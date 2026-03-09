@@ -1,0 +1,12 @@
+# Ignore Gradle build artifacts and cache
+.gradle/
+build/
+
+# Ignore the entire plans directory and all its contents
+plans/
+# Ignore the entire plans directory and all its contents
+specs/
+# Ignore the entire specify directory and all its contents
+.specify/
+# Ignore the entire claude directory and all its contents
+.claude/
