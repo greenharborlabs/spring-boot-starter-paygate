@@ -47,6 +47,8 @@ import java.util.Objects;
  */
 public class L402SecurityFilter implements Filter {
 
+    private static final System.Logger log = System.getLogger(L402SecurityFilter.class.getName());
+
     private static final String AUTHORIZATION_HEADER = "Authorization";
     private static final String L402_PREFIX = "L402 ";
     private static final String LSAT_PREFIX = "LSAT ";
@@ -98,6 +100,7 @@ public class L402SecurityFilter implements Filter {
 
         // 2. Check Lightning backend health
         if (!lightningBackend.isHealthy()) {
+            log.log(System.Logger.Level.WARNING, "Lightning backend health check failed for {0} {1}", method, path);
             writeLightningUnavailableResponse(httpResponse);
             return;
         }
@@ -106,7 +109,14 @@ public class L402SecurityFilter implements Filter {
         String authHeader = httpRequest.getHeader(AUTHORIZATION_HEADER);
         if (authHeader == null || authHeader.isEmpty()
                 || (!authHeader.startsWith(L402_PREFIX) && !authHeader.startsWith(LSAT_PREFIX))) {
-            writePaymentRequiredResponse(httpResponse, config);
+            try {
+                writePaymentRequiredResponse(httpResponse, config);
+            } catch (Exception e) {
+                log.log(System.Logger.Level.WARNING, "Failed to create invoice for {0} {1}: {2}", method, path, e.getMessage());
+                if (!httpResponse.isCommitted()) {
+                    writeLightningUnavailableResponse(httpResponse);
+                }
+            }
             return;
         }
 
@@ -115,6 +125,7 @@ public class L402SecurityFilter implements Filter {
             L402Credential credential = validator.validate(authHeader);
 
             // Success: add headers and pass through
+            log.log(System.Logger.Level.DEBUG, "L402 credential validated successfully, tokenId={0}", credential.tokenId());
             httpResponse.setHeader("X-L402-Token-Id", credential.tokenId());
             httpResponse.setHeader("X-L402-Credential-Expires",
                     Instant.now().plus(config.timeoutSeconds(), ChronoUnit.SECONDS).toString());
@@ -123,11 +134,25 @@ public class L402SecurityFilter implements Filter {
 
         } catch (L402Exception e) {
             ErrorCode errorCode = e.getErrorCode();
+            log.log(System.Logger.Level.WARNING, "L402 validation failed, errorCode={0}, tokenId={1}", errorCode, e.getTokenId());
             if (errorCode == ErrorCode.MALFORMED_HEADER) {
                 // Malformed L402 header: issue a new challenge
-                writePaymentRequiredResponse(httpResponse, config);
+                try {
+                    writePaymentRequiredResponse(httpResponse, config);
+                } catch (Exception ex) {
+                    log.log(System.Logger.Level.WARNING, "Failed to create invoice for {0} {1}: {2}", method, path, ex.getMessage());
+                    if (!httpResponse.isCommitted()) {
+                        writeLightningUnavailableResponse(httpResponse);
+                    }
+                }
             } else {
                 writeErrorResponse(httpResponse, errorCode, e.getMessage(), e.getTokenId());
+            }
+        } catch (Exception e) {
+            // Fail closed: any unexpected exception from validation produces 503, never 500
+            log.log(System.Logger.Level.WARNING, "Unexpected error during L402 validation for {0} {1}: {2}", method, path, e.getMessage());
+            if (!httpResponse.isCommitted()) {
+                writeLightningUnavailableResponse(httpResponse);
             }
         }
     }

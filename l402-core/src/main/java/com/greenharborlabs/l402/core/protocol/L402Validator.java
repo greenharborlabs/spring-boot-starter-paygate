@@ -72,6 +72,14 @@ public final class L402Validator {
         } catch (MacaroonVerificationException e) {
             throw new L402Exception(ErrorCode.INVALID_MACAROON,
                     "Macaroon verification failed: " + e.getMessage(), tokenId);
+        } catch (L402Exception e) {
+            // Caveat verifiers throw L402Exception with the correct ErrorCode
+            // (EXPIRED_CREDENTIAL, INVALID_SERVICE) but without tokenId context.
+            // Re-throw with tokenId enriched if missing.
+            if (e.getTokenId() == null) {
+                throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
+            }
+            throw e;
         }
 
         // 6. Verify preimage matches payment hash
