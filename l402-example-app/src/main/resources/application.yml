@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: l402-example-app
+
+server:
+  port: 8080
+
+l402:
+  enabled: true
+  test-mode: true
+  service-name: example-api
