@@ -9,11 +9,14 @@ import com.greenharborlabs.l402.core.macaroon.InMemoryRootKeyStore;
 import com.greenharborlabs.l402.core.macaroon.RootKeyStore;
 
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
@@ -44,10 +47,24 @@ public class L402AutoConfiguration {
         };
     }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public CredentialStore credentialStore() {
-        return new InMemoryCredentialStore();
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "com.github.benmanes.caffeine.cache.Caffeine")
+    static class CaffeineCredentialStoreConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        CredentialStore credentialStore(L402Properties properties) {
+            return new CaffeineCredentialStore(properties.getCredentialCacheMaxSize());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnMissingClass("com.github.benmanes.caffeine.cache.Caffeine")
+    static class InMemoryCredentialStoreConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        CredentialStore credentialStore() {
+            return new InMemoryCredentialStore();
+        }
     }
 
     @Bean

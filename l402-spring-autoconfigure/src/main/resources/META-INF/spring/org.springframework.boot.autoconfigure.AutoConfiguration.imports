@@ -1,1 +1,2 @@
 com.greenharborlabs.l402.spring.L402AutoConfiguration
+com.greenharborlabs.l402.spring.TestModeAutoConfiguration
