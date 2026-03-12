@@ -1,6 +1,7 @@
 package com.greenharborlabs.l402.lightning.lnbits;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.greenharborlabs.l402.core.lightning.Invoice;
@@ -228,6 +229,50 @@ class LnbitsBackendTest {
                             i + 1, request.getMethod(), request.getPath())
                     .isEqualTo(API_KEY);
         }
+    }
+
+    @Test
+    void createInvoice_throws_when4xxResponse() {
+        server.enqueue(new MockResponse()
+                .setResponseCode(401)
+                .setBody("Unauthorized"));
+
+        assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
+                .isInstanceOf(LnbitsException.class)
+                .hasMessageContaining("HTTP 401");
+    }
+
+    @Test
+    void createInvoice_throws_when5xxResponse() {
+        server.enqueue(new MockResponse()
+                .setResponseCode(500)
+                .setBody("Internal Server Error"));
+
+        assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
+                .isInstanceOf(LnbitsException.class)
+                .hasMessageContaining("HTTP 500");
+    }
+
+    @Test
+    void lookupInvoice_throws_when4xxResponse() {
+        server.enqueue(new MockResponse()
+                .setResponseCode(404)
+                .setBody("Not Found"));
+
+        assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+                .isInstanceOf(LnbitsException.class)
+                .hasMessageContaining("HTTP 404");
+    }
+
+    @Test
+    void lookupInvoice_throws_when5xxResponse() {
+        server.enqueue(new MockResponse()
+                .setResponseCode(502)
+                .setBody("Bad Gateway"));
+
+        assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+                .isInstanceOf(LnbitsException.class)
+                .hasMessageContaining("HTTP 502");
     }
 
     // Verify the backend implements the LightningBackend interface

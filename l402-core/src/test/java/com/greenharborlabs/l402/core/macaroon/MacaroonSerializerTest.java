@@ -416,6 +416,101 @@ class MacaroonSerializerTest {
             assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(truncated))
                     .isInstanceOf(IllegalArgumentException.class);
         }
+
+        @Test
+        @DisplayName("rejects header length varint larger than data array")
+        void rejectsOversizedHeaderLength() {
+            // Build: version(0x02) + fieldType=2(identifier) + length varint encoding 999999
+            var buf = new ByteArrayOutputStream();
+            buf.write(0x02);                                    // version
+            buf.writeBytes(Varint.encode(FIELD_IDENTIFIER));    // field type = 2
+            buf.writeBytes(Varint.encode(999_999));             // length far exceeding data size
+            byte[] malicious = buf.toByteArray();
+
+            assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(malicious))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Invalid packet length");
+        }
+
+        @Test
+        @DisplayName("rejects header length varint with very large value near Long.MAX_VALUE")
+        void rejectsVeryLargeHeaderLength() {
+            // Encode a value close to Long.MAX_VALUE as the length varint
+            var buf = new ByteArrayOutputStream();
+            buf.write(0x02);                                    // version
+            buf.writeBytes(Varint.encode(FIELD_IDENTIFIER));    // field type = 2
+            buf.writeBytes(Varint.encode(Long.MAX_VALUE));      // enormous length
+            byte[] malicious = buf.toByteArray();
+
+            assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(malicious))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Invalid packet length");
+        }
+
+        @Test
+        @DisplayName("rejects caveat section with oversized length varint")
+        void rejectsOversizedCaveatLength() throws IOException {
+            // Build a valid header, then inject a caveat with an oversized length
+            byte[] identifier = identifierFilledWith((byte) 0x01);
+            byte[] signature = signatureFilledWith((byte) 0x02);
+            byte[] validBytes = buildExpectedV2Bytes(null, identifier, List.of(), signature);
+
+            // validBytes layout: version + id_packet + EOS + EOS + sig_packet
+            // We need to insert a malicious caveat section between the two EOS bytes.
+            // Find the first EOS after the identifier (end of header section).
+            // The second EOS is at the next position (end of caveats section, since there are none).
+            // We replace the second EOS + signature with: malicious caveat + EOS + signature.
+            var buf = new ByteArrayOutputStream();
+            // Copy up to and including first EOS (header section)
+            int headerEnd = findSecondEosPosition(validBytes);
+            buf.write(validBytes, 0, headerEnd);
+            // Inject malicious caveat: fieldType=2, length=999999
+            buf.writeBytes(Varint.encode(FIELD_IDENTIFIER));
+            buf.writeBytes(Varint.encode(999_999));
+            byte[] malicious = buf.toByteArray();
+
+            assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(malicious))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Invalid packet length");
+        }
+
+        @Test
+        @DisplayName("rejects signature section with oversized length varint")
+        void rejectsOversizedSignatureLength() throws IOException {
+            byte[] identifier = identifierFilledWith((byte) 0x01);
+            byte[] signature = signatureFilledWith((byte) 0x02);
+            byte[] validBytes = buildExpectedV2Bytes(null, identifier, List.of(), signature);
+
+            // Replace signature packet with one that has an oversized length.
+            // Find signature packet start: it's after the two EOS bytes at the end of caveats.
+            var buf = new ByteArrayOutputStream();
+            int sigPacketStart = validBytes.length - Macaroon.SIGNATURE_LENGTH - 2; // -2 for varint(6) + varint(32)
+            buf.write(validBytes, 0, sigPacketStart);
+            buf.writeBytes(Varint.encode(FIELD_SIGNATURE));
+            buf.writeBytes(Varint.encode(999_999));
+            byte[] malicious = buf.toByteArray();
+
+            assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(malicious))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Invalid packet length");
+        }
+
+        /**
+         * Finds the position of the second EOS (0x00) byte that marks the end of the caveats section.
+         * This is the byte right before the signature packet in a no-caveats macaroon.
+         */
+        private int findSecondEosPosition(byte[] data) {
+            int pos = 1; // skip version byte
+            // Parse header fields until first EOS
+            while (pos < data.length && data[pos] != FIELD_EOS) {
+                Varint.DecodeResult ft = Varint.decode(data, pos);
+                pos += ft.bytesRead();
+                Varint.DecodeResult len = Varint.decode(data, pos);
+                pos += len.bytesRead() + (int) len.value();
+            }
+            pos++; // skip first EOS
+            return pos; // this is where the second EOS (or caveat data) starts
+        }
     }
 
     @Nested

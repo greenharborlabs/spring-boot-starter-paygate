@@ -83,11 +83,19 @@ public final class MacaroonSerializer {
                 break;
             }
             Varint.DecodeResult fieldTypeResult = Varint.decode(data, pos);
-            int fieldType = (int) fieldTypeResult.value();
+            long rawFieldType = fieldTypeResult.value();
+            if (rawFieldType < 0 || rawFieldType > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Invalid field type: " + rawFieldType);
+            }
+            int fieldType = (int) rawFieldType;
             pos += fieldTypeResult.bytesRead();
 
             Varint.DecodeResult lenResult = Varint.decode(data, pos);
-            int len = (int) lenResult.value();
+            long rawLen = lenResult.value();
+            if (rawLen < 0 || rawLen > data.length) {
+                throw new IllegalArgumentException("Invalid packet length: " + rawLen);
+            }
+            int len = (int) rawLen;
             pos += lenResult.bytesRead();
 
             if (pos + len > data.length) {
@@ -119,11 +127,19 @@ public final class MacaroonSerializer {
             }
             // Each caveat section: identifier packet + EOS
             Varint.DecodeResult fieldTypeResult = Varint.decode(data, pos);
-            int fieldType = (int) fieldTypeResult.value();
+            long rawFieldType = fieldTypeResult.value();
+            if (rawFieldType < 0 || rawFieldType > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Invalid field type: " + rawFieldType);
+            }
+            int fieldType = (int) rawFieldType;
             pos += fieldTypeResult.bytesRead();
 
             Varint.DecodeResult lenResult = Varint.decode(data, pos);
-            int len = (int) lenResult.value();
+            long rawLen = lenResult.value();
+            if (rawLen < 0 || rawLen > data.length) {
+                throw new IllegalArgumentException("Invalid packet length: " + rawLen);
+            }
+            int len = (int) rawLen;
             pos += lenResult.bytesRead();
 
             if (pos + len > data.length) {
@@ -157,14 +173,22 @@ public final class MacaroonSerializer {
             throw new IllegalArgumentException("Missing signature in V2 macaroon data");
         }
         Varint.DecodeResult sigFieldResult = Varint.decode(data, pos);
-        if ((int) sigFieldResult.value() != FIELD_SIGNATURE) {
+        long rawSigFieldType = sigFieldResult.value();
+        if (rawSigFieldType < 0 || rawSigFieldType > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Invalid field type: " + rawSigFieldType);
+        }
+        if ((int) rawSigFieldType != FIELD_SIGNATURE) {
             throw new IllegalArgumentException(
-                    "Expected signature field type 6, got " + sigFieldResult.value());
+                    "Expected signature field type 6, got " + rawSigFieldType);
         }
         pos += sigFieldResult.bytesRead();
 
         Varint.DecodeResult sigLenResult = Varint.decode(data, pos);
-        int sigLen = (int) sigLenResult.value();
+        long rawSigLen = sigLenResult.value();
+        if (rawSigLen < 0 || rawSigLen > data.length) {
+            throw new IllegalArgumentException("Invalid packet length: " + rawSigLen);
+        }
+        int sigLen = (int) rawSigLen;
         pos += sigLenResult.bytesRead();
 
         if (pos + sigLen > data.length) {

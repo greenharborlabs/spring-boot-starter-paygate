@@ -53,6 +53,9 @@ public class LnbitsBackend implements LightningBackend {
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new LnbitsException("LNbits API returned HTTP " + response.statusCode());
+            }
             JsonNode json = objectMapper.readTree(response.body());
 
             String paymentHashHex = json.get("payment_hash").asText();
@@ -91,6 +94,9 @@ public class LnbitsBackend implements LightningBackend {
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new LnbitsException("LNbits API returned HTTP " + response.statusCode());
+            }
             JsonNode json = objectMapper.readTree(response.body());
 
             boolean paid = json.get("paid").asBoolean();
