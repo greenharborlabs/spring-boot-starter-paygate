@@ -84,9 +84,9 @@ public record PaymentPreimage(byte[] value) {
     }
 
     private static boolean constantTimeEquals(byte[] a, byte[] b) {
-        if (a.length != b.length) return false;
-        int result = 0;
-        for (int i = 0; i < a.length; i++) {
+        int result = a.length ^ b.length;
+        int len = Math.min(a.length, b.length);
+        for (int i = 0; i < len; i++) {
             result |= a[i] ^ b[i];
         }
         return result == 0;

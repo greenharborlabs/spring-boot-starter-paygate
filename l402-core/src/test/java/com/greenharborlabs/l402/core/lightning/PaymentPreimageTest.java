@@ -266,6 +266,29 @@ class PaymentPreimageTest {
         assertThat(preimage.matchesHash(otherHash)).isFalse();
     }
 
+    // --- constantTimeEquals: different-length arrays (via reflection, since method is private) ---
+
+    @Test
+    void constantTimeEqualsReturnsFalseForDifferentLengthArrays() throws Exception {
+        var method = PaymentPreimage.class.getDeclaredMethod("constantTimeEquals", byte[].class, byte[].class);
+        method.setAccessible(true);
+
+        // Shorter vs longer with shared prefix
+        byte[] shorter = {0x01, 0x02, 0x03};
+        byte[] longer = {0x01, 0x02, 0x03, 0x04, 0x05};
+        assertThat((boolean) method.invoke(null, shorter, longer)).isFalse();
+        assertThat((boolean) method.invoke(null, longer, shorter)).isFalse();
+
+        // Empty vs non-empty
+        assertThat((boolean) method.invoke(null, new byte[0], new byte[]{0x01})).isFalse();
+        assertThat((boolean) method.invoke(null, new byte[]{0x01}, new byte[0])).isFalse();
+
+        // Same content, same length — should still return true
+        byte[] a = {0x01, 0x02, 0x03};
+        byte[] b = {0x01, 0x02, 0x03};
+        assertThat((boolean) method.invoke(null, a, b)).isTrue();
+    }
+
     // --- Helper ---
 
     private static byte[] sha256(byte[] input) throws NoSuchAlgorithmException {

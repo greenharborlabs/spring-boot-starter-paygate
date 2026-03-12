@@ -242,6 +242,21 @@ class MacaroonCryptoTest {
         }
 
         @Test
+        @DisplayName("returns false for different lengths without early return (no length leak)")
+        void differentLengthsNoTimingLeak() {
+            byte[] shorter = {0x01, 0x02, 0x03};
+            byte[] longer = {0x01, 0x02, 0x03, 0x04, 0x05};
+
+            // Both orderings must return false
+            assertThat(MacaroonCrypto.constantTimeEquals(shorter, longer)).isFalse();
+            assertThat(MacaroonCrypto.constantTimeEquals(longer, shorter)).isFalse();
+
+            // Empty vs non-empty
+            assertThat(MacaroonCrypto.constantTimeEquals(new byte[0], new byte[]{0x01})).isFalse();
+            assertThat(MacaroonCrypto.constantTimeEquals(new byte[]{0x01}, new byte[0])).isFalse();
+        }
+
+        @Test
         @DisplayName("returns false for all-zero vs all-one arrays of same length")
         void allZeroVsAllOne() {
             byte[] zeros = new byte[32];

@@ -16,4 +16,9 @@ public record LnbitsConfig(String baseUrl, String apiKey) {
             throw new IllegalArgumentException("apiKey must not be null or blank");
         }
     }
+
+    @Override
+    public String toString() {
+        return "LnbitsConfig[baseUrl=" + baseUrl + ", apiKey=***REDACTED***]";
+    }
 }

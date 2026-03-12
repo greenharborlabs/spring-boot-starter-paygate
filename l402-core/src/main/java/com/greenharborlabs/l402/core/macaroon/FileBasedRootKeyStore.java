@@ -35,8 +35,8 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     private final boolean posix;
 
     public FileBasedRootKeyStore(Path directory) {
-        this.directory = directory;
-        this.posix = directory.getFileSystem().supportedFileAttributeViews().contains("posix");
+        this.directory = directory.toAbsolutePath().normalize();
+        this.posix = this.directory.getFileSystem().supportedFileAttributeViews().contains("posix");
         ensureDirectory();
     }
 
@@ -63,7 +63,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     @Override
     public byte[] getRootKey(byte[] keyId) {
         String hexKeyId = HEX.formatHex(keyId);
-        Path keyFile = directory.resolve(hexKeyId);
+        Path keyFile = resolveKeyFile(hexKeyId);
 
         lock.readLock().lock();
         try {
@@ -82,7 +82,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     @Override
     public void revokeRootKey(byte[] keyId) {
         String hexKeyId = HEX.formatHex(keyId);
-        Path keyFile = directory.resolve(hexKeyId);
+        Path keyFile = resolveKeyFile(hexKeyId);
 
         lock.writeLock().lock();
         try {
@@ -92,6 +92,15 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
         } finally {
             lock.writeLock().unlock();
         }
+    }
+
+    // package-private for testing
+    Path resolveKeyFile(String hexKeyId) {
+        Path keyFile = directory.resolve(hexKeyId).normalize();
+        if (!keyFile.startsWith(directory)) {
+            throw new IllegalArgumentException("Key ID resolves outside storage directory");
+        }
+        return keyFile;
     }
 
     private void ensureDirectory() {
@@ -116,8 +125,8 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     private void writeKeyFile(String hexKeyId, byte[] rootKey) {
         try {
             String hexContent = HEX.formatHex(rootKey);
-            Path targetFile = directory.resolve(hexKeyId);
-            Path tmpFile = directory.resolve(hexKeyId + ".tmp");
+            Path targetFile = resolveKeyFile(hexKeyId);
+            Path tmpFile = resolveKeyFile(hexKeyId + ".tmp");
 
             Files.writeString(tmpFile, hexContent);
             if (posix) {

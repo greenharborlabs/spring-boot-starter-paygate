@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
 @DisplayName("FileBasedRootKeyStore")
@@ -210,6 +211,48 @@ class FileBasedRootKeyStoreTest {
 
             store.revokeRootKey(unknownKeyId);
             // Should complete without exception
+        }
+    }
+
+    @Nested
+    @DisplayName("path confinement")
+    class PathConfinement {
+
+        @Test
+        @DisplayName("resolveKeyFile rejects path traversal input")
+        void resolveKeyFileRejectsTraversal() {
+            // HexFormat output is always [0-9a-f] so traversal via the public API
+            // is not possible, but this defense-in-depth check guards against
+            // future refactors that might pass untrusted strings directly.
+            assertThatThrownBy(() -> store.resolveKeyFile("../../etc/passwd"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("outside storage directory");
+        }
+
+        @Test
+        @DisplayName("resolveKeyFile rejects input with embedded path separators")
+        void resolveKeyFileRejectsEmbeddedSeparators() {
+            assertThatThrownBy(() -> store.resolveKeyFile("../sibling/file"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("outside storage directory");
+        }
+
+        @Test
+        @DisplayName("resolveKeyFile allows valid hex key IDs")
+        void resolveKeyFileAllowsValidHexIds() {
+            Path resolved = store.resolveKeyFile("abcdef0123456789");
+            assertThat(resolved.getFileName().toString()).isEqualTo("abcdef0123456789");
+            assertThat(resolved.startsWith(tempDir.toAbsolutePath().normalize())).isTrue();
+        }
+
+        @Test
+        @DisplayName("hex-encoded keyId can never produce path traversal via public API")
+        void hexEncodedKeyIdCannotTraverse() {
+            // Even if the raw bytes represent "../../", the hex encoding is safe
+            byte[] bytesOfTraversal = "../../etc/passwd".getBytes();
+            // This should not throw because HEX.formatHex produces [0-9a-f] only
+            byte[] result = store.getRootKey(bytesOfTraversal);
+            assertThat(result).isNull(); // key doesn't exist, but no exception
         }
     }
 
