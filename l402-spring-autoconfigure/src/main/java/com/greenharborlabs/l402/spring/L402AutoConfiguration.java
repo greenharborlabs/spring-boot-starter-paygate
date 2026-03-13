@@ -74,8 +74,8 @@ public class L402AutoConfiguration {
     static class InMemoryCredentialStoreConfiguration {
         @Bean
         @ConditionalOnMissingBean
-        CredentialStore credentialStore() {
-            return new InMemoryCredentialStore();
+        CredentialStore credentialStore(L402Properties properties) {
+            return new InMemoryCredentialStore(properties.getCredentialCacheMaxSize());
         }
     }
 
