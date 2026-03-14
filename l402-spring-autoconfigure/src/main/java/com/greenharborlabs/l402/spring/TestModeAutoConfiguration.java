@@ -26,6 +26,7 @@ import org.springframework.core.env.Environment;
  * </ol>
  */
 @AutoConfiguration(before = L402AutoConfiguration.class)
+@ConditionalOnProperty(name = "l402.enabled", havingValue = "true")
 @ConditionalOnProperty(name = "l402.test-mode", havingValue = "true")
 public class TestModeAutoConfiguration {
 

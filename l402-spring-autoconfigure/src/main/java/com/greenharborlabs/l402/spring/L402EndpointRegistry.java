@@ -24,9 +24,27 @@ import java.util.concurrent.ConcurrentHashMap;
 public class L402EndpointRegistry {
 
     private static final PathPatternParser PATTERN_PARSER = new PathPatternParser();
+    private static final long DEFAULT_TIMEOUT_SECONDS_FALLBACK = 3600;
 
+    private final long defaultTimeoutSeconds;
     private final Map<String, L402EndpointConfig> configs = new ConcurrentHashMap<>();
     private final Map<String, PathPattern> parsedPatterns = new ConcurrentHashMap<>();
+
+    /**
+     * Creates a registry that resolves the {@code -1} sentinel timeout to the given default.
+     *
+     * @param defaultTimeoutSeconds the default credential timeout in seconds
+     */
+    public L402EndpointRegistry(long defaultTimeoutSeconds) {
+        this.defaultTimeoutSeconds = defaultTimeoutSeconds;
+    }
+
+    /**
+     * Creates a registry with the built-in default timeout of 3600 seconds.
+     */
+    public L402EndpointRegistry() {
+        this(DEFAULT_TIMEOUT_SECONDS_FALLBACK);
+    }
 
     /**
      * Manually registers a protected endpoint configuration.
@@ -122,12 +140,15 @@ public class L402EndpointRegistry {
         return configs.size();
     }
 
-    private static L402EndpointConfig toConfig(String method, String path, L402Protected annotation) {
+    private L402EndpointConfig toConfig(String method, String path, L402Protected annotation) {
+        long timeout = annotation.timeoutSeconds() == -1
+                ? defaultTimeoutSeconds
+                : annotation.timeoutSeconds();
         return new L402EndpointConfig(
                 method,
                 path,
                 annotation.priceSats(),
-                annotation.timeoutSeconds(),
+                timeout,
                 annotation.description(),
                 annotation.pricingStrategy()
         );

@@ -107,6 +107,21 @@ class AutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("L402EndpointRegistry receives defaultTimeoutSeconds from properties")
+    void registryReceivesDefaultTimeoutFromProperties() {
+        contextRunner
+                .withPropertyValues("l402.default-timeout-seconds=9999")
+                .withBean("testController", SentinelTimeoutController.class, SentinelTimeoutController::new)
+                .run(context -> {
+                    L402EndpointRegistry registry = context.getBean(L402EndpointRegistry.class);
+                    // The controller endpoint uses @L402Protected(priceSats=5) with default timeoutSeconds=-1
+                    L402EndpointConfig config = registry.findConfig("GET", "/api/sentinel-test");
+                    assertThat(config).isNotNull();
+                    assertThat(config.timeoutSeconds()).isEqualTo(9999);
+                });
+    }
+
+    @Test
     @DisplayName("RootKeyStore is InMemoryRootKeyStore when l402.root-key-store=memory")
     void inMemoryRootKeyStoreWhenMemoryMode() {
         contextRunner.run(context -> {
@@ -139,6 +154,19 @@ class AutoConfigurationTest {
         @Override
         public boolean isHealthy() {
             return true;
+        }
+    }
+
+    /**
+     * Controller with sentinel timeout (-1) to test default resolution.
+     */
+    @org.springframework.web.bind.annotation.RestController
+    static class SentinelTimeoutController {
+
+        @L402Protected(priceSats = 5)
+        @org.springframework.web.bind.annotation.GetMapping("/api/sentinel-test")
+        String sentinelEndpoint() {
+            return "sentinel";
         }
     }
 }

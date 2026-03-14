@@ -112,8 +112,9 @@ public class L402AutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public L402EndpointRegistry l402EndpointRegistry(RequestMappingHandlerMapping handlerMapping) {
-        var registry = new L402EndpointRegistry();
+    public L402EndpointRegistry l402EndpointRegistry(RequestMappingHandlerMapping handlerMapping,
+                                                       L402Properties properties) {
+        var registry = new L402EndpointRegistry(properties.getDefaultTimeoutSeconds());
         registry.scanAnnotatedEndpoints(handlerMapping);
         return registry;
     }

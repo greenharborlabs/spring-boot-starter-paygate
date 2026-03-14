@@ -99,7 +99,31 @@ class TestModeConfigTest {
     void testModeNotActiveWhenDisabled() {
         new WebApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(TestModeAutoConfiguration.class))
-                .withPropertyValues("l402.test-mode=false")
+                .withPropertyValues("l402.enabled=true", "l402.test-mode=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(TestModeLightningBackend.class);
+                });
+    }
+
+    @Test
+    @DisplayName("TestModeLightningBackend not created when l402.test-mode=true but l402.enabled is not set")
+    void testModeNotActiveWhenMasterSwitchDisabled() {
+        new WebApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(TestModeAutoConfiguration.class))
+                .withPropertyValues("l402.test-mode=true", "spring.profiles.active=test")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(TestModeLightningBackend.class);
+                });
+    }
+
+    @Test
+    @DisplayName("TestModeLightningBackend not created when l402.test-mode=true and l402.enabled=false")
+    void testModeNotActiveWhenMasterSwitchExplicitlyDisabled() {
+        new WebApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(TestModeAutoConfiguration.class))
+                .withPropertyValues("l402.enabled=false", "l402.test-mode=true", "spring.profiles.active=test")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).doesNotHaveBean(TestModeLightningBackend.class);

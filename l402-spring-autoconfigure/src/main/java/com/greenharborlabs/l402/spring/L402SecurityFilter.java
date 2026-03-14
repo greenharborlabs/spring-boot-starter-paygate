@@ -55,6 +55,9 @@ public class L402SecurityFilter implements Filter {
     private static final String L402_PREFIX = "L402 ";
     private static final String LSAT_PREFIX = "LSAT ";
 
+    /** Macaroon binary format version — V2 as defined by the L402 identifier layout. */
+    private static final int MACAROON_IDENTIFIER_VERSION = 0;
+
     private final L402EndpointRegistry registry;
     private final LightningBackend lightningBackend;
     private final RootKeyStore rootKeyStore;
@@ -297,7 +300,7 @@ public class L402SecurityFilter implements Filter {
         }
 
         // Build MacaroonIdentifier and mint macaroon with service and expiry caveats
-        MacaroonIdentifier identifier = new MacaroonIdentifier(0, invoice.paymentHash(), tokenId);
+        MacaroonIdentifier identifier = new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, invoice.paymentHash(), tokenId);
         Instant validUntil = Instant.now().plusSeconds(config.timeoutSeconds());
         List<Caveat> caveats = List.of(
                 new Caveat("services", serviceName + ":0"),
