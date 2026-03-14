@@ -200,8 +200,8 @@ class L402ValidatorTest {
     class CachedCredential {
 
         @Test
-        @DisplayName("returns cached credential without full re-verification when present in store and root key exists")
-        void returnsCachedWithoutFullReVerification() {
+        @DisplayName("returns cached credential when presented credential matches and caveats are valid")
+        void returnsCachedWhenPresentedCredentialMatches() {
             // Pre-populate the credential store with a cached credential
             PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
             L402Credential cached = new L402Credential(macaroon, preimage, tokenIdHex);
@@ -239,6 +239,105 @@ class L402ValidatorTest {
                     });
 
             // Credential should be evicted from cache
+            assertThat(credentialStore.get(tokenIdHex)).isNull();
+        }
+
+        @Test
+        @DisplayName("throws INVALID_MACAROON when presented macaroon signature does not match cached")
+        void rejectsCachedCredentialWithTamperedSignature() {
+            // Pre-populate the credential store with the legitimate credential
+            PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
+            L402Credential cached = new L402Credential(macaroon, preimage, tokenIdHex);
+            credentialStore.store(tokenIdHex, cached, 3600);
+
+            // Build a header with the same tokenId but a tampered macaroon signature
+            byte[] tamperedSig = macaroon.signature();
+            tamperedSig[0] = (byte) (tamperedSig[0] ^ 0xFF);
+            Macaroon tampered = new Macaroon(
+                    macaroon.identifier(), macaroon.location(), macaroon.caveats(), tamperedSig);
+
+            byte[] serialized = MacaroonSerializer.serializeV2(tampered);
+            String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
+            String preimageHex = HEX.formatHex(preimageBytes);
+            String header = "L402 " + macaroonBase64 + ":" + preimageHex;
+
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+
+            assertThatThrownBy(() -> validator.validate(header))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(ex -> {
+                        L402Exception l402Ex = (L402Exception) ex;
+                        assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
+                        assertThat(l402Ex.getMessage()).contains("signature");
+                        assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
+                    });
+        }
+
+        @Test
+        @DisplayName("throws INVALID_MACAROON when presented preimage does not match cached")
+        void rejectsCachedCredentialWithWrongPreimage() {
+            // Pre-populate the credential store with the legitimate credential
+            PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
+            L402Credential cached = new L402Credential(macaroon, preimage, tokenIdHex);
+            credentialStore.store(tokenIdHex, cached, 3600);
+
+            // Build a header with the correct macaroon but a different preimage.
+            // The attacker knows the tokenId (from a response header) but not the real preimage.
+            byte[] wrongPreimageBytes = new byte[32];
+            RANDOM.nextBytes(wrongPreimageBytes);
+            byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
+            String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
+            String wrongPreimageHex = HEX.formatHex(wrongPreimageBytes);
+            String header = "L402 " + macaroonBase64 + ":" + wrongPreimageHex;
+
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+
+            assertThatThrownBy(() -> validator.validate(header))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(ex -> {
+                        L402Exception l402Ex = (L402Exception) ex;
+                        assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
+                        assertThat(l402Ex.getMessage()).contains("preimage");
+                        assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
+                    });
+        }
+
+        @Test
+        @DisplayName("throws EXPIRED_CREDENTIAL and revokes cache when cached credential has expired caveat")
+        void rejectsCachedCredentialWithExpiredCaveat() {
+            // Create a macaroon with a valid_until caveat set in the past
+            long pastEpoch = Instant.now().minusSeconds(60).getEpochSecond();
+            List<Caveat> caveats = List.of(
+                    new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(pastEpoch))
+            );
+            Macaroon expiredMacaroon = MacaroonMinter.mint(
+                    rootKey, identifier, "https://example.com", caveats);
+
+            // Pre-populate the credential store as if this was cached before expiry
+            PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
+            L402Credential cached = new L402Credential(expiredMacaroon, preimage, tokenIdHex);
+            credentialStore.store(tokenIdHex, cached, 3600);
+
+            // Build header with matching macaroon and preimage (attacker replays a real credential)
+            byte[] serialized = MacaroonSerializer.serializeV2(expiredMacaroon);
+            String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
+            String preimageHex = HEX.formatHex(preimageBytes);
+            String header = "L402 " + macaroonBase64 + ":" + preimageHex;
+
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(validUntilVerifier()), SERVICE_NAME);
+
+            assertThatThrownBy(() -> validator.validate(header))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(ex -> {
+                        L402Exception l402Ex = (L402Exception) ex;
+                        assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
+                        assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
+                    });
+
+            // Credential should be evicted from cache after expiry detection
             assertThat(credentialStore.get(tokenIdHex)).isNull();
         }
     }

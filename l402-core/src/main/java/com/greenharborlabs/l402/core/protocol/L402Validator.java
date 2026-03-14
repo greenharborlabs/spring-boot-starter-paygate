@@ -5,6 +5,7 @@ import com.greenharborlabs.l402.core.macaroon.Caveat;
 import com.greenharborlabs.l402.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.l402.core.macaroon.Macaroon;
+import com.greenharborlabs.l402.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.l402.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.l402.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.l402.core.macaroon.MacaroonVerifier;
@@ -53,7 +54,7 @@ public final class L402Validator {
         L402Credential credential = L402Credential.parse(authorizationHeader);
         String tokenId = credential.tokenId();
 
-        // 2. Check credential cache — re-verify root key existence before returning
+        // 2. Check credential cache — verify presented credential matches cached, re-verify caveats
         L402Credential cached = credentialStore.get(tokenId);
         if (cached != null) {
             MacaroonIdentifier cachedMacId = MacaroonIdentifier.decode(cached.macaroon().identifier());
@@ -63,6 +64,42 @@ public final class L402Validator {
                 throw new L402Exception(ErrorCode.REVOKED_CREDENTIAL,
                         "Root key has been revoked", tokenId);
             }
+
+            // Verify the presented macaroon signature matches the cached one
+            if (!MacaroonCrypto.constantTimeEquals(
+                    credential.macaroon().signature(), cached.macaroon().signature())) {
+                throw new L402Exception(ErrorCode.INVALID_MACAROON,
+                        "Presented macaroon signature does not match cached credential", tokenId);
+            }
+
+            // Verify the presented preimage matches the cached one
+            if (!credential.preimage().equals(cached.preimage())) {
+                throw new L402Exception(ErrorCode.INVALID_MACAROON,
+                        "Presented preimage does not match cached credential", tokenId);
+            }
+
+            // Re-verify time-based caveats against current time
+            Instant now = Instant.now();
+            L402VerificationContext context = L402VerificationContext.builder()
+                    .serviceName(serviceName)
+                    .currentTime(now)
+                    .build();
+            for (Caveat caveat : cached.macaroon().caveats()) {
+                for (CaveatVerifier verifier : caveatVerifiers) {
+                    if (verifier.getKey().equals(caveat.key())) {
+                        try {
+                            verifier.verify(caveat, context);
+                        } catch (L402Exception e) {
+                            credentialStore.revoke(tokenId);
+                            if (e.getTokenId() == null) {
+                                throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
+                            }
+                            throw e;
+                        }
+                    }
+                }
+            }
+
             return new ValidationResult(cached, false);
         }
 
