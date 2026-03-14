@@ -71,7 +71,9 @@ class LsatChallengeSchemeTest {
         mockMvc.perform(get(PROTECTED_PATH))
                 .andExpect(status().isPaymentRequired())
                 .andExpect(header().exists("WWW-Authenticate"))
-                .andExpect(header().string("WWW-Authenticate", startsWith("L402 ")));
+                .andExpect(header().string("WWW-Authenticate", startsWith("L402 ")))
+                .andExpect(header().string("WWW-Authenticate", containsString("version=\"0\"")))
+                .andExpect(header().string("WWW-Authenticate", containsString("token=")));
     }
 
     @Test

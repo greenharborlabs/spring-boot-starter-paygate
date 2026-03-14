@@ -314,7 +314,9 @@ public class L402SecurityFilter implements Filter {
 
         // Build response — sanitize bolt11 to prevent header injection and JSON breaking
         String safeBolt11Header = sanitizeBolt11ForHeader(invoice.bolt11());
-        String wwwAuth = "L402 macaroon=\"" + macaroonBase64 + "\", invoice=\"" + safeBolt11Header + "\"";
+        String wwwAuth = "L402 version=\"0\", token=\"" + macaroonBase64
+                + "\", macaroon=\"" + macaroonBase64
+                + "\", invoice=\"" + safeBolt11Header + "\"";
 
         response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         response.setHeader("WWW-Authenticate", wwwAuth);

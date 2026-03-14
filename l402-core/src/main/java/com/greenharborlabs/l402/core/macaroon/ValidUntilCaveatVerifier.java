@@ -36,4 +36,20 @@ public class ValidUntilCaveatVerifier implements CaveatVerifier {
                     null);
         }
     }
+
+    /**
+     * Returns {@code true} if the current timestamp is at or before the previous timestamp.
+     * A later expiry than the previous caveat would be an escalation.
+     */
+    @Override
+    public boolean isMoreRestrictive(Caveat previous, Caveat current) {
+        try {
+            long previousEpoch = Long.parseLong(previous.value());
+            long currentEpoch = Long.parseLong(current.value());
+            return currentEpoch <= previousEpoch;
+        } catch (NumberFormatException _) {
+            // Malformed timestamps are rejected by verify(); treat as non-restrictive
+            return false;
+        }
+    }
 }

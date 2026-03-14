@@ -192,6 +192,8 @@ class L402SecurityFilterTest {
                     .andExpect(status().isPaymentRequired())
                     .andExpect(header().exists("WWW-Authenticate"))
                     .andExpect(header().string("WWW-Authenticate", containsString("L402")))
+                    .andExpect(header().string("WWW-Authenticate", containsString("version=\"0\"")))
+                    .andExpect(header().string("WWW-Authenticate", containsString("token=")))
                     .andExpect(header().string("WWW-Authenticate", containsString("macaroon=")))
                     .andExpect(header().string("WWW-Authenticate", containsString("invoice=")));
         }

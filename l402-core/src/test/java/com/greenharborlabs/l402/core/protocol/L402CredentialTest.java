@@ -57,6 +57,17 @@ class L402CredentialTest {
         tokenIdHex = HEX.formatHex(tokenIdBytes);
     }
 
+    private String mintAdditionalMacaroonBase64() throws NoSuchAlgorithmException {
+        byte[] additionalRootKey = new byte[32];
+        RANDOM.nextBytes(additionalRootKey);
+        byte[] additionalPaymentHash = MessageDigest.getInstance("SHA-256").digest(additionalRootKey);
+        byte[] additionalTokenId = new byte[32];
+        RANDOM.nextBytes(additionalTokenId);
+        MacaroonIdentifier additionalId = new MacaroonIdentifier(0, additionalPaymentHash, additionalTokenId);
+        Macaroon additionalMacaroon = MacaroonMinter.mint(additionalRootKey, additionalId, "https://example.com", List.of());
+        return Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(additionalMacaroon));
+    }
+
     @Nested
     @DisplayName("valid L402 header")
     class ValidL402Header {
@@ -72,6 +83,7 @@ class L402CredentialTest {
             assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
             assertThat(credential.preimage().toHex()).isEqualTo(preimageHex);
             assertThat(credential.macaroon().identifier()).isEqualTo(macaroon.identifier());
+            assertThat(credential.additionalMacaroons()).isEmpty();
         }
 
         @Test
@@ -259,6 +271,112 @@ class L402CredentialTest {
 
             assertThat(credential).isNotNull();
             assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
+        }
+    }
+
+    @Nested
+    @DisplayName("multi-token headers")
+    class MultiTokenHeaders {
+
+        @Test
+        @DisplayName("parses two comma-separated tokens with primary and one additional macaroon")
+        void parsesTwoTokens() throws NoSuchAlgorithmException {
+            String secondBase64 = mintAdditionalMacaroonBase64();
+            String header = "L402 " + macaroonBase64 + "," + secondBase64 + ":" + preimageHex;
+
+            L402Credential credential = L402Credential.parse(header);
+
+            assertThat(credential).isNotNull();
+            assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
+            assertThat(credential.macaroon().identifier()).isEqualTo(macaroon.identifier());
+            assertThat(credential.additionalMacaroons()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("parses three comma-separated tokens with primary and two additional macaroons")
+        void parsesThreeTokens() throws NoSuchAlgorithmException {
+            String secondBase64 = mintAdditionalMacaroonBase64();
+            String thirdBase64 = mintAdditionalMacaroonBase64();
+            String header = "L402 " + macaroonBase64 + "," + secondBase64 + "," + thirdBase64 + ":" + preimageHex;
+
+            L402Credential credential = L402Credential.parse(header);
+
+            assertThat(credential).isNotNull();
+            assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
+            assertThat(credential.macaroon().identifier()).isEqualTo(macaroon.identifier());
+            assertThat(credential.additionalMacaroons()).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("tokenId is always derived from the first (primary) macaroon")
+        void tokenIdFromPrimaryMacaroon() throws NoSuchAlgorithmException {
+            String secondBase64 = mintAdditionalMacaroonBase64();
+            String header = "L402 " + macaroonBase64 + "," + secondBase64 + ":" + preimageHex;
+
+            L402Credential credential = L402Credential.parse(header);
+
+            // tokenId must come from the primary macaroon, not the additional one
+            assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
+        }
+
+        @Test
+        @DisplayName("throws MALFORMED_HEADER for empty token between commas")
+        void throwsForEmptyTokenBetweenCommas() {
+            String header = "L402 " + macaroonBase64 + ",," + macaroonBase64 + ":" + preimageHex;
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .isInstanceOf(L402Exception.class)
+                    .extracting(e -> ((L402Exception) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED_HEADER);
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .hasMessageContaining("Empty token in multi-token header");
+        }
+
+        @Test
+        @DisplayName("throws MALFORMED_HEADER for trailing comma (empty last token)")
+        void throwsForTrailingComma() {
+            String header = "L402 " + macaroonBase64 + ",:" + preimageHex;
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .isInstanceOf(L402Exception.class)
+                    .extracting(e -> ((L402Exception) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED_HEADER);
+        }
+
+        @Test
+        @DisplayName("throws MALFORMED_HEADER for leading comma (empty first token)")
+        void throwsForLeadingComma() {
+            String header = "L402 ," + macaroonBase64 + ":" + preimageHex;
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .isInstanceOf(L402Exception.class)
+                    .extracting(e -> ((L402Exception) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED_HEADER);
+        }
+
+        @Test
+        @DisplayName("throws MALFORMED_HEADER for malformed base64 in additional token")
+        void throwsForMalformedBase64InAdditionalToken() {
+            String header = "L402 " + macaroonBase64 + ",!!!bad!!!:" + preimageHex;
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .isInstanceOf(L402Exception.class)
+                    .extracting(e -> ((L402Exception) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED_HEADER);
+        }
+
+        @Test
+        @DisplayName("multi-token works with LSAT prefix too")
+        void multiTokenWithLsatPrefix() throws NoSuchAlgorithmException {
+            String secondBase64 = mintAdditionalMacaroonBase64();
+            String header = "LSAT " + macaroonBase64 + "," + secondBase64 + ":" + preimageHex;
+
+            L402Credential credential = L402Credential.parse(header);
+
+            assertThat(credential).isNotNull();
+            assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
+            assertThat(credential.additionalMacaroons()).hasSize(1);
         }
     }
 }

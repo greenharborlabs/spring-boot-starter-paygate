@@ -200,7 +200,7 @@ class L402AuthenticationFilterTest {
 
     @Test
     void skipsWhenMacaroonExceedsMaxLength() throws ServletException, IOException {
-        String oversizedMacaroon = "A".repeat(4097);
+        String oversizedMacaroon = "A".repeat(8193);
         request.addHeader("Authorization", "L402 " + oversizedMacaroon + ":" + VALID_PREIMAGE);
 
         filter.doFilterInternal(request, response, filterChain);
@@ -212,6 +212,34 @@ class L402AuthenticationFilterTest {
     @Test
     void skipsWhenMacaroonContainsInvalidCharacters() throws ServletException, IOException {
         request.addHeader("Authorization", "L402 mac:with:colons:" + VALID_PREIMAGE);
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verify(authenticationManager, never()).authenticate(any());
+    }
+
+    @Test
+    void extractsMultiTokenHeaderAndAuthenticates() throws ServletException, IOException {
+        String secondToken = "c2Vjb25kdG9rZW4=";
+        request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + "," + secondToken + ":" + VALID_PREIMAGE);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        ArgumentCaptor<L402AuthenticationToken> captor = ArgumentCaptor.forClass(L402AuthenticationToken.class);
+        verify(authenticationManager).authenticate(captor.capture());
+
+        L402AuthenticationToken unauthToken = captor.getValue();
+        assertThat(unauthToken.getRawMacaroon()).isEqualTo(VALID_MACAROON_B64 + "," + secondToken);
+        assertThat(unauthToken.getRawPreimage()).isEqualTo(VALID_PREIMAGE);
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    void skipsWhenMultiTokenExceedsMaxLength() throws ServletException, IOException {
+        String oversizedTokens = "A".repeat(4000) + "," + "B".repeat(4193);
+        request.addHeader("Authorization", "L402 " + oversizedTokens + ":" + VALID_PREIMAGE);
 
         filter.doFilterInternal(request, response, filterChain);
 

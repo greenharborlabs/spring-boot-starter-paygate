@@ -32,13 +32,17 @@ public record L402Challenge(Macaroon macaroon, String bolt11Invoice, long priceS
 
     /**
      * Formats the challenge as a {@code WWW-Authenticate} header value.
-     * <p>Example: {@code L402 macaroon="<base64>", invoice="<bolt11>"}
+     * <p>Example: {@code L402 version="0", token="<base64>", macaroon="<base64>", invoice="<bolt11>"}
+     * <p>{@code token=} is the spec-compliant primary parameter name; {@code macaroon=} is kept
+     * as a backward-compatible alias carrying the same value.
      *
      * @return the header value string
      */
     public String toWwwAuthenticateHeader() {
         String macaroonBase64 = Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(macaroon));
-        return "L402 macaroon=\"" + macaroonBase64 + "\", invoice=\"" + sanitizeBolt11ForHeader(bolt11Invoice) + "\"";
+        return "L402 version=\"0\", token=\"" + macaroonBase64
+                + "\", macaroon=\"" + macaroonBase64
+                + "\", invoice=\"" + sanitizeBolt11ForHeader(bolt11Invoice) + "\"";
     }
 
     /**

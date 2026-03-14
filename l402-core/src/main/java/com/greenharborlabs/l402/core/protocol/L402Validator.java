@@ -90,9 +90,8 @@ public final class L402Validator {
                     }
                 }
                 if (matchedVerifier == null) {
-                    credentialStore.revoke(tokenId);
-                    throw new L402Exception(ErrorCode.INVALID_MACAROON,
-                            "No verifier for caveat: " + caveat.key(), tokenId);
+                    // Unknown caveats are skipped per the L402 spec
+                    continue;
                 }
                 try {
                     matchedVerifier.verify(caveat, context);

@@ -80,6 +80,28 @@ class MacaroonVerifierTest {
         };
     }
 
+    /**
+     * Creates a CaveatVerifier with a custom isMoreRestrictive implementation.
+     */
+    private CaveatVerifier monotonicVerifier(String key, boolean restrictive) {
+        return new CaveatVerifier() {
+            @Override
+            public String getKey() {
+                return key;
+            }
+
+            @Override
+            public void verify(Caveat caveat, L402VerificationContext ctx) {
+                // accepts unconditionally
+            }
+
+            @Override
+            public boolean isMoreRestrictive(Caveat previous, Caveat current) {
+                return restrictive;
+            }
+        };
+    }
+
     @Nested
     @DisplayName("valid macaroon verification")
     class ValidMacaroon {
@@ -189,35 +211,196 @@ class MacaroonVerifierTest {
     }
 
     @Nested
-    @DisplayName("missing caveat verifier")
-    class MissingCaveatVerifier {
+    @DisplayName("unknown caveat handling")
+    class UnknownCaveatHandling {
 
         @Test
-        @DisplayName("fails when macaroon has a caveat but no verifier for that key")
-        void missingVerifierFails() {
-            List<Caveat> caveats = List.of(new Caveat("service", "api"));
+        @DisplayName("skips unknown caveats when a verifier exists for other caveats")
+        void skipsUnknownCaveatsWithKnownOnes() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("services", "foo:0"),
+                    new Caveat("custom_app_data", "xyz")
+            );
             Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
 
-            // Provide a verifier for a different key — "service" has no verifier
-            List<CaveatVerifier> verifiers = List.of(acceptingVerifier("tier"));
+            // Only register a verifier for "services" — "custom_app_data" is unknown
+            List<CaveatVerifier> verifiers = List.of(acceptingVerifier("services"));
+
+            assertThatCode(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, context)
+            ).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("passes when macaroon has only unknown caveats and signature is valid")
+        void passesWithOnlyUnknownCaveats() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("custom_app_data", "xyz"),
+                    new Caveat("another_unknown", "abc")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            // No verifiers registered — all caveats are unknown
+            assertThatCode(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, List.of(), context)
+            ).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("still rejects known caveat that fails verification alongside unknown ones")
+        void rejectsKnownCaveatFailureWithUnknownOnes() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("custom_app_data", "xyz"),
+                    new Caveat("service", "api")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            // "service" verifier rejects, "custom_app_data" has no verifier (skipped)
+            List<CaveatVerifier> verifiers = List.of(rejectingVerifier("service"));
 
             assertThatThrownBy(() ->
                     MacaroonVerifier.verify(macaroon, rootKey, verifiers, context)
             ).isInstanceOf(MacaroonVerificationException.class);
         }
+    }
+
+    @Nested
+    @DisplayName("monotonic restriction validation")
+    class MonotonicRestriction {
 
         @Test
-        @DisplayName("fails when caveat verifiers list is empty but caveats are present")
-        void emptyCaveatVerifiersWithCaveatsFails() {
+        @DisplayName("passes when repeated caveat is more restrictive")
+        void passesWhenMoreRestrictive() {
             List<Caveat> caveats = List.of(
-                    new Caveat("service", "api"),
-                    new Caveat("tier", "premium")
+                    new Caveat("tier", "gold"),
+                    new Caveat("tier", "silver")
             );
             Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
 
+            // isMoreRestrictive returns true
+            List<CaveatVerifier> verifiers = List.of(monotonicVerifier("tier", true));
+
+            assertThatCode(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, context)
+            ).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("fails when repeated caveat escalates access")
+        void failsWhenEscalating() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("tier", "silver"),
+                    new Caveat("tier", "gold")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            // isMoreRestrictive returns false (escalation)
+            List<CaveatVerifier> verifiers = List.of(monotonicVerifier("tier", false));
+
             assertThatThrownBy(() ->
-                    MacaroonVerifier.verify(macaroon, rootKey, List.of(), context)
-            ).isInstanceOf(MacaroonVerificationException.class);
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, context)
+            ).isInstanceOf(MacaroonVerificationException.class)
+             .hasMessageContaining("caveat escalation detected for key: tier");
+        }
+
+        @Test
+        @DisplayName("does not check monotonicity for first occurrence of a caveat key")
+        void firstOccurrenceNotChecked() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("tier", "gold")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            // Even with isMoreRestrictive=false, single occurrence should pass
+            List<CaveatVerifier> verifiers = List.of(monotonicVerifier("tier", false));
+
+            assertThatCode(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, context)
+            ).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("services caveat: subset passes monotonic check")
+        void servicesSubsetPasses() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("services", "a:0,b:0"),
+                    new Caveat("services", "a:0")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            L402VerificationContext ctx = L402VerificationContext.builder()
+                    .serviceName("a")
+                    .build();
+
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+
+            assertThatCode(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, ctx)
+            ).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("services caveat: superset fails monotonic check (escalation)")
+        void servicesSupersetFails() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("services", "a:0"),
+                    new Caveat("services", "a:0,b:0")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            L402VerificationContext ctx = L402VerificationContext.builder()
+                    .serviceName("a")
+                    .build();
+
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+
+            assertThatThrownBy(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, ctx)
+            ).isInstanceOf(MacaroonVerificationException.class)
+             .hasMessageContaining("caveat escalation detected for key: services");
+        }
+
+        @Test
+        @DisplayName("valid_until caveat: earlier timestamp passes monotonic check")
+        void validUntilEarlierPasses() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("svc_valid_until", "2000000000"),
+                    new Caveat("svc_valid_until", "1999999000")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            L402VerificationContext ctx = L402VerificationContext.builder()
+                    .serviceName("svc")
+                    .currentTime(java.time.Instant.ofEpochSecond(1900000000))
+                    .build();
+
+            List<CaveatVerifier> verifiers = List.of(new ValidUntilCaveatVerifier("svc"));
+
+            assertThatCode(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, ctx)
+            ).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("valid_until caveat: later timestamp fails monotonic check (escalation)")
+        void validUntilLaterFails() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("svc_valid_until", "1999999000"),
+                    new Caveat("svc_valid_until", "2000000000")
+            );
+            Macaroon macaroon = createValidMacaroon(rootKey, identifier, "https://example.com", caveats);
+
+            L402VerificationContext ctx = L402VerificationContext.builder()
+                    .serviceName("svc")
+                    .currentTime(java.time.Instant.ofEpochSecond(1900000000))
+                    .build();
+
+            List<CaveatVerifier> verifiers = List.of(new ValidUntilCaveatVerifier("svc"));
+
+            assertThatThrownBy(() ->
+                    MacaroonVerifier.verify(macaroon, rootKey, verifiers, ctx)
+            ).isInstanceOf(MacaroonVerificationException.class)
+             .hasMessageContaining("caveat escalation detected for key: svc_valid_until");
         }
     }
 }

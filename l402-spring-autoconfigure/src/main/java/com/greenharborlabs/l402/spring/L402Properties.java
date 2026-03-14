@@ -14,6 +14,12 @@ public class L402Properties {
 
     private String backend;
 
+    /**
+     * Default price for L402-protected endpoints, in satoshis.
+     * <p>Note: The L402 protocol specification recommends milli-satoshis (1/1000th of a satoshi),
+     * but this library uses satoshis for practical simplicity. BOLT 11 invoices handle the
+     * conversion internally.
+     */
     private long defaultPriceSats = 10;
 
     private long defaultTimeoutSeconds = 3600;

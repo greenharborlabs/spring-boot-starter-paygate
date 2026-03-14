@@ -7,6 +7,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -100,6 +101,56 @@ class ServicesCaveatVerifierTest {
                     .isInstanceOf(L402Exception.class)
                     .extracting(e -> ((L402Exception) e).getErrorCode())
                     .isEqualTo(ErrorCode.INVALID_SERVICE);
+        }
+    }
+
+    @Nested
+    @DisplayName("isMoreRestrictive")
+    class IsMoreRestrictive {
+
+        @Test
+        @DisplayName("returns true when current services are a subset of previous")
+        void subsetIsMoreRestrictive() {
+            Caveat previous = new Caveat("services", "a:0,b:0,c:0");
+            Caveat current = new Caveat("services", "a:0,b:0");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isTrue();
+        }
+
+        @Test
+        @DisplayName("returns true when current services are equal to previous")
+        void equalSetsAreMoreRestrictive() {
+            Caveat previous = new Caveat("services", "a:0,b:0");
+            Caveat current = new Caveat("services", "b:0,a:0");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isTrue();
+        }
+
+        @Test
+        @DisplayName("returns true when current is a single service from previous set")
+        void singleServiceSubset() {
+            Caveat previous = new Caveat("services", "a:0,b:0");
+            Caveat current = new Caveat("services", "a:0");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isTrue();
+        }
+
+        @Test
+        @DisplayName("returns false when current services are a superset of previous (escalation)")
+        void supersetIsNotMoreRestrictive() {
+            Caveat previous = new Caveat("services", "a:0");
+            Caveat current = new Caveat("services", "a:0,b:0");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
+        }
+
+        @Test
+        @DisplayName("returns false when current has a service not in previous (escalation)")
+        void disjointServiceIsNotMoreRestrictive() {
+            Caveat previous = new Caveat("services", "a:0,b:0");
+            Caveat current = new Caveat("services", "a:0,c:0");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
         }
     }
 }

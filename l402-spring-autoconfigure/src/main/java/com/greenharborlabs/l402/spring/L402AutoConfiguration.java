@@ -7,6 +7,7 @@ import com.greenharborlabs.l402.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.FileBasedRootKeyStore;
 import com.greenharborlabs.l402.core.macaroon.InMemoryRootKeyStore;
 import com.greenharborlabs.l402.core.macaroon.RootKeyStore;
+import com.greenharborlabs.l402.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.l402.core.protocol.L402Validator;
@@ -94,7 +95,8 @@ public class L402AutoConfiguration {
         if (svcName == null || svcName.isBlank()) {
             svcName = "default";
         }
-        return List.of(new ServicesCaveatVerifier(), new ValidUntilCaveatVerifier(svcName));
+        return List.of(new ServicesCaveatVerifier(), new ValidUntilCaveatVerifier(svcName),
+                new CapabilitiesCaveatVerifier(svcName));
     }
 
     @Bean

@@ -119,4 +119,54 @@ class ValidUntilCaveatVerifierTest {
                     .isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
         }
     }
+
+    @Nested
+    @DisplayName("isMoreRestrictive")
+    class IsMoreRestrictive {
+
+        @Test
+        @DisplayName("returns true when current timestamp is earlier than previous")
+        void earlierTimestampIsMoreRestrictive() {
+            Caveat previous = new Caveat("my-api_valid_until", "2000000000");
+            Caveat current = new Caveat("my-api_valid_until", "1999999000");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isTrue();
+        }
+
+        @Test
+        @DisplayName("returns true when current timestamp equals previous")
+        void equalTimestampIsMoreRestrictive() {
+            Caveat previous = new Caveat("my-api_valid_until", "2000000000");
+            Caveat current = new Caveat("my-api_valid_until", "2000000000");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isTrue();
+        }
+
+        @Test
+        @DisplayName("returns false when current timestamp is later than previous (escalation)")
+        void laterTimestampIsNotMoreRestrictive() {
+            Caveat previous = new Caveat("my-api_valid_until", "1999999000");
+            Caveat current = new Caveat("my-api_valid_until", "2000000000");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
+        }
+
+        @Test
+        @DisplayName("returns false when previous value is not a valid number")
+        void invalidPreviousReturnsFalse() {
+            Caveat previous = new Caveat("my-api_valid_until", "not-a-number");
+            Caveat current = new Caveat("my-api_valid_until", "2000000000");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
+        }
+
+        @Test
+        @DisplayName("returns false when current value is not a valid number")
+        void invalidCurrentReturnsFalse() {
+            Caveat previous = new Caveat("my-api_valid_until", "2000000000");
+            Caveat current = new Caveat("my-api_valid_until", "not-a-number");
+
+            assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
+        }
+    }
 }

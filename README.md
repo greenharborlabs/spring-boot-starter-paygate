@@ -568,6 +568,16 @@ Test coverage reports (JaCoCo) are generated at `build/reports/jacoco/` in each 
 
 ---
 
+## Spec Deviations
+
+### Price Unit: Satoshis vs Milli-satoshis
+
+The L402 `protocol-specification.md` recommends expressing prices in milli-satoshis (1/1000th of a satoshi). This library uses **satoshis** as the price unit (`l402.default-price-sats`, `@L402Protected(priceSats = ...)`).
+
+**Rationale:** Satoshis are the practical unit for most L402 use cases. BOLT 11 invoices handle the conversion to milli-satoshis internally. Using whole satoshis avoids fractional pricing complexity for the vast majority of API monetization scenarios where sub-satoshi granularity is unnecessary.
+
+---
+
 ## Contributing
 
 Contributions are welcome. Please follow these guidelines:

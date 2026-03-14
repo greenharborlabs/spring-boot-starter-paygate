@@ -340,6 +340,40 @@ class L402ValidatorTest {
             // Credential should be evicted from cache after expiry detection
             assertThat(credentialStore.get(tokenIdHex)).isNull();
         }
+
+        @Test
+        @DisplayName("skips unknown caveats in cached credential instead of revoking")
+        void skipsUnknownCaveatsInCachedCredential() {
+            // Create a macaroon with an unknown caveat
+            List<Caveat> caveats = List.of(
+                    new Caveat("custom_app_data", "xyz")
+            );
+            Macaroon macWithUnknown = com.greenharborlabs.l402.core.macaroon.MacaroonMinter.mint(
+                    rootKey, identifier, "https://example.com", caveats);
+
+            // Pre-populate the credential store
+            com.greenharborlabs.l402.core.lightning.PaymentPreimage preimage =
+                    com.greenharborlabs.l402.core.lightning.PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
+            L402Credential cached = new L402Credential(macWithUnknown, preimage, tokenIdHex);
+            credentialStore.store(tokenIdHex, cached, 3600);
+
+            // Build header with matching macaroon
+            byte[] serialized = com.greenharborlabs.l402.core.macaroon.MacaroonSerializer.serializeV2(macWithUnknown);
+            String macaroonBase64 = java.util.Base64.getEncoder().encodeToString(serialized);
+            String preimageHex = HEX.formatHex(preimageBytes);
+            String header = "L402 " + macaroonBase64 + ":" + preimageHex;
+
+            // No verifiers registered — unknown caveat should be skipped, not cause rejection
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+
+            L402Validator.ValidationResult result = validator.validate(header);
+
+            assertThat(result.freshValidation()).isFalse();
+            assertThat(result.credential()).isSameAs(cached);
+            // Credential should NOT be revoked
+            assertThat(credentialStore.get(tokenIdHex)).isNotNull();
+        }
     }
 
     @Nested

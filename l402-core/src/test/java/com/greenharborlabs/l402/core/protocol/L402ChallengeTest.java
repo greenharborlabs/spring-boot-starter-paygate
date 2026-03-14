@@ -23,7 +23,7 @@ class L402ChallengeTest {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Pattern HEADER_PATTERN =
-            Pattern.compile("L402 macaroon=\"([^\"]+)\", invoice=\"([^\"]+)\"");
+            Pattern.compile("L402 version=\"0\", token=\"([^\"]+)\", macaroon=\"([^\"]+)\", invoice=\"([^\"]+)\"");
 
     private byte[] rootKey;
     private byte[] paymentHash;
@@ -55,15 +55,18 @@ class L402ChallengeTest {
                 .as("Header must match L402 format")
                 .isTrue();
 
-        String macaroonBase64 = matcher.group(1);
-        byte[] decoded = Base64.getDecoder().decode(macaroonBase64);
+        String tokenBase64 = matcher.group(1);
+        String macaroonBase64 = matcher.group(2);
+        assertThat(tokenBase64).as("token and macaroon params must carry the same value").isEqualTo(macaroonBase64);
+
+        byte[] decoded = Base64.getDecoder().decode(tokenBase64);
         Macaroon deserialized = MacaroonSerializer.deserializeV2(decoded);
 
         assertThat(deserialized.identifier()).isEqualTo(macaroon.identifier());
         assertThat(deserialized.signature()).isEqualTo(macaroon.signature());
         assertThat(deserialized.caveats()).isEqualTo(macaroon.caveats());
 
-        assertThat(matcher.group(2)).isEqualTo(invoice);
+        assertThat(matcher.group(3)).isEqualTo(invoice);
     }
 
     @Test
@@ -78,6 +81,8 @@ class L402ChallengeTest {
 
         Matcher matcher = HEADER_PATTERN.matcher(header);
         assertThat(matcher.matches()).isTrue();
+
+        assertThat(matcher.group(1)).as("token and macaroon params must match").isEqualTo(matcher.group(2));
 
         byte[] decoded = Base64.getDecoder().decode(matcher.group(1));
         Macaroon deserialized = MacaroonSerializer.deserializeV2(decoded);
@@ -164,6 +169,8 @@ class L402ChallengeTest {
 
         Matcher matcher = HEADER_PATTERN.matcher(header);
         assertThat(matcher.matches()).isTrue();
+
+        assertThat(matcher.group(1)).as("token and macaroon params must match").isEqualTo(matcher.group(2));
 
         byte[] decoded = Base64.getDecoder().decode(matcher.group(1));
         // Full V2 serialization includes version byte, field tags, lengths, signature
