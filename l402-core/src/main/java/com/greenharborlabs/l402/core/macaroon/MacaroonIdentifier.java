@@ -85,8 +85,8 @@ public record MacaroonIdentifier(int version, byte[] paymentHash, byte[] tokenId
     public boolean equals(Object o) {
         return o instanceof MacaroonIdentifier other
                 && version == other.version
-                && Arrays.equals(paymentHash, other.paymentHash)
-                && Arrays.equals(tokenId, other.tokenId);
+                && MacaroonCrypto.constantTimeEquals(paymentHash, other.paymentHash)
+                && MacaroonCrypto.constantTimeEquals(tokenId, other.tokenId);
     }
 
     @Override

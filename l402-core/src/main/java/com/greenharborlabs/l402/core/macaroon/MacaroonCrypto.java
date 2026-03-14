@@ -40,12 +40,24 @@ public final class MacaroonCrypto {
 
     /**
      * Constant-time byte array comparison using XOR accumulation.
-     * Never use Arrays.equals — it short-circuits on first mismatch.
+     * Never use {@code Arrays.equals} — it short-circuits on first mismatch.
+     *
+     * <p>This method is designed for fixed-length inputs such as HMAC-SHA256
+     * digests (32 bytes) and fixed-layout identifiers (66 bytes). The early
+     * length check is safe because a length mismatch reveals no timing
+     * information about the <em>content</em> of either array — only that
+     * their lengths differ, which is already evident from the inputs.
+     *
+     * <p>After the length guard, the XOR loop provides constant-time
+     * comparison of all byte contents: every byte is visited regardless
+     * of where (or whether) a difference exists.
      */
     public static boolean constantTimeEquals(byte[] a, byte[] b) {
-        int result = a.length ^ b.length;
-        int len = Math.min(a.length, b.length);
-        for (int i = 0; i < len; i++) {
+        if (a.length != b.length) {
+            return false;
+        }
+        int result = 0;
+        for (int i = 0; i < a.length; i++) {
             result |= a[i] ^ b[i];
         }
         return result == 0;

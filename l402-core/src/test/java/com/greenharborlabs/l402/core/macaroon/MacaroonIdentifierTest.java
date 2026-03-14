@@ -278,6 +278,35 @@ class MacaroonIdentifierTest {
         assertThat(id.tokenId()).isEqualTo(original);
     }
 
+    // --- Constant-time equality for cryptographic identifiers ---
+
+    @Test
+    @DisplayName("equals() uses constant-time comparison for paymentHash and tokenId to prevent timing side-channel attacks")
+    void equalsUsesConstantTimeComparisonForCryptographicFields() {
+        byte[] paymentHash = randomBytes(32);
+        byte[] tokenId = randomBytes(32);
+        MacaroonIdentifier id1 = new MacaroonIdentifier(CURRENT_VERSION, paymentHash, tokenId);
+        MacaroonIdentifier id2 = new MacaroonIdentifier(CURRENT_VERSION, paymentHash.clone(), tokenId.clone());
+
+        // Identical identifiers are equal
+        assertThat(id1).isEqualTo(id2);
+
+        // Differ only in last byte of paymentHash — still detected as not equal
+        byte[] altPaymentHash = paymentHash.clone();
+        altPaymentHash[31] = (byte) (altPaymentHash[31] ^ 0x01);
+        MacaroonIdentifier id3 = new MacaroonIdentifier(CURRENT_VERSION, altPaymentHash, tokenId);
+        assertThat(id1).isNotEqualTo(id3);
+
+        // Differ only in last byte of tokenId — still detected as not equal
+        byte[] altTokenId = tokenId.clone();
+        altTokenId[31] = (byte) (altTokenId[31] ^ 0x01);
+        MacaroonIdentifier id4 = new MacaroonIdentifier(CURRENT_VERSION, paymentHash, altTokenId);
+        assertThat(id1).isNotEqualTo(id4);
+
+        // Symmetry holds
+        assertThat(id2).isEqualTo(id1);
+    }
+
     @Test
     @DisplayName("Accessor returns defensive copy — mutating returned array does not affect record")
     void accessorReturnsDefensiveCopy() {

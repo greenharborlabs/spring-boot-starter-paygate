@@ -23,6 +23,21 @@ public interface RootKeyStore {
         public byte[] tokenId() {
             return Arrays.copyOf(tokenId, tokenId.length);
         }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof GenerationResult other)) return false;
+            return MacaroonCrypto.constantTimeEquals(rootKey, other.rootKey)
+                    && MacaroonCrypto.constantTimeEquals(tokenId, other.tokenId);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = Arrays.hashCode(rootKey);
+            result = 31 * result + Arrays.hashCode(tokenId);
+            return result;
+        }
     }
 
     GenerationResult generateRootKey();

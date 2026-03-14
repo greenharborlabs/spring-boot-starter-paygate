@@ -321,6 +321,88 @@ class FileBasedRootKeyStoreTest {
     }
 
     @Nested
+    @DisplayName("GenerationResult equals and hashCode")
+    class GenerationResultEquality {
+
+        @Test
+        @DisplayName("equal when both byte[] fields have same content")
+        void equalWhenSameContent() {
+            byte[] rootKey = {1, 2, 3, 4};
+            byte[] tokenId = {5, 6, 7, 8};
+
+            var a = new RootKeyStore.GenerationResult(rootKey, tokenId);
+            var b = new RootKeyStore.GenerationResult(rootKey.clone(), tokenId.clone());
+
+            assertThat(a).isEqualTo(b);
+            assertThat(b).isEqualTo(a);
+        }
+
+        @Test
+        @DisplayName("identity equality")
+        void identityEquality() {
+            var result = new RootKeyStore.GenerationResult(new byte[]{1}, new byte[]{2});
+            assertThat(result).isEqualTo(result);
+        }
+
+        @Test
+        @DisplayName("not equal when rootKey differs")
+        void notEqualWhenRootKeyDiffers() {
+            byte[] tokenId = {5, 6, 7, 8};
+            var a = new RootKeyStore.GenerationResult(new byte[]{1, 2, 3}, tokenId);
+            var b = new RootKeyStore.GenerationResult(new byte[]{9, 9, 9}, tokenId.clone());
+
+            assertThat(a).isNotEqualTo(b);
+        }
+
+        @Test
+        @DisplayName("not equal when tokenId differs")
+        void notEqualWhenTokenIdDiffers() {
+            byte[] rootKey = {1, 2, 3};
+            var a = new RootKeyStore.GenerationResult(rootKey, new byte[]{5, 6, 7});
+            var b = new RootKeyStore.GenerationResult(rootKey.clone(), new byte[]{9, 9, 9});
+
+            assertThat(a).isNotEqualTo(b);
+        }
+
+        @Test
+        @DisplayName("not equal to null")
+        void notEqualToNull() {
+            var result = new RootKeyStore.GenerationResult(new byte[]{1}, new byte[]{2});
+            assertThat(result).isNotEqualTo(null);
+        }
+
+        @Test
+        @DisplayName("not equal to different type")
+        void notEqualToDifferentType() {
+            var result = new RootKeyStore.GenerationResult(new byte[]{1}, new byte[]{2});
+            assertThat(result).isNotEqualTo("not a GenerationResult");
+        }
+
+        @Test
+        @DisplayName("hashCode consistent with equals")
+        void hashCodeConsistentWithEquals() {
+            byte[] rootKey = {10, 20, 30};
+            byte[] tokenId = {40, 50, 60};
+
+            var a = new RootKeyStore.GenerationResult(rootKey, tokenId);
+            var b = new RootKeyStore.GenerationResult(rootKey.clone(), tokenId.clone());
+
+            assertThat(a).isEqualTo(b);
+            assertThat(a.hashCode()).isEqualTo(b.hashCode());
+        }
+
+        @Test
+        @DisplayName("hashCode differs for different content (not guaranteed but expected)")
+        void hashCodeDiffersForDifferentContent() {
+            var a = new RootKeyStore.GenerationResult(new byte[]{1, 2, 3}, new byte[]{4, 5, 6});
+            var b = new RootKeyStore.GenerationResult(new byte[]{7, 8, 9}, new byte[]{10, 11, 12});
+
+            // Not strictly required by contract, but for these inputs it should differ
+            assertThat(a.hashCode()).isNotEqualTo(b.hashCode());
+        }
+    }
+
+    @Nested
     @DisplayName("thread safety")
     class ThreadSafety {
 
