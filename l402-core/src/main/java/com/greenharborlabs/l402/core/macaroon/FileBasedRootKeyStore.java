@@ -8,8 +8,6 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -47,13 +45,12 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     FileBasedRootKeyStore(Path directory, int maxCacheSize) {
         this.directory = directory.toAbsolutePath().normalize();
         this.posix = this.directory.getFileSystem().supportedFileAttributeViews().contains("posix");
-        this.cache = Collections.synchronizedMap(
-                new LinkedHashMap<>(16, 0.75f, true) {
-                    @Override
-                    protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
-                        return size() > maxCacheSize;
-                    }
-                });
+        this.cache = new LinkedHashMap<>(16, 0.75f, false) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
+                return size() > maxCacheSize;
+            }
+        };
         ensureDirectory();
     }
 
@@ -81,17 +78,27 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     @Override
     public byte[] getRootKey(byte[] keyId) {
         String hexKeyId = HEX.formatHex(keyId);
-
-        // Check in-memory cache first — root keys are immutable once written
-        byte[] cached = cache.get(hexKeyId);
-        if (cached != null) {
-            return cached.clone();
-        }
-
         Path keyFile = resolveKeyFile(hexKeyId);
 
+        // Fast path: read lock for cache hit (safe because accessOrder=false)
         lock.readLock().lock();
         try {
+            byte[] cached = cache.get(hexKeyId);
+            if (cached != null) {
+                return cached.clone();
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+
+        // Slow path: write lock for disk read + cache population
+        lock.writeLock().lock();
+        try {
+            // Double-check after lock promotion
+            byte[] cached = cache.get(hexKeyId);
+            if (cached != null) {
+                return cached.clone();
+            }
             if (!Files.exists(keyFile)) {
                 return null;
             }
@@ -102,7 +109,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read root key: " + hexKeyId, e);
         } finally {
-            lock.readLock().unlock();
+            lock.writeLock().unlock();
         }
     }
 
@@ -156,10 +163,25 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
             Path targetFile = resolveKeyFile(hexKeyId);
             Path tmpFile = resolveKeyFile(hexKeyId + ".tmp");
 
-            Files.writeString(tmpFile, hexContent);
             if (posix) {
-                Files.setPosixFilePermissions(tmpFile,
-                        PosixFilePermissions.fromString("rw-------"));
+                // Create temp file with owner-only permissions from the start,
+                // so the key is never world-readable even briefly.
+                Files.createFile(tmpFile,
+                        PosixFilePermissions.asFileAttribute(
+                                PosixFilePermissions.fromString("rw-------")));
+                try {
+                    Files.writeString(tmpFile, hexContent);
+                } catch (IOException e) {
+                    Files.deleteIfExists(tmpFile);
+                    throw e;
+                }
+            } else {
+                try {
+                    Files.writeString(tmpFile, hexContent);
+                } catch (IOException e) {
+                    Files.deleteIfExists(tmpFile);
+                    throw e;
+                }
             }
             Files.move(tmpFile, targetFile,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);

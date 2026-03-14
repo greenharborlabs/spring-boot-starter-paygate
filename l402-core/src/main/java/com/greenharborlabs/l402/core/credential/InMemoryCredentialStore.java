@@ -63,15 +63,11 @@ public class InMemoryCredentialStore implements CredentialStore {
 
     @Override
     public L402Credential get(String tokenId) {
-        CachedCredential cached = entries.get(tokenId);
-        if (cached == null) {
-            return null;
-        }
-        if (cached.isExpired()) {
-            entries.remove(tokenId);
-            return null;
-        }
-        return cached.credential();
+        // Atomic expired-entry removal: computeIfPresent guarantees no race
+        // between reading and removing an expired entry.
+        CachedCredential cached = entries.computeIfPresent(tokenId,
+                (_, v) -> v.isExpired() ? null : v);
+        return cached == null ? null : cached.credential();
     }
 
     @Override
@@ -81,17 +77,10 @@ public class InMemoryCredentialStore implements CredentialStore {
 
     @Override
     public long activeCount() {
-        long count = 0;
-        var iterator = entries.entrySet().iterator();
-        while (iterator.hasNext()) {
-            var entry = iterator.next();
-            if (entry.getValue().isExpired()) {
-                iterator.remove();
-            } else {
-                count++;
-            }
-        }
-        return count;
+        // Read-only: no mutation, safe to call without storeLock
+        return entries.values().stream()
+                .filter(cached -> !cached.isExpired())
+                .count();
     }
 
     private void evictExpired() {
