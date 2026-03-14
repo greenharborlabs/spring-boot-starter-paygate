@@ -48,8 +48,7 @@ class LndBackendTest {
                 .directExecutor()
                 .build();
 
-        var config = new LndConfig("localhost", 10009, null, null);
-        backend = new LndBackend(config, channel);
+        backend = new LndBackend(channel);
     }
 
     @AfterEach

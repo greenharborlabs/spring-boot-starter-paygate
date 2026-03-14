@@ -151,8 +151,7 @@ class ExampleAppIntegrationTest {
             mockMvc.perform(get("/api/v1/data")
                             .header("Authorization", authHeader))
                     .andExpect(status().isOk())
-                    .andExpect(header().exists("X-L402-Token-Id"))
-                    .andExpect(header().string("X-L402-Token-Id", is(HEX.formatHex(tokenId))))
+                    .andExpect(header().doesNotExist("X-L402-Token-Id"))
                     .andExpect(header().exists("X-L402-Credential-Expires"))
                     .andExpect(jsonPath("$.data", is("premium content")));
         }

@@ -228,11 +228,13 @@ class L402SecurityFilterTest {
         }
 
         @Test
-        @DisplayName("returns 402 when Authorization header has malformed L402 value")
-        void malformedL402Returns402() throws Exception {
+        @DisplayName("returns 400 when Authorization header has malformed L402 value")
+        void malformedL402Returns400() throws Exception {
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", "L402 not-valid-format"))
-                    .andExpect(status().isPaymentRequired());
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code", is(400)))
+                    .andExpect(jsonPath("$.error", is("MALFORMED_HEADER")));
         }
     }
 
@@ -241,7 +243,7 @@ class L402SecurityFilterTest {
     class ValidCredential {
 
         @Test
-        @DisplayName("returns 200 with X-L402-Token-Id and X-L402-Credential-Expires headers")
+        @DisplayName("returns 200 with X-L402-Credential-Expires header but no X-L402-Token-Id")
         void validCredentialReturns200WithHeaders() throws Exception {
             ((StubLightningBackend) lightningBackend).setHealthy(true);
 
@@ -271,36 +273,9 @@ class L402SecurityFilterTest {
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", authHeader))
                     .andExpect(status().isOk())
-                    .andExpect(header().exists("X-L402-Token-Id"))
+                    .andExpect(header().doesNotExist("X-L402-Token-Id"))
                     .andExpect(header().exists("X-L402-Credential-Expires"))
                     .andExpect(content().string("protected-content"));
-        }
-
-        @Test
-        @DisplayName("X-L402-Token-Id header contains the hex-encoded token ID from the macaroon")
-        void tokenIdHeaderMatchesMacaroon() throws Exception {
-            ((StubLightningBackend) lightningBackend).setHealthy(true);
-
-            byte[] preimage = new byte[32];
-            new SecureRandom().nextBytes(preimage);
-            byte[] paymentHash = sha256(preimage);
-
-            byte[] tokenId = new byte[32];
-            new SecureRandom().nextBytes(tokenId);
-            String expectedTokenIdHex = HEX.formatHex(tokenId);
-
-            MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
-            Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, validCaveats());
-
-            byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-            String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-            String preimageHex = HEX.formatHex(preimage);
-            String authHeader = "L402 " + macaroonBase64 + ":" + preimageHex;
-
-            mockMvc.perform(get(PROTECTED_PATH)
-                            .header("Authorization", authHeader))
-                    .andExpect(status().isOk())
-                    .andExpect(header().string("X-L402-Token-Id", is(expectedTokenIdHex)));
         }
     }
 
@@ -368,7 +343,7 @@ class L402SecurityFilterTest {
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", authHeader))
                     .andExpect(status().isOk())
-                    .andExpect(header().exists("X-L402-Token-Id"))
+                    .andExpect(header().doesNotExist("X-L402-Token-Id"))
                     .andExpect(content().string("protected-content"));
         }
 

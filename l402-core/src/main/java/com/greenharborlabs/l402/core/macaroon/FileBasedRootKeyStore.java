@@ -9,9 +9,11 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -28,17 +30,30 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public final class FileBasedRootKeyStore implements RootKeyStore {
 
     private static final int KEY_LENGTH = 32;
+    private static final int DEFAULT_MAX_CACHE_SIZE = 10_000;
     private static final HexFormat HEX = HexFormat.of();
 
     private final Path directory;
     private final SecureRandom secureRandom = new SecureRandom();
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-    private final ConcurrentHashMap<String, byte[]> cache = new ConcurrentHashMap<>();
+    private final Map<String, byte[]> cache;
     private final boolean posix;
 
     public FileBasedRootKeyStore(Path directory) {
+        this(directory, DEFAULT_MAX_CACHE_SIZE);
+    }
+
+    // package-private for testing cache eviction behavior
+    FileBasedRootKeyStore(Path directory, int maxCacheSize) {
         this.directory = directory.toAbsolutePath().normalize();
         this.posix = this.directory.getFileSystem().supportedFileAttributeViews().contains("posix");
+        this.cache = Collections.synchronizedMap(
+                new LinkedHashMap<>(16, 0.75f, true) {
+                    @Override
+                    protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
+                        return size() > maxCacheSize;
+                    }
+                });
         ensureDirectory();
     }
 

@@ -51,9 +51,11 @@ public class L402AutoConfiguration {
         };
     }
 
+    private static final String DEFAULT_ROOT_KEY_STORE_PATH = "~/.l402/keys";
+
     private static String resolvePath(String rawPath) {
-        if (rawPath == null) {
-            return rawPath;
+        if (rawPath == null || rawPath.isBlank()) {
+            return resolvePath(DEFAULT_ROOT_KEY_STORE_PATH);
         }
         String home = System.getProperty("user.home");
         if ("~".equals(rawPath)) {
@@ -223,12 +225,8 @@ public class L402AutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean(LightningBackend.class)
-        LightningBackend lightningBackend(L402Properties properties,
-                                          io.grpc.ManagedChannel lndManagedChannel) {
-            var lnd = properties.getLnd();
-            var config = new com.greenharborlabs.l402.lightning.lnd.LndConfig(
-                    lnd.getHost(), lnd.getPort(), lnd.getTlsCertPath(), lnd.getMacaroonPath());
-            return new com.greenharborlabs.l402.lightning.lnd.LndBackend(config, lndManagedChannel);
+        LightningBackend lightningBackend(io.grpc.ManagedChannel lndManagedChannel) {
+            return new com.greenharborlabs.l402.lightning.lnd.LndBackend(lndManagedChannel);
         }
 
         private static io.grpc.ManagedChannel buildChannel(L402Properties.Lnd lnd) {

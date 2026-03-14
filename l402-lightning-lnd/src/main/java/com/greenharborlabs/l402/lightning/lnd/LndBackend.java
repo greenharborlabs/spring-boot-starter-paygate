@@ -21,7 +21,7 @@ public class LndBackend implements LightningBackend {
 
     private final LightningGrpc.LightningBlockingStub stub;
 
-    public LndBackend(LndConfig config, ManagedChannel channel) {
+    public LndBackend(ManagedChannel channel) {
         this.stub = LightningGrpc.newBlockingStub(channel);
     }
 

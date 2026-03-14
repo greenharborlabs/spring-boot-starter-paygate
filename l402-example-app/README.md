@@ -2,17 +2,45 @@
 
 A reference Spring Boot application demonstrating how to use `spring-boot-starter-l402` to protect API endpoints with Lightning payments using the [L402 protocol](https://docs.lightning.engineering/the-lightning-network/l402).
 
-This application runs in **test mode** by default, so no real Lightning node is required.
+This application runs in **test mode** by default, so no real Lightning node is required. You can exercise the complete L402 flow -- challenge, payment, and credential presentation -- entirely on your local machine.
+
+---
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [How L402 Works](#how-l402-works)
+- [How Test Mode Works](#how-test-mode-works)
+- [Running the Application](#running-the-application)
+  - [With Gradle](#with-gradle)
+  - [With Docker](#with-docker)
+- [Endpoints](#endpoints)
+- [Trying the L402 Flow](#trying-the-l402-flow)
+  - [Step 1: Hit the unprotected health endpoint](#step-1-hit-the-unprotected-health-endpoint)
+  - [Step 2: Request a protected endpoint without credentials](#step-2-request-a-protected-endpoint-without-credentials)
+  - [Step 3: Complete the flow with the test preimage](#step-3-complete-the-flow-with-the-test-preimage)
+  - [Step 4: Dynamic pricing](#step-4-dynamic-pricing)
+  - [Step 5: Compare with a real deployment](#step-5-compare-with-a-real-deployment)
+- [What the Example Demonstrates](#what-the-example-demonstrates)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [Running the Tests](#running-the-tests)
+- [Docker Setup Details](#docker-setup-details)
+- [Connecting a Real Lightning Backend](#connecting-a-real-lightning-backend)
 
 ---
 
 ## Prerequisites
 
-- JDK 25
+- **Java 25** (LTS)
+- **curl** (or any HTTP client) for testing the endpoints
+- **Docker** and **Docker Compose** (optional, for containerized runs)
+
+No Lightning node or wallet is required. The application ships with test mode enabled.
 
 ---
 
-## How L402 Works (Quick Overview)
+## How L402 Works
 
 L402 is an HTTP-native payment protocol. When a client requests a protected resource without paying:
 
@@ -20,6 +48,28 @@ L402 is an HTTP-native payment protocol. When a client requests a protected reso
 2. The client pays the invoice via the Lightning Network and receives a **preimage** (proof of payment).
 3. The client re-requests the resource, presenting the macaroon and preimage together in the `Authorization` header.
 4. The server verifies the macaroon signature and checks that `SHA-256(preimage) == paymentHash` embedded in the macaroon. If both check out, access is granted.
+
+```
+Client                              Server
+  |                                    |
+  |  GET /api/v1/data                  |
+  |----------------------------------->|
+  |                                    |
+  |  402 Payment Required              |
+  |  WWW-Authenticate: L402            |
+  |    macaroon="...", invoice="..."    |
+  |<-----------------------------------|
+  |                                    |
+  |  (pay invoice, get preimage)       |
+  |                                    |
+  |  GET /api/v1/data                  |
+  |  Authorization: L402 <mac>:<pre>   |
+  |----------------------------------->|
+  |                                    |
+  |  200 OK                            |
+  |  {"data": "premium content"}       |
+  |<-----------------------------------|
+```
 
 ---
 
@@ -41,6 +91,8 @@ To enable end-to-end testing with curl, the test backend includes the preimage i
 
 ## Running the Application
 
+### With Gradle
+
 From the **project root** (not from inside `l402-example-app/`):
 
 ```bash
@@ -50,6 +102,36 @@ From the **project root** (not from inside `l402-example-app/`):
 The `gradlew` wrapper lives in the project root. The `:l402-example-app:` prefix tells Gradle which submodule to run.
 
 The application starts on `http://localhost:8080`.
+
+### With Docker
+
+From the **project root**:
+
+```bash
+docker compose up --build
+```
+
+This builds the example app using a multi-stage Dockerfile (JDK 25 build, JRE 25 runtime) and starts it on port 8080 with test mode enabled and an in-memory root key store.
+
+To run in detached mode:
+
+```bash
+docker compose up --build -d
+```
+
+To view logs while running detached:
+
+```bash
+docker compose logs -f l402-example-app
+```
+
+To stop:
+
+```bash
+docker compose down
+```
+
+See [Docker Setup Details](#docker-setup-details) for more information on the Docker configuration.
 
 ---
 
@@ -64,12 +146,29 @@ The application starts on `http://localhost:8080`.
 Endpoints are protected by annotating the controller method with `@L402Protected`:
 
 ```java
-@L402Protected(priceSats = 10)
+@L402Protected(priceSats = 10, timeoutSeconds = 3600)
 @GetMapping("/data")
 public DataResponse data() { ... }
 ```
 
 The `L402SecurityFilter` automatically discovers all `@L402Protected` methods at startup and enforces payment for matching requests.
+
+### Dynamic Pricing
+
+The `/api/v1/analyze` endpoint uses `AnalysisPricingStrategy`, a custom implementation of the `L402PricingStrategy` interface that scales the invoice price based on request content length:
+
+- Requests up to 1,000 bytes pay the base price (50 sats)
+- Larger payloads add 1 sat per 100 bytes of content beyond the threshold
+
+The pricing strategy is wired to the endpoint via the `pricingStrategy` attribute:
+
+```java
+@L402Protected(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
+@PostMapping("/analyze")
+public AnalyzeResponse analyze(@RequestBody AnalyzeRequest request) { ... }
+```
+
+This demonstrates how to implement pay-per-use pricing that scales with resource consumption.
 
 ---
 
@@ -128,7 +227,7 @@ The `Authorization` header format is:
 L402 <base64-encoded-macaroon>:<preimage-as-64-hex-chars>
 ```
 
-Here's a concrete example using the values from a 402 response:
+Here is a script that automates the full flow:
 
 ```bash
 # Save the 402 response to parse the macaroon and preimage
@@ -145,18 +244,17 @@ curl -i -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
      http://localhost:8080/api/v1/data
 ```
 
-Or if you already have the values, you can run it directly:
+Or if you already have the values from a previous 402 response, you can pass them directly:
 
 ```bash
 curl -i -H "Authorization: L402 AgJCAABb976nP3z4iWZflFsXM/tDqgv9UKj0hrMC...:a05d63f6f7993a83e464229215f408a6b79e957679c2bafd67f3d6aa59237467" \
      http://localhost:8080/api/v1/data
 ```
 
-Example response:
+Expected response (HTTP 200):
 
 ```
 HTTP/1.1 200
-X-L402-Token-Id: 21b5a136d139351ed4fde56d5583c48fcb9ae33fdb89874d009e83b01f5d86ab
 X-L402-Credential-Expires: 2026-03-14T02:46:38.298632Z
 Content-Type: application/json
 
@@ -165,13 +263,12 @@ Content-Type: application/json
 
 What the server verified:
 
-1. **Macaroon signature** -- The HMAC-SHA256 chain is intact, proving the macaroon was minted by this server and hasn't been tampered with.
-2. **Caveats** -- The `services` caveat matches `example-api` and the `valid_until` timestamp hasn't expired.
+1. **Macaroon signature** -- The HMAC-SHA256 chain is intact, proving the macaroon was minted by this server and has not been tampered with.
+2. **Caveats** -- The `services` caveat matches `example-api` and the `valid_until` timestamp has not expired.
 3. **Preimage** -- `SHA-256(preimage) == paymentHash` embedded in the macaroon identifier, proving the invoice was paid.
 
 The response headers tell you:
 
-- `X-L402-Token-Id` -- Identifies this credential (useful for debugging).
 - `X-L402-Credential-Expires` -- When the credential expires and a new payment will be needed.
 
 Subsequent requests with the same valid credential are served from cache without re-running the full verification.
@@ -208,6 +305,107 @@ The only difference is *how you get the preimage*. Everything else -- macaroon m
 
 ---
 
+## What the Example Demonstrates
+
+This application is a minimal but complete reference implementation covering the main features of the L402 Spring Boot Starter:
+
+| Feature | Where |
+|---------|-------|
+| Fixed-price endpoint protection | `ExampleController.data()` with `@L402Protected(priceSats = 10)` |
+| Dynamic pricing | `ExampleController.analyze()` with `pricingStrategy = "analysisPricer"` |
+| Custom pricing strategy | `AnalysisPricingStrategy` implementing `L402PricingStrategy` |
+| Unprotected endpoints alongside protected ones | `ExampleController.health()` with no annotation |
+| Test mode configuration | `application.yml` with `l402.test-mode=true` |
+| Spring Boot auto-configuration | No manual bean wiring -- the starter auto-configures everything |
+| Integration testing | `ExampleAppIntegrationTest` exercising the full verification path |
+| Docker deployment | Multi-stage Dockerfile and docker-compose.yml |
+
+### Key patterns to adopt in your own application
+
+1. **Annotate controller methods** with `@L402Protected` to mark them as payment-gated. The filter discovers them automatically.
+2. **Implement `L402PricingStrategy`** and register it as a Spring `@Component` to create dynamic pricing. Reference it by bean name in the annotation.
+3. **Use test mode during development**. Set `l402.test-mode=true` and exercise the full flow without a Lightning node. Switch to a real backend (LNbits or LND) for staging and production.
+
+---
+
+## Configuration
+
+The example uses this configuration (`src/main/resources/application.yml`):
+
+```yaml
+spring:
+  application:
+    name: l402-example-app
+  profiles:
+    active: dev
+
+server:
+  port: 8080
+
+l402:
+  enabled: true
+  test-mode: true
+  service-name: example-api
+```
+
+### Property Reference
+
+| Property            | Value         | Effect                                                       |
+|---------------------|---------------|--------------------------------------------------------------|
+| `l402.enabled`      | `true`        | Activates the L402 filter and auto-configuration.            |
+| `l402.test-mode`    | `true`        | Uses `TestModeLightningBackend` instead of a real node.      |
+| `l402.service-name` | `example-api` | Appears in macaroon caveats (e.g., `services=example-api:0`).|
+
+### Additional Properties (defaults)
+
+These properties are not set explicitly in the example but take effect via their defaults:
+
+| Property | Default | Effect |
+|----------|---------|--------|
+| `l402.default-price-sats` | `10` | Fallback price if `@L402Protected` does not specify one. |
+| `l402.default-timeout-seconds` | `3600` | Fallback credential lifetime (1 hour). |
+| `l402.root-key-store` | `file` | Root key persistence. Use `memory` for ephemeral keys (Docker, tests). |
+| `l402.root-key-store-path` | `~/.l402/keys` | File system path for persisted root keys. |
+| `l402.credential-cache` | `caffeine` | Cache implementation for verified credentials. |
+| `l402.credential-cache-max-size` | `10000` | Maximum cached credentials before eviction. |
+| `l402.health-cache.enabled` | `true` | Cache backend health check results. |
+| `l402.health-cache.ttl-seconds` | `5` | TTL for cached health check results. |
+
+To connect to a real Lightning backend, disable test mode and configure one of the supported backends. See [Connecting a Real Lightning Backend](#connecting-a-real-lightning-backend).
+
+---
+
+## Project Structure
+
+```
+l402-example-app/
+  src/main/java/com/greenharborlabs/l402/example/
+    ExampleApplication.java         Main class (@SpringBootApplication)
+    ExampleController.java          REST endpoints with @L402Protected
+    AnalysisPricingStrategy.java    Dynamic pricing implementation (L402PricingStrategy)
+  src/main/resources/
+    application.yml                 Configuration
+  src/test/java/
+    ExampleAppIntegrationTest.java  Full L402 flow integration tests
+  Dockerfile                        Multi-stage Docker build
+  .dockerignore                     Docker build exclusions
+  build.gradle.kts                  Module build file
+```
+
+### Dependencies
+
+Declared in `build.gradle.kts`:
+
+| Dependency | Scope | Purpose |
+|------------|-------|---------|
+| `l402-spring-boot-starter` | implementation | Pulls in core, auto-configuration, and transitive dependencies |
+| `l402-lightning-lnbits` | implementation | LNbits backend (on the classpath for real deployments; test mode overrides it) |
+| `spring-boot-starter-web` | implementation | Spring MVC, embedded Tomcat |
+| `spring-boot-starter-test` | testImplementation | JUnit 5, MockMvc, AssertJ |
+| `spring-boot-starter-webmvc-test` | testImplementation | `@AutoConfigureMockMvc` support |
+
+---
+
 ## Running the Tests
 
 The integration tests exercise the **complete L402 flow** including credential verification. They mint their own macaroons with known preimage/paymentHash pairs to test the full verification path programmatically.
@@ -220,81 +418,150 @@ From the project root:
 
 ### What the tests cover
 
-1. **Health endpoint** -- Confirms `GET /api/v1/health` returns 200 without authentication.
+| Test Class | Test | What It Verifies |
+|------------|------|-----------------|
+| `HealthEndpoint` | `returns200WithoutAuth` | `GET /api/v1/health` returns 200 without authentication. |
+| `DataEndpointNoAuth` | `returns402WithChallenge` | `GET /api/v1/data` without credentials returns 402 with a `WWW-Authenticate` header containing `macaroon=` and `invoice=` fields. |
+| `DataEndpointNoAuth` | `returns402JsonBody` | The 402 response body includes JSON with `code: 402` and `price_sats: 10`. |
+| `FullL402Flow` | `validCredentialReturns200` | A self-minted macaroon with a matching preimage grants access. Verifies HTTP 200, `X-L402-Credential-Expires` header, and the expected JSON body. |
+| `AnalyzeEndpointNoAuth` | `returns402WithDynamicPricing` | `POST /api/v1/analyze` with a small body returns 402 with `price_sats >= 50`. |
 
-2. **402 challenge** -- Confirms `GET /api/v1/data` without credentials returns 402 with a `WWW-Authenticate` header containing `macaroon=` and `invoice=` fields, and a JSON body with `code: 402` and `price_sats: 10`.
+### How the full-flow test works
 
-3. **Full credential flow** -- The test:
-   - Generates a random 32-byte preimage.
-   - Computes `paymentHash = SHA-256(preimage)`.
-   - Generates a root key from the application's own `RootKeyStore` (using `root-key-store=memory` so the test shares the same store as the filter).
-   - Mints a macaroon with an identifier containing the payment hash and token ID, signed with the root key.
-   - Builds the `Authorization: L402 <macaroon>:<preimage>` header.
-   - Sends the request and asserts HTTP 200, the presence of `X-L402-Token-Id` and `X-L402-Credential-Expires` headers, and the expected JSON body.
+The test cannot use the preimage from a server-issued 402 challenge because the test backend generates a random payment hash for which the preimage cannot be derived (that would require inverting SHA-256). Instead, the test:
 
-   This exercises the full verification path: macaroon signature check, preimage-to-paymentHash SHA-256 match, and credential caching.
+1. Generates a random 32-byte preimage.
+2. Computes `paymentHash = SHA-256(preimage)`.
+3. Generates a root key from the application's own `RootKeyStore` (using `root-key-store=memory` so the test shares the same store as the filter).
+4. Mints a macaroon with an identifier containing the payment hash and token ID, signed with the root key.
+5. Builds the `Authorization: L402 <macaroon>:<preimage>` header.
+6. Sends the request and asserts HTTP 200 with the expected response.
 
-4. **Dynamic pricing** -- Confirms `POST /api/v1/analyze` with a small body returns 402 with `price_sats >= 50`.
-
----
-
-## Running with Docker
-
-From the project root:
-
-```bash
-docker compose up --build
-```
-
-This builds the example app using a multi-stage Dockerfile (JDK 25 build, JRE 25 runtime) and starts it on port 8080 with test mode enabled and an in-memory root key store.
-
-To stop:
-
-```bash
-docker compose down
-```
+This exercises the full verification path: root key lookup, macaroon signature check, preimage-to-paymentHash SHA-256 match, and credential caching.
 
 ---
 
-## Configuration
+## Docker Setup Details
 
-The example uses this configuration (`src/main/resources/application.yml`):
+### Dockerfile
+
+The Dockerfile at `l402-example-app/Dockerfile` uses a **multi-stage build**:
+
+**Stage 1 -- Build** (`eclipse-temurin:25-jdk`):
+
+1. Copies Gradle wrapper and all module build files first for Docker layer caching. Dependency downloads are cached unless build files change.
+2. Copies proto files required by the `l402-lightning-lnd` module for compilation.
+3. Downloads dependencies in a separate layer (`./gradlew dependencies`).
+4. Copies all source code and builds the example app boot JAR, skipping tests for faster image builds.
+
+**Stage 2 -- Runtime** (`eclipse-temurin:25-jre`):
+
+1. Runs as a non-root user (`appuser`) for security.
+2. Copies only the built JAR from the build stage.
+3. Exposes port 8080.
+4. Starts the application with `java -jar app.jar`.
+
+### docker-compose.yml
+
+The Compose file at the project root defines one service:
 
 ```yaml
-spring:
-  application:
-    name: l402-example-app
-
-server:
-  port: 8080
-
-l402:
-  enabled: true
-  test-mode: true
-  service-name: example-api
+services:
+  l402-example-app:
+    build:
+      context: .
+      dockerfile: l402-example-app/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      L402_ENABLED: "true"
+      L402_TEST_MODE: "true"
+      L402_SERVICE_NAME: "example-api"
+      L402_ROOT_KEY_STORE: "memory"
 ```
 
-| Property            | Value         | Effect                                                       |
-|---------------------|---------------|--------------------------------------------------------------|
-| `l402.enabled`      | `true`        | Activates the L402 filter.                                   |
-| `l402.test-mode`    | `true`        | Uses `TestModeLightningBackend` instead of a real node.      |
-| `l402.service-name` | `example-api` | Appears in macaroon caveats (e.g., `services=example-api:0`).|
+Key details:
 
-To connect to a real Lightning backend, disable test mode and configure one of the supported backends. See the [root README](../README.md) for details.
+- The build context is the **project root** (not `l402-example-app/`) because the multi-module build needs access to all submodules.
+- Environment variables use Spring Boot's relaxed binding (e.g., `L402_TEST_MODE` maps to `l402.test-mode`).
+- `L402_ROOT_KEY_STORE=memory` is used because file-based key storage would require a persistent volume. For production, mount a volume and use `file` instead.
+
+### Building the Docker image manually
+
+If you prefer to build the image without Compose:
+
+```bash
+docker build -f l402-example-app/Dockerfile -t l402-example-app .
+```
+
+Run it:
+
+```bash
+docker run -p 8080:8080 \
+  -e L402_ENABLED=true \
+  -e L402_TEST_MODE=true \
+  -e L402_SERVICE_NAME=example-api \
+  -e L402_ROOT_KEY_STORE=memory \
+  l402-example-app
+```
 
 ---
 
-## Project Structure
+## Connecting a Real Lightning Backend
 
+To use this example with a real Lightning node instead of test mode, update the configuration:
+
+### With LNbits
+
+```yaml
+l402:
+  enabled: true
+  test-mode: false
+  backend: lnbits
+  service-name: example-api
+  lnbits:
+    url: https://your-lnbits-instance.com
+    api-key: ${LNBITS_API_KEY}
 ```
-l402-example-app/
-  src/main/java/com/greenharborlabs/l402/example/
-    ExampleApplication.java         Main class
-    ExampleController.java          REST endpoints with @L402Protected
-    AnalysisPricingStrategy.java    Dynamic pricing implementation
-  src/main/resources/
-    application.yml                 Configuration
-  src/test/java/
-    ExampleAppIntegrationTest.java  Full L402 flow integration tests
-  Dockerfile                        Multi-stage Docker build
+
+See [`l402-lightning-lnbits/README.md`](../l402-lightning-lnbits/README.md) for details on obtaining an API key and configuring the LNbits backend.
+
+### With LND
+
+```yaml
+l402:
+  enabled: true
+  test-mode: false
+  backend: lnd
+  service-name: example-api
+  lnd:
+    host: localhost
+    port: 10009
+    cert-path: /path/to/tls.cert
+    macaroon-path: /path/to/invoice.macaroon
 ```
+
+See [`l402-lightning-lnd/README.md`](../l402-lightning-lnd/README.md) for details on configuring the LND backend.
+
+### Docker with a real backend
+
+Pass the backend configuration as environment variables:
+
+```bash
+docker run -p 8080:8080 \
+  -e L402_ENABLED=true \
+  -e L402_TEST_MODE=false \
+  -e L402_BACKEND=lnbits \
+  -e L402_SERVICE_NAME=example-api \
+  -e L402_LNBITS_URL=https://your-lnbits-instance.com \
+  -e L402_LNBITS_API_KEY=your-api-key \
+  l402-example-app
+```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](../LICENSE).
+
+Copyright (c) 2026 Green Harbor Labs

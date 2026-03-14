@@ -5,12 +5,14 @@ import com.greenharborlabs.l402.core.protocol.L402Credential;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class InMemoryCredentialStore implements CredentialStore {
 
     private static final int DEFAULT_MAX_SIZE = 10_000;
 
     private final ConcurrentHashMap<String, CachedCredential> entries = new ConcurrentHashMap<>();
+    private final ReentrantLock storeLock = new ReentrantLock();
     private final int maxSize;
 
     public InMemoryCredentialStore() {
@@ -25,33 +27,38 @@ public class InMemoryCredentialStore implements CredentialStore {
     }
 
     @Override
-    public synchronized void store(String tokenId, L402Credential credential, long ttlSeconds) {
+    public void store(String tokenId, L402Credential credential, long ttlSeconds) {
         Instant expiresAt = Instant.now().plusSeconds(ttlSeconds);
         CachedCredential cached = new CachedCredential(credential, expiresAt);
 
-        // If updating an existing entry, always allow it
-        if (entries.containsKey(tokenId)) {
+        storeLock.lock();
+        try {
+            // If updating an existing entry, always allow it
+            if (entries.containsKey(tokenId)) {
+                entries.put(tokenId, cached);
+                return;
+            }
+
+            // If under capacity, store directly
+            if (entries.size() < maxSize) {
+                entries.put(tokenId, cached);
+                return;
+            }
+
+            // At capacity: evict expired entries first
+            evictExpired();
+
+            if (entries.size() < maxSize) {
+                entries.put(tokenId, cached);
+                return;
+            }
+
+            // Still full: evict a random entry
+            evictRandom();
             entries.put(tokenId, cached);
-            return;
+        } finally {
+            storeLock.unlock();
         }
-
-        // If under capacity, store directly
-        if (entries.size() < maxSize) {
-            entries.put(tokenId, cached);
-            return;
-        }
-
-        // At capacity: evict expired entries first
-        evictExpired();
-
-        if (entries.size() < maxSize) {
-            entries.put(tokenId, cached);
-            return;
-        }
-
-        // Still full: evict a random entry to avoid O(N) scan under lock
-        evictRandom();
-        entries.put(tokenId, cached);
     }
 
     @Override
@@ -97,12 +104,19 @@ public class InMemoryCredentialStore implements CredentialStore {
     }
 
     private void evictRandom() {
-        // Pick a random entry via key snapshot — O(1) amortized, no full scan
-        var keys = entries.keySet().toArray(String[]::new);
-        if (keys.length == 0) {
+        int size = entries.size();
+        if (size == 0) {
             return;
         }
-        int index = ThreadLocalRandom.current().nextInt(keys.length);
-        entries.remove(keys[index]);
+        // Iterator-based random sampling: skip a random number of entries
+        int skip = ThreadLocalRandom.current().nextInt(size);
+        var iterator = entries.keySet().iterator();
+        for (int i = 0; i < skip && iterator.hasNext(); i++) {
+            iterator.next();
+        }
+        if (iterator.hasNext()) {
+            iterator.next();
+            iterator.remove();
+        }
     }
 }

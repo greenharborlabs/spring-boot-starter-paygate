@@ -166,12 +166,12 @@ class FailClosedTest {
         }
 
         @Test
-        @DisplayName("returns 503 even when Authorization header is present")
-        void returns503WithAuthHeaderWhenUnhealthy() throws Exception {
+        @DisplayName("returns 400 when Authorization header has malformed L402 value even when Lightning is down")
+        void returns400WithMalformedAuthHeaderWhenUnhealthy() throws Exception {
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", "L402 some-macaroon:some-preimage"))
-                    .andExpect(status().isServiceUnavailable())
-                    .andExpect(jsonPath("$.error", is("LIGHTNING_UNAVAILABLE")));
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error", is("MALFORMED_HEADER")));
         }
 
         @Test

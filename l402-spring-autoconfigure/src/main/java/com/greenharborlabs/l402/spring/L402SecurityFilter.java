@@ -65,6 +65,7 @@ public class L402SecurityFilter implements Filter {
     private volatile L402Metrics metrics;
     private volatile L402EarningsTracker earningsTracker;
     private volatile L402RateLimiter rateLimiter;
+    private volatile boolean reverseProxyWarningLogged;
 
     /**
      * Primary constructor accepting a pre-built L402Validator and properties (used by auto-configuration).
@@ -201,9 +202,8 @@ public class L402SecurityFilter implements Filter {
                 L402Validator.ValidationResult result = validator.validate(authHeader);
                 L402Credential credential = result.credential();
 
-                // Success: add headers and pass through
+                // Success: add expiry header and pass through
                 log.log(System.Logger.Level.DEBUG, "L402 credential validated successfully, tokenId={0}", credential.tokenId());
-                httpResponse.setHeader("X-L402-Token-Id", credential.tokenId());
                 httpResponse.setHeader("X-L402-Credential-Expires",
                         Instant.now().plus(config.timeoutSeconds(), ChronoUnit.SECONDS).toString());
 
@@ -214,13 +214,16 @@ public class L402SecurityFilter implements Filter {
             } catch (L402Exception e) {
                 ErrorCode errorCode = e.getErrorCode();
                 log.log(System.Logger.Level.WARNING, "L402 validation failed, errorCode={0}, tokenId={1}", errorCode, e.getTokenId());
-                if (errorCode != ErrorCode.MALFORMED_HEADER) {
-                    // Non-malformed errors (expired, invalid signature, etc.) are terminal — no invoice needed
-                    writeErrorResponse(httpResponse, errorCode, e.getMessage(), e.getTokenId());
+                if (errorCode == ErrorCode.MALFORMED_HEADER) {
+                    // Clearly malformed L402 header — return 400 Bad Request, do not issue a new invoice
+                    writeMalformedHeaderResponse(httpResponse, e.getMessage(), e.getTokenId());
                     recordRejected(path);
                     return;
                 }
-                // MALFORMED_HEADER falls through to the invoice-creation path below
+                // Non-malformed errors (expired, invalid signature, etc.) are terminal — no invoice needed
+                writeErrorResponse(httpResponse, errorCode, e.getMessage(), e.getTokenId());
+                recordRejected(path);
+                return;
             } catch (Exception e) {
                 // Fail closed: any unexpected exception from validation produces 503, never 500
                 log.log(System.Logger.Level.WARNING, "Unexpected error during L402 validation for {0} {1}: {2}", method, path, e.getMessage());
@@ -345,6 +348,19 @@ public class L402SecurityFilter implements Filter {
         }
     }
 
+    private void writeMalformedHeaderResponse(HttpServletResponse response,
+                                                 String message, String tokenId) throws IOException {
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        response.setContentType("application/json");
+
+        String tokenDetail = tokenId != null ? tokenId : "";
+        log.log(System.Logger.Level.WARNING, "Malformed L402 header for token {0}: {1}", tokenDetail, message);
+
+        response.getWriter().write("""
+                {"code": 400, "error": "MALFORMED_HEADER", "message": "Malformed L402 Authorization header", "details": {"token_id": "%s"}}"""
+                .formatted(JsonEscaper.escape(tokenDetail)));
+    }
+
     private void writeErrorResponse(HttpServletResponse response, ErrorCode errorCode,
                                     String message, String tokenId) throws IOException {
         response.setStatus(errorCode.getHttpStatus());
@@ -440,6 +456,16 @@ public class L402SecurityFilter implements Filter {
                 if (!ip.isEmpty()) {
                     return ip;
                 }
+            }
+        } else if (!reverseProxyWarningLogged) {
+            String xff = request.getHeader("X-Forwarded-For");
+            if (xff != null && !xff.isBlank()) {
+                reverseProxyWarningLogged = true;
+                log.log(System.Logger.Level.WARNING,
+                        "X-Forwarded-For header detected but trustForwardedHeaders is false. "
+                                + "Rate limiting uses the direct remote address, which may be the proxy IP. "
+                                + "If this service is behind a reverse proxy, set l402.trust-forwarded-headers=true "
+                                + "to use the client IP from X-Forwarded-For for rate limiting.");
             }
         }
         return request.getRemoteAddr();
