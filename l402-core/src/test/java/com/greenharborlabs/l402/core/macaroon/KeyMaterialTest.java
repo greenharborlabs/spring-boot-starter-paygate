@@ -1,5 +1,7 @@
 package com.greenharborlabs.l402.core.macaroon;
 
+import java.util.Arrays;
+
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +33,14 @@ class KeyMaterialTest {
     @Test
     void zeroizeVarargsNullArrayIsNoop() {
         assertThatNoException().isThrownBy(() -> KeyMaterial.zeroize((byte[][]) null));
+    }
+
+    @Test
+    void zeroizeNormalArrayAllBytesZero() {
+        byte[] data = new byte[32];
+        Arrays.fill(data, (byte) 0xFF);
+        KeyMaterial.zeroize(data);
+        assertThat(data).hasSize(32).containsOnly(0);
     }
 
     @Test

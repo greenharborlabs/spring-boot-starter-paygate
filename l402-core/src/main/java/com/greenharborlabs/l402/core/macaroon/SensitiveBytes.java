@@ -53,7 +53,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
      * Zeroizes the internal key material. Idempotent — safe to call multiple times.
      */
     @Override
-    public void destroy() {
+    public synchronized void destroy() {
         if (!destroyed) {
             Arrays.fill(data, (byte) 0);
             destroyed = true;
@@ -87,6 +87,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
 
     @Override
     public int hashCode() {
+        if (destroyed) return 0;
         return Arrays.hashCode(data);
     }
 

@@ -192,6 +192,24 @@ class SensitiveBytesTest {
             var sb = new SensitiveBytes(new byte[]{1, 2, 3});
             assertThat(sb).isEqualTo(sb);
         }
+
+        @Test
+        @DisplayName("hashCode returns constant 0 after destroy")
+        void hashCode_afterDestroy_returnsConstant() {
+            var sb = new SensitiveBytes(new byte[]{1, 2, 3});
+            sb.destroy();
+            assertThat(sb.hashCode()).isEqualTo(0);
+        }
+
+        @Test
+        @DisplayName("hashCode returns same constant after destroy regardless of original content")
+        void hashCode_afterDestroy_sameForDifferentContent() {
+            var a = new SensitiveBytes(new byte[]{1, 2, 3});
+            var b = new SensitiveBytes(new byte[]{99, 98, 97, 96});
+            a.destroy();
+            b.destroy();
+            assertThat(a.hashCode()).isEqualTo(b.hashCode()).isEqualTo(0);
+        }
     }
 
     @Nested
@@ -217,6 +235,33 @@ class SensitiveBytesTest {
     @Nested
     @DisplayName("Thread safety")
     class ThreadSafety {
+
+        @Test
+        @DisplayName("concurrent destroy from multiple threads does not throw")
+        void concurrent_destroy_noException() throws Exception {
+            var sb = new SensitiveBytes(new byte[]{1, 2, 3, 4, 5});
+            int threadCount = 10;
+            var startLatch = new CountDownLatch(1);
+            var doneLatch = new CountDownLatch(threadCount);
+            var errors = new ConcurrentLinkedQueue<Throwable>();
+
+            for (int i = 0; i < threadCount; i++) {
+                Thread.startVirtualThread(() -> {
+                    try {
+                        startLatch.await();
+                        sb.destroy();
+                    } catch (Throwable t) {
+                        errors.add(t);
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                });
+            }
+            startLatch.countDown();
+            doneLatch.await();
+            assertThat(errors).isEmpty();
+            assertThat(sb.isDestroyed()).isTrue();
+        }
 
         @Test
         @DisplayName("concurrent close and value produce no unexpected exceptions")
