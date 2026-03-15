@@ -403,4 +403,66 @@ class MacaroonVerifierTest {
              .hasMessageContaining("caveat escalation detected for key: svc_valid_until");
         }
     }
+
+    @Nested
+    @DisplayName("verifyCaveats direct invocation")
+    class VerifyCaveatsDirect {
+
+        @Test
+        @DisplayName("throws on caveat escalation detected via verifyCaveats")
+        void escalationDetected() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("tier", "silver"),
+                    new Caveat("tier", "gold")
+            );
+            List<CaveatVerifier> verifiers = List.of(monotonicVerifier("tier", false));
+
+            assertThatThrownBy(() ->
+                    MacaroonVerifier.verifyCaveats(caveats, verifiers, context)
+            ).isInstanceOf(MacaroonVerificationException.class)
+             .hasMessageContaining("caveat escalation detected for key: tier");
+        }
+
+        @Test
+        @DisplayName("skips unknown caveats without throwing")
+        void unknownCaveatsSkipped() {
+            List<Caveat> caveats = List.of(
+                    new Caveat("unknown_key", "some_value"),
+                    new Caveat("another_unknown", "other_value")
+            );
+
+            assertThatCode(() ->
+                    MacaroonVerifier.verifyCaveats(caveats, List.of(), context)
+            ).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("passes context through to verifier")
+        void contextPassedThrough() {
+            L402VerificationContext specificContext = L402VerificationContext.builder()
+                    .serviceName("test-service")
+                    .build();
+
+            List<Caveat> caveats = List.of(new Caveat("service", "test-service"));
+
+            // Verifier that captures and asserts the context it receives
+            CaveatVerifier capturingVerifier = new CaveatVerifier() {
+                @Override
+                public String getKey() {
+                    return "service";
+                }
+
+                @Override
+                public void verify(Caveat caveat, L402VerificationContext ctx) {
+                    if (ctx != specificContext) {
+                        throw new AssertionError("context object was not the same instance");
+                    }
+                }
+            };
+
+            assertThatCode(() ->
+                    MacaroonVerifier.verifyCaveats(caveats, List.of(capturingVerifier), specificContext)
+            ).doesNotThrowAnyException();
+        }
+    }
 }

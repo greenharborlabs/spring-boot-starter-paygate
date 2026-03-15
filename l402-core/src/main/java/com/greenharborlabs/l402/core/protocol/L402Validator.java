@@ -45,13 +45,32 @@ public final class L402Validator {
     public record ValidationResult(L402Credential credential, boolean freshValidation) {}
 
     /**
-     * Validates an L402 Authorization header and returns the authenticated credential.
+     * Validates an L402 Authorization header using a default verification context
+     * built from the configured service name and the current time.
      *
      * @param authorizationHeader the raw Authorization header value
      * @return a {@link ValidationResult} containing the credential and freshness flag
      * @throws L402Exception on any validation failure
      */
     public ValidationResult validate(String authorizationHeader) {
+        L402VerificationContext defaultContext = L402VerificationContext.builder()
+                .serviceName(serviceName)
+                .currentTime(Instant.now())
+                .build();
+        return validate(authorizationHeader, defaultContext);
+    }
+
+    /**
+     * Validates an L402 Authorization header using the provided verification context.
+     *
+     * @param authorizationHeader the raw Authorization header value
+     * @param context             the verification context (service name, current time, capabilities, etc.)
+     * @return a {@link ValidationResult} containing the credential and freshness flag
+     * @throws L402Exception on any validation failure
+     */
+    public ValidationResult validate(String authorizationHeader, L402VerificationContext context) {
+        Objects.requireNonNull(context, "context must not be null");
+
         // 1. Parse the authorization header
         L402Credential credential = L402Credential.parse(authorizationHeader);
         String tokenId = credential.tokenId();
@@ -75,33 +94,19 @@ public final class L402Validator {
                         "Presented preimage does not match cached credential", tokenId);
             }
 
-            // Re-verify all caveats against current time (must match MacaroonVerifier strictness)
-            Instant now = Instant.now();
-            L402VerificationContext context = L402VerificationContext.builder()
-                    .serviceName(serviceName)
-                    .currentTime(now)
-                    .build();
-            for (Caveat caveat : cached.macaroon().caveats()) {
-                CaveatVerifier matchedVerifier = null;
-                for (CaveatVerifier verifier : caveatVerifiers) {
-                    if (verifier.getKey().equals(caveat.key())) {
-                        matchedVerifier = verifier;
-                        break;
-                    }
+            // Re-verify all caveats against the provided context (includes escalation detection)
+            try {
+                MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiers, context);
+            } catch (MacaroonVerificationException e) {
+                credentialStore.revoke(tokenId);
+                throw new L402Exception(ErrorCode.INVALID_MACAROON,
+                        "Macaroon verification failed: " + e.getMessage(), tokenId);
+            } catch (L402Exception e) {
+                credentialStore.revoke(tokenId);
+                if (e.getTokenId() == null) {
+                    throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
                 }
-                if (matchedVerifier == null) {
-                    // Unknown caveats are skipped per the L402 spec
-                    continue;
-                }
-                try {
-                    matchedVerifier.verify(caveat, context);
-                } catch (L402Exception e) {
-                    credentialStore.revoke(tokenId);
-                    if (e.getTokenId() == null) {
-                        throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
-                    }
-                    throw e;
-                }
+                throw e;
             }
 
             return new ValidationResult(cached, false);
@@ -118,15 +123,11 @@ public final class L402Validator {
                     "No root key found for token", tokenId);
         }
 
-        // 5. Verify macaroon signature (caveat verification happens inside)
-        Instant now = Instant.now();
+        // 5. Verify macaroon signature and caveats using the provided context
+        Instant now = context.getCurrentTime();
         try (rootKeySb) {
             byte[] rootKey = rootKeySb.value();
             try {
-                L402VerificationContext context = L402VerificationContext.builder()
-                        .serviceName(serviceName)
-                        .currentTime(now)
-                        .build();
                 MacaroonVerifier.verify(credential.macaroon(), rootKey, caveatVerifiers, context);
             } catch (MacaroonVerificationException e) {
                 throw new L402Exception(ErrorCode.INVALID_MACAROON,

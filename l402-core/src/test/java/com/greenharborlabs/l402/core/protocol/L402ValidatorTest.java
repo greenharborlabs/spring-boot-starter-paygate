@@ -2,6 +2,7 @@ package com.greenharborlabs.l402.core.protocol;
 
 import com.greenharborlabs.l402.core.credential.CredentialStore;
 import com.greenharborlabs.l402.core.lightning.PaymentPreimage;
+import com.greenharborlabs.l402.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.Caveat;
 import com.greenharborlabs.l402.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.L402VerificationContext;
@@ -25,6 +26,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -582,6 +584,154 @@ class L402ValidatorTest {
 
             assertThat(issuedKeys).hasSize(1);
             assertThat(issuedKeys.peek().isDestroyed()).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("validate with external context")
+    class ValidateWithExternalContext {
+
+        @Test
+        @DisplayName("cached credential with escalating caveats is rejected and revoked")
+        void cachedEscalatingCaveatsRejectedAndRevoked() {
+            // Create a macaroon with two capabilities caveats where the second EXPANDS access
+            // (escalation: "search" -> "search,analyze,admin"), which should be detected
+            List<Caveat> caveats = List.of(
+                    new Caveat(SERVICE_NAME + "_capabilities", "search"),
+                    new Caveat(SERVICE_NAME + "_capabilities", "search,analyze,admin")
+            );
+            Macaroon escalatingMacaroon = MacaroonMinter.mint(
+                    rootKey, identifier, "https://example.com", caveats);
+
+            // Pre-populate the credential store as if this was cached
+            PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
+            L402Credential cached = new L402Credential(escalatingMacaroon, preimage, tokenIdHex);
+            credentialStore.store(tokenIdHex, cached, 3600);
+
+            // Build header with matching macaroon
+            byte[] serialized = MacaroonSerializer.serializeV2(escalatingMacaroon);
+            String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
+            String preimageHex = HEX.formatHex(preimageBytes);
+            String header = "L402 " + macaroonBase64 + ":" + preimageHex;
+
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
+
+            assertThatThrownBy(() -> validator.validate(header))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(ex -> {
+                        L402Exception l402Ex = (L402Exception) ex;
+                        assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
+                        assertThat(l402Ex.getMessage()).containsIgnoringCase("caveat escalation");
+                        assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
+                    });
+
+            // Credential should be revoked from cache
+            assertThat(credentialStore.get(tokenIdHex)).isNull();
+        }
+
+        @Test
+        @DisplayName("validate with context enforces requested capability — matching capability passes")
+        void contextWithMatchingCapabilityPasses() {
+            List<Caveat> caveats = List.of(
+                    new Caveat(SERVICE_NAME + "_capabilities", "search,analyze")
+            );
+            String header = buildAuthHeader(caveats);
+
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
+
+            L402VerificationContext context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .currentTime(Instant.now())
+                    .requestedCapability("search")
+                    .build();
+
+            L402Validator.ValidationResult result = validator.validate(header, context);
+
+            assertThat(result).isNotNull();
+            assertThat(result.freshValidation()).isTrue();
+        }
+
+        @Test
+        @DisplayName("validate with context enforces requested capability — missing capability fails")
+        void contextWithMissingCapabilityFails() {
+            List<Caveat> caveats = List.of(
+                    new Caveat(SERVICE_NAME + "_capabilities", "search,analyze")
+            );
+            String header = buildAuthHeader(caveats);
+
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
+
+            L402VerificationContext context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .currentTime(Instant.now())
+                    .requestedCapability("admin")
+                    .build();
+
+            assertThatThrownBy(() -> validator.validate(header, context))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(ex -> {
+                        L402Exception l402Ex = (L402Exception) ex;
+                        assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        assertThat(l402Ex.getMessage()).contains("admin");
+                        assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
+                    });
+        }
+
+        @Test
+        @DisplayName("validate(String) backward compatible — delegates with default context")
+        void validateStringBackwardCompatible() {
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+
+            L402Validator.ValidationResult result = validator.validate(validAuthHeader);
+
+            assertThat(result).isNotNull();
+            assertThat(result.freshValidation()).isTrue();
+            assertThat(result.credential().tokenId()).isEqualTo(tokenIdHex);
+        }
+
+        @Test
+        @DisplayName("external context flows through to fresh path verifier")
+        void contextFlowsThroughToFreshPath() {
+            // A context-capturing verifier that records the context it receives
+            AtomicReference<L402VerificationContext> capturedContext = new AtomicReference<>();
+            CaveatVerifier capturingVerifier = new CaveatVerifier() {
+                @Override
+                public String getKey() {
+                    return SERVICE_NAME + "_marker";
+                }
+
+                @Override
+                public void verify(Caveat caveat, L402VerificationContext ctx) {
+                    capturedContext.set(ctx);
+                }
+            };
+
+            List<Caveat> caveats = List.of(
+                    new Caveat(SERVICE_NAME + "_marker", "test-value")
+            );
+            String header = buildAuthHeader(caveats);
+
+            L402Validator validator = new L402Validator(
+                    rootKeyStore, credentialStore, List.of(capturingVerifier), SERVICE_NAME);
+
+            L402VerificationContext externalContext = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .currentTime(Instant.now())
+                    .requestedCapability("custom-cap")
+                    .build();
+
+            validator.validate(header, externalContext);
+
+            // The verifier should have received the external context, not a locally-built one
+            assertThat(capturedContext.get()).isSameAs(externalContext);
+            assertThat(capturedContext.get().getRequestedCapability()).isEqualTo("custom-cap");
         }
     }
 

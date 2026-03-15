@@ -45,25 +45,43 @@ public final class MacaroonVerifier {
                 throw new MacaroonVerificationException("signature verification failed");
             }
 
-            Map<String, Caveat> lastSeenByKey = new HashMap<>();
-            for (Caveat caveat : macaroon.caveats()) {
-                CaveatVerifier verifier = findVerifier(caveatVerifiers, caveat.key());
-                if (verifier == null) {
-                    // Unknown caveats are skipped per the L402 spec
-                    continue;
-                }
-
-                Caveat previous = lastSeenByKey.get(caveat.key());
-                if (previous != null && !verifier.isMoreRestrictive(previous, caveat)) {
-                    throw new MacaroonVerificationException(
-                            "caveat escalation detected for key: " + caveat.key());
-                }
-                lastSeenByKey.put(caveat.key(), caveat);
-
-                verifier.verify(caveat, context);
-            }
+            verifyCaveats(macaroon.caveats(), caveatVerifiers, context);
         } finally {
             KeyMaterial.zeroize(derivedKey, sig);
+        }
+    }
+
+    /**
+     * Verifies a list of caveats against registered verifiers and a verification context.
+     *
+     * <p>Unknown caveats (no registered verifier for the key) are silently skipped.
+     * For caveats whose key appears more than once, each subsequent occurrence must be
+     * at least as restrictive as the previous one (monotonic restriction).
+     *
+     * @param caveats         the caveats to verify
+     * @param caveatVerifiers registered verifiers for known caveat keys
+     * @param context         verification context (service name, current time, etc.)
+     * @throws MacaroonVerificationException if a caveat escalation is detected or a verifier rejects
+     */
+    public static void verifyCaveats(List<Caveat> caveats,
+                                     List<CaveatVerifier> caveatVerifiers,
+                                     L402VerificationContext context) {
+        Map<String, Caveat> lastSeenByKey = new HashMap<>();
+        for (Caveat caveat : caveats) {
+            CaveatVerifier verifier = findVerifier(caveatVerifiers, caveat.key());
+            if (verifier == null) {
+                // Unknown caveats are skipped per the L402 spec
+                continue;
+            }
+
+            Caveat previous = lastSeenByKey.get(caveat.key());
+            if (previous != null && !verifier.isMoreRestrictive(previous, caveat)) {
+                throw new MacaroonVerificationException(
+                        "caveat escalation detected for key: " + caveat.key());
+            }
+            lastSeenByKey.put(caveat.key(), caveat);
+
+            verifier.verify(caveat, context);
         }
     }
 
