@@ -177,6 +177,7 @@ All properties are under the `l402.*` prefix.
 | `l402.root-key-store-path` | `string` | `~/.l402/keys` | Directory for file-based root key storage. |
 | `l402.credential-cache` | `string` | `caffeine` | Cache implementation. Caffeine used when on classpath. |
 | `l402.credential-cache-max-size` | `int` | `10000` | Maximum cached credentials. |
+| `l402.security-mode` | `string` | `auto` | Security integration mode: `auto`, `servlet`, or `spring-security`. See [Spring Security Integration](#spring-security-integration). |
 | `l402.test-mode` | `boolean` | `false` | Enable test mode (dummy invoices, auto-settle). |
 
 ### Health Check Caching
@@ -332,6 +333,61 @@ When both Spring Security and an `L402Validator` bean are present, the module au
 - **`L402AuthenticationProvider`** -- validates L402 credentials via `L402Validator` and produces an authenticated `L402AuthenticationToken`
 - **`L402AuthenticationFilter`** -- extracts L402 credentials from the `Authorization` header and delegates to the `AuthenticationManager`
 - **`L402AuthenticationToken`** -- carries the validated credential, token ID, service name, and caveat-derived attributes accessible via SpEL in `@PreAuthorize` expressions
+- **`L402AuthenticationEntryPoint`** -- issues HTTP 402 Payment Required challenges with Lightning invoices when an unauthenticated request hits a protected endpoint, replacing the default 401 response
+
+### Security Mode (`l402.security-mode`)
+
+The `l402.security-mode` property controls how L402 protection is applied. This determines whether the standalone servlet filter or the Spring Security integration handles requests.
+
+| Value | Behavior |
+|-------|----------|
+| `auto` (default) | Detects Spring Security on the classpath. If present, uses `spring-security` mode; otherwise, uses `servlet` mode. |
+| `servlet` | Forces the standalone `L402SecurityFilter` (from `l402-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@L402Protected` handling. |
+| `spring-security` | Forces the Spring Security path. The standalone servlet filter is disabled. Fails at startup if Spring Security is not on the classpath. |
+
+The two modes are mutually exclusive -- only one is active at a time. Configure the mode explicitly when both modules are on the classpath and you want deterministic behavior:
+
+```yaml
+l402:
+  enabled: true
+  security-mode: spring-security   # or "servlet" or "auto"
+```
+
+### Authentication Entry Point
+
+The `L402AuthenticationEntryPoint` bridges Spring Security's exception handling with the L402 payment flow. When an unauthenticated request reaches a protected endpoint, the entry point:
+
+1. Looks up the endpoint's L402 configuration (price, timeout, pricing strategy)
+2. Creates a Lightning invoice via the configured backend
+3. Returns HTTP 402 with a `WWW-Authenticate: L402` header containing the macaroon and invoice
+
+Configure it in your `SecurityFilterChain`:
+
+```java
+@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                 L402AuthenticationFilter l402Filter,
+                                                 L402AuthenticationProvider l402Provider,
+                                                 L402AuthenticationEntryPoint l402EntryPoint) throws Exception {
+    return http
+            .authenticationProvider(l402Provider)
+            .addFilterBefore(l402Filter, BasicAuthenticationFilter.class)
+            .authorizeHttpRequests(auth -> auth
+                    .requestMatchers("/api/public/**").permitAll()
+                    .requestMatchers("/api/premium/**").hasRole("L402")
+                    .anyRequest().authenticated()
+            )
+            .exceptionHandling(ex -> ex
+                    .authenticationEntryPoint(l402EntryPoint)
+            )
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session
+                    .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .build();
+}
+```
+
+### Accessing L402 Credentials
 
 The authenticated token grants the `ROLE_L402` authority and exposes caveat values as attributes:
 
@@ -347,7 +403,7 @@ public Response protectedEndpoint(Authentication auth) {
 }
 ```
 
-Register the filter in your security filter chain configuration. The auto-configuration provides the beans; placement in the filter chain is left to your `SecurityFilterChain` definition.
+See the [l402-spring-security README](l402-spring-security/README.md) for detailed documentation, SpEL examples, and mixed-auth patterns. A complete `SecurityFilterChain` example is available in `l402-example-app/src/main/java/.../example/SecurityConfig.java` (commented out by default).
 
 ---
 

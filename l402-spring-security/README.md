@@ -93,18 +93,20 @@ implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0") // or l402-lig
 
 ## Architecture
 
-The module contains four classes, all in the `com.greenharborlabs.l402.spring.security` package:
+The module contains five classes, all in the `com.greenharborlabs.l402.spring.security` package:
 
 ```
 l402-spring-security/
   src/main/java/com/greenharborlabs/l402/spring/security/
-    L402AuthenticationFilter.java         Extracts L402 credentials from Authorization header
+    L402AuthenticationEntryPoint.java      Issues 402 challenges with Lightning invoices
+    L402AuthenticationFilter.java          Extracts L402 credentials from Authorization header
     L402AuthenticationProvider.java        Validates credentials via L402Validator
     L402AuthenticationToken.java           Spring Security token (unauthenticated and authenticated states)
     L402SecurityAutoConfiguration.java     Registers beans when Spring Security is present
   src/main/resources/META-INF/spring/
     org.springframework.boot.autoconfigure.AutoConfiguration.imports
   src/test/java/com/greenharborlabs/l402/spring/security/
+    L402AuthenticationEntryPointTest.java  Entry point challenge and error handling tests
     L402AuthenticationFilterTest.java      Filter behavior tests with MockHttpServletRequest
     L402AuthenticationProviderTest.java    Provider validation and error handling tests
     L402AuthenticationTokenTest.java       Token lifecycle and attribute extraction tests
@@ -204,12 +206,13 @@ Implements `AuthenticationProvider`. Accepts only `L402AuthenticationToken` inst
 1. `EnableWebSecurity` and `L402Validator` classes are on the classpath (`@ConditionalOnClass`)
 2. An `L402Validator` bean exists in the application context (`@ConditionalOnBean`)
 
-It registers two beans:
+It registers three beans:
 
 | Bean | Condition | Description |
 |------|-----------|-------------|
 | `L402AuthenticationProvider` | `@ConditionalOnMissingBean` | Validates L402 tokens using the `L402Validator` and `l402.service-name` property |
 | `L402AuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
+| `L402AuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `L402ChallengeService` and `L402EndpointRegistry` from `l402-spring-autoconfigure`. |
 
 The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). This gives you full control over filter ordering and which paths are protected.
 
@@ -400,23 +403,74 @@ public class MethodSecurityConfig {
 | Spring Security dependency | Not required | Required |
 | Protection mechanism | `@L402Protected` annotation on controller methods | `SecurityFilterChain` with `authorizeHttpRequests` |
 | Filter type | Jakarta `Filter` registered via `FilterRegistrationBean` | `OncePerRequestFilter` added to Spring Security filter chain |
-| Invoice generation | Built-in: generates 402 response with invoice | Not built-in: filter only validates existing credentials |
+| Invoice generation | Built-in: generates 402 response with invoice | Built-in via `L402AuthenticationEntryPoint`: generates 402 response with invoice when configured as the exception handling entry point |
 | Mixed auth support | L402 only | L402 + OAuth2 + JWT + Basic + any Spring Security provider |
 | Role/authority model | None | `ROLE_L402` granted authority |
 | `@PreAuthorize` support | No | Yes, with full SpEL on `L402AuthenticationToken` attributes |
 | Caveat-based access control | Via `CaveatVerifier` implementations at validation time | Via `CaveatVerifier` + SpEL expressions at authorization time |
 | `SecurityContextHolder` integration | No | Yes, authenticated token in security context |
 | Session management | Stateless (no session) | Configurable (STATELESS recommended) |
-| 402 challenge response | Automatic with invoice | Not provided -- use with `@L402Protected` for invoice generation, or implement a custom `AuthenticationEntryPoint` |
+| 402 challenge response | Automatic with invoice | Automatic via `L402AuthenticationEntryPoint` when configured as the entry point in `SecurityFilterChain` |
 
-### When They Work Together
+### Mutual Exclusion via `l402.security-mode`
 
-In a typical setup, both modules are active simultaneously:
+The servlet filter and Spring Security paths are mutually exclusive. The `l402.security-mode` property controls which one is active:
 
-1. The `L402SecurityFilter` from `l402-spring-autoconfigure` handles `@L402Protected` endpoints -- generating invoices (402 responses) for unauthenticated requests and validating credentials
-2. The `L402AuthenticationFilter` from `l402-spring-security` handles Spring Security-protected endpoints -- extracting and validating L402 credentials within the Spring Security filter chain
+| Value | Servlet filter (`L402SecurityFilter`) | Spring Security (`L402AuthenticationFilter` + entry point) |
+|-------|--------------------------------------|----------------------------------------------------------|
+| `auto` (default) | Active when Spring Security is **not** on the classpath | Active when Spring Security **is** on the classpath |
+| `servlet` | Always active | Disabled, even if Spring Security is on the classpath |
+| `spring-security` | Disabled | Always active. Fails at startup if Spring Security is not on the classpath. |
 
-They operate on different paths and serve complementary purposes. The `@L402Protected` annotation handles the full payment flow (challenge + validation), while the Spring Security integration provides authorization features (roles, SpEL, mixed auth) on top of credential validation.
+Only one mode is active at a time. This prevents conflicts where both the servlet filter and the Spring Security filter chain attempt to handle the same request.
+
+When using `spring-security` mode, the `L402AuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point in your `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security.
+
+Set the mode explicitly when both modules are on the classpath:
+
+```yaml
+l402:
+  enabled: true
+  security-mode: spring-security
+```
+
+### L402AuthenticationEntryPoint
+
+The entry point implements Spring Security's `AuthenticationEntryPoint` interface. When an unauthenticated request reaches a protected endpoint, it:
+
+1. Looks up the endpoint's L402 configuration from the `L402EndpointRegistry` (price, timeout, pricing strategy)
+2. Delegates to `L402ChallengeService` to create a Lightning invoice and mint a macaroon
+3. Returns HTTP 402 with a `WWW-Authenticate: L402 macaroon="...", invoice="..."` header
+4. Falls back to 503 if the Lightning backend is unavailable (fail-closed)
+5. Returns 429 with `Retry-After` if the rate limiter rejects the request
+
+Register it in your `SecurityFilterChain`:
+
+```java
+@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                 L402AuthenticationFilter l402Filter,
+                                                 L402AuthenticationProvider l402Provider,
+                                                 L402AuthenticationEntryPoint l402EntryPoint) throws Exception {
+    return http
+            .authenticationProvider(l402Provider)
+            .addFilterBefore(l402Filter, BasicAuthenticationFilter.class)
+            .authorizeHttpRequests(auth -> auth
+                    .requestMatchers("/api/public/**").permitAll()
+                    .requestMatchers("/api/premium/**").hasRole("L402")
+                    .anyRequest().authenticated()
+            )
+            .exceptionHandling(ex -> ex
+                    .authenticationEntryPoint(l402EntryPoint)
+            )
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session
+                    .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .build();
+}
+```
+
+If the requested path is not registered in the `L402EndpointRegistry` (i.e., it has no `@L402Protected` annotation), the entry point returns a plain 401 Unauthorized response instead of a 402 challenge.
 
 ---
 
