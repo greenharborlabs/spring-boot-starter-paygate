@@ -48,8 +48,9 @@ public class L402SecurityAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(L402AuthenticationFilter.class)
     @ConditionalOnBean(AuthenticationManager.class)
-    public L402AuthenticationFilter l402AuthenticationFilter(AuthenticationManager authenticationManager) {
-        return new L402AuthenticationFilter(authenticationManager);
+    public L402AuthenticationFilter l402AuthenticationFilter(AuthenticationManager authenticationManager,
+                                                                L402EndpointRegistry l402EndpointRegistry) {
+        return new L402AuthenticationFilter(authenticationManager, l402EndpointRegistry);
     }
 
     @Bean

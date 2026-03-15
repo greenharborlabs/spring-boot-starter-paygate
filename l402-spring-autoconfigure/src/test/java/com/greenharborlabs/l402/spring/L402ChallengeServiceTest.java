@@ -3,6 +3,8 @@ package com.greenharborlabs.l402.spring;
 import com.greenharborlabs.l402.core.lightning.Invoice;
 import com.greenharborlabs.l402.core.lightning.InvoiceStatus;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
+import com.greenharborlabs.l402.core.macaroon.Macaroon;
+import com.greenharborlabs.l402.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.l402.core.macaroon.RootKeyStore;
 import com.greenharborlabs.l402.core.macaroon.SensitiveBytes;
 
@@ -442,6 +444,86 @@ class L402ChallengeServiceTest {
         void passesCleanInputUnchanged() {
             String clean = "lnbc500n1p0testinvoice";
             assertThat(L402ChallengeService.sanitizeBolt11ForHeader(clean)).isEqualTo(clean);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Capabilities caveat minting
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("capabilities caveat minting")
+    class CapabilitiesCaveatMinting {
+
+        @Test
+        @DisplayName("mints capabilities caveat when capability is non-empty")
+        void mintsCapabilitiesCaveatWhenNonEmpty() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            L402EndpointConfig configWithCapability = new L402EndpointConfig(
+                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "search");
+
+            L402ChallengeService service = createService(createTrackingRootKeyStore());
+            L402ChallengeResult result = service.createChallenge(request, configWithCapability);
+
+            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
+            assertThat(macaroon.caveats())
+                    .anyMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities") && c.value().equals("search"));
+        }
+
+        @Test
+        @DisplayName("does not mint capabilities caveat when capability is empty")
+        void noCapabilitiesCaveatWhenEmpty() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            // config from @BeforeEach has empty capability ""
+            L402ChallengeService service = createService(createTrackingRootKeyStore());
+            L402ChallengeResult result = service.createChallenge(request, config);
+
+            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
+            assertThat(macaroon.caveats())
+                    .noneMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities"));
+        }
+
+        @Test
+        @DisplayName("does not mint capabilities caveat when capability is null")
+        void noCapabilitiesCaveatWhenNull() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            L402EndpointConfig configWithNull = new L402EndpointConfig(
+                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", null);
+
+            L402ChallengeService service = createService(createTrackingRootKeyStore());
+            L402ChallengeResult result = service.createChallenge(request, configWithNull);
+
+            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
+            assertThat(macaroon.caveats())
+                    .noneMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities"));
+        }
+
+        @Test
+        @DisplayName("does not mint capabilities caveat when capability is blank")
+        void noCapabilitiesCaveatWhenBlank() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            L402EndpointConfig configWithBlank = new L402EndpointConfig(
+                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "   ");
+
+            L402ChallengeService service = createService(createTrackingRootKeyStore());
+            L402ChallengeResult result = service.createChallenge(request, configWithBlank);
+
+            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
+            assertThat(macaroon.caveats())
+                    .noneMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities"));
+        }
+
+        private Macaroon deserializeMacaroon(String base64) {
+            byte[] bytes = Base64.getDecoder().decode(base64);
+            return MacaroonSerializer.deserializeV2(bytes);
         }
     }
 

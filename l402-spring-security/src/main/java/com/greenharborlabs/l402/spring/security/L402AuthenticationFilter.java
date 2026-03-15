@@ -1,5 +1,7 @@
 package com.greenharborlabs.l402.spring.security;
 
+import com.greenharborlabs.l402.spring.L402EndpointConfig;
+import com.greenharborlabs.l402.spring.L402EndpointRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,10 +39,14 @@ public final class L402AuthenticationFilter extends OncePerRequestFilter {
             Pattern.compile("(?:LSAT|L402) ([A-Za-z0-9+/=,]{1,8192}):([a-fA-F0-9]{64})");
 
     private final AuthenticationManager authenticationManager;
+    private final L402EndpointRegistry endpointRegistry;
 
-    public L402AuthenticationFilter(AuthenticationManager authenticationManager) {
+    public L402AuthenticationFilter(AuthenticationManager authenticationManager,
+                                     L402EndpointRegistry endpointRegistry) {
         this.authenticationManager = Objects.requireNonNull(authenticationManager,
                 "authenticationManager must not be null");
+        this.endpointRegistry = Objects.requireNonNull(endpointRegistry,
+                "endpointRegistry must not be null");
     }
 
     @Override
@@ -64,7 +70,8 @@ public final class L402AuthenticationFilter extends OncePerRequestFilter {
         String macaroonBase64 = matcher.group(1);
         String preimageHex = matcher.group(2);
 
-        var unauthenticatedToken = new L402AuthenticationToken(macaroonBase64, preimageHex);
+        String capability = resolveCapability(request);
+        var unauthenticatedToken = new L402AuthenticationToken(macaroonBase64, preimageHex, capability);
 
         try {
             Authentication authenticated = authenticationManager.authenticate(unauthenticatedToken);
@@ -88,5 +95,29 @@ public final class L402AuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Resolves the capability for the current request by looking up the endpoint registry.
+     * Returns {@code null} (permissive) if no config is found, the capability is blank,
+     * or any error occurs during lookup.
+     */
+    private String resolveCapability(HttpServletRequest request) {
+        try {
+            L402EndpointConfig config = endpointRegistry.findConfig(
+                    request.getMethod(), request.getRequestURI());
+            if (config == null) {
+                return null;
+            }
+            String capability = config.capability();
+            if (capability == null || capability.isBlank()) {
+                return null;
+            }
+            return capability;
+        } catch (RuntimeException e) {
+            log.debug("Failed to resolve capability for {} {}; proceeding without capability enforcement",
+                    request.getMethod(), request.getRequestURI(), e);
+            return null;
+        }
     }
 }

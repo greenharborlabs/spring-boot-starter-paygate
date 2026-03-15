@@ -15,6 +15,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.ApplicationContext;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -146,13 +147,16 @@ public class L402ChallengeService {
                     log.log(System.Logger.Level.WARNING, "Failed to record invoice creation in earnings tracker: {0}", e.getMessage());
                 }
 
-                // Build MacaroonIdentifier and mint macaroon with service and expiry caveats
+                // Build MacaroonIdentifier and mint macaroon with service, capability, and expiry caveats
                 MacaroonIdentifier identifier = new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, invoice.paymentHash(), tokenId);
                 Instant validUntil = Instant.now().plusSeconds(config.timeoutSeconds());
-                List<Caveat> caveats = List.of(
-                        new Caveat("services", serviceName + ":0"),
-                        new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond()))
-                );
+                List<Caveat> caveats = new ArrayList<>();
+                caveats.add(new Caveat("services", serviceName + ":0"));
+                String capability = config.capability();
+                if (capability != null && !capability.isBlank()) {
+                    caveats.add(new Caveat(serviceName + "_capabilities", capability));
+                }
+                caveats.add(new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
                 Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
 
                 // Serialize and encode

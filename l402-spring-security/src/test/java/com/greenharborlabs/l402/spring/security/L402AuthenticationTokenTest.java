@@ -120,6 +120,92 @@ class L402AuthenticationTokenTest {
         assertThat(token.getAttributes()).containsKey("tokenId");
     }
 
+    @Test
+    void authenticatedTokenMapsCapabilitiesToAuthorities() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("test-service_capabilities", "search,analyze")
+        ));
+
+        var token = L402AuthenticationToken.authenticated(credential, "test-service");
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_L402", "L402_CAPABILITY_search", "L402_CAPABILITY_analyze");
+    }
+
+    @Test
+    void authenticatedTokenWithNoCapabilitiesCaveatHasOnlyRoleL402() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("other_key", "value")
+        ));
+
+        var token = L402AuthenticationToken.authenticated(credential, "svc");
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactly("ROLE_L402");
+    }
+
+    @Test
+    void caveatRejectsEmptyCapabilitiesValue() {
+        assertThatThrownBy(() -> new Caveat("svc_capabilities", ""))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("value must not be null, empty, or blank");
+    }
+
+    @Test
+    void authenticatedTokenDeduplicatesCapabilities() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("svc_capabilities", "search,search")
+        ));
+
+        var token = L402AuthenticationToken.authenticated(credential, "svc");
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_L402", "L402_CAPABILITY_search");
+    }
+
+    @Test
+    void authenticatedTokenHandlesMalformedCapabilitiesValue() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("svc_capabilities", "search,,analyze,")
+        ));
+
+        var token = L402AuthenticationToken.authenticated(credential, "svc");
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_L402", "L402_CAPABILITY_search", "L402_CAPABILITY_analyze");
+    }
+
+    @Test
+    void authenticatedTokenWithNullServiceNameSkipsCapabilityExtraction() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("null_capabilities", "search")
+        ));
+
+        var token = L402AuthenticationToken.authenticated(credential, null);
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactly("ROLE_L402");
+    }
+
+    @Test
+    void authenticatedTokenDeduplicatesAcrossMultipleCapabilityCaveats() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("svc_capabilities", "search,read"),
+                new Caveat("svc_capabilities", "read,write")
+        ));
+
+        var token = L402AuthenticationToken.authenticated(credential, "svc");
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_L402", "L402_CAPABILITY_search", "L402_CAPABILITY_read", "L402_CAPABILITY_write");
+    }
+
     private L402Credential createTestCredential(List<Caveat> caveats) {
         byte[] paymentHash = new byte[32];
         byte[] tokenIdBytes = new byte[32];
