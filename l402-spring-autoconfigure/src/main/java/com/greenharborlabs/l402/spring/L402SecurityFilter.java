@@ -5,6 +5,7 @@ import com.greenharborlabs.l402.core.lightning.Invoice;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
 import com.greenharborlabs.l402.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.Caveat;
+import com.greenharborlabs.l402.core.macaroon.KeyMaterial;
 import com.greenharborlabs.l402.core.macaroon.Macaroon;
 import com.greenharborlabs.l402.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.l402.core.macaroon.MacaroonMinter;
@@ -281,59 +282,65 @@ public class L402SecurityFilter implements Filter {
                                                L402EndpointConfig config)
             throws IOException {
 
-        // Generate root key and tokenId atomically
-        RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey();
-        byte[] rootKey = generationResult.rootKey().value();
-        byte[] tokenId = generationResult.tokenId();
+        // Generate root key and tokenId atomically; try-with-resources ensures
+        // SensitiveBytes.destroy() is called even if an exception is thrown.
+        try (RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey()) {
+            byte[] rootKey = generationResult.rootKey().value();
+            try {
+                byte[] tokenId = generationResult.tokenId();
 
-        // Resolve effective price: dynamic strategy overrides static annotation value
-        long effectivePrice = resolvePrice(request, config);
+                // Resolve effective price: dynamic strategy overrides static annotation value
+                long effectivePrice = resolvePrice(request, config);
 
-        // Create Lightning invoice
-        Invoice invoice = lightningBackend.createInvoice(effectivePrice, config.description());
+                // Create Lightning invoice
+                Invoice invoice = lightningBackend.createInvoice(effectivePrice, config.description());
 
-        // Record invoice creation in earnings tracker
-        try {
-            if (earningsTracker != null) { earningsTracker.recordInvoiceCreated(); }
-        } catch (Exception e) {
-            log.log(System.Logger.Level.WARNING, "Failed to record invoice creation in earnings tracker: {0}", e.getMessage());
+                // Record invoice creation in earnings tracker
+                try {
+                    if (earningsTracker != null) { earningsTracker.recordInvoiceCreated(); }
+                } catch (Exception e) {
+                    log.log(System.Logger.Level.WARNING, "Failed to record invoice creation in earnings tracker: {0}", e.getMessage());
+                }
+
+                // Build MacaroonIdentifier and mint macaroon with service and expiry caveats
+                MacaroonIdentifier identifier = new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, invoice.paymentHash(), tokenId);
+                Instant validUntil = Instant.now().plusSeconds(config.timeoutSeconds());
+                List<Caveat> caveats = List.of(
+                        new Caveat("services", serviceName + ":0"),
+                        new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond()))
+                );
+                Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
+
+                // Serialize and encode
+                byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
+                String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
+
+                // Build response — sanitize bolt11 to prevent header injection and JSON breaking
+                String safeBolt11Header = sanitizeBolt11ForHeader(invoice.bolt11());
+                String wwwAuth = "L402 version=\"0\", token=\"" + macaroonBase64
+                        + "\", macaroon=\"" + macaroonBase64
+                        + "\", invoice=\"" + safeBolt11Header + "\"";
+
+                response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+                response.setHeader("WWW-Authenticate", wwwAuth);
+                response.setContentType("application/json");
+
+                // In test mode the backend includes the preimage on the PENDING invoice so
+                // users can complete the full L402 flow with curl. Real backends never set
+                // preimage on PENDING invoices, so this field only appears in test mode.
+                String testPreimageField = "";
+                byte[] invoicePreimage = invoice.preimage();
+                if (invoicePreimage != null) {
+                    testPreimageField = ", \"test_preimage\": \"" + HexFormat.of().formatHex(invoicePreimage) + "\"";
+                }
+
+                response.getWriter().write("""
+                        {"code": 402, "message": "Payment required", "price_sats": %d, "description": "%s", "invoice": "%s"%s}"""
+                        .formatted(effectivePrice, JsonEscaper.escape(config.description()), JsonEscaper.escape(invoice.bolt11()), testPreimageField));
+            } finally {
+                KeyMaterial.zeroize(rootKey);
+            }
         }
-
-        // Build MacaroonIdentifier and mint macaroon with service and expiry caveats
-        MacaroonIdentifier identifier = new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, invoice.paymentHash(), tokenId);
-        Instant validUntil = Instant.now().plusSeconds(config.timeoutSeconds());
-        List<Caveat> caveats = List.of(
-                new Caveat("services", serviceName + ":0"),
-                new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond()))
-        );
-        Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
-
-        // Serialize and encode
-        byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-        String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-
-        // Build response — sanitize bolt11 to prevent header injection and JSON breaking
-        String safeBolt11Header = sanitizeBolt11ForHeader(invoice.bolt11());
-        String wwwAuth = "L402 version=\"0\", token=\"" + macaroonBase64
-                + "\", macaroon=\"" + macaroonBase64
-                + "\", invoice=\"" + safeBolt11Header + "\"";
-
-        response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-        response.setHeader("WWW-Authenticate", wwwAuth);
-        response.setContentType("application/json");
-
-        // In test mode the backend includes the preimage on the PENDING invoice so
-        // users can complete the full L402 flow with curl. Real backends never set
-        // preimage on PENDING invoices, so this field only appears in test mode.
-        String testPreimageField = "";
-        byte[] invoicePreimage = invoice.preimage();
-        if (invoicePreimage != null) {
-            testPreimageField = ", \"test_preimage\": \"" + HexFormat.of().formatHex(invoicePreimage) + "\"";
-        }
-
-        response.getWriter().write("""
-                {"code": 402, "message": "Payment required", "price_sats": %d, "description": "%s", "invoice": "%s"%s}"""
-                .formatted(effectivePrice, JsonEscaper.escape(config.description()), JsonEscaper.escape(invoice.bolt11()), testPreimageField));
     }
 
     /**
