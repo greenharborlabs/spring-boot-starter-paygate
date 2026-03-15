@@ -1,4 +1,4 @@
-package com.greenharborlabs.l402.spring;
+package com.greenharborlabs.l402.lightning.lnd;
 
 import io.grpc.CallOptions;
 import io.grpc.Channel;
@@ -12,14 +12,17 @@ import io.grpc.MethodDescriptor;
  * gRPC {@link ClientInterceptor} that attaches an LND macaroon as metadata
  * on every outgoing call.
  */
-class MacaroonClientInterceptor implements ClientInterceptor {
+public class MacaroonClientInterceptor implements ClientInterceptor {
 
     private static final Metadata.Key<String> MACAROON_KEY =
             Metadata.Key.of("macaroon", Metadata.ASCII_STRING_MARSHALLER);
 
     private final String macaroonHex;
 
-    MacaroonClientInterceptor(String macaroonHex) {
+    public MacaroonClientInterceptor(String macaroonHex) {
+        if (macaroonHex == null) {
+            throw new IllegalArgumentException("macaroonHex must not be null");
+        }
         this.macaroonHex = macaroonHex;
     }
 

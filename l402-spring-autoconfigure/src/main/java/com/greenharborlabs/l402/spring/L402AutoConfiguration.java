@@ -312,7 +312,7 @@ public class L402AutoConfiguration {
                     byte[] macaroonBytes = java.nio.file.Files.readAllBytes(
                             Path.of(lnd.getMacaroonPath()));
                     String macaroonHex = java.util.HexFormat.of().formatHex(macaroonBytes);
-                    builder.intercept(new MacaroonClientInterceptor(macaroonHex));
+                    builder.intercept(new com.greenharborlabs.l402.lightning.lnd.MacaroonClientInterceptor(macaroonHex));
                 }
                 return builder.build();
             } catch (java.io.IOException e) {
