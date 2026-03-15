@@ -93,6 +93,26 @@ public class SecurityConfig {
 
                 .build();
     }
+
+    // --- Capability-Based Authorization with @PreAuthorize ---
+    //
+    // When endpoints are annotated with @L402Protected(capability = "analyze"),
+    // the minted macaroon includes a {serviceName}_capabilities caveat, and
+    // the authenticated L402AuthenticationToken carries L402_CAPABILITY_*
+    // GrantedAuthority entries. Use @PreAuthorize to enforce them:
+    //
+    //   @PreAuthorize("hasAuthority('L402_CAPABILITY_analyze')")
+    //   @GetMapping("/api/v1/analyze")
+    //   public AnalysisResult analyze() { ... }
+    //
+    //   // Combined: require both L402 authentication AND a specific capability
+    //   @PreAuthorize("hasRole('L402') and hasAuthority('L402_CAPABILITY_search')")
+    //   @GetMapping("/api/v1/search")
+    //   public SearchResult search() { ... }
+    //
+    // If no capability is configured on the endpoint (@L402Protected without
+    // capability, or capability = ""), the token has only ROLE_L402 and
+    // capability checks are permissive (backward-compatible).
 }
 
 */

@@ -17,6 +17,7 @@ If you do not use Spring Security, you do not need this module. The base `l402-s
 - [Path-Based Protection Patterns](#path-based-protection-patterns)
 - [Accessing L402 Credentials in Controllers](#accessing-l402-credentials-in-controllers)
 - [SpEL and @PreAuthorize](#spel-and-preauthorize)
+- [Capability Enforcement](#capability-enforcement)
 - [Comparison with Non-Spring-Security Approach](#comparison-with-non-spring-security-approach)
 - [Testing](#testing)
 
@@ -125,15 +126,20 @@ L402AuthenticationFilter (OncePerRequestFilter)
      |-- Header present, matches L402/LSAT pattern?
      |       |
      |       v
+     |   Resolve capability from L402EndpointRegistry (if configured)
+     |       |
+     |       v
      |   AuthenticationManager.authenticate(unauthenticatedToken)
      |       |
      |       v
      |   L402AuthenticationProvider
      |       |
      |       |-- Reconstructs "L402 <macaroon>:<preimage>" header
-     |       |-- Delegates to L402Validator.validate()
+     |       |-- Builds L402VerificationContext with requestedCapability
+     |       |-- Delegates to L402Validator.validate() (includes CapabilitiesCaveatVerifier)
      |       |-- Returns authenticated L402AuthenticationToken with:
      |       |     - ROLE_L402 authority
+     |       |     - L402_CAPABILITY_* authorities (from capabilities caveat)
      |       |     - tokenId as principal
      |       |     - L402Credential as credentials
      |       |     - Caveat-derived attributes map
@@ -167,7 +173,7 @@ The token has two states:
 | `tokenId` | Hex-encoded 32-byte token identifier |
 | `serviceName` | Service name from configuration (`l402.service-name`) |
 | `authenticated` | `true` |
-| `authorities` | `[ROLE_L402]` |
+| `authorities` | `[ROLE_L402]` + `[L402_CAPABILITY_*]` for each capability in the `{serviceName}_capabilities` caveat |
 | `principal` | token ID string |
 | `credentials` | `L402Credential` object |
 | `attributes` | Map of caveat key-value pairs plus `tokenId` and `serviceName` |
@@ -396,6 +402,57 @@ public class MethodSecurityConfig {
 
 ---
 
+## Capability Enforcement
+
+L402 tokens can carry fine-grained capabilities that restrict what a paid credential is allowed to do. This builds on the role-based `ROLE_L402` authority with per-endpoint capability checks.
+
+### How Capabilities Are Minted
+
+When an endpoint is configured with a capability via `@L402Protected(capability = "analyze")`, the `L402ChallengeService` includes a `{serviceName}_capabilities` caveat in the minted macaroon. For example, with `l402.service-name=myapi`:
+
+```
+myapi_capabilities = analyze
+```
+
+Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@L402Protected` without `capability`, or `capability = ""`), no capabilities caveat is added.
+
+### How Capabilities Are Enforced
+
+Capability enforcement happens at two levels:
+
+1. **Macaroon verification (core layer):** The `L402AuthenticationProvider` builds an `L402VerificationContext` with the `requestedCapability` resolved from the endpoint's `@L402Protected` configuration. The `CapabilitiesCaveatVerifier` checks that the requested capability is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
+
+2. **Spring Security authorization (security layer):** The `L402AuthenticationToken.authenticated()` factory method parses the `{serviceName}_capabilities` caveat and maps each capability to a `GrantedAuthority` named `L402_CAPABILITY_{name}`. These authorities are available to `@PreAuthorize` expressions and `authorizeHttpRequests` rules.
+
+### SpEL Examples
+
+```java
+// Require a specific capability
+@PreAuthorize("hasAuthority('L402_CAPABILITY_analyze')")
+@GetMapping("/api/v1/analyze")
+public AnalysisResult analyze() { ... }
+
+// Require role + capability
+@PreAuthorize("hasRole('L402') and hasAuthority('L402_CAPABILITY_search')")
+@GetMapping("/api/v1/search")
+public SearchResult search() { ... }
+
+// Check capability via attributes map (alternative)
+@PreAuthorize("hasRole('L402') and authentication.getAttribute('myapi_capabilities').contains('analyze')")
+@GetMapping("/api/v1/analyze-alt")
+public AnalysisResult analyzeAlt() { ... }
+```
+
+### Backward Compatibility
+
+Capability enforcement is fully backward-compatible:
+
+- **Tokens without capabilities caveats** receive only `ROLE_L402`. No `L402_CAPABILITY_*` authorities are added. Existing tokens continue to work for endpoints that do not require a specific capability.
+- **Endpoints without a capability configured** (`@L402Protected` without `capability`) do not trigger capability verification. The `CapabilitiesCaveatVerifier` receives a `null` requested capability and passes without checking.
+- **Existing `hasRole('L402')` rules** are unaffected. Capability authorities are additive.
+
+---
+
 ## Comparison with Non-Spring-Security Approach
 
 | Aspect | `l402-spring-autoconfigure` (`L402SecurityFilter`) | `l402-spring-security` |
@@ -494,7 +551,8 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 
 | Test Case | What It Verifies |
 |-----------|-----------------|
-| `constructorRejectsNullAuthenticationManager` | Null guard on constructor |
+| `constructorRejectsNullAuthenticationManager` | Null guard on authentication manager parameter |
+| `constructorRejectsNullEndpointRegistry` | Null guard on endpoint registry parameter |
 | `skipsWhenNoAuthorizationHeader` | No header: filter chain continues, no authentication attempt |
 | `skipsWhenBlankAuthorizationHeader` | Blank header: filter chain continues |
 | `skipsWhenNonL402AuthorizationHeader` | Bearer/Basic headers: filter chain continues (pass-through to other filters) |
@@ -504,7 +562,18 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `skipsWhenPreimageNotHex` | Invalid preimage format: filter chain continues without authentication attempt |
 | `extractsUppercaseHexPreimageAndAuthenticates` | Uppercase hex preimage accepted |
 | `extractsMixedCaseHexPreimageAndAuthenticates` | Mixed-case hex preimage accepted |
+| `returns503WhenRuntimeExceptionThrown` | Runtime exception: 503 status, JSON error body, security context cleared, filter chain short-circuited |
 | `skipsWhenMacaroonEmpty` | Empty macaroon field: filter chain continues |
+| `skipsWhenMacaroonExceedsMaxLength` | Oversized macaroon (>8192 chars): filter chain continues without authentication attempt |
+| `skipsWhenMacaroonContainsInvalidCharacters` | Macaroon with invalid characters: filter chain continues without authentication attempt |
+| `extractsMultiTokenHeaderAndAuthenticates` | Comma-separated multi-token macaroon: extracted as single raw value, authenticates |
+| `skipsWhenMultiTokenExceedsMaxLength` | Oversized multi-token macaroon: filter chain continues without authentication attempt |
+| `passesCapabilityFromRegistryToToken` | Capability from `L402EndpointRegistry` is set on the unauthenticated token |
+| `passesNullCapabilityWhenConfigNotFound` | No registry config: null capability (permissive) |
+| `passesNullCapabilityWhenConfigHasEmptyCapability` | Empty capability string: null capability (permissive) |
+| `passesNullCapabilityWhenConfigHasBlankCapability` | Blank capability string: null capability (permissive) |
+| `passesNullCapabilityWhenRegistryThrowsException` | Registry exception: null capability, authentication proceeds |
+| `passesNullCapabilityWhenConfigHasNullCapability` | Null capability in config: null capability (permissive) |
 
 `L402AuthenticationProviderTest` covers:
 
@@ -518,20 +587,30 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `throwsBadCredentialsOnValidationFailure` | `L402Exception` wrapped in `BadCredentialsException` with original cause preserved |
 | `throwsBadCredentialsWhenRawCredentialsMissing` | Already-authenticated token (no raw credentials) rejected |
 | `allowsNullServiceName` | Null service name is accepted, `serviceName` attribute omitted |
+| `passesRequestedCapabilityThroughToValidatorContext` | Requested capability from token is forwarded to `L402VerificationContext` |
+| `passesNullCapabilityWhenNotSpecified` | Null capability when token has no requested capability |
+| `capabilityMismatchResultsInBadCredentialsException` | Capability mismatch from validator is wrapped in `BadCredentialsException` |
 
 `L402AuthenticationTokenTest` covers:
 
 | Test Case | What It Verifies |
 |-----------|-----------------|
 | `unauthenticatedTokenHoldsRawCredentials` | Unauthenticated state: raw values stored, no tokenId/serviceName/authorities |
-| `unauthenticatedTokenPrincipalIsRawMacaroon` | Principal is raw macaroon, credentials is `macaroon:preimage` |
+| `unauthenticatedTokenRedactsSensitiveValues` | Unauthenticated token redacts raw credentials in `getPrincipal()` and `getCredentials()` |
 | `unauthenticatedTokenRejectsNullMacaroon` | Null guard on macaroon |
 | `unauthenticatedTokenRejectsNullPreimage` | Null guard on preimage |
 | `authenticatedTokenExposesCredentialDetails` | Authenticated state: correct tokenId, serviceName, principal, credential |
 | `authenticatedTokenHasL402Authority` | `ROLE_L402` authority present |
 | `authenticatedTokenExtractsCaveatAttributes` | Caveat key-value pairs extracted into attributes map |
 | `builtInAttributesCannotBeOverwrittenByCaveats` | Attacker-controlled caveat keys `tokenId`/`serviceName` overwritten by trusted values |
-| `authenticatedTokenWithNullServiceName` | Null service name omitted from attributes, tokenId still present |
+| `authenticatedTokenWithNullServiceName` | Null service name omitted from attributes map |
+| `authenticatedTokenMapsCapabilitiesToAuthorities` | Capabilities caveat parsed into `L402_CAPABILITY_*` authorities |
+| `authenticatedTokenWithNoCapabilitiesCaveatHasOnlyRoleL402` | No capabilities caveat: only `ROLE_L402` authority |
+| `caveatRejectsEmptyCapabilitiesValue` | Caveat constructor rejects empty capabilities value |
+| `authenticatedTokenDeduplicatesCapabilities` | Duplicate capabilities in one caveat deduplicated |
+| `authenticatedTokenHandlesMalformedCapabilitiesValue` | Trailing commas and whitespace in capabilities handled |
+| `authenticatedTokenWithNullServiceNameSkipsCapabilityExtraction` | Null service name: no capability extraction attempted |
+| `authenticatedTokenDeduplicatesAcrossMultipleCapabilityCaveats` | Multiple capabilities caveats are merged and deduplicated into `L402_CAPABILITY_*` authorities |
 
 ### Writing Your Own Tests
 
