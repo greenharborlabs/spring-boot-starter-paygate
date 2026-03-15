@@ -122,6 +122,47 @@ class AutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("spring-security mode without Spring Security on classpath fails startup")
+    void springSecurityModeWithoutSpringSecurityFails() {
+        // Spring Security is not on this module's test classpath, so spring-security mode
+        // should cause a validation failure at startup.
+        contextRunner
+                .withPropertyValues("l402.security-mode=spring-security")
+                .run(context ->
+                        assertThat(context).hasFailed());
+    }
+
+    @Test
+    @DisplayName("FilterRegistrationBean created in servlet mode")
+    void filterRegistrationCreatedInServletMode() {
+        contextRunner
+                .withPropertyValues("l402.security-mode=servlet")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(L402SecurityFilter.class);
+                    assertThat(context).hasBean("l402SecurityFilterRegistration");
+                });
+    }
+
+    @Test
+    @DisplayName("invalid security-mode causes startup failure")
+    void invalidSecurityModeFailsStartup() {
+        contextRunner
+                .withPropertyValues("l402.security-mode=bogus")
+                .run(context ->
+                        assertThat(context).hasFailed());
+    }
+
+    @Test
+    @DisplayName("L402SecurityModeStartupValidator bean is created")
+    void securityModeValidatorBeanCreated() {
+        contextRunner
+                .withPropertyValues("l402.security-mode=servlet")
+                .run(context ->
+                        assertThat(context).hasSingleBean(
+                                L402AutoConfiguration.L402SecurityModeStartupValidator.class));
+    }
+
+    @Test
     @DisplayName("RootKeyStore is InMemoryRootKeyStore when l402.root-key-store=memory")
     void inMemoryRootKeyStoreWhenMemoryMode() {
         contextRunner.run(context -> {

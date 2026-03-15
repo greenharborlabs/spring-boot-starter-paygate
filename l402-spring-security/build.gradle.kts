@@ -1,5 +1,6 @@
 dependencies {
     api(project(":l402-core"))
+    implementation(project(":l402-spring-autoconfigure"))
 
     implementation("org.springframework.boot:spring-boot-autoconfigure")
     implementation("org.springframework.security:spring-security-core")

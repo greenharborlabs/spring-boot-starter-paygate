@@ -23,8 +23,10 @@ import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 import java.nio.file.Path;
@@ -41,6 +43,34 @@ import java.util.List;
 @ConditionalOnProperty(name = "l402.enabled", havingValue = "true", matchIfMissing = false)
 @EnableConfigurationProperties(L402Properties.class)
 public class L402AutoConfiguration {
+
+    private static final System.Logger LOG = System.getLogger(L402AutoConfiguration.class.getName());
+
+    @Bean
+    L402SecurityModeStartupValidator l402SecurityModeStartupValidator(Environment environment) {
+        String configured = L402SecurityModeResolver.getConfiguredMode(environment);
+        L402SecurityModeResolver.validate(configured);
+        String resolved = L402SecurityModeResolver.resolveFromConfigured(configured);
+
+        LOG.log(System.Logger.Level.INFO,
+                "L402 security mode resolved to: {0} (configured: {1})", resolved, configured);
+
+        if (L402SecurityModeResolver.MODE_SERVLET.equals(resolved)
+                && L402SecurityModeResolver.isSpringSecurityPresent()) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "Spring Security is on the classpath but L402 is using servlet filter mode. "
+                            + "L402AuthenticationFilter and L402AuthenticationEntryPoint will not be active.");
+        }
+
+        return new L402SecurityModeStartupValidator(resolved, configured);
+    }
+
+    /**
+     * Marker bean that records the resolved security mode and ensures validation
+     * runs at startup.
+     */
+    record L402SecurityModeStartupValidator(String resolvedMode, String configuredMode) {
+    }
 
     @Bean
     @ConditionalOnMissingBean
@@ -171,6 +201,7 @@ public class L402AutoConfiguration {
     }
 
     @Bean
+    @Conditional(L402ServletModeCondition.class)
     public FilterRegistrationBean<L402SecurityFilter> l402SecurityFilterRegistration(
             L402SecurityFilter l402SecurityFilter) {
         var registration = new FilterRegistrationBean<>(l402SecurityFilter);

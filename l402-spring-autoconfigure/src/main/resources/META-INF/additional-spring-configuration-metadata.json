@@ -53,6 +53,12 @@
       "defaultValue": 10000
     },
     {
+      "name": "l402.security-mode",
+      "type": "java.lang.String",
+      "description": "Security mode controlling which L402 authentication path is active. 'auto' (default) detects Spring Security on the classpath and uses spring-security mode if present. 'servlet' forces the L402SecurityFilter servlet path. 'spring-security' forces the Spring Security integration path.",
+      "defaultValue": "auto"
+    },
+    {
       "name": "l402.test-mode",
       "type": "java.lang.Boolean",
       "description": "Enable test mode which uses an in-memory Lightning backend that auto-settles invoices. Must NOT be used in production. When enabled, no real Lightning node connection is required.",
@@ -110,6 +116,23 @@
     }
   ],
   "hints": [
+    {
+      "name": "l402.security-mode",
+      "values": [
+        {
+          "value": "auto",
+          "description": "Auto-detect: use spring-security mode if Spring Security is on the classpath, otherwise use servlet mode."
+        },
+        {
+          "value": "servlet",
+          "description": "Force servlet filter mode. L402SecurityFilter handles all authentication and challenge issuance."
+        },
+        {
+          "value": "spring-security",
+          "description": "Force Spring Security mode. Uses L402AuthenticationFilter and L402AuthenticationEntryPoint within the Spring Security filter chain."
+        }
+      ]
+    },
     {
       "name": "l402.backend",
       "values": [

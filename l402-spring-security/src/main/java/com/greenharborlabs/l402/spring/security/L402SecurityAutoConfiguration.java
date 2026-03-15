@@ -1,6 +1,9 @@
 package com.greenharborlabs.l402.spring.security;
 
 import com.greenharborlabs.l402.core.protocol.L402Validator;
+import com.greenharborlabs.l402.spring.L402ChallengeService;
+import com.greenharborlabs.l402.spring.L402EndpointRegistry;
+import com.greenharborlabs.l402.spring.L402SpringSecurityModeCondition;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -8,6 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 
@@ -30,6 +34,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 @ConditionalOnProperty(name = "l402.enabled", havingValue = "true")
 @ConditionalOnClass({EnableWebSecurity.class, L402Validator.class})
 @ConditionalOnBean(L402Validator.class)
+@Conditional(L402SpringSecurityModeCondition.class)
 public class L402SecurityAutoConfiguration {
 
     @Bean
@@ -45,5 +50,13 @@ public class L402SecurityAutoConfiguration {
     @ConditionalOnBean(AuthenticationManager.class)
     public L402AuthenticationFilter l402AuthenticationFilter(AuthenticationManager authenticationManager) {
         return new L402AuthenticationFilter(authenticationManager);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(L402AuthenticationEntryPoint.class)
+    public L402AuthenticationEntryPoint l402AuthenticationEntryPoint(
+            L402ChallengeService l402ChallengeService,
+            L402EndpointRegistry l402EndpointRegistry) {
+        return new L402AuthenticationEntryPoint(l402ChallengeService, l402EndpointRegistry);
     }
 }

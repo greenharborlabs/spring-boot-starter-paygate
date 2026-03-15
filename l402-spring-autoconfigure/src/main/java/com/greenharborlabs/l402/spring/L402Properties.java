@@ -34,6 +34,8 @@ public class L402Properties {
 
     private int credentialCacheMaxSize = 10000;
 
+    private String securityMode = "auto";
+
     private boolean testMode = false;
 
     private boolean trustForwardedHeaders = false;
@@ -148,6 +150,14 @@ public class L402Properties {
 
     public void setCredentialCacheMaxSize(int credentialCacheMaxSize) {
         this.credentialCacheMaxSize = credentialCacheMaxSize;
+    }
+
+    public String getSecurityMode() {
+        return securityMode;
+    }
+
+    public void setSecurityMode(String securityMode) {
+        this.securityMode = securityMode;
     }
 
     public boolean isTestMode() {
