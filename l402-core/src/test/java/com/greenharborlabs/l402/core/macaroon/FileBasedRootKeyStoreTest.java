@@ -281,6 +281,39 @@ class FileBasedRootKeyStoreTest {
     }
 
     @Nested
+    @DisplayName("generateRootKey zeroization")
+    class GenerateRootKeyZeroization {
+
+        @Test
+        @DisplayName("after generateRootKey, getRootKey still returns correct key (cached copy not affected)")
+        void cachedCopyNotAffectedByLocalZeroization() {
+            RootKeyStore.GenerationResult result = store.generateRootKey();
+            byte[] expectedKey = result.rootKey().value();
+            byte[] keyId = result.tokenId();
+
+            SensitiveBytes retrieved = store.getRootKey(keyId);
+
+            assertThat(retrieved).isNotNull();
+            assertThat(retrieved.value()).isEqualTo(expectedKey);
+        }
+
+        @Test
+        @DisplayName("after generateRootKey, fresh store reads correct key from disk (disk copy not affected)")
+        void diskCopyNotAffectedByLocalZeroization() {
+            RootKeyStore.GenerationResult result = store.generateRootKey();
+            byte[] expectedKey = result.rootKey().value();
+            byte[] keyId = result.tokenId();
+
+            // Fresh store with empty cache reads from disk
+            FileBasedRootKeyStore freshStore = new FileBasedRootKeyStore(tempDir);
+            SensitiveBytes retrieved = freshStore.getRootKey(keyId);
+
+            assertThat(retrieved).isNotNull();
+            assertThat(retrieved.value()).isEqualTo(expectedKey);
+        }
+    }
+
+    @Nested
     @DisplayName("cache eviction")
     class CacheEviction {
 

@@ -33,7 +33,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
             throw new IllegalArgumentException("Key material must not be empty");
         }
         this.data = Arrays.copyOf(raw, raw.length);
-        Arrays.fill(raw, (byte) 0);
+        KeyMaterial.zeroize(raw);
     }
 
     /**
@@ -55,7 +55,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
     @Override
     public synchronized void destroy() {
         if (!destroyed) {
-            Arrays.fill(data, (byte) 0);
+            KeyMaterial.zeroize(data);
             destroyed = true;
         }
     }

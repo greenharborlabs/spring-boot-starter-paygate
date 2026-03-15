@@ -33,8 +33,13 @@ public final class MacaroonCrypto {
      * The result is wrapped in a new {@link SensitiveBytes} instance.
      */
     public static SensitiveBytes deriveKey(SensitiveBytes rootKey) {
-        byte[] derived = deriveKey(rootKey.value());
-        return new SensitiveBytes(derived);
+        byte[] raw = rootKey.value();
+        try {
+            byte[] derived = deriveKey(raw);
+            return new SensitiveBytes(derived);
+        } finally {
+            KeyMaterial.zeroize(raw);
+        }
     }
 
     /**
@@ -66,7 +71,12 @@ public final class MacaroonCrypto {
      * the {@link SecretKeySpec} created from that copy is destroyed in the delegate method.
      */
     public static byte[] hmac(SensitiveBytes key, byte[] data) {
-        return hmac(key.value(), data);
+        byte[] raw = key.value();
+        try {
+            return hmac(raw, data);
+        } finally {
+            KeyMaterial.zeroize(raw);
+        }
     }
 
     /**

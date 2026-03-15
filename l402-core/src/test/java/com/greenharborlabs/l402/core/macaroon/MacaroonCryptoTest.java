@@ -376,6 +376,34 @@ class MacaroonCryptoTest {
         }
 
         @Test
+        @DisplayName("deriveKey(SensitiveBytes) does not destroy the source — source remains usable")
+        void deriveKeyDoesNotDestroySource() {
+            byte[] rootKey = new byte[32];
+            new SecureRandom().nextBytes(rootKey);
+            byte[] snapshot = rootKey.clone();
+            try (var sb = new SensitiveBytes(rootKey.clone())) {
+                try (var ignored = MacaroonCrypto.deriveKey(sb)) {
+                    // Source must still be usable after the call
+                    assertThat(sb.value()).isEqualTo(snapshot);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("hmac(SensitiveBytes, byte[]) does not destroy the source — source remains usable")
+        void hmacDoesNotDestroySource() {
+            byte[] key = new byte[32];
+            new SecureRandom().nextBytes(key);
+            byte[] snapshot = key.clone();
+            byte[] data = "test-data".getBytes(StandardCharsets.UTF_8);
+            try (var sb = new SensitiveBytes(key.clone())) {
+                MacaroonCrypto.hmac(sb, data);
+                // Source must still be usable after the call
+                assertThat(sb.value()).isEqualTo(snapshot);
+            }
+        }
+
+        @Test
         @DisplayName("deriveKey(SensitiveBytes) throws ISE when input is destroyed")
         void deriveKeyThrowsWhenDestroyed() {
             var sb = new SensitiveBytes(new byte[]{1, 2, 3});

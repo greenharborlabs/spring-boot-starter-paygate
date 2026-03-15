@@ -1,22 +1,40 @@
 package com.greenharborlabs.l402.core.lightning;
 
+import com.greenharborlabs.l402.core.macaroon.KeyMaterial;
 import com.greenharborlabs.l402.core.macaroon.MacaroonCrypto;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.HexFormat;
+import javax.security.auth.Destroyable;
 
 /**
  * A 32-byte payment preimage used in Lightning Network HTLC settlement.
  * The corresponding payment hash is SHA-256(preimage).
+ *
+ * <p>Implements {@link AutoCloseable} and {@link Destroyable} so that the
+ * sensitive preimage bytes can be zeroized when no longer needed. After
+ * {@link #destroy()} or {@link #close()}, all accessors throw
+ * {@link IllegalStateException}.
  */
-public record PaymentPreimage(byte[] value) {
+public final class PaymentPreimage implements AutoCloseable, Destroyable {
 
     private static final int PREIMAGE_LENGTH = 32;
     private static final int SHA256_LENGTH = 32;
     private static final HexFormat HEX = HexFormat.of();
 
-    public PaymentPreimage {
+    private final byte[] data;
+    private volatile boolean destroyed;
+
+    /**
+     * Creates a new {@code PaymentPreimage} from the given 32-byte value.
+     * The input array is defensively copied; the caller's array is NOT zeroized.
+     *
+     * @param value the 32-byte preimage (must not be null)
+     * @throws IllegalArgumentException if {@code value} is null or not exactly 32 bytes
+     */
+    public PaymentPreimage(byte[] value) {
         if (value == null) {
             throw new IllegalArgumentException("Preimage value must not be null");
         }
@@ -24,19 +42,33 @@ public record PaymentPreimage(byte[] value) {
             throw new IllegalArgumentException(
                     "Preimage must be exactly " + PREIMAGE_LENGTH + " bytes, got " + value.length);
         }
-        value = value.clone();
+        this.data = value.clone();
     }
 
-    @Override
+    /**
+     * Returns a defensive copy of the preimage bytes.
+     *
+     * @return a fresh copy of the internal byte array
+     * @throws IllegalStateException if this instance has been destroyed
+     */
     public byte[] value() {
-        return value.clone();
+        if (destroyed) {
+            throw new IllegalStateException("Preimage has been destroyed");
+        }
+        return Arrays.copyOf(data, data.length);
     }
 
     /**
      * Verifies that SHA-256(this preimage) equals the given payment hash,
      * using constant-time comparison to prevent timing side-channels.
+     *
+     * @throws IllegalStateException    if this instance has been destroyed
+     * @throws IllegalArgumentException if paymentHash is null or not 32 bytes
      */
     public boolean matchesHash(byte[] paymentHash) {
+        if (destroyed) {
+            throw new IllegalStateException("Preimage has been destroyed");
+        }
         if (paymentHash == null) {
             throw new IllegalArgumentException("Payment hash must not be null");
         }
@@ -44,15 +76,20 @@ public record PaymentPreimage(byte[] value) {
             throw new IllegalArgumentException(
                     "Payment hash must be exactly " + SHA256_LENGTH + " bytes, got " + paymentHash.length);
         }
-        byte[] computed = sha256(value);
+        byte[] computed = sha256(data);
         return MacaroonCrypto.constantTimeEquals(computed, paymentHash);
     }
 
     /**
      * Returns the preimage as a 64-character lowercase hex string.
+     *
+     * @throws IllegalStateException if this instance has been destroyed
      */
     public String toHex() {
-        return HEX.formatHex(value);
+        if (destroyed) {
+            throw new IllegalStateException("Preimage has been destroyed");
+        }
+        return HEX.formatHex(data);
     }
 
     /**
@@ -74,22 +111,61 @@ public record PaymentPreimage(byte[] value) {
         }
     }
 
+    /**
+     * Zeroizes the internal preimage bytes using {@link KeyMaterial#zeroize(byte[])}.
+     * Idempotent -- safe to call multiple times.
+     */
+    @Override
+    public synchronized void destroy() {
+        if (!destroyed) {
+            KeyMaterial.zeroize(data);
+            destroyed = true;
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        return destroyed;
+    }
+
+    /**
+     * Delegates to {@link #destroy()}.
+     */
+    @Override
+    public void close() {
+        destroy();
+    }
+
+    /**
+     * Constant-time equality comparison using {@link MacaroonCrypto#constantTimeEquals}.
+     * Two destroyed instances are never equal.
+     */
     @Override
     public boolean equals(Object o) {
-        return o instanceof PaymentPreimage other
-                && MacaroonCrypto.constantTimeEquals(value, other.value);
+        if (this == o) return true;
+        if (!(o instanceof PaymentPreimage other)) return false;
+        if (this.destroyed || other.destroyed) return false;
+        return MacaroonCrypto.constantTimeEquals(this.data, other.data);
     }
 
     @Override
     public int hashCode() {
-        return java.util.Arrays.hashCode(value);
+        if (destroyed) return 0;
+        return Arrays.hashCode(data);
+    }
+
+    /**
+     * Returns a safe string representation that never reveals the preimage bytes.
+     */
+    @Override
+    public String toString() {
+        return destroyed ? "PaymentPreimage[destroyed]" : "PaymentPreimage[**]";
     }
 
     private static byte[] sha256(byte[] input) {
         try {
             return MessageDigest.getInstance("SHA-256").digest(input);
         } catch (NoSuchAlgorithmException e) {
-            // SHA-256 is guaranteed by the JDK specification
             throw new AssertionError("SHA-256 not available", e);
         }
     }

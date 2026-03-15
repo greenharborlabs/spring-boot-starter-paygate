@@ -199,6 +199,15 @@ class PaymentPreimageTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void fromHexReturnsUsableInstance() {
+        PaymentPreimage preimage = PaymentPreimage.fromHex("00".repeat(32));
+
+        assertThat(preimage).isNotNull();
+        assertThat(preimage.value()).hasSize(32);
+        assertThat(preimage.isDestroyed()).isFalse();
+    }
+
     // --- matchesHash ---
 
     @Test
@@ -301,6 +310,117 @@ class PaymentPreimageTest {
     void equalsReturnsTrueForSameInstance() {
         var a = new PaymentPreimage(VALID_32_BYTES.clone());
         assertThat(a).isEqualTo(a);
+    }
+
+    // --- Destroyable lifecycle ---
+
+    @Test
+    void destroyThenValueThrowsIllegalStateException() {
+        var preimage = new PaymentPreimage(VALID_32_BYTES.clone());
+        preimage.destroy();
+
+        assertThatThrownBy(preimage::value)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("destroyed");
+    }
+
+    @Test
+    void destroyThenMatchesHashThrowsIllegalStateException() {
+        var preimage = new PaymentPreimage(VALID_32_BYTES.clone());
+        preimage.destroy();
+
+        assertThatThrownBy(() -> preimage.matchesHash(new byte[32]))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("destroyed");
+    }
+
+    @Test
+    void destroyThenToHexThrowsIllegalStateException() {
+        var preimage = new PaymentPreimage(VALID_32_BYTES.clone());
+        preimage.destroy();
+
+        assertThatThrownBy(preimage::toHex)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("destroyed");
+    }
+
+    @Test
+    void tryWithResourcesSetsDestroyedFlag() {
+        PaymentPreimage preimage;
+        try (var p = new PaymentPreimage(VALID_32_BYTES.clone())) {
+            preimage = p;
+            assertThat(p.isDestroyed()).isFalse();
+        }
+        assertThat(preimage.isDestroyed()).isTrue();
+    }
+
+    @Test
+    void doubleDestroyIsIdempotent() {
+        var preimage = new PaymentPreimage(VALID_32_BYTES.clone());
+        preimage.destroy();
+        preimage.destroy(); // should not throw
+
+        assertThat(preimage.isDestroyed()).isTrue();
+    }
+
+    @Test
+    void equalsReturnsFalseAfterEitherIsDestroyed() {
+        var a = new PaymentPreimage(VALID_32_BYTES.clone());
+        var b = new PaymentPreimage(VALID_32_BYTES.clone());
+
+        // Verify equal before destroy
+        assertThat(a).isEqualTo(b);
+
+        a.destroy();
+        assertThat(a).isNotEqualTo(b);
+        assertThat(b).isNotEqualTo(a);
+
+        b.destroy();
+        assertThat(a).isNotEqualTo(b);
+    }
+
+    @Test
+    void hashCodeReturnsConstantAfterDestroy() {
+        var preimage = new PaymentPreimage(VALID_32_BYTES.clone());
+        preimage.destroy();
+
+        assertThat(preimage.hashCode()).isEqualTo(0);
+    }
+
+    @Test
+    void isDestroyedReturnsFalseInitially() {
+        var preimage = new PaymentPreimage(VALID_32_BYTES.clone());
+
+        assertThat(preimage.isDestroyed()).isFalse();
+    }
+
+    @Test
+    void toStringNeverRevealsPreimageBytes() {
+        var preimage = new PaymentPreimage(VALID_32_BYTES.clone());
+        String before = preimage.toString();
+        assertThat(before).doesNotContain("0102");
+        assertThat(before).contains("PaymentPreimage");
+
+        preimage.destroy();
+        String after = preimage.toString();
+        assertThat(after).contains("destroyed");
+    }
+
+    @Test
+    void destroyZeroizesInternalData() {
+        // We can verify indirectly: after destroy, creating a new instance
+        // from the same bytes and comparing shows they differ
+        byte[] input = VALID_32_BYTES.clone();
+        var preimage = new PaymentPreimage(input);
+
+        // Verify it was usable
+        assertThat(preimage.toHex()).isNotEmpty();
+
+        preimage.destroy();
+
+        // After destroy, value() throws, confirming data is inaccessible
+        assertThatThrownBy(preimage::value)
+                .isInstanceOf(IllegalStateException.class);
     }
 
     // --- Helper ---

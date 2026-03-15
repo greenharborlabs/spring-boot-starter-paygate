@@ -22,15 +22,19 @@ public final class InMemoryRootKeyStore implements RootKeyStore {
     public GenerationResult generateRootKey() {
         ensureOpen();
         byte[] rootKey = new byte[KEY_LENGTH];
-        secureRandom.nextBytes(rootKey);
+        try {
+            secureRandom.nextBytes(rootKey);
 
-        byte[] tokenId = new byte[KEY_LENGTH];
-        secureRandom.nextBytes(tokenId);
+            byte[] tokenId = new byte[KEY_LENGTH];
+            secureRandom.nextBytes(tokenId);
 
-        String hexKeyId = HEX.formatHex(tokenId);
-        keys.put(hexKeyId, Arrays.copyOf(rootKey, rootKey.length));
+            String hexKeyId = HEX.formatHex(tokenId);
+            keys.put(hexKeyId, Arrays.copyOf(rootKey, rootKey.length));
 
-        return new GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
+            return new GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
+        } finally {
+            KeyMaterial.zeroize(rootKey);
+        }
     }
 
     @Override
@@ -46,7 +50,7 @@ public final class InMemoryRootKeyStore implements RootKeyStore {
         ensureOpen();
         String hexKeyId = HEX.formatHex(keyId);
         keys.computeIfPresent(hexKeyId, (_, value) -> {
-            Arrays.fill(value, (byte) 0);
+            KeyMaterial.zeroize(value);
             return null; // removes the entry
         });
     }
@@ -60,7 +64,7 @@ public final class InMemoryRootKeyStore implements RootKeyStore {
             if (closed) {
                 return;
             }
-            keys.values().forEach(value -> Arrays.fill(value, (byte) 0));
+            keys.values().forEach(KeyMaterial::zeroize);
             keys.clear();
             closed = true;
         }

@@ -23,6 +23,7 @@ public interface RootKeyStore extends Closeable {
         @Override
         public void close() {
             rootKey.close();
+            KeyMaterial.zeroize(tokenId);
         }
 
         @Override

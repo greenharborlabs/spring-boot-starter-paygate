@@ -338,6 +338,54 @@ class InMemoryRootKeyStoreTest {
         }
     }
 
+    @Nested
+    @DisplayName("generateRootKey zeroization")
+    class GenerateRootKeyZeroization {
+
+        @Test
+        @DisplayName("after generateRootKey, getRootKey still returns correct key (cached copy not affected)")
+        void cachedCopyNotAffectedByLocalZeroization() {
+            RootKeyStore.GenerationResult result = store.generateRootKey();
+            byte[] expectedKey = result.rootKey().value();
+            byte[] keyId = result.tokenId();
+
+            SensitiveBytes retrieved = store.getRootKey(keyId);
+
+            assertThat(retrieved).isNotNull();
+            assertThat(retrieved.value()).isEqualTo(expectedKey);
+        }
+    }
+
+    @Nested
+    @DisplayName("GenerationResult close zeroization")
+    class GenerationResultCloseZeroization {
+
+        @Test
+        @DisplayName("close() zeroizes tokenId — tokenId() returns all zeros after close")
+        void closeZeroizesTokenId() {
+            byte[] rootKey = {1, 2, 3, 4, 5, 6, 7, 8};
+            byte[] tokenId = {10, 20, 30, 40};
+
+            var result = new RootKeyStore.GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
+            result.close();
+
+            // After close, the internal tokenId was zeroized, so the defensive copy returns all zeros
+            byte[] afterClose = result.tokenId();
+            assertThat(afterClose).containsOnly(0);
+        }
+
+        @Test
+        @DisplayName("double close is safe — no exception on second close")
+        void doubleCloseIsSafe() {
+            byte[] rootKey = {1, 2, 3, 4};
+            byte[] tokenId = {5, 6, 7, 8};
+
+            var result = new RootKeyStore.GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
+            result.close();
+            result.close(); // should not throw
+        }
+    }
+
     // --- Test helpers ---
 
     @SuppressWarnings("unchecked")

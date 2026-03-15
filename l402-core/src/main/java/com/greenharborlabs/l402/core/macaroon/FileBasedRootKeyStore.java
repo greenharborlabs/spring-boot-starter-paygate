@@ -63,23 +63,27 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     public GenerationResult generateRootKey() {
         ensureOpen();
         byte[] rootKey = new byte[KEY_LENGTH];
-        secureRandom.nextBytes(rootKey);
-
-        byte[] tokenId = new byte[KEY_LENGTH];
-        secureRandom.nextBytes(tokenId);
-
-        String hexKeyId = HEX.formatHex(tokenId);
-
-        lock.writeLock().lock();
         try {
-            ensureOpen();
-            writeKeyFile(hexKeyId, rootKey);
-            cache.put(hexKeyId, rootKey.clone());
-        } finally {
-            lock.writeLock().unlock();
-        }
+            secureRandom.nextBytes(rootKey);
 
-        return new GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
+            byte[] tokenId = new byte[KEY_LENGTH];
+            secureRandom.nextBytes(tokenId);
+
+            String hexKeyId = HEX.formatHex(tokenId);
+
+            lock.writeLock().lock();
+            try {
+                ensureOpen();
+                writeKeyFile(hexKeyId, rootKey);
+                cache.put(hexKeyId, rootKey.clone());
+            } finally {
+                lock.writeLock().unlock();
+            }
+
+            return new GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
+        } finally {
+            KeyMaterial.zeroize(rootKey);
+        }
     }
 
     @Override
@@ -114,8 +118,12 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
             }
             String hexContent = Files.readString(keyFile).strip();
             byte[] rootKey = HEX.parseHex(hexContent);
-            cache.put(hexKeyId, rootKey.clone());
-            return new SensitiveBytes(rootKey.clone());
+            try {
+                cache.put(hexKeyId, rootKey.clone());
+                return new SensitiveBytes(rootKey.clone());
+            } finally {
+                KeyMaterial.zeroize(rootKey);
+            }
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read root key: " + hexKeyId, e);
         } finally {
