@@ -135,16 +135,25 @@ class L402SecurityFilterTest {
         }
 
         @Bean
+        L402Properties l402Properties() {
+            var props = new L402Properties();
+            props.setServiceName("test-service");
+            return props;
+        }
+
+        @Bean
         L402SecurityFilter l402SecurityFilter(
                 L402EndpointRegistry endpointRegistry,
                 LightningBackend lightningBackendBean,
                 RootKeyStore rootKeyStore,
                 CredentialStore credentialStore,
                 List<CaveatVerifier> caveatVerifiers,
-                L402EarningsTracker l402EarningsTracker
+                L402EarningsTracker l402EarningsTracker,
+                L402Properties l402Properties
         ) {
             var filter = new L402SecurityFilter(
-                    endpointRegistry, lightningBackendBean, rootKeyStore, credentialStore, caveatVerifiers, "test-service"
+                    endpointRegistry, lightningBackendBean, rootKeyStore, credentialStore, caveatVerifiers, "test-service",
+                    null, l402Properties
             );
             filter.setEarningsTracker(l402EarningsTracker);
             return filter;

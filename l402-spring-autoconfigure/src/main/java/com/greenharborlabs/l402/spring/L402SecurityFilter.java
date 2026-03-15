@@ -1,15 +1,8 @@
 package com.greenharborlabs.l402.spring;
 
 import com.greenharborlabs.l402.core.credential.CredentialStore;
-import com.greenharborlabs.l402.core.lightning.Invoice;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
 import com.greenharborlabs.l402.core.macaroon.CaveatVerifier;
-import com.greenharborlabs.l402.core.macaroon.Caveat;
-import com.greenharborlabs.l402.core.macaroon.KeyMaterial;
-import com.greenharborlabs.l402.core.macaroon.Macaroon;
-import com.greenharborlabs.l402.core.macaroon.MacaroonIdentifier;
-import com.greenharborlabs.l402.core.macaroon.MacaroonMinter;
-import com.greenharborlabs.l402.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.l402.core.macaroon.RootKeyStore;
 import com.greenharborlabs.l402.core.protocol.ErrorCode;
 import com.greenharborlabs.l402.core.protocol.L402Credential;
@@ -31,8 +24,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 
@@ -45,8 +36,8 @@ import java.util.Objects;
  *   <li>Match request against registry; if no match, pass through</li>
  *   <li>If Authorization header contains an L402/LSAT credential, validate it immediately
  *       (no Lightning health check needed — credential validation is purely local)</li>
- *   <li>If no valid credential, check Lightning backend health; if down, return 503</li>
- *   <li>Create invoice and return 402 challenge</li>
+ *   <li>If no valid credential, delegate to {@link L402ChallengeService} which checks
+ *       Lightning health, rate limits, and creates the 402 challenge</li>
  * </ol>
  */
 public class L402SecurityFilter implements Filter {
@@ -56,9 +47,6 @@ public class L402SecurityFilter implements Filter {
     private static final String AUTHORIZATION_HEADER = "Authorization";
     private static final String L402_PREFIX = "L402 ";
     private static final String LSAT_PREFIX = "LSAT ";
-
-    /** Macaroon binary format version — V2 as defined by the L402 identifier layout. */
-    private static final int MACAROON_IDENTIFIER_VERSION = 0;
 
     private final L402EndpointRegistry registry;
     private final LightningBackend lightningBackend;
@@ -70,7 +58,7 @@ public class L402SecurityFilter implements Filter {
     private volatile L402Metrics metrics;
     private volatile L402EarningsTracker earningsTracker;
     private volatile L402RateLimiter rateLimiter;
-    private volatile boolean reverseProxyWarningLogged;
+    private volatile L402ChallengeService challengeService;
 
     /**
      * Primary constructor accepting a pre-built L402Validator and properties (used by auto-configuration).
@@ -177,6 +165,38 @@ public class L402SecurityFilter implements Filter {
         this.rateLimiter = rateLimiter;
     }
 
+    /**
+     * Sets the challenge service that handles health checks, rate limiting,
+     * invoice creation, and macaroon minting. When not set, an internal
+     * instance is created lazily from the filter's own dependencies.
+     */
+    public void setChallengeService(L402ChallengeService challengeService) {
+        this.challengeService = challengeService;
+    }
+
+    /**
+     * Returns the challenge service, creating an internal one lazily if none
+     * was explicitly set via {@link #setChallengeService(L402ChallengeService)}.
+     * The internal instance is kept in sync with the filter's optional dependencies
+     * (metrics, earnings tracker, rate limiter).
+     */
+    private L402ChallengeService getOrCreateChallengeService() {
+        L402ChallengeService svc = this.challengeService;
+        if (svc != null) {
+            return svc;
+        }
+        // Create an internal instance from the filter's own dependencies.
+        // This preserves backward compatibility for callers that construct
+        // the filter directly without an externally provided ChallengeService.
+        svc = new L402ChallengeService(
+                rootKeyStore, lightningBackend, properties,
+                applicationContext);
+        svc.setEarningsTracker(this.earningsTracker);
+        svc.setRateLimiter(this.rateLimiter);
+        this.challengeService = svc;
+        return svc;
+    }
+
     @Override
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
             throws IOException, ServletException {
@@ -231,7 +251,7 @@ public class L402SecurityFilter implements Filter {
                 // Consume rate limiter token on auth failure to penalize brute-force probing
                 L402RateLimiter limiter = this.rateLimiter;
                 if (limiter != null) {
-                    limiter.tryAcquire(resolveClientIp(httpRequest));
+                    limiter.tryAcquire(getOrCreateChallengeService().resolveClientIp(httpRequest));
                 }
                 ErrorCode errorCode = e.getErrorCode();
                 log.log(System.Logger.Level.WARNING, "L402 validation failed, errorCode={0}, tokenId={1}", errorCode, e.getTokenId());
@@ -255,25 +275,20 @@ public class L402SecurityFilter implements Filter {
             }
         }
 
-        // 3. No valid credential — an invoice must be created.
-        //    Check Lightning health first; only needed on this path.
-        if (!lightningBackend.isHealthy()) {
-            log.log(System.Logger.Level.WARNING, "Lightning backend health check failed for {0} {1}", method, path);
-            writeLightningUnavailableResponse(httpResponse);
-            return;
-        }
-
-        // 4. Check rate limit before creating invoice to prevent flooding
-        L402RateLimiter limiter = this.rateLimiter;
-        if (limiter != null && !limiter.tryAcquire(resolveClientIp(httpRequest))) {
-            writeRateLimitedResponse(httpResponse);
-            return;
-        }
-
-        // 5. Issue 402 challenge with a new invoice
+        // 3. No valid credential — delegate to ChallengeService for health check,
+        //    rate limiting, invoice creation, and macaroon minting.
         try {
-            writePaymentRequiredResponse(httpRequest, httpResponse, config);
+            L402ChallengeService svc = getOrCreateChallengeService();
+            L402ChallengeResult challengeResult = svc.createChallenge(httpRequest, config);
+            writePaymentRequiredResponse(httpResponse, challengeResult);
             recordChallenge(path);
+        } catch (L402RateLimitedException _) {
+            writeRateLimitedResponse(httpResponse);
+        } catch (L402LightningUnavailableException e) {
+            log.log(System.Logger.Level.WARNING, "Lightning unavailable for {0} {1}: {2}", method, path, e.getMessage());
+            if (!httpResponse.isCommitted()) {
+                writeLightningUnavailableResponse(httpResponse);
+            }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to create invoice for {0} {1}: {2}", method, path, e.getMessage());
             if (!httpResponse.isCommitted()) {
@@ -282,99 +297,22 @@ public class L402SecurityFilter implements Filter {
         }
     }
 
-    // NOTE: This method performs three sequential blocking operations:
-    // (1) rootKeyStore.generateRootKey() — file I/O with write lock
-    // (2) lightningBackend.createInvoice() — synchronous network call
-    // (3) MacaroonMinter.mint() — CPU-bound HMAC computation
-    // The CachingLightningBackendWrapper mitigates (2) for health checks.
-    // Future optimization: consider virtual threads or structured concurrency
-    // to parallelize (1) and (2) when they are independent.
-    private void writePaymentRequiredResponse(HttpServletRequest request,
-                                               HttpServletResponse response,
-                                               L402EndpointConfig config)
+    private void writePaymentRequiredResponse(HttpServletResponse response,
+                                               L402ChallengeResult result)
             throws IOException {
 
-        // Generate root key and tokenId atomically; try-with-resources ensures
-        // SensitiveBytes.destroy() is called even if an exception is thrown.
-        try (RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey()) {
-            byte[] rootKey = generationResult.rootKey().value();
-            try {
-                byte[] tokenId = generationResult.tokenId();
+        response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        response.setHeader("WWW-Authenticate", result.wwwAuthenticateHeader());
+        response.setContentType("application/json");
 
-                // Resolve effective price: dynamic strategy overrides static annotation value
-                long effectivePrice = resolvePrice(request, config);
-
-                // Create Lightning invoice
-                Invoice invoice = lightningBackend.createInvoice(effectivePrice, config.description());
-
-                // Record invoice creation in earnings tracker
-                try {
-                    if (earningsTracker != null) { earningsTracker.recordInvoiceCreated(); }
-                } catch (Exception e) {
-                    log.log(System.Logger.Level.WARNING, "Failed to record invoice creation in earnings tracker: {0}", e.getMessage());
-                }
-
-                // Build MacaroonIdentifier and mint macaroon with service and expiry caveats
-                MacaroonIdentifier identifier = new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, invoice.paymentHash(), tokenId);
-                Instant validUntil = Instant.now().plusSeconds(config.timeoutSeconds());
-                List<Caveat> caveats = List.of(
-                        new Caveat("services", serviceName + ":0"),
-                        new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond()))
-                );
-                Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
-
-                // Serialize and encode
-                byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-                String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-
-                // Build response — sanitize bolt11 to prevent header injection and JSON breaking
-                String safeBolt11Header = sanitizeBolt11ForHeader(invoice.bolt11());
-                String wwwAuth = "L402 version=\"0\", token=\"" + macaroonBase64
-                        + "\", macaroon=\"" + macaroonBase64
-                        + "\", invoice=\"" + safeBolt11Header + "\"";
-
-                response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-                response.setHeader("WWW-Authenticate", wwwAuth);
-                response.setContentType("application/json");
-
-                // In test mode the backend includes the preimage on the PENDING invoice so
-                // users can complete the full L402 flow with curl. Real backends never set
-                // preimage on PENDING invoices, so this field only appears in test mode.
-                String testPreimageField = "";
-                byte[] invoicePreimage = invoice.preimage();
-                if (invoicePreimage != null) {
-                    testPreimageField = ", \"test_preimage\": \"" + HexFormat.of().formatHex(invoicePreimage) + "\"";
-                }
-
-                response.getWriter().write("""
-                        {"code": 402, "message": "Payment required", "price_sats": %d, "description": "%s", "invoice": "%s"%s}"""
-                        .formatted(effectivePrice, JsonEscaper.escape(config.description()), JsonEscaper.escape(invoice.bolt11()), testPreimageField));
-            } finally {
-                KeyMaterial.zeroize(rootKey);
-            }
+        String testPreimageField = "";
+        if (result.testPreimage() != null) {
+            testPreimageField = ", \"test_preimage\": \"" + result.testPreimage() + "\"";
         }
-    }
 
-    /**
-     * Resolves the effective price for an endpoint by looking up the pricing strategy
-     * bean from the ApplicationContext. Falls back to the static annotation price if
-     * no strategy is configured, the ApplicationContext is unavailable, or the bean
-     * does not exist.
-     */
-    private long resolvePrice(HttpServletRequest request, L402EndpointConfig config) {
-        String strategyName = config.pricingStrategy();
-        if (strategyName == null || strategyName.isBlank() || applicationContext == null) {
-            return config.priceSats();
-        }
-        try {
-            L402PricingStrategy strategy = applicationContext.getBean(strategyName, L402PricingStrategy.class);
-            return strategy.calculatePrice(request, config.priceSats());
-        } catch (Exception e) {
-            log.log(System.Logger.Level.WARNING,
-                    "Pricing strategy bean ''{0}'' not found or failed; falling back to static price {1} sats",
-                    strategyName, config.priceSats());
-            return config.priceSats();
-        }
+        response.getWriter().write("""
+                {"code": 402, "message": "Payment required", "price_sats": %d, "description": "%s", "invoice": "%s"%s}"""
+                .formatted(result.priceSats(), JsonEscaper.escape(result.description()), JsonEscaper.escape(result.bolt11()), testPreimageField));
     }
 
     private void writeMalformedHeaderResponse(HttpServletResponse response,
@@ -449,55 +387,6 @@ public class L402SecurityFilter implements Filter {
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record rejected metric: {0}", e.getMessage());
         }
-    }
-
-    /**
-     * Strips characters from a bolt11 string that could enable HTTP header injection
-     * or break the WWW-Authenticate header format. Removes double quotes, carriage
-     * returns, and newlines.
-     */
-    private static String sanitizeBolt11ForHeader(String bolt11) {
-        if (bolt11 == null) {
-            return "";
-        }
-        var sb = new StringBuilder(bolt11.length());
-        for (int i = 0; i < bolt11.length(); i++) {
-            char c = bolt11.charAt(i);
-            if (c != '"' && c != '\r' && c != '\n') {
-                sb.append(c);
-            }
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Extracts the client IP address. Only reads the X-Forwarded-For header
-     * when {@code trustForwardedHeaders} is explicitly enabled in properties,
-     * to prevent rate-limit bypass via header spoofing.
-     */
-    private String resolveClientIp(HttpServletRequest request) {
-        if (this.properties != null && this.properties.isTrustForwardedHeaders()) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                // X-Forwarded-For: client, proxy1, proxy2 — take leftmost
-                int comma = xff.indexOf(',');
-                String ip = (comma > 0 ? xff.substring(0, comma) : xff).strip();
-                if (!ip.isEmpty()) {
-                    return ip;
-                }
-            }
-        } else if (!reverseProxyWarningLogged) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                reverseProxyWarningLogged = true;
-                log.log(System.Logger.Level.WARNING,
-                        "X-Forwarded-For header detected but trustForwardedHeaders is false. "
-                                + "Rate limiting uses the direct remote address, which may be the proxy IP. "
-                                + "If this service is behind a reverse proxy, set l402.trust-forwarded-headers=true "
-                                + "to use the client IP from X-Forwarded-For for rate limiting.");
-            }
-        }
-        return request.getRemoteAddr();
     }
 
     /**
