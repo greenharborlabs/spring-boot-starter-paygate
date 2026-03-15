@@ -573,6 +573,74 @@ class L402SecurityFilterTest {
         }
     }
 
+    @Nested
+    @DisplayName("path traversal prevention")
+    class PathTraversalPrevention {
+
+        @BeforeEach
+        void setUp() {
+            ((StubLightningBackend) lightningBackend).setHealthy(true);
+            ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+        }
+
+        @Test
+        @DisplayName("path traversal to protected endpoint is blocked with 402")
+        void pathTraversalToProtectedEndpointIsBlocked() throws Exception {
+            // /api/public/../protected normalizes to /api/protected which is protected
+            mockMvc.perform(get("/api/public/../protected"))
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(header().exists("WWW-Authenticate"))
+                    .andExpect(header().string("WWW-Authenticate", containsString("L402")));
+        }
+
+        @Test
+        @DisplayName("double dot segments in path are normalized before registry lookup")
+        void doubleDotsNormalizedBeforeLookup() throws Exception {
+            // /api/foo/bar/../../protected normalizes to /api/protected
+            mockMvc.perform(get("/api/foo/bar/../../protected"))
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(header().exists("WWW-Authenticate"));
+        }
+
+        @Test
+        @DisplayName("percent-encoded path traversal to protected endpoint is blocked with 402")
+        void percentEncodedTraversalIsBlocked() throws Exception {
+            // %2e%2e is percent-encoded ".."
+            mockMvc.perform(get("/api/public/%2e%2e/protected"))
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(header().exists("WWW-Authenticate"))
+                    .andExpect(header().string("WWW-Authenticate", containsString("L402")));
+        }
+
+        @Test
+        @DisplayName("uppercase percent-encoded path traversal is blocked with 402")
+        void uppercasePercentEncodedTraversalIsBlocked() throws Exception {
+            mockMvc.perform(get("/api/public/%2E%2E/protected"))
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(header().exists("WWW-Authenticate"));
+        }
+
+        @Test
+        @DisplayName("double-encoded path traversal is blocked with 402")
+        void doubleEncodedTraversalIsBlocked() throws Exception {
+            // %252e%252e double-encodes ".."
+            mockMvc.perform(get("/api/public/%252e%252e/protected"))
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(header().exists("WWW-Authenticate"));
+        }
+
+        @Test
+        @DisplayName("traversal that resolves outside protected paths is not challenged")
+        void traversalToUnprotectedPathIsNotChallenged() throws Exception {
+            // /api/protected/../public normalizes to /api/public which is NOT protected.
+            // The filter should pass through (no 402); the downstream dispatch may or may
+            // not find a handler for the raw URI, but the key assertion is no L402 challenge.
+            int status = mockMvc.perform(get("/api/protected/../public"))
+                    .andReturn().getResponse().getStatus();
+            assertThat(status).isNotEqualTo(402);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Test helpers
     // -----------------------------------------------------------------------
