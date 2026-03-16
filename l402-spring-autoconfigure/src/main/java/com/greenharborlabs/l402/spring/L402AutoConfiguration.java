@@ -201,27 +201,51 @@ public class L402AutoConfiguration {
         return new L402EarningsTracker();
     }
 
+    /**
+     * Single BeanPostProcessor that applies both timeout enforcement and
+     * health-check caching wrappers in the correct order. Using a single
+     * processor guarantees the wrapping order:
+     * {@code CachingWrapper(TimeoutWrapper(Backend))}.
+     *
+     * <p>This avoids reliance on BeanPostProcessor ordering semantics
+     * between separate {@code @Configuration} classes, which can be
+     * unreliable across different Spring context initialization strategies.
+     */
     @Configuration(proxyBeanMethods = false)
-    @ConditionalOnProperty(name = "l402.health-cache.enabled", havingValue = "true", matchIfMissing = true)
-    static class HealthCacheConfiguration {
+    static class LightningBackendWrappingConfiguration {
 
         @Bean
-        static org.springframework.beans.factory.config.BeanPostProcessor cachingLightningBackendPostProcessor(
+        static org.springframework.beans.factory.config.BeanPostProcessor lightningBackendWrappingPostProcessor(
                 org.springframework.core.env.Environment environment) {
             return new org.springframework.beans.factory.config.BeanPostProcessor() {
                 @Override
                 public Object postProcessAfterInitialization(Object bean, String beanName) {
-                    if (bean instanceof LightningBackend backend
-                            && !(bean instanceof CachingLightningBackendWrapper)
-                            && !(bean instanceof TestModeLightningBackend)) {
+                    if (!(bean instanceof LightningBackend backend)
+                            || bean instanceof CachingLightningBackendWrapper
+                            || bean instanceof TimeoutEnforcingLightningBackendWrapper
+                            || bean instanceof TestModeLightningBackend) {
+                        return bean;
+                    }
+
+                    // Apply timeout wrapper (innermost)
+                    int timeoutSeconds = Binder.get(environment)
+                            .bind("l402.lightning.timeout-seconds", Integer.class)
+                            .orElse(5);
+                    LightningBackend wrapped = new TimeoutEnforcingLightningBackendWrapper(backend, timeoutSeconds);
+
+                    // Apply caching wrapper (outermost) if health-cache is enabled
+                    boolean healthCacheEnabled = Binder.get(environment)
+                            .bind("l402.health-cache.enabled", Boolean.class)
+                            .orElse(true);
+                    if (healthCacheEnabled) {
                         int ttlSeconds = Binder.get(environment)
                                 .bind("l402.health-cache.ttl-seconds", Integer.class)
                                 .orElse(5);
-                        return new CachingLightningBackendWrapper(
-                                backend,
-                                java.time.Duration.ofSeconds(ttlSeconds));
+                        wrapped = new CachingLightningBackendWrapper(
+                                wrapped, java.time.Duration.ofSeconds(ttlSeconds));
                     }
-                    return bean;
+
+                    return wrapped;
                 }
             };
         }
@@ -237,8 +261,11 @@ public class L402AutoConfiguration {
         LightningBackend lightningBackend(L402Properties properties,
                                           com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
             var lnbits = properties.getLnbits();
+            int timeout = lnbits.getRequestTimeoutSeconds() != null
+                    ? lnbits.getRequestTimeoutSeconds()
+                    : properties.getLightning().getTimeoutSeconds();
             var config = new com.greenharborlabs.l402.lightning.lnbits.LnbitsConfig(
-                    lnbits.getUrl(), lnbits.getApiKey());
+                    lnbits.getUrl(), lnbits.getApiKey(), timeout);
             return new com.greenharborlabs.l402.lightning.lnbits.LnbitsBackend(
                     config,
                     objectMapper,
@@ -253,11 +280,14 @@ public class L402AutoConfiguration {
     @ConditionalOnClass(name = "com.greenharborlabs.l402.lightning.lnd.LndBackend")
     static class LndBackendConfiguration {
 
-        @Bean(destroyMethod = "shutdown")
-        @ConditionalOnMissingBean(io.grpc.ManagedChannel.class)
-        io.grpc.ManagedChannel lndManagedChannel(L402Properties properties) {
+        @Bean
+        @ConditionalOnMissingBean(LndConfig.class)
+        LndConfig lndConfig(L402Properties properties) {
             var lnd = properties.getLnd();
-            var config = new LndConfig(
+            int rpcDeadline = lnd.getRpcDeadlineSeconds() != null
+                    ? lnd.getRpcDeadlineSeconds()
+                    : properties.getLightning().getTimeoutSeconds();
+            return new LndConfig(
                     lnd.getHost(),
                     lnd.getPort(),
                     lnd.getTlsCertPath(),
@@ -266,15 +296,21 @@ public class L402AutoConfiguration {
                     lnd.getKeepAliveTimeSeconds(),
                     lnd.getKeepAliveTimeoutSeconds(),
                     lnd.getIdleTimeoutMinutes(),
-                    lnd.getMaxInboundMessageSize()
+                    lnd.getMaxInboundMessageSize(),
+                    rpcDeadline
             );
-            return LndChannelFactory.create(config);
+        }
+
+        @Bean(destroyMethod = "shutdown")
+        @ConditionalOnMissingBean(io.grpc.ManagedChannel.class)
+        io.grpc.ManagedChannel lndManagedChannel(LndConfig lndConfig) {
+            return LndChannelFactory.create(lndConfig);
         }
 
         @Bean
         @ConditionalOnMissingBean(LightningBackend.class)
-        LightningBackend lightningBackend(io.grpc.ManagedChannel lndManagedChannel) {
-            return new com.greenharborlabs.l402.lightning.lnd.LndBackend(lndManagedChannel);
+        LightningBackend lightningBackend(io.grpc.ManagedChannel lndManagedChannel, LndConfig lndConfig) {
+            return new com.greenharborlabs.l402.lightning.lnd.LndBackend(lndManagedChannel, lndConfig);
         }
     }
 }

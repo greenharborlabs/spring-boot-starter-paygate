@@ -7,11 +7,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.greenharborlabs.l402.core.lightning.Invoice;
 import com.greenharborlabs.l402.core.lightning.InvoiceStatus;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
+import com.greenharborlabs.l402.core.lightning.LightningTimeoutException;
 import java.net.http.HttpClient;
 import java.util.HexFormat;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import okhttp3.mockwebserver.SocketPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -367,5 +369,74 @@ class LnbitsBackendTest {
         assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
                 .isInstanceOf(LnbitsException.class)
                 .hasMessageContaining("Missing 'details.amount'");
+    }
+
+    // --- Timeout tests ---
+
+    private LnbitsBackend backendWithShortTimeout() {
+        var config = new LnbitsConfig(
+                server.url("/").toString(),
+                API_KEY,
+                1  // 1-second timeout for fast tests
+        );
+        return new LnbitsBackend(config, objectMapper, HttpClient.newHttpClient());
+    }
+
+    @Test
+    void createInvoice_throwsLnbitsTimeoutException_onTimeout() {
+        server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+
+        var shortTimeoutBackend = backendWithShortTimeout();
+
+        assertThatThrownBy(() -> shortTimeoutBackend.createInvoice(100L, "memo"))
+                .isInstanceOf(LnbitsTimeoutException.class)
+                .isInstanceOf(LightningTimeoutException.class)
+                .hasMessageContaining("createInvoice timed out after 1s");
+    }
+
+    @Test
+    void lookupInvoice_throwsLnbitsTimeoutException_onTimeout() {
+        server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+
+        var shortTimeoutBackend = backendWithShortTimeout();
+
+        assertThatThrownBy(() -> shortTimeoutBackend.lookupInvoice(PAYMENT_HASH))
+                .isInstanceOf(LnbitsTimeoutException.class)
+                .isInstanceOf(LightningTimeoutException.class)
+                .hasMessageContaining("lookupInvoice timed out after 1s");
+    }
+
+    @Test
+    void isHealthy_returnsFalse_onTimeout() {
+        server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+
+        var shortTimeoutBackend = backendWithShortTimeout();
+
+        assertThat(shortTimeoutBackend.isHealthy()).isFalse();
+    }
+
+    @Test
+    void createInvoice_nonTimeoutError_stillThrowsLnbitsException() {
+        // Verify that non-timeout errors remain as LnbitsException (not LnbitsTimeoutException)
+        server.enqueue(new MockResponse()
+                .setResponseCode(500)
+                .setBody("Internal Server Error"));
+
+        var shortTimeoutBackend = backendWithShortTimeout();
+
+        assertThatThrownBy(() -> shortTimeoutBackend.createInvoice(100L, "memo"))
+                .isInstanceOf(LnbitsException.class)
+                .isNotInstanceOf(LnbitsTimeoutException.class)
+                .hasMessageContaining("HTTP 500");
+    }
+
+    @Test
+    void backendUsesConfiguredTimeout() {
+        var config = new LnbitsConfig(
+                server.url("/").toString(),
+                API_KEY,
+                30
+        );
+        assertThat(config.requestTimeoutSeconds()).isEqualTo(30);
     }
 }

@@ -48,7 +48,17 @@ public class L402Properties {
 
     private Lnd lnd = new Lnd();
 
+    private Lightning lightning = new Lightning();
+
     private Metrics metrics = new Metrics();
+
+    public Lightning getLightning() {
+        return lightning;
+    }
+
+    public void setLightning(Lightning lightning) {
+        this.lightning = lightning;
+    }
 
     public Metrics getMetrics() {
         return metrics;
@@ -239,6 +249,26 @@ public class L402Properties {
     }
 
     /**
+     * Global Lightning backend configuration bound from {@code l402.lightning.*}.
+     */
+    public static class Lightning {
+
+        private int timeoutSeconds = 5;
+
+        public int getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        public void setTimeoutSeconds(int timeoutSeconds) {
+            if (timeoutSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        "l402.lightning.timeout-seconds must be > 0, got: " + timeoutSeconds);
+            }
+            this.timeoutSeconds = timeoutSeconds;
+        }
+    }
+
+    /**
      * LNbits backend configuration properties bound from {@code l402.lnbits.*}.
      */
     public static class Lnbits {
@@ -246,6 +276,8 @@ public class L402Properties {
         private String url;
 
         private String apiKey;
+
+        private Integer requestTimeoutSeconds;
 
         public String getUrl() {
             return url;
@@ -261,6 +293,18 @@ public class L402Properties {
 
         public void setApiKey(String apiKey) {
             this.apiKey = apiKey;
+        }
+
+        public Integer getRequestTimeoutSeconds() {
+            return requestTimeoutSeconds;
+        }
+
+        public void setRequestTimeoutSeconds(Integer requestTimeoutSeconds) {
+            if (requestTimeoutSeconds != null && requestTimeoutSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        "l402.lnbits.request-timeout-seconds must be > 0, got: " + requestTimeoutSeconds);
+            }
+            this.requestTimeoutSeconds = requestTimeoutSeconds;
         }
     }
 
@@ -286,6 +330,8 @@ public class L402Properties {
         private int idleTimeoutMinutes = 5;
 
         private int maxInboundMessageSize = 4194304;
+
+        private Integer rpcDeadlineSeconds;
 
         public boolean isAllowPlaintext() {
             return allowPlaintext;
@@ -357,6 +403,18 @@ public class L402Properties {
 
         public void setMaxInboundMessageSize(int maxInboundMessageSize) {
             this.maxInboundMessageSize = maxInboundMessageSize;
+        }
+
+        public Integer getRpcDeadlineSeconds() {
+            return rpcDeadlineSeconds;
+        }
+
+        public void setRpcDeadlineSeconds(Integer rpcDeadlineSeconds) {
+            if (rpcDeadlineSeconds != null && rpcDeadlineSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        "l402.lnd.rpc-deadline-seconds must be > 0, got: " + rpcDeadlineSeconds);
+            }
+            this.rpcDeadlineSeconds = rpcDeadlineSeconds;
         }
     }
 

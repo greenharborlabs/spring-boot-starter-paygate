@@ -48,4 +48,36 @@ class LnbitsConfigTest {
         assertThatThrownBy(() -> new LnbitsConfig(BASE_URL, "  "))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void twoArgConstructorShouldDefaultTimeoutToFiveSeconds() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY);
+        assertThat(config.requestTimeoutSeconds()).isEqualTo(5);
+    }
+
+    @Test
+    void threeArgConstructorShouldAcceptCustomTimeout() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY, 30);
+        assertThat(config.requestTimeoutSeconds()).isEqualTo(30);
+    }
+
+    @Test
+    void shouldRejectZeroTimeoutSeconds() {
+        assertThatThrownBy(() -> new LnbitsConfig(BASE_URL, API_KEY, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requestTimeoutSeconds must be positive");
+    }
+
+    @Test
+    void shouldRejectNegativeTimeoutSeconds() {
+        assertThatThrownBy(() -> new LnbitsConfig(BASE_URL, API_KEY, -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requestTimeoutSeconds must be positive");
+    }
+
+    @Test
+    void toStringShouldIncludeTimeoutSeconds() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY, 10);
+        assertThat(config.toString()).contains("requestTimeoutSeconds=10");
+    }
 }

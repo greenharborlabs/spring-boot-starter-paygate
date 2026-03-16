@@ -14,7 +14,7 @@ class LndConfigTest {
     @Test
     void validConfig_withAllFields() {
         var config = new LndConfig("localhost", 10009, "/path/tls.cert", "/path/admin.macaroon",
-                false, 60, 20, 5, 4_194_304);
+                false, 60, 20, 5, 4_194_304, 5);
 
         assertThat(config.host()).isEqualTo("localhost");
         assertThat(config.port()).isEqualTo(10009);
@@ -25,16 +25,18 @@ class LndConfigTest {
         assertThat(config.keepAliveTimeoutSeconds()).isEqualTo(20);
         assertThat(config.idleTimeoutMinutes()).isEqualTo(5);
         assertThat(config.maxInboundMessageSize()).isEqualTo(4_194_304);
+        assertThat(config.rpcDeadlineSeconds()).isEqualTo(5);
     }
 
     @Test
     void validConfig_plaintextWithNullPaths() {
         var config = new LndConfig("localhost", 10009, null, null,
-                true, 30, 10, 3, 2_097_152);
+                true, 30, 10, 3, 2_097_152, 10);
 
         assertThat(config.tlsCertPath()).isNull();
         assertThat(config.macaroonPath()).isNull();
         assertThat(config.allowPlaintext()).isTrue();
+        assertThat(config.rpcDeadlineSeconds()).isEqualTo(10);
     }
 
     // --- Host validation ---
@@ -42,7 +44,7 @@ class LndConfigTest {
     @Test
     void shouldRejectNullHost() {
         assertThatThrownBy(() -> new LndConfig(null, 10009, "/tls.cert", null,
-                false, 60, 20, 5, 4_194_304))
+                false, 60, 20, 5, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("host");
     }
@@ -50,7 +52,7 @@ class LndConfigTest {
     @Test
     void shouldRejectBlankHost() {
         assertThatThrownBy(() -> new LndConfig("  ", 10009, "/tls.cert", null,
-                false, 60, 20, 5, 4_194_304))
+                false, 60, 20, 5, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("host");
     }
@@ -58,7 +60,7 @@ class LndConfigTest {
     @Test
     void shouldRejectEmptyHost() {
         assertThatThrownBy(() -> new LndConfig("", 10009, "/tls.cert", null,
-                false, 60, 20, 5, 4_194_304))
+                false, 60, 20, 5, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("host");
     }
@@ -69,7 +71,7 @@ class LndConfigTest {
     @ValueSource(ints = {0, -1, -100, 65536, 70000, Integer.MIN_VALUE, Integer.MAX_VALUE})
     void shouldRejectInvalidPort(int port) {
         assertThatThrownBy(() -> new LndConfig("localhost", port, "/tls.cert", null,
-                false, 60, 20, 5, 4_194_304))
+                false, 60, 20, 5, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("port");
     }
@@ -78,7 +80,7 @@ class LndConfigTest {
     @ValueSource(ints = {1, 443, 10009, 65535})
     void shouldAcceptValidPort(int port) {
         var config = new LndConfig("localhost", port, "/tls.cert", null,
-                false, 60, 20, 5, 4_194_304);
+                false, 60, 20, 5, 4_194_304, 5);
         assertThat(config.port()).isEqualTo(port);
     }
 
@@ -87,7 +89,7 @@ class LndConfigTest {
     @Test
     void shouldRejectNullTlsCertWhenPlaintextDisabled() {
         assertThatThrownBy(() -> new LndConfig("localhost", 10009, null, null,
-                false, 60, 20, 5, 4_194_304))
+                false, 60, 20, 5, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("tlsCertPath")
                 .hasMessageContaining("allowPlaintext");
@@ -96,7 +98,7 @@ class LndConfigTest {
     @Test
     void shouldAllowNullTlsCertWhenPlaintextEnabled() {
         var config = new LndConfig("localhost", 10009, null, null,
-                true, 60, 20, 5, 4_194_304);
+                true, 60, 20, 5, 4_194_304, 5);
         assertThat(config.allowPlaintext()).isTrue();
         assertThat(config.tlsCertPath()).isNull();
     }
@@ -107,7 +109,7 @@ class LndConfigTest {
     @ValueSource(ints = {0, -1, Integer.MIN_VALUE})
     void shouldRejectNonPositiveKeepAliveTimeSeconds(int value) {
         assertThatThrownBy(() -> new LndConfig("localhost", 10009, "/tls.cert", null,
-                false, value, 20, 5, 4_194_304))
+                false, value, 20, 5, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("keepAliveTimeSeconds");
     }
@@ -118,7 +120,7 @@ class LndConfigTest {
     @ValueSource(ints = {0, -1, Integer.MIN_VALUE})
     void shouldRejectNonPositiveKeepAliveTimeoutSeconds(int value) {
         assertThatThrownBy(() -> new LndConfig("localhost", 10009, "/tls.cert", null,
-                false, 60, value, 5, 4_194_304))
+                false, 60, value, 5, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("keepAliveTimeoutSeconds");
     }
@@ -129,7 +131,7 @@ class LndConfigTest {
     @ValueSource(ints = {0, -1, Integer.MIN_VALUE})
     void shouldRejectNonPositiveIdleTimeoutMinutes(int value) {
         assertThatThrownBy(() -> new LndConfig("localhost", 10009, "/tls.cert", null,
-                false, 60, 20, value, 4_194_304))
+                false, 60, 20, value, 4_194_304, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("idleTimeoutMinutes");
     }
@@ -140,9 +142,27 @@ class LndConfigTest {
     @ValueSource(ints = {0, -1, Integer.MIN_VALUE})
     void shouldRejectNonPositiveMaxInboundMessageSize(int value) {
         assertThatThrownBy(() -> new LndConfig("localhost", 10009, "/tls.cert", null,
-                false, 60, 20, 5, value))
+                false, 60, 20, 5, value, 5))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("maxInboundMessageSize");
+    }
+
+    // --- rpcDeadlineSeconds validation ---
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, -1, Integer.MIN_VALUE})
+    void shouldRejectNonPositiveRpcDeadlineSeconds(int value) {
+        assertThatThrownBy(() -> new LndConfig("localhost", 10009, "/tls.cert", null,
+                false, 60, 20, 5, 4_194_304, value))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rpcDeadlineSeconds");
+    }
+
+    @Test
+    void shouldAcceptCustomRpcDeadlineSeconds() {
+        var config = new LndConfig("localhost", 10009, "/tls.cert", null,
+                false, 60, 20, 5, 4_194_304, 30);
+        assertThat(config.rpcDeadlineSeconds()).isEqualTo(30);
     }
 
     // --- withDefaults factory ---
@@ -160,6 +180,7 @@ class LndConfigTest {
         assertThat(config.keepAliveTimeoutSeconds()).isEqualTo(20);
         assertThat(config.idleTimeoutMinutes()).isEqualTo(5);
         assertThat(config.maxInboundMessageSize()).isEqualTo(4_194_304);
+        assertThat(config.rpcDeadlineSeconds()).isEqualTo(5);
     }
 
     @Test
@@ -184,6 +205,7 @@ class LndConfigTest {
         assertThat(config.keepAliveTimeoutSeconds()).isEqualTo(20);
         assertThat(config.idleTimeoutMinutes()).isEqualTo(5);
         assertThat(config.maxInboundMessageSize()).isEqualTo(4_194_304);
+        assertThat(config.rpcDeadlineSeconds()).isEqualTo(5);
     }
 
     @Test

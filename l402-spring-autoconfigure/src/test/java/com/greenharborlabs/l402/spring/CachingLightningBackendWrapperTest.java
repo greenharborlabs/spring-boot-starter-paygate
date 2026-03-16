@@ -215,13 +215,14 @@ class CachingLightningBackendWrapperTest {
                     assertThat(context).hasSingleBean(LightningBackend.class);
                     var bean = context.getBean(LightningBackend.class);
                     assertThat(bean).isInstanceOf(CachingLightningBackendWrapper.class);
+                    // The caching wrapper's delegate is a TimeoutEnforcingLightningBackendWrapper
                     assertThat(((CachingLightningBackendWrapper) bean).getDelegate())
-                            .isInstanceOf(StubBackend.class);
+                            .isInstanceOf(TimeoutEnforcingLightningBackendWrapper.class);
                 });
     }
 
     @Test
-    @DisplayName("auto-config does not wrap when health-cache.enabled=false")
+    @DisplayName("auto-config does not wrap with caching when health-cache.enabled=false")
     void autoConfigDoesNotWrapWhenDisabled() {
         contextRunner
                 .withPropertyValues("l402.health-cache.enabled=false")
@@ -230,7 +231,6 @@ class CachingLightningBackendWrapperTest {
                     assertThat(context).hasSingleBean(LightningBackend.class);
                     var bean = context.getBean(LightningBackend.class);
                     assertThat(bean).isNotInstanceOf(CachingLightningBackendWrapper.class);
-                    assertThat(bean).isInstanceOf(StubBackend.class);
                 });
     }
 

@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString;
 import com.greenharborlabs.l402.core.lightning.Invoice;
 import com.greenharborlabs.l402.core.lightning.InvoiceStatus;
 import com.greenharborlabs.l402.core.lightning.LightningException;
+import com.greenharborlabs.l402.core.lightning.LightningTimeoutException;
 
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
@@ -164,5 +165,113 @@ class LndBackendTest {
         });
 
         assertThat(backend.isHealthy()).isFalse();
+    }
+
+    // --- DEADLINE_EXCEEDED tests ---
+
+    @Test
+    void createInvoice_throwsLndTimeoutExceptionOnDeadlineExceeded() throws Exception {
+        var backend = startBackendWith(new LightningGrpc.LightningImplBase() {
+            @Override
+            public void addInvoice(Lnrpc.Invoice request, StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
+                responseObserver.onError(Status.DEADLINE_EXCEEDED
+                        .withDescription("deadline exceeded")
+                        .asRuntimeException());
+            }
+        });
+
+        assertThatThrownBy(() -> backend.createInvoice(100, "test"))
+                .isInstanceOf(LndTimeoutException.class)
+                .isInstanceOf(LightningTimeoutException.class)
+                .hasMessageContaining("LND createInvoice timed out after 5s")
+                .hasCauseInstanceOf(StatusRuntimeException.class);
+    }
+
+    @Test
+    void lookupInvoice_throwsLndTimeoutExceptionOnDeadlineExceeded() throws Exception {
+        var backend = startBackendWith(new LightningGrpc.LightningImplBase() {
+            @Override
+            public void lookupInvoice(Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                responseObserver.onError(Status.DEADLINE_EXCEEDED
+                        .withDescription("deadline exceeded")
+                        .asRuntimeException());
+            }
+        });
+
+        byte[] paymentHash = new byte[32];
+
+        assertThatThrownBy(() -> backend.lookupInvoice(paymentHash))
+                .isInstanceOf(LndTimeoutException.class)
+                .isInstanceOf(LightningTimeoutException.class)
+                .hasMessageContaining("LND lookupInvoice timed out after 5s")
+                .hasCauseInstanceOf(StatusRuntimeException.class);
+    }
+
+    @Test
+    void isHealthy_returnsFalseOnDeadlineExceeded() throws Exception {
+        var backend = startBackendWith(new LightningGrpc.LightningImplBase() {
+            @Override
+            public void getInfo(Lnrpc.GetInfoRequest request, StreamObserver<Lnrpc.GetInfoResponse> responseObserver) {
+                responseObserver.onError(Status.DEADLINE_EXCEEDED.asRuntimeException());
+            }
+        });
+
+        assertThat(backend.isHealthy()).isFalse();
+    }
+
+    // --- Config constructor tests ---
+
+    @Test
+    void constructorWithConfig_usesConfiguredDeadline() throws Exception {
+        var config = LndConfig.plaintextForTesting("localhost", 10009);
+        String serverName = InProcessServerBuilder.generateName();
+        grpcServer = InProcessServerBuilder.forName(serverName)
+                .directExecutor()
+                .addService(new LightningGrpc.LightningImplBase() {
+                    @Override
+                    public void addInvoice(Lnrpc.Invoice request, StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
+                        responseObserver.onError(Status.DEADLINE_EXCEEDED.asRuntimeException());
+                    }
+                })
+                .build()
+                .start();
+        channel = InProcessChannelBuilder.forName(serverName)
+                .directExecutor()
+                .build();
+        var backend = new LndBackend(channel, config);
+
+        assertThatThrownBy(() -> backend.createInvoice(100, "test"))
+                .isInstanceOf(LndTimeoutException.class)
+                .hasMessageContaining("timed out after 5s");
+    }
+
+    @Test
+    void constructorWithConfig_customDeadlineReflectedInMessage() throws Exception {
+        var config = new LndConfig("localhost", 10009, null, null,
+                true, 60, 20, 5, 4_194_304, 15);
+        String serverName = InProcessServerBuilder.generateName();
+        grpcServer = InProcessServerBuilder.forName(serverName)
+                .directExecutor()
+                .addService(new LightningGrpc.LightningImplBase() {
+                    @Override
+                    public void addInvoice(Lnrpc.Invoice request, StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
+                        responseObserver.onError(Status.DEADLINE_EXCEEDED.asRuntimeException());
+                    }
+                })
+                .build()
+                .start();
+        channel = InProcessChannelBuilder.forName(serverName)
+                .directExecutor()
+                .build();
+        var backend = new LndBackend(channel, config);
+
+        assertThatThrownBy(() -> backend.createInvoice(100, "test"))
+                .isInstanceOf(LndTimeoutException.class)
+                .hasMessageContaining("timed out after 15s");
+    }
+
+    @Test
+    void lndTimeoutException_extendsLightningTimeoutException() {
+        assertThat(LightningTimeoutException.class).isAssignableFrom(LndTimeoutException.class);
     }
 }

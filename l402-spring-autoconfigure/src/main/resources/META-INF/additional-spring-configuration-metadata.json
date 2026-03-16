@@ -83,6 +83,22 @@
       "defaultValue": 20
     },
     {
+      "name": "l402.lightning.timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "Global timeout in seconds for Lightning backend RPC/HTTP calls. Used as the default for both LND and LNbits backends. Backend-specific properties (l402.lnd.rpc-deadline-seconds, l402.lnbits.request-timeout-seconds) override this value when set.",
+      "defaultValue": 5
+    },
+    {
+      "name": "l402.lnbits.request-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "HTTP request timeout in seconds for LNbits API calls. Overrides l402.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."
+    },
+    {
+      "name": "l402.lnd.rpc-deadline-seconds",
+      "type": "java.lang.Integer",
+      "description": "Deadline in seconds for individual LND gRPC calls. Overrides l402.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."
+    },
+    {
       "name": "l402.lnbits.url",
       "type": "java.lang.String",
       "description": "Base URL of the LNbits instance (e.g., https://lnbits.example.com). Required when l402.backend=lnbits."

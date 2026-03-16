@@ -12,6 +12,7 @@ package com.greenharborlabs.l402.lightning.lnd;
  * @param keepAliveTimeoutSeconds timeout waiting for a keepalive ping acknowledgement
  * @param idleTimeoutMinutes      close the channel after this many idle minutes
  * @param maxInboundMessageSize   maximum inbound gRPC message size in bytes
+ * @param rpcDeadlineSeconds      deadline for individual gRPC calls in seconds
  */
 public record LndConfig(
         String host,
@@ -22,13 +23,15 @@ public record LndConfig(
         int keepAliveTimeSeconds,
         int keepAliveTimeoutSeconds,
         int idleTimeoutMinutes,
-        int maxInboundMessageSize
+        int maxInboundMessageSize,
+        int rpcDeadlineSeconds
 ) {
 
     private static final int DEFAULT_KEEP_ALIVE_TIME_SECONDS = 60;
     private static final int DEFAULT_KEEP_ALIVE_TIMEOUT_SECONDS = 20;
     private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 5;
     private static final int DEFAULT_MAX_INBOUND_MESSAGE_SIZE = 4_194_304; // 4 MB
+    static final int DEFAULT_RPC_DEADLINE_SECONDS = 5;
 
     public LndConfig {
         if (host == null || host.isBlank()) {
@@ -57,6 +60,10 @@ public record LndConfig(
             throw new IllegalArgumentException(
                     "maxInboundMessageSize must be positive, got: " + maxInboundMessageSize);
         }
+        if (rpcDeadlineSeconds <= 0) {
+            throw new IllegalArgumentException(
+                    "rpcDeadlineSeconds must be positive, got: " + rpcDeadlineSeconds);
+        }
     }
 
     /**
@@ -70,7 +77,8 @@ public record LndConfig(
                 DEFAULT_KEEP_ALIVE_TIME_SECONDS,
                 DEFAULT_KEEP_ALIVE_TIMEOUT_SECONDS,
                 DEFAULT_IDLE_TIMEOUT_MINUTES,
-                DEFAULT_MAX_INBOUND_MESSAGE_SIZE
+                DEFAULT_MAX_INBOUND_MESSAGE_SIZE,
+                DEFAULT_RPC_DEADLINE_SECONDS
         );
     }
 
@@ -84,7 +92,8 @@ public record LndConfig(
                 DEFAULT_KEEP_ALIVE_TIME_SECONDS,
                 DEFAULT_KEEP_ALIVE_TIMEOUT_SECONDS,
                 DEFAULT_IDLE_TIMEOUT_MINUTES,
-                DEFAULT_MAX_INBOUND_MESSAGE_SIZE
+                DEFAULT_MAX_INBOUND_MESSAGE_SIZE,
+                DEFAULT_RPC_DEADLINE_SECONDS
         );
     }
 }

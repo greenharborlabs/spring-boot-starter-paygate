@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Tests for {@link L402Properties.Lnd} configuration property binding,
@@ -52,6 +53,39 @@ class L402PropertiesLndTest {
     }
 
     @Test
+    @DisplayName("Lnd defaults: rpcDeadlineSeconds is null (uses global)")
+    void rpcDeadlineSecondsDefaultNull() {
+        var lnd = new L402Properties.Lnd();
+        assertThat(lnd.getRpcDeadlineSeconds()).isNull();
+    }
+
+    @Test
+    @DisplayName("Lnd rejects zero rpcDeadlineSeconds")
+    void rpcDeadlineSecondsRejectsZero() {
+        var lnd = new L402Properties.Lnd();
+        assertThatThrownBy(() -> lnd.setRpcDeadlineSeconds(0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rpc-deadline-seconds must be > 0");
+    }
+
+    @Test
+    @DisplayName("Lnd rejects negative rpcDeadlineSeconds")
+    void rpcDeadlineSecondsRejectsNegative() {
+        var lnd = new L402Properties.Lnd();
+        assertThatThrownBy(() -> lnd.setRpcDeadlineSeconds(-5))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rpc-deadline-seconds must be > 0");
+    }
+
+    @Test
+    @DisplayName("Lnd accepts null rpcDeadlineSeconds")
+    void rpcDeadlineSecondsAcceptsNull() {
+        var lnd = new L402Properties.Lnd();
+        lnd.setRpcDeadlineSeconds(null);
+        assertThat(lnd.getRpcDeadlineSeconds()).isNull();
+    }
+
+    @Test
     @DisplayName("Lnd setters update all new fields")
     void settersWork() {
         var lnd = new L402Properties.Lnd();
@@ -60,10 +94,12 @@ class L402PropertiesLndTest {
         lnd.setKeepAliveTimeoutSeconds(30);
         lnd.setIdleTimeoutMinutes(10);
         lnd.setMaxInboundMessageSize(8_388_608);
+        lnd.setRpcDeadlineSeconds(15);
 
         assertThat(lnd.getKeepAliveTimeSeconds()).isEqualTo(120);
         assertThat(lnd.getKeepAliveTimeoutSeconds()).isEqualTo(30);
         assertThat(lnd.getIdleTimeoutMinutes()).isEqualTo(10);
         assertThat(lnd.getMaxInboundMessageSize()).isEqualTo(8_388_608);
+        assertThat(lnd.getRpcDeadlineSeconds()).isEqualTo(15);
     }
 }

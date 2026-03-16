@@ -121,7 +121,7 @@ class LndChannelFactoryTest {
         // IllegalStateException guard is reached. This test documents that
         // the constructor is the effective enforcement point.
         assertThatThrownBy(() -> {
-            var config = new LndConfig("localhost", 10009, null, null, false, 60, 20, 5, 4_194_304);
+            var config = new LndConfig("localhost", 10009, null, null, false, 60, 20, 5, 4_194_304, 5);
             LndChannelFactory.create(config);
         }).isInstanceOf(IllegalArgumentException.class);
     }
@@ -131,7 +131,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", 10009,
                 "/nonexistent/path/tls.cert", null,
-                false, 60, 20, 5, 4_194_304);
+                false, 60, 20, 5, 4_194_304, 5);
 
         assertThatThrownBy(() -> LndChannelFactory.create(config))
                 .isInstanceOf(LndException.class)
@@ -153,7 +153,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", 10009,
                 certFile.toString(), null,
-                false, 60, 20, 5, 4_194_304);
+                false, 60, 20, 5, 4_194_304, 5);
 
         assertThatThrownBy(() -> LndChannelFactory.create(config))
                 .isInstanceOf(LndException.class)
@@ -175,7 +175,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", 10009,
                 null, macaroonFile.toString(),
-                true, 60, 20, 5, 4_194_304);
+                true, 60, 20, 5, 4_194_304, 5);
 
         assertThatThrownBy(() -> LndChannelFactory.create(config))
                 .isInstanceOf(LndException.class)
@@ -189,7 +189,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", 10009,
                 null, "/nonexistent/path/admin.macaroon",
-                true, 60, 20, 5, 4_194_304);
+                true, 60, 20, 5, 4_194_304, 5);
 
         assertThatThrownBy(() -> LndChannelFactory.create(config))
                 .isInstanceOf(LndException.class)
@@ -205,7 +205,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", 10009,
                 null, macaroonFile.toString(),
-                true, 60, 20, 5, 4_194_304);
+                true, 60, 20, 5, 4_194_304, 5);
 
         channel = LndChannelFactory.create(config);
 
@@ -221,7 +221,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", 10009,
                 certFile.toString(), null,
-                false, 60, 20, 5, 4_194_304);
+                false, 60, 20, 5, 4_194_304, 5);
 
         channel = LndChannelFactory.create(config);
 
@@ -237,7 +237,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", 10009,
                 certFile.toString(), null,
-                false, 60, 20, 5, 4_194_304);
+                false, 60, 20, 5, 4_194_304, 5);
 
         assertThatThrownBy(() -> LndChannelFactory.create(config))
                 .isInstanceOf(LndException.class)
@@ -291,7 +291,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", port,
                 null, macaroonFile.toString(),
-                true, 60, 20, 5, 4_194_304);
+                true, 60, 20, 5, 4_194_304, 5);
 
         channel = LndChannelFactory.create(config);
 
@@ -362,7 +362,7 @@ class LndChannelFactoryTest {
         var config = new LndConfig(
                 "localhost", port,
                 certFile.toString(), null,
-                false, 60, 20, 5, 4_194_304);
+                false, 60, 20, 5, 4_194_304, 5);
 
         channel = LndChannelFactory.create(config);
 
@@ -391,7 +391,8 @@ class LndChannelFactoryTest {
                 customKeepAlive,
                 customKeepAliveTimeout,
                 customIdleTimeout,
-                4_194_304);
+                4_194_304,
+                5);
 
         channel = LndChannelFactory.create(config);
 

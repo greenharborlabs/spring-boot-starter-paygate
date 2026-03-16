@@ -6,6 +6,7 @@ import com.greenharborlabs.l402.core.lightning.InvoiceStatus;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
 import lnrpc.LightningGrpc;
@@ -21,10 +22,20 @@ public class LndBackend implements LightningBackend, AutoCloseable {
 
     private final ManagedChannel channel;
     private final LightningGrpc.LightningBlockingStub stub;
+    private final int rpcDeadlineSeconds;
 
     public LndBackend(ManagedChannel channel) {
+        this(channel, LndConfig.DEFAULT_RPC_DEADLINE_SECONDS);
+    }
+
+    public LndBackend(ManagedChannel channel, LndConfig config) {
+        this(channel, config.rpcDeadlineSeconds());
+    }
+
+    private LndBackend(ManagedChannel channel, int rpcDeadlineSeconds) {
         this.channel = channel;
         this.stub = LightningGrpc.newBlockingStub(channel);
+        this.rpcDeadlineSeconds = rpcDeadlineSeconds;
     }
 
     @Override
@@ -43,7 +54,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
                     .setExpiry(DEFAULT_EXPIRY_SECONDS)
                     .build();
 
-            Lnrpc.AddInvoiceResponse addResponse = stub.withDeadlineAfter(5, TimeUnit.SECONDS).addInvoice(request);
+            Lnrpc.AddInvoiceResponse addResponse = stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).addInvoice(request);
 
             Instant createdAt = Instant.now();
             Instant expiresAt = createdAt.plusSeconds(DEFAULT_EXPIRY_SECONDS);
@@ -59,6 +70,10 @@ public class LndBackend implements LightningBackend, AutoCloseable {
                     expiresAt
             );
         } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                throw new LndTimeoutException(
+                        "LND createInvoice timed out after " + rpcDeadlineSeconds + "s", e);
+            }
             throw new LndException("Failed to create invoice via LND: " + e.getStatus(), e);
         }
     }
@@ -70,9 +85,13 @@ public class LndBackend implements LightningBackend, AutoCloseable {
                     .setRHash(ByteString.copyFrom(paymentHash))
                     .build();
 
-            Lnrpc.Invoice lndInvoice = stub.withDeadlineAfter(5, TimeUnit.SECONDS).lookupInvoice(request);
+            Lnrpc.Invoice lndInvoice = stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).lookupInvoice(request);
             return mapInvoice(lndInvoice);
         } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                throw new LndTimeoutException(
+                        "LND lookupInvoice timed out after " + rpcDeadlineSeconds + "s", e);
+            }
             throw new LndException("Failed to lookup invoice via LND: " + e.getStatus(), e);
         }
     }
@@ -80,7 +99,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
     @Override
     public boolean isHealthy() {
         try {
-            Lnrpc.GetInfoResponse info = stub.withDeadlineAfter(5, TimeUnit.SECONDS).getInfo(
+            Lnrpc.GetInfoResponse info = stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).getInfo(
                     Lnrpc.GetInfoRequest.getDefaultInstance());
             return info.getSyncedToChain();
         } catch (StatusRuntimeException _) {

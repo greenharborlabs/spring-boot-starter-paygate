@@ -10,6 +10,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -22,12 +23,12 @@ public class LnbitsBackend implements LightningBackend {
 
     private static final HexFormat HEX = HexFormat.of();
     private static final Duration DEFAULT_INVOICE_EXPIRY = Duration.ofHours(1);
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(5);
 
     private final LnbitsConfig config;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final String baseUrl;
+    private final Duration requestTimeout;
 
     public LnbitsBackend(LnbitsConfig config, ObjectMapper objectMapper, HttpClient httpClient) {
         this.config = config;
@@ -36,6 +37,7 @@ public class LnbitsBackend implements LightningBackend {
         // Strip trailing slash for consistent URL construction
         String url = config.baseUrl();
         this.baseUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        this.requestTimeout = Duration.ofSeconds(config.requestTimeoutSeconds());
     }
 
     @Override
@@ -50,7 +52,7 @@ public class LnbitsBackend implements LightningBackend {
                     .uri(URI.create(baseUrl + "/api/v1/payments"))
                     .header("X-Api-Key", config.apiKey())
                     .header("Content-Type", "application/json")
-                    .timeout(REQUEST_TIMEOUT)
+                    .timeout(requestTimeout)
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
                     .build();
 
@@ -83,6 +85,9 @@ public class LnbitsBackend implements LightningBackend {
                     now,
                     now.plus(DEFAULT_INVOICE_EXPIRY)
             );
+        } catch (HttpTimeoutException e) {
+            throw new LnbitsTimeoutException(
+                    "LNbits createInvoice timed out after " + config.requestTimeoutSeconds() + "s", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new LnbitsException("Interrupted while creating invoice", e);
@@ -101,7 +106,7 @@ public class LnbitsBackend implements LightningBackend {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/v1/payments/" + hashHex))
                     .header("X-Api-Key", config.apiKey())
-                    .timeout(REQUEST_TIMEOUT)
+                    .timeout(requestTimeout)
                     .GET()
                     .build();
 
@@ -152,6 +157,9 @@ public class LnbitsBackend implements LightningBackend {
                     now,
                     now.plus(DEFAULT_INVOICE_EXPIRY)
             );
+        } catch (HttpTimeoutException e) {
+            throw new LnbitsTimeoutException(
+                    "LNbits lookupInvoice timed out after " + config.requestTimeoutSeconds() + "s", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new LnbitsException("Interrupted while looking up invoice", e);
@@ -168,12 +176,14 @@ public class LnbitsBackend implements LightningBackend {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/v1/wallet"))
                     .header("X-Api-Key", config.apiKey())
-                    .timeout(REQUEST_TIMEOUT)
+                    .timeout(requestTimeout)
                     .GET()
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return response.statusCode() == 200;
+        } catch (HttpTimeoutException e) {
+            return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
