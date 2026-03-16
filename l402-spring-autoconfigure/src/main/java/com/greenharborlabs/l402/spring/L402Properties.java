@@ -48,6 +48,16 @@ public class L402Properties {
 
     private Lnd lnd = new Lnd();
 
+    private Metrics metrics = new Metrics();
+
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    public void setMetrics(Metrics metrics) {
+        this.metrics = metrics;
+    }
+
     public RateLimit getRateLimit() {
         return rateLimit;
     }
@@ -347,6 +357,36 @@ public class L402Properties {
 
         public void setMaxInboundMessageSize(int maxInboundMessageSize) {
             this.maxInboundMessageSize = maxInboundMessageSize;
+        }
+    }
+
+    /**
+     * Metrics configuration bound from {@code l402.metrics.*}.
+     */
+    public static class Metrics {
+
+        private int maxEndpointCardinality = 100;
+
+        private String overflowTagValue = "_other";
+
+        public int getMaxEndpointCardinality() {
+            return maxEndpointCardinality;
+        }
+
+        public void setMaxEndpointCardinality(int maxEndpointCardinality) {
+            if (maxEndpointCardinality < 1) {
+                throw new IllegalArgumentException(
+                        "l402.metrics.max-endpoint-cardinality must be >= 1, got: " + maxEndpointCardinality);
+            }
+            this.maxEndpointCardinality = maxEndpointCardinality;
+        }
+
+        public String getOverflowTagValue() {
+            return overflowTagValue;
+        }
+
+        public void setOverflowTagValue(String overflowTagValue) {
+            this.overflowTagValue = overflowTagValue;
         }
     }
 }

@@ -137,6 +137,18 @@
       "type": "java.lang.Integer",
       "description": "Maximum size in bytes for inbound gRPC messages from the LND node. Increase if LND responses (e.g., large channel lists) exceed the default 4 MB limit.",
       "defaultValue": 4194304
+    },
+    {
+      "name": "l402.metrics.max-endpoint-cardinality",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of distinct endpoint tag values tracked in L402 metrics before new values are replaced with the overflow sentinel. Prevents unbounded cardinality in TSDB backends.",
+      "defaultValue": 100
+    },
+    {
+      "name": "l402.metrics.overflow-tag-value",
+      "type": "java.lang.String",
+      "description": "Tag value used for the endpoint dimension when the cardinality cap is exceeded. All overflow endpoints are bucketed under this single value.",
+      "defaultValue": "_other"
     }
   ],
   "hints": [

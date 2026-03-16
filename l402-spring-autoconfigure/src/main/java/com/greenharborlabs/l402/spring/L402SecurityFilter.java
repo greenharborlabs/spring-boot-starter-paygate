@@ -92,6 +92,7 @@ public class L402SecurityFilter implements Filter {
             httpResponse.setContentType("application/json");
             httpResponse.getWriter().write(
                 "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
+            recordRejected("_malformed");
             return;
         }
 
@@ -109,7 +110,7 @@ public class L402SecurityFilter implements Filter {
         if (componentsOpt.isEmpty() && L402HeaderComponents.isL402Header(authHeader)) {
             // Header starts with L402/LSAT prefix but fails structural validation — malformed
             writeMalformedHeaderResponse(httpResponse, "Malformed L402 Authorization header", null);
-            recordRejected(path);
+            recordRejected(config.pathPattern());
             return;
         }
         if (componentsOpt.isPresent()) {
@@ -131,7 +132,7 @@ public class L402SecurityFilter implements Filter {
                         Instant.now().plus(config.timeoutSeconds(), ChronoUnit.SECONDS).toString());
 
                 chain.doFilter(request, response);
-                recordPassed(path, config.priceSats(), result.freshValidation());
+                recordPassed(config.pathPattern(), config.priceSats(), result.freshValidation());
                 return;
 
             } catch (L402Exception e) {
@@ -145,12 +146,12 @@ public class L402SecurityFilter implements Filter {
                 if (errorCode == ErrorCode.MALFORMED_HEADER) {
                     // Clearly malformed L402 header — return 400 Bad Request, do not issue a new invoice
                     writeMalformedHeaderResponse(httpResponse, e.getMessage(), e.getTokenId());
-                    recordRejected(path);
+                    recordRejected(config.pathPattern());
                     return;
                 }
                 // Non-malformed errors (expired, invalid signature, etc.) are terminal — no invoice needed
                 writeErrorResponse(httpResponse, errorCode, e.getMessage(), e.getTokenId());
-                recordRejected(path);
+                recordRejected(config.pathPattern());
                 return;
             } catch (Exception e) {
                 // Fail closed: any unexpected exception from validation produces 503, never 500
@@ -167,7 +168,7 @@ public class L402SecurityFilter implements Filter {
         try {
             L402ChallengeResult challengeResult = this.challengeService.createChallenge(httpRequest, config);
             writePaymentRequiredResponse(httpResponse, challengeResult);
-            recordChallenge(path);
+            recordChallenge(config.pathPattern());
         } catch (L402RateLimitedException _) {
             writeRateLimitedResponse(httpResponse);
         } catch (L402LightningUnavailableException e) {
@@ -244,17 +245,17 @@ public class L402SecurityFilter implements Filter {
                 {"code": 503, "error": "LIGHTNING_UNAVAILABLE", "message": "Lightning backend is not available. Please try again later."}""");
     }
 
-    private void recordChallenge(String path) {
+    private void recordChallenge(String endpoint) {
         try {
-            if (metrics != null) { metrics.recordChallenge(path); }
+            if (metrics != null) { metrics.recordChallenge(endpoint); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record challenge metric: {0}", e.getMessage());
         }
     }
 
-    private void recordPassed(String path, long priceSats, boolean freshValidation) {
+    private void recordPassed(String endpoint, long priceSats, boolean freshValidation) {
         try {
-            if (metrics != null) { metrics.recordPassed(path, priceSats); }
+            if (metrics != null) { metrics.recordPassed(endpoint, priceSats); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record passed metric: {0}", e.getMessage());
         }
@@ -267,9 +268,9 @@ public class L402SecurityFilter implements Filter {
         }
     }
 
-    private void recordRejected(String path) {
+    private void recordRejected(String endpoint) {
         try {
-            if (metrics != null) { metrics.recordRejected(path); }
+            if (metrics != null) { metrics.recordRejected(endpoint); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record rejected metric: {0}", e.getMessage());
         }

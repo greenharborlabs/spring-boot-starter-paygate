@@ -29,6 +29,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.security.MessageDigest;
@@ -72,6 +73,7 @@ class L402MetricsTest {
     private static final long PRICE_SATS = 21;
     private static final String PROTECTED_PATH = "/api/paid";
     private static final String PUBLIC_PATH = "/api/free";
+    private static final String PARAMETERIZED_PATH_PATTERN = "/api/items/{id}";
 
     static {
         new SecureRandom().nextBytes(ROOT_KEY);
@@ -128,6 +130,9 @@ class L402MetricsTest {
             registry.register(
                     new L402EndpointConfig("GET", PROTECTED_PATH, PRICE_SATS, 600, "Paid endpoint", "", "")
             );
+            registry.register(
+                    new L402EndpointConfig("GET", PARAMETERIZED_PATH_PATTERN, 10, 600, "Items endpoint", "", "")
+            );
             return registry;
         }
 
@@ -173,6 +178,11 @@ class L402MetricsTest {
         @GetMapping(PUBLIC_PATH)
         String freeEndpoint() {
             return "free-content";
+        }
+
+        @GetMapping("/api/items/{id}")
+        String itemEndpoint(@PathVariable String id) {
+            return "item-" + id;
         }
     }
 
@@ -488,6 +498,73 @@ class L402MetricsTest {
                     .isEqualTo(challengedBefore);
             assertThat(counterValue("l402.requests", "endpoint", PUBLIC_PATH, "result", "rejected"))
                     .isEqualTo(rejectedBefore);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Parameterized path cardinality — counters use pattern, not raw path
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("parameterized path cardinality")
+    class ParameterizedPathCardinalityMetrics {
+
+        @Test
+        @DisplayName("requests to /api/items/1 and /api/items/2 both tag with endpoint=/api/items/{id}")
+        void bothConcretePathsUsePatternTag() throws Exception {
+            double before = counterValue("l402.requests", "endpoint", PARAMETERIZED_PATH_PATTERN, "result", "challenged");
+
+            mockMvc.perform(get("/api/items/1"))
+                    .andExpect(status().isPaymentRequired());
+            mockMvc.perform(get("/api/items/2"))
+                    .andExpect(status().isPaymentRequired());
+
+            double after = counterValue("l402.requests", "endpoint", PARAMETERIZED_PATH_PATTERN, "result", "challenged");
+            assertThat(after).isEqualTo(before + 2.0);
+        }
+
+        @Test
+        @DisplayName("no counter exists tagged with raw path /api/items/1")
+        void noCounterForRawPath1() throws Exception {
+            mockMvc.perform(get("/api/items/1"))
+                    .andExpect(status().isPaymentRequired());
+
+            assertThat(counterValue("l402.requests", "endpoint", "/api/items/1", "result", "challenged"))
+                    .isZero();
+        }
+
+        @Test
+        @DisplayName("no counter exists tagged with raw path /api/items/2")
+        void noCounterForRawPath2() throws Exception {
+            mockMvc.perform(get("/api/items/2"))
+                    .andExpect(status().isPaymentRequired());
+
+            assertThat(counterValue("l402.requests", "endpoint", "/api/items/2", "result", "challenged"))
+                    .isZero();
+        }
+
+        @Test
+        @DisplayName("invoices.created counter uses pattern tag for parameterized paths")
+        void invoicesCreatedUsesPatternTag() throws Exception {
+            double before = counterValue("l402.invoices.created", "endpoint", PARAMETERIZED_PATH_PATTERN);
+
+            mockMvc.perform(get("/api/items/1"))
+                    .andExpect(status().isPaymentRequired());
+
+            double after = counterValue("l402.invoices.created", "endpoint", PARAMETERIZED_PATH_PATTERN);
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("existing exact-path tests still use endpoint=/api/paid")
+        void exactPathStillWorks() throws Exception {
+            double before = counterValue("l402.requests", "endpoint", PROTECTED_PATH, "result", "challenged");
+
+            mockMvc.perform(get(PROTECTED_PATH))
+                    .andExpect(status().isPaymentRequired());
+
+            double after = counterValue("l402.requests", "endpoint", PROTECTED_PATH, "result", "challenged");
+            assertThat(after).isEqualTo(before + 1.0);
         }
     }
 

@@ -33,4 +33,15 @@ public class L402MetricsAutoConfiguration {
                                    LightningBackend lightningBackend) {
         return new L402Metrics(meterRegistry, credentialStore, lightningBackend);
     }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public L402MeterFilter l402MeterFilter(MeterRegistry meterRegistry, L402Properties properties) {
+        L402MeterFilter filter = new L402MeterFilter(
+                properties.getMetrics().getMaxEndpointCardinality(),
+                properties.getMetrics().getOverflowTagValue()
+        );
+        meterRegistry.config().meterFilter(filter);
+        return filter;
+    }
 }
