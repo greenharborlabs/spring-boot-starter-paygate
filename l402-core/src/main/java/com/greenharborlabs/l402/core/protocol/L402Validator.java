@@ -18,8 +18,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Orchestrates L402 credential validation: parse header, check cache, verify macaroon
- * signature, verify preimage, run caveat verifiers, and cache on success.
+ * Orchestrates L402 credential validation: parse header, check cache, verify preimage,
+ * verify macaroon signature, run caveat verifiers, and cache on success.
+ *
+ * <p><strong>SECURITY INVARIANT:</strong> Preimage (proof-of-payment) MUST be verified before
+ * macaroon signature on all paths. This prevents oracle attacks where an adversary without
+ * proof-of-payment can probe macaroon validity through differential error responses.</p>
  */
 public final class L402Validator {
 
@@ -94,49 +98,24 @@ public final class L402Validator {
         //    the revoking code should proactively call credentialStore.revoke() to evict it.
         L402Credential cached = credentialStore.get(tokenId);
         if (cached != null) {
-            // Verify the presented macaroon signature matches the cached one
-            if (!MacaroonCrypto.constantTimeEquals(
-                    credential.macaroon().signature(), cached.macaroon().signature())) {
-                throw new L402Exception(ErrorCode.INVALID_MACAROON,
-                        "Presented macaroon signature does not match cached credential", tokenId);
-            }
-
-            // Verify the presented preimage matches the cached one
-            if (!credential.preimage().equals(cached.preimage())) {
-                throw new L402Exception(ErrorCode.INVALID_MACAROON,
-                        "Presented preimage does not match cached credential", tokenId);
-            }
-
-            // Re-verify all caveats against the provided context (includes escalation detection)
-            try {
-                MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiers, context);
-            } catch (MacaroonVerificationException e) {
-                credentialStore.revoke(tokenId);
-                throw new L402Exception(ErrorCode.INVALID_MACAROON,
-                        "Macaroon verification failed: " + e.getMessage(), tokenId);
-            } catch (L402Exception e) {
-                credentialStore.revoke(tokenId);
-                if (e.getTokenId() == null) {
-                    throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
-                }
-                throw e;
-            }
-
-            return new ValidationResult(cached, false);
+            return verifyCachedCredential(credential, cached, context);
         }
 
-        // 3. Extract tokenId bytes from macaroon identifier for root key lookup
+        // 3. Decode identifier
         MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
         byte[] tokenIdBytes = macId.tokenId();
 
-        // 4. Look up root key
+        // 4. Verify preimage matches payment hash (BEFORE root key lookup — see security invariant)
+        verifyPreimage(credential, macId);
+
+        // 5. Look up root key
         SensitiveBytes rootKeySb = rootKeyStore.getRootKey(tokenIdBytes);
         if (rootKeySb == null) {
             throw new L402Exception(ErrorCode.REVOKED_CREDENTIAL,
                     "No root key found for token", tokenId);
         }
 
-        // 5. Verify macaroon signature and caveats using the provided context
+        // 6. Verify macaroon signature and caveats using the provided context
         Instant now = context.getCurrentTime();
         try (rootKeySb) {
             byte[] rootKey = rootKeySb.value();
@@ -158,18 +137,81 @@ public final class L402Validator {
             }
         }
 
-        // 6. Verify preimage matches payment hash
-        byte[] paymentHash = macId.paymentHash();
-        if (!credential.preimage().matchesHash(paymentHash)) {
-            throw new L402Exception(ErrorCode.INVALID_PREIMAGE,
-                    "Preimage does not match payment hash", tokenId);
-        }
-
         // 7. Cache the credential with TTL derived from valid_until caveats
         long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
         credentialStore.store(tokenId, credential, cacheTtl);
 
         return new ValidationResult(credential, true);
+    }
+
+    /**
+     * Validates a presented credential against a cached credential.
+     * Verification order: preimage, then signature, then caveats.
+     *
+     * <p>Preimage is checked first to uphold the security invariant: proof-of-payment
+     * must be verified before any macaroon-structural checks, preventing an adversary
+     * without payment proof from probing signature validity.</p>
+     *
+     * @param credential the presented credential from the request
+     * @param cached     the previously validated and cached credential
+     * @param context    the verification context for caveat re-evaluation
+     * @return a {@link ValidationResult} with the cached credential and freshValidation=false
+     * @throws L402Exception if preimage, signature, or caveat verification fails
+     */
+    private ValidationResult verifyCachedCredential(L402Credential credential, L402Credential cached,
+                                                    L402VerificationContext context) {
+        String tokenId = credential.tokenId();
+
+        // Verify preimage first (security invariant: proof-of-payment before signature)
+        if (!credential.preimage().equals(cached.preimage())) {
+            throw new L402Exception(ErrorCode.INVALID_PREIMAGE,
+                    "Presented preimage does not match cached credential", tokenId);
+        }
+
+        // Verify the presented macaroon signature matches the cached one
+        if (!MacaroonCrypto.constantTimeEquals(
+                credential.macaroon().signature(), cached.macaroon().signature())) {
+            throw new L402Exception(ErrorCode.INVALID_MACAROON,
+                    "Presented macaroon signature does not match cached credential", tokenId);
+        }
+
+        // Re-verify all caveats against the provided context (includes escalation detection)
+        try {
+            MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiers, context);
+        } catch (MacaroonVerificationException e) {
+            credentialStore.revoke(tokenId);
+            throw new L402Exception(ErrorCode.INVALID_MACAROON,
+                    "Macaroon verification failed: " + e.getMessage(), tokenId);
+        } catch (L402Exception e) {
+            credentialStore.revoke(tokenId);
+            if (e.getTokenId() == null) {
+                throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
+            }
+            throw e;
+        }
+
+        return new ValidationResult(cached, false);
+    }
+
+    /**
+     * Verifies that the credential's preimage hashes to the payment hash embedded in
+     * the macaroon identifier. Uses constant-time SHA-256 comparison.
+     *
+     * <p>This check is performed early in the validation pipeline (before root key lookup
+     * and signature verification) to uphold the security invariant: an adversary who does
+     * not possess proof-of-payment must not be able to learn anything about macaroon
+     * validity from error responses.</p>
+     *
+     * @param credential the credential containing the preimage to verify
+     * @param macId      the decoded macaroon identifier containing the expected payment hash
+     * @throws L402Exception with {@link ErrorCode#INVALID_PREIMAGE} if the preimage does not match
+     */
+    private void verifyPreimage(L402Credential credential, MacaroonIdentifier macId) {
+        byte[] paymentHash = macId.paymentHash();
+        if (!credential.preimage().matchesHash(paymentHash)) {
+            throw new L402Exception(ErrorCode.INVALID_PREIMAGE,
+                    "Preimage does not match payment hash", credential.tokenId());
+        }
     }
 
     /**

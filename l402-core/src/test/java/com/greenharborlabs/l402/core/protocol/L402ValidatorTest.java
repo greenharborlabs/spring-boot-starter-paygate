@@ -277,7 +277,7 @@ class L402ValidatorTest {
         }
 
         @Test
-        @DisplayName("throws INVALID_MACAROON when presented preimage does not match cached")
+        @DisplayName("throws INVALID_PREIMAGE when presented preimage does not match cached")
         void rejectsCachedCredentialWithWrongPreimage() {
             // Pre-populate the credential store with the legitimate credential
             PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
@@ -300,7 +300,7 @@ class L402ValidatorTest {
                     .isInstanceOf(L402Exception.class)
                     .satisfies(ex -> {
                         L402Exception l402Ex = (L402Exception) ex;
-                        assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
+                        assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_PREIMAGE);
                         assertThat(l402Ex.getMessage()).contains("preimage");
                         assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
                     });
