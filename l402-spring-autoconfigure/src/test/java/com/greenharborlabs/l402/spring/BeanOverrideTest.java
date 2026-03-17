@@ -41,25 +41,25 @@ class BeanOverrideTest {
             );
 
     @Test
-    @DisplayName("auto-configured InMemoryRootKeyStore is used when no custom bean is defined")
+    @DisplayName("auto-configured InMemoryRootKeyStore is wrapped in ObservableRootKeyStore")
     void autoConfiguredRootKeyStoreWhenNoOverride() {
         contextRunner
                 .run(context -> {
                     assertThat(context).hasSingleBean(RootKeyStore.class);
                     assertThat(context.getBean(RootKeyStore.class))
-                            .isInstanceOf(InMemoryRootKeyStore.class);
+                            .isInstanceOf(com.greenharborlabs.l402.core.macaroon.ObservableRootKeyStore.class);
                 });
     }
 
     @Test
-    @DisplayName("custom RootKeyStore bean replaces auto-configured store")
+    @DisplayName("custom RootKeyStore bean is wrapped in ObservableRootKeyStore")
     void customRootKeyStorePreventsAutoConfigured() {
         contextRunner
                 .withUserConfiguration(CustomRootKeyStoreConfig.class)
                 .run(context -> {
                     assertThat(context).hasSingleBean(RootKeyStore.class);
                     assertThat(context.getBean(RootKeyStore.class))
-                            .isInstanceOf(CustomRootKeyStore.class)
+                            .isInstanceOf(com.greenharborlabs.l402.core.macaroon.ObservableRootKeyStore.class)
                             .isNotInstanceOf(InMemoryRootKeyStore.class);
                 });
     }

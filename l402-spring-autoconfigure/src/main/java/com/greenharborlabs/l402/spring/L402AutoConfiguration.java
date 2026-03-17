@@ -1,5 +1,6 @@
 package com.greenharborlabs.l402.spring;
 
+import com.greenharborlabs.l402.core.credential.CredentialCacheEvictionListener;
 import com.greenharborlabs.l402.core.credential.CredentialStore;
 import com.greenharborlabs.l402.core.credential.InMemoryCredentialStore;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
@@ -8,12 +9,14 @@ import com.greenharborlabs.l402.lightning.lnd.LndConfig;
 import com.greenharborlabs.l402.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.FileBasedRootKeyStore;
 import com.greenharborlabs.l402.core.macaroon.InMemoryRootKeyStore;
+import com.greenharborlabs.l402.core.macaroon.ObservableRootKeyStore;
 import com.greenharborlabs.l402.core.macaroon.RootKeyStore;
 import com.greenharborlabs.l402.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.l402.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.l402.core.protocol.L402Validator;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -98,6 +101,46 @@ public class L402AutoConfiguration {
             return home + rawPath.substring(1);
         }
         return rawPath;
+    }
+
+    /**
+     * Wraps any {@link RootKeyStore} bean with {@link ObservableRootKeyStore} and
+     * registers {@link CredentialCacheEvictionListener} so that root key revocations
+     * automatically evict cached credentials. Idempotent: already-wrapped stores
+     * are not double-wrapped.
+     */
+    @Configuration(proxyBeanMethods = false)
+    static class RootKeyStoreWrappingConfiguration {
+
+        @Bean
+        static org.springframework.beans.factory.config.BeanPostProcessor rootKeyStoreWrappingPostProcessor(
+                ObjectProvider<CredentialStore> credentialStoreProvider) {
+            return new org.springframework.beans.factory.config.BeanPostProcessor() {
+                @Override
+                public Object postProcessAfterInitialization(Object bean, String beanName) {
+                    if (!(bean instanceof RootKeyStore rootKeyStore)) {
+                        return bean;
+                    }
+                    if (bean instanceof ObservableRootKeyStore) {
+                        return bean;
+                    }
+
+                    var observable = new ObservableRootKeyStore(rootKeyStore);
+
+                    CredentialStore credentialStore = credentialStoreProvider.getIfAvailable();
+                    if (credentialStore != null) {
+                        observable.addRevocationListener(
+                                new CredentialCacheEvictionListener(credentialStore));
+                    } else {
+                        System.getLogger(RootKeyStoreWrappingConfiguration.class.getName())
+                                .log(System.Logger.Level.WARNING,
+                                        "CredentialStore not available; skipping revocation listener registration");
+                    }
+
+                    return observable;
+                }
+            };
+        }
     }
 
     @Configuration(proxyBeanMethods = false)

@@ -163,12 +163,12 @@ class AutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("RootKeyStore is InMemoryRootKeyStore when l402.root-key-store=memory")
+    @DisplayName("RootKeyStore is wrapped in ObservableRootKeyStore when l402.root-key-store=memory")
     void inMemoryRootKeyStoreWhenMemoryMode() {
         contextRunner.run(context -> {
             RootKeyStore store = context.getBean(RootKeyStore.class);
             assertThat(store).isInstanceOf(
-                    com.greenharborlabs.l402.core.macaroon.InMemoryRootKeyStore.class);
+                    com.greenharborlabs.l402.core.macaroon.ObservableRootKeyStore.class);
         });
     }
 
