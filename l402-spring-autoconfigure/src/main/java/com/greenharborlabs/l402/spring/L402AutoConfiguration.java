@@ -49,7 +49,7 @@ import java.util.List;
 @EnableConfigurationProperties(L402Properties.class)
 public class L402AutoConfiguration {
 
-    private static final System.Logger LOG = System.getLogger(L402AutoConfiguration.class.getName());
+    private static final System.Logger log = System.getLogger(L402AutoConfiguration.class.getName());
 
     @Bean
     L402SecurityModeStartupValidator l402SecurityModeStartupValidator(Environment environment) {
@@ -57,12 +57,12 @@ public class L402AutoConfiguration {
         L402SecurityModeResolver.validate(configured);
         String resolved = L402SecurityModeResolver.resolveFromConfigured(configured);
 
-        LOG.log(System.Logger.Level.INFO,
+        log.log(System.Logger.Level.INFO,
                 "L402 security mode resolved to: {0} (configured: {1})", resolved, configured);
 
         if (L402SecurityModeResolver.MODE_SERVLET.equals(resolved)
                 && L402SecurityModeResolver.isSpringSecurityPresent()) {
-            LOG.log(System.Logger.Level.WARNING,
+            log.log(System.Logger.Level.WARNING,
                     "Spring Security is on the classpath but L402 is using servlet filter mode. "
                             + "L402AuthenticationFilter and L402AuthenticationEntryPoint will not be active.");
         }
@@ -307,13 +307,16 @@ public class L402AutoConfiguration {
             int timeout = lnbits.getRequestTimeoutSeconds() != null
                     ? lnbits.getRequestTimeoutSeconds()
                     : properties.getLightning().getTimeoutSeconds();
-            var config = new com.greenharborlabs.l402.lightning.lnbits.LnbitsConfig(
-                    lnbits.getUrl(), lnbits.getApiKey(), timeout);
+            var config = lnbits.getConnectTimeoutSeconds() != null
+                    ? new com.greenharborlabs.l402.lightning.lnbits.LnbitsConfig(
+                            lnbits.getUrl(), lnbits.getApiKey(), timeout, lnbits.getConnectTimeoutSeconds())
+                    : new com.greenharborlabs.l402.lightning.lnbits.LnbitsConfig(
+                            lnbits.getUrl(), lnbits.getApiKey(), timeout);
             return new com.greenharborlabs.l402.lightning.lnbits.LnbitsBackend(
                     config,
                     objectMapper,
                     java.net.http.HttpClient.newBuilder()
-                            .connectTimeout(java.time.Duration.ofSeconds(10))
+                            .connectTimeout(java.time.Duration.ofSeconds(config.connectTimeoutSeconds()))
                             .build());
         }
     }

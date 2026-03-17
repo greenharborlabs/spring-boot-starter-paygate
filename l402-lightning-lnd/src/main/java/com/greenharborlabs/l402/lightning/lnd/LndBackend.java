@@ -13,12 +13,15 @@ import lnrpc.LightningGrpc;
 import lnrpc.Lnrpc;
 
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.concurrent.TimeUnit;
 
 /**
  * {@link LightningBackend} implementation backed by an LND node via gRPC.
  */
 public class LndBackend implements LightningBackend, AutoCloseable {
+
+    private static final System.Logger log = System.getLogger(LndBackend.class.getName());
 
     private final ManagedChannel channel;
     private final LightningGrpc.LightningBlockingStub stub;
@@ -59,7 +62,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
             Instant createdAt = Instant.now();
             Instant expiresAt = createdAt.plusSeconds(DEFAULT_EXPIRY_SECONDS);
 
-            return new Invoice(
+            var invoice = new Invoice(
                     addResponse.getRHash().toByteArray(),
                     addResponse.getPaymentRequest(),
                     amountSats,
@@ -69,7 +72,14 @@ public class LndBackend implements LightningBackend, AutoCloseable {
                     createdAt,
                     expiresAt
             );
+
+            log.log(System.Logger.Level.DEBUG, "LND createInvoice succeeded: paymentHash={0}",
+                    HexFormat.of().formatHex(addResponse.getRHash().toByteArray()));
+
+            return invoice;
         } catch (StatusRuntimeException e) {
+            log.log(System.Logger.Level.WARNING, "LND createInvoice failed: {0} - {1}",
+                    e.getStatus().getCode(), e.getStatus().getDescription());
             if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
                 throw new LndTimeoutException(
                         "LND createInvoice timed out after " + rpcDeadlineSeconds + "s", e);
@@ -88,6 +98,8 @@ public class LndBackend implements LightningBackend, AutoCloseable {
             Lnrpc.Invoice lndInvoice = stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).lookupInvoice(request);
             return mapInvoice(lndInvoice);
         } catch (StatusRuntimeException e) {
+            log.log(System.Logger.Level.WARNING, "LND lookupInvoice failed: {0} - {1}",
+                    e.getStatus().getCode(), e.getStatus().getDescription());
             if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
                 throw new LndTimeoutException(
                         "LND lookupInvoice timed out after " + rpcDeadlineSeconds + "s", e);
@@ -101,8 +113,12 @@ public class LndBackend implements LightningBackend, AutoCloseable {
         try {
             Lnrpc.GetInfoResponse info = stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).getInfo(
                     Lnrpc.GetInfoRequest.getDefaultInstance());
-            return info.getSyncedToChain();
-        } catch (StatusRuntimeException _) {
+            boolean synced = info.getSyncedToChain();
+            log.log(System.Logger.Level.DEBUG, "LND health check: syncedToChain={0}", synced);
+            return synced;
+        } catch (StatusRuntimeException e) {
+            log.log(System.Logger.Level.WARNING, "LND health check failed: {0} - {1}",
+                    e.getStatus().getCode(), e.getStatus().getDescription());
             return false;
         }
     }

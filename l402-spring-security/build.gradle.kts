@@ -7,7 +7,6 @@ dependencies {
     implementation("org.springframework.security:spring-security-web")
     implementation("org.springframework.security:spring-security-config")
     implementation("org.springframework:spring-web")
-    implementation("org.slf4j:slf4j-api")
     compileOnly("jakarta.servlet:jakarta.servlet-api")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")

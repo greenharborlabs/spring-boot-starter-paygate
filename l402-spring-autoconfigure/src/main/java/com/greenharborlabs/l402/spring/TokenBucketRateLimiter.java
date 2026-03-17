@@ -52,11 +52,12 @@ public class TokenBucketRateLimiter implements L402RateLimiter {
         buckets.compute(key, (_, existing) -> {
             long now = System.nanoTime();
             if (existing == null) {
-                // Use AtomicInteger for reliable capacity check (avoids TOCTOU with ConcurrentHashMap.size())
-                if (bucketCount.get() >= MAX_BUCKETS) {
-                    return null; // don't create bucket
+                // Atomically increment only if below MAX_BUCKETS — avoids TOCTOU race
+                // between concurrent compute() calls on different hash bins.
+                int prev = bucketCount.getAndUpdate(c -> c < MAX_BUCKETS ? c + 1 : c);
+                if (prev >= MAX_BUCKETS) {
+                    return null; // don't create bucket — at capacity
                 }
-                bucketCount.incrementAndGet();
                 // New bucket: start full, consume one token immediately
                 allowed[0] = true;
                 return new Bucket(maxTokens - 1.0, now);

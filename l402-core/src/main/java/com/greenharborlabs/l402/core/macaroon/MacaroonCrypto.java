@@ -6,7 +6,6 @@ import javax.security.auth.DestroyFailedException;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.util.logging.Logger;
 
 /**
  * Cryptographic primitives for macaroon operations.
@@ -14,7 +13,7 @@ import java.util.logging.Logger;
  */
 public final class MacaroonCrypto {
 
-    private static final Logger LOG = Logger.getLogger(MacaroonCrypto.class.getName());
+    private static final System.Logger log = System.getLogger(MacaroonCrypto.class.getName());
     private static final String HMAC_SHA256 = "HmacSHA256";
     private static final byte[] GENERATOR_KEY = "macaroons-key-generator".getBytes(StandardCharsets.UTF_8);
 
@@ -57,7 +56,7 @@ public final class MacaroonCrypto {
                 try {
                     keySpec.destroy();
                 } catch (DestroyFailedException e) {
-                    LOG.warning("SecretKeySpec.destroy() failed: " + e.getMessage());
+                    log.log(System.Logger.Level.WARNING, "SecretKeySpec.destroy() failed: {0}", e.getMessage());
                 }
             }
         } catch (NoSuchAlgorithmException | InvalidKeyException e) {

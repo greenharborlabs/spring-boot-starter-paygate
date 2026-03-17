@@ -80,4 +80,51 @@ class LnbitsConfigTest {
         var config = new LnbitsConfig(BASE_URL, API_KEY, 10);
         assertThat(config.toString()).contains("requestTimeoutSeconds=10");
     }
+
+    // --- connectTimeoutSeconds tests ---
+
+    @Test
+    void twoArgConstructorShouldDefaultConnectTimeoutToTenSeconds() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY);
+        assertThat(config.connectTimeoutSeconds()).isEqualTo(10);
+    }
+
+    @Test
+    void threeArgConstructorShouldDefaultConnectTimeoutToTenSeconds() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY, 30);
+        assertThat(config.connectTimeoutSeconds()).isEqualTo(10);
+    }
+
+    @Test
+    void fourArgConstructorShouldAcceptCustomConnectTimeout() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY, 5, 20);
+        assertThat(config.connectTimeoutSeconds()).isEqualTo(20);
+    }
+
+    @Test
+    void shouldRejectZeroConnectTimeoutSeconds() {
+        assertThatThrownBy(() -> new LnbitsConfig(BASE_URL, API_KEY, 5, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("connectTimeoutSeconds must be positive");
+    }
+
+    @Test
+    void shouldRejectNegativeConnectTimeoutSeconds() {
+        assertThatThrownBy(() -> new LnbitsConfig(BASE_URL, API_KEY, 5, -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("connectTimeoutSeconds must be positive");
+    }
+
+    @Test
+    void toStringShouldIncludeConnectTimeoutSeconds() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY, 5, 15);
+        assertThat(config.toString()).contains("connectTimeoutSeconds=15");
+    }
+
+    @Test
+    void toStringShouldRedactApiKeyWithFourArgConstructor() {
+        var config = new LnbitsConfig(BASE_URL, API_KEY, 5, 15);
+        assertThat(config.toString()).contains("***REDACTED***");
+        assertThat(config.toString()).doesNotContain(API_KEY);
+    }
 }

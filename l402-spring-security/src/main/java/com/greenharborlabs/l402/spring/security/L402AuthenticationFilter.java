@@ -3,12 +3,11 @@ package com.greenharborlabs.l402.spring.security;
 import com.greenharborlabs.l402.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.l402.spring.L402EndpointConfig;
 import com.greenharborlabs.l402.spring.L402EndpointRegistry;
+import com.greenharborlabs.l402.spring.L402ResponseWriter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
@@ -31,7 +30,7 @@ import java.util.Objects;
  */
 public final class L402AuthenticationFilter extends OncePerRequestFilter {
 
-    private static final Logger log = LoggerFactory.getLogger(L402AuthenticationFilter.class);
+    private static final System.Logger log = System.getLogger(L402AuthenticationFilter.class.getName());
 
     private static final String AUTHORIZATION_HEADER = "Authorization";
 
@@ -70,17 +69,12 @@ public final class L402AuthenticationFilter extends OncePerRequestFilter {
             SecurityContextHolder.setContext(securityContext);
         } catch (AuthenticationException e) {
             SecurityContextHolder.clearContext();
-            response.setHeader("WWW-Authenticate", "L402");
-            response.setContentType("application/json");
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.getWriter().write("{\"error\": \"L402 authentication failed\"}");
+            L402ResponseWriter.writeAuthenticationFailed(response);
             return;
         } catch (RuntimeException e) {
-            log.warn("L402 authentication encountered an unexpected error", e);
+            log.log(System.Logger.Level.WARNING, "L402 authentication encountered an unexpected error", e);
             SecurityContextHolder.clearContext();
-            response.setContentType("application/json");
-            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-            response.getWriter().write("{\"error\": \"Service temporarily unavailable\"}");
+            L402ResponseWriter.writeLightningUnavailable(response);
             return;
         }
 
@@ -105,7 +99,7 @@ public final class L402AuthenticationFilter extends OncePerRequestFilter {
             }
             return capability;
         } catch (RuntimeException e) {
-            log.debug("Failed to resolve capability for {} {}; proceeding without capability enforcement",
+            log.log(System.Logger.Level.DEBUG, "Failed to resolve capability for {0} {1}; proceeding without capability enforcement",
                     request.getMethod(), request.getRequestURI(), e);
             return null;
         }

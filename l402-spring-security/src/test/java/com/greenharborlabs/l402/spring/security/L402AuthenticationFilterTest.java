@@ -142,7 +142,7 @@ class L402AuthenticationFilterTest {
         assertThat(response.getStatus()).isEqualTo(401);
         assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
         assertThat(response.getContentType()).isEqualTo("application/json");
-        assertThat(response.getContentAsString()).isEqualTo("{\"error\": \"L402 authentication failed\"}");
+        assertThat(response.getContentAsString()).isEqualTo("{\"code\": 401, \"error\": \"AUTHENTICATION_FAILED\", \"message\": \"L402 authentication failed\"}");
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         verify(filterChain, never()).doFilter(request, response);
     }
@@ -207,7 +207,7 @@ class L402AuthenticationFilterTest {
 
         assertThat(response.getStatus()).isEqualTo(503);
         assertThat(response.getContentType()).isEqualTo("application/json");
-        assertThat(response.getContentAsString()).isEqualTo("{\"error\": \"Service temporarily unavailable\"}");
+        assertThat(response.getContentAsString()).isEqualTo("{\"code\": 503, \"error\": \"LIGHTNING_UNAVAILABLE\", \"message\": \"Lightning backend is not available. Please try again later.\"}");
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         verify(filterChain, never()).doFilter(request, response);
     }

@@ -130,6 +130,43 @@ class MacaroonMinterTest {
     }
 
     @Nested
+    @DisplayName("sig zeroization")
+    class SigZeroization {
+
+        @Test
+        @DisplayName("macaroon signature is correct after mint — proves clone preserved value before zeroization")
+        void signaturePreservedAfterSigZeroization() {
+            Caveat caveat1 = new Caveat("services", "my_api:0");
+            Caveat caveat2 = new Caveat("my_api_valid_until", "1735689600");
+            List<Caveat> caveats = List.of(caveat1, caveat2);
+
+            // Independently compute the expected final signature
+            byte[] sig = MacaroonCrypto.hmac(derivedKey, identifierBytes);
+            for (Caveat caveat : caveats) {
+                sig = MacaroonCrypto.hmac(sig, caveat.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            byte[] expectedSig = sig;
+
+            // Mint the macaroon — internally, sig is zeroized in finally block
+            Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, LOCATION, caveats);
+
+            // The macaroon's signature must match, proving the Macaroon constructor
+            // cloned the sig array before MacaroonMinter zeroized it
+            assertThat(macaroon.signature()).isEqualTo(expectedSig);
+        }
+
+        @Test
+        @DisplayName("macaroon signature correct with no caveats — sig zeroization does not corrupt result")
+        void signaturePreservedNoCaveats() {
+            byte[] expectedSig = MacaroonCrypto.hmac(derivedKey, identifierBytes);
+
+            Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, LOCATION, List.of());
+
+            assertThat(macaroon.signature()).isEqualTo(expectedSig);
+        }
+    }
+
+    @Nested
     @DisplayName("null argument validation")
     class NullValidation {
 

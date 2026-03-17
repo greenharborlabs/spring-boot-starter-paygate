@@ -21,6 +21,7 @@ import java.util.HexFormat;
  */
 public class LnbitsBackend implements LightningBackend {
 
+    private static final System.Logger log = System.getLogger(LnbitsBackend.class.getName());
     private static final HexFormat HEX = HexFormat.of();
     private static final Duration DEFAULT_INVOICE_EXPIRY = Duration.ofHours(1);
 
@@ -58,6 +59,8 @@ public class LnbitsBackend implements LightningBackend {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.log(System.Logger.Level.WARNING,
+                        "LNbits createInvoice returned HTTP {0}", response.statusCode());
                 throw new LnbitsException("LNbits API returned HTTP " + response.statusCode());
             }
             JsonNode json = objectMapper.readTree(response.body());
@@ -75,6 +78,9 @@ public class LnbitsBackend implements LightningBackend {
             String bolt11 = bolt11Node.asText();
             Instant now = Instant.now();
 
+            log.log(System.Logger.Level.DEBUG,
+                    "LNbits invoice created, paymentHash={0}", paymentHashHex);
+
             return new Invoice(
                     HEX.parseHex(paymentHashHex),
                     bolt11,
@@ -86,6 +92,8 @@ public class LnbitsBackend implements LightningBackend {
                     now.plus(DEFAULT_INVOICE_EXPIRY)
             );
         } catch (HttpTimeoutException e) {
+            log.log(System.Logger.Level.WARNING,
+                    "LNbits createInvoice timed out after {0}s", config.requestTimeoutSeconds());
             throw new LnbitsTimeoutException(
                     "LNbits createInvoice timed out after " + config.requestTimeoutSeconds() + "s", e);
         } catch (InterruptedException e) {
@@ -94,6 +102,7 @@ public class LnbitsBackend implements LightningBackend {
         } catch (LnbitsException e) {
             throw e;
         } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "LNbits createInvoice failed", e);
             throw new LnbitsException("Failed to create invoice via LNbits", e);
         }
     }
@@ -112,6 +121,9 @@ public class LnbitsBackend implements LightningBackend {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.log(System.Logger.Level.WARNING,
+                        "LNbits lookupInvoice returned HTTP {0} for hash={1}",
+                        response.statusCode(), hashHex);
                 throw new LnbitsException("LNbits API returned HTTP " + response.statusCode());
             }
             JsonNode json = objectMapper.readTree(response.body());
@@ -158,6 +170,8 @@ public class LnbitsBackend implements LightningBackend {
                     now.plus(DEFAULT_INVOICE_EXPIRY)
             );
         } catch (HttpTimeoutException e) {
+            log.log(System.Logger.Level.WARNING,
+                    "LNbits lookupInvoice timed out after {0}s", config.requestTimeoutSeconds());
             throw new LnbitsTimeoutException(
                     "LNbits lookupInvoice timed out after " + config.requestTimeoutSeconds() + "s", e);
         } catch (InterruptedException e) {
@@ -166,6 +180,7 @@ public class LnbitsBackend implements LightningBackend {
         } catch (LnbitsException e) {
             throw e;
         } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "LNbits lookupInvoice failed", e);
             throw new LnbitsException("Failed to lookup invoice via LNbits", e);
         }
     }
@@ -181,13 +196,17 @@ public class LnbitsBackend implements LightningBackend {
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() == 200;
+            boolean healthy = response.statusCode() == 200;
+            log.log(System.Logger.Level.DEBUG, "LNbits health check result={0}", healthy);
+            return healthy;
         } catch (HttpTimeoutException e) {
+            log.log(System.Logger.Level.WARNING, "LNbits health check timed out");
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
         } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "LNbits health check failed", e);
             return false;
         }
     }

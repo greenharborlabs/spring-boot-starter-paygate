@@ -6,8 +6,6 @@ import com.greenharborlabs.l402.core.protocol.L402Credential;
 import com.greenharborlabs.l402.core.protocol.L402Exception;
 import com.greenharborlabs.l402.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.l402.core.protocol.L402Validator;
-import com.greenharborlabs.l402.core.util.JsonEscaper;
-
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -109,7 +107,8 @@ public class L402SecurityFilter implements Filter {
         var componentsOpt = L402HeaderComponents.extract(authHeader);
         if (componentsOpt.isEmpty() && L402HeaderComponents.isL402Header(authHeader)) {
             // Header starts with L402/LSAT prefix but fails structural validation — malformed
-            writeMalformedHeaderResponse(httpResponse, "Malformed L402 Authorization header", null);
+            log.log(System.Logger.Level.WARNING, "Malformed L402 header for token {0}: {1}", "", "Malformed L402 Authorization header");
+            L402ResponseWriter.writeMalformedHeader(httpResponse, "Malformed L402 Authorization header", null);
             recordRejected(config.pathPattern());
             return;
         }
@@ -142,22 +141,25 @@ public class L402SecurityFilter implements Filter {
                     limiter.tryAcquire(this.challengeService.resolveClientIp(httpRequest));
                 }
                 ErrorCode errorCode = e.getErrorCode();
+                String tokenDetail = e.getTokenId() != null ? e.getTokenId() : "";
                 log.log(System.Logger.Level.WARNING, "L402 validation failed, errorCode={0}, tokenId={1}", errorCode, e.getTokenId());
                 if (errorCode == ErrorCode.MALFORMED_HEADER) {
                     // Clearly malformed L402 header — return 400 Bad Request, do not issue a new invoice
-                    writeMalformedHeaderResponse(httpResponse, e.getMessage(), e.getTokenId());
+                    log.log(System.Logger.Level.WARNING, "Malformed L402 header for token {0}: {1}", tokenDetail, e.getMessage());
+                    L402ResponseWriter.writeMalformedHeader(httpResponse, e.getMessage(), e.getTokenId());
                     recordRejected(config.pathPattern());
                     return;
                 }
                 // Non-malformed errors (expired, invalid signature, etc.) are terminal — no invoice needed
-                writeErrorResponse(httpResponse, errorCode, e.getMessage(), e.getTokenId());
+                log.log(System.Logger.Level.WARNING, "L402 validation failed for token {0}: {1}", tokenDetail, e.getMessage());
+                L402ResponseWriter.writeValidationError(httpResponse, errorCode, e.getMessage(), e.getTokenId());
                 recordRejected(config.pathPattern());
                 return;
             } catch (Exception e) {
                 // Fail closed: any unexpected exception from validation produces 503, never 500
                 log.log(System.Logger.Level.WARNING, "Unexpected error during L402 validation for {0} {1}: {2}", method, path, e.getMessage());
                 if (!httpResponse.isCommitted()) {
-                    writeLightningUnavailableResponse(httpResponse);
+                    L402ResponseWriter.writeLightningUnavailable(httpResponse);
                 }
                 return;
             }
@@ -167,82 +169,21 @@ public class L402SecurityFilter implements Filter {
         //    rate limiting, invoice creation, and macaroon minting.
         try {
             L402ChallengeResult challengeResult = this.challengeService.createChallenge(httpRequest, config);
-            writePaymentRequiredResponse(httpResponse, challengeResult);
+            L402ResponseWriter.writePaymentRequired(httpResponse, challengeResult);
             recordChallenge(config.pathPattern());
         } catch (L402RateLimitedException _) {
-            writeRateLimitedResponse(httpResponse);
+            L402ResponseWriter.writeRateLimited(httpResponse);
         } catch (L402LightningUnavailableException e) {
             log.log(System.Logger.Level.WARNING, "Lightning unavailable for {0} {1}: {2}", method, path, e.getMessage());
             if (!httpResponse.isCommitted()) {
-                writeLightningUnavailableResponse(httpResponse);
+                L402ResponseWriter.writeLightningUnavailable(httpResponse);
             }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to create invoice for {0} {1}: {2}", method, path, e.getMessage());
             if (!httpResponse.isCommitted()) {
-                writeLightningUnavailableResponse(httpResponse);
+                L402ResponseWriter.writeLightningUnavailable(httpResponse);
             }
         }
-    }
-
-    private void writePaymentRequiredResponse(HttpServletResponse response,
-                                               L402ChallengeResult result)
-            throws IOException {
-
-        response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-        response.setHeader("WWW-Authenticate", result.wwwAuthenticateHeader());
-        response.setContentType("application/json");
-
-        String testPreimageField = "";
-        if (result.testPreimage() != null) {
-            testPreimageField = ", \"test_preimage\": \"" + result.testPreimage() + "\"";
-        }
-
-        response.getWriter().write("""
-                {"code": 402, "message": "Payment required", "price_sats": %d, "description": "%s", "invoice": "%s"%s}"""
-                .formatted(result.priceSats(), JsonEscaper.escape(result.description()), JsonEscaper.escape(result.bolt11()), testPreimageField));
-    }
-
-    private void writeMalformedHeaderResponse(HttpServletResponse response,
-                                                 String message, String tokenId) throws IOException {
-        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-        response.setContentType("application/json");
-
-        String tokenDetail = tokenId != null ? tokenId : "";
-        log.log(System.Logger.Level.WARNING, "Malformed L402 header for token {0}: {1}", tokenDetail, message);
-
-        response.getWriter().write("""
-                {"code": 400, "error": "MALFORMED_HEADER", "message": "Malformed L402 Authorization header", "details": {"token_id": "%s"}}"""
-                .formatted(JsonEscaper.escape(tokenDetail)));
-    }
-
-    private void writeErrorResponse(HttpServletResponse response, ErrorCode errorCode,
-                                    String message, String tokenId) throws IOException {
-        response.setStatus(errorCode.getHttpStatus());
-        response.setContentType("application/json");
-
-        String tokenDetail = tokenId != null ? tokenId : "";
-        log.log(System.Logger.Level.WARNING, "L402 validation failed for token {0}: {1}", tokenDetail, message);
-
-        String clientMessage = "Invalid L402 credential";
-        response.getWriter().write("""
-                {"code": %d, "error": "%s", "message": "%s", "details": {"token_id": "%s"}}"""
-                .formatted(errorCode.getHttpStatus(), errorCode.name(),
-                        JsonEscaper.escape(clientMessage), JsonEscaper.escape(tokenDetail)));
-    }
-
-    private void writeRateLimitedResponse(HttpServletResponse response) throws IOException {
-        response.setStatus(429);
-        response.setHeader("Retry-After", "1");
-        response.setContentType("application/json");
-        response.getWriter().write("""
-                {"code": 429, "error": "RATE_LIMITED", "message": "Too many payment challenge requests. Please try again later."}""");
-    }
-
-    private void writeLightningUnavailableResponse(HttpServletResponse response) throws IOException {
-        response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-        response.setContentType("application/json");
-        response.getWriter().write("""
-                {"code": 503, "error": "LIGHTNING_UNAVAILABLE", "message": "Lightning backend is not available. Please try again later."}""");
     }
 
     private void recordChallenge(String endpoint) {

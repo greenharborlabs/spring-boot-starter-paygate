@@ -94,6 +94,12 @@
       "description": "HTTP request timeout in seconds for LNbits API calls. Overrides l402.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."
     },
     {
+      "name": "l402.lnbits.connect-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "TCP connect timeout in seconds for the LNbits HTTP client. Defaults to 10 seconds if not set.",
+      "defaultValue": 10
+    },
+    {
       "name": "l402.lnd.rpc-deadline-seconds",
       "type": "java.lang.Integer",
       "description": "Deadline in seconds for individual LND gRPC calls. Overrides l402.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."

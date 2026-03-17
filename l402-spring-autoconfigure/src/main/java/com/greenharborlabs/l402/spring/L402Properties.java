@@ -289,6 +289,8 @@ public class L402Properties {
 
         private Integer requestTimeoutSeconds;
 
+        private Integer connectTimeoutSeconds;
+
         public String getUrl() {
             return url;
         }
@@ -315,6 +317,18 @@ public class L402Properties {
                         "l402.lnbits.request-timeout-seconds must be > 0, got: " + requestTimeoutSeconds);
             }
             this.requestTimeoutSeconds = requestTimeoutSeconds;
+        }
+
+        public Integer getConnectTimeoutSeconds() {
+            return connectTimeoutSeconds;
+        }
+
+        public void setConnectTimeoutSeconds(Integer connectTimeoutSeconds) {
+            if (connectTimeoutSeconds != null && connectTimeoutSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        "l402.lnbits.connect-timeout-seconds must be > 0, got: " + connectTimeoutSeconds);
+            }
+            this.connectTimeoutSeconds = connectTimeoutSeconds;
         }
     }
 

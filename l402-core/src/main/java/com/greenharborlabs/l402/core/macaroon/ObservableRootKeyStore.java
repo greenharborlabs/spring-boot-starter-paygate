@@ -6,7 +6,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class ObservableRootKeyStore implements RootKeyStore {
 
-    private static final System.Logger LOG = System.getLogger(ObservableRootKeyStore.class.getName());
+    private static final System.Logger log = System.getLogger(ObservableRootKeyStore.class.getName());
 
     private final RootKeyStore delegate;
     private final CopyOnWriteArrayList<RootKeyRevocationListener> listeners = new CopyOnWriteArrayList<>();
@@ -38,7 +38,7 @@ public final class ObservableRootKeyStore implements RootKeyStore {
             try {
                 listener.onRootKeyRevoked(copy);
             } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.WARNING, "Revocation listener threw exception", e);
+                log.log(System.Logger.Level.WARNING, "Revocation listener threw exception", e);
             }
         }
     }

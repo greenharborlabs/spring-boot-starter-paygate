@@ -4,6 +4,8 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 
+import java.util.concurrent.ConcurrentHashMap;
+
 import com.greenharborlabs.l402.core.credential.CredentialStore;
 import com.greenharborlabs.l402.core.credential.EvictionReason;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
@@ -12,13 +14,21 @@ import com.greenharborlabs.l402.core.lightning.LightningBackend;
  * Helper class that wraps a {@link MeterRegistry} and provides convenient
  * methods for recording L402-related Micrometer metrics.
  *
- * <p>Counters are created lazily via Micrometer's deduplication.
- * Gauges for credential store size and Lightning health are registered
- * eagerly during construction so they are available before any requests.
+ * <p>Counters are cached per unique tag combination in {@link ConcurrentHashMap}
+ * fields so that {@code Counter.builder().register()} is called at most once
+ * per combination. Gauges for credential store size and Lightning health are
+ * registered eagerly during construction so they are available before any requests.
  */
 public class L402Metrics {
 
     private final MeterRegistry registry;
+
+    // Cache key for l402.requests: "endpoint\0result"
+    private final ConcurrentHashMap<String, Counter> requestCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> invoicesCreatedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> revenueSatsCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> invoicesSettledCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<EvictionReason, Counter> evictionCounters = new ConcurrentHashMap<>();
 
     public L402Metrics(MeterRegistry registry,
                        CredentialStore credentialStore,
@@ -49,18 +59,8 @@ public class L402Metrics {
      * with {@code result=challenged} and {@code l402.invoices.created}.
      */
     public void recordChallenge(String endpoint) {
-        Counter.builder("l402.requests")
-                .tag("endpoint", endpoint)
-                .tag("result", "challenged")
-                .description("Total protected endpoint requests")
-                .register(registry)
-                .increment();
-
-        Counter.builder("l402.invoices.created")
-                .tag("endpoint", endpoint)
-                .description("Invoices generated")
-                .register(registry)
-                .increment();
+        requestCounter(endpoint, "challenged").increment();
+        invoicesCreatedCounter(endpoint).increment();
     }
 
     /**
@@ -69,24 +69,9 @@ public class L402Metrics {
      * {@code l402.invoices.settled}.
      */
     public void recordPassed(String endpoint, long priceSats) {
-        Counter.builder("l402.requests")
-                .tag("endpoint", endpoint)
-                .tag("result", "passed")
-                .description("Total protected endpoint requests")
-                .register(registry)
-                .increment();
-
-        Counter.builder("l402.revenue.sats")
-                .tag("endpoint", endpoint)
-                .description("Total sats earned")
-                .register(registry)
-                .increment(priceSats);
-
-        Counter.builder("l402.invoices.settled")
-                .tag("endpoint", endpoint)
-                .description("Invoices paid")
-                .register(registry)
-                .increment();
+        requestCounter(endpoint, "passed").increment();
+        revenueSatsCounter(endpoint).increment(priceSats);
+        invoicesSettledCounter(endpoint).increment();
     }
 
     /**
@@ -94,14 +79,14 @@ public class L402Metrics {
      * counter tagged with the eviction reason (lowercase).
      *
      * <p>Thread-safe: may be called from Caffeine's async removal listener thread.
-     * {@code Counter.builder().register()} is idempotent in Micrometer.
      */
     public void recordCacheEviction(EvictionReason reason) {
-        Counter.builder("l402.cache.evictions")
-                .tag("reason", reason.name().toLowerCase())
-                .description("Credential cache evictions")
-                .register(registry)
-                .increment();
+        evictionCounters.computeIfAbsent(reason, r ->
+                Counter.builder("l402.cache.evictions")
+                        .tag("reason", r.name().toLowerCase())
+                        .description("Credential cache evictions")
+                        .register(registry)
+        ).increment();
     }
 
     /**
@@ -109,11 +94,44 @@ public class L402Metrics {
      * with {@code result=rejected}.
      */
     public void recordRejected(String endpoint) {
-        Counter.builder("l402.requests")
-                .tag("endpoint", endpoint)
-                .tag("result", "rejected")
-                .description("Total protected endpoint requests")
-                .register(registry)
-                .increment();
+        requestCounter(endpoint, "rejected").increment();
+    }
+
+    private Counter requestCounter(String endpoint, String result) {
+        String key = endpoint + '\0' + result;
+        return requestCounters.computeIfAbsent(key, _ ->
+                Counter.builder("l402.requests")
+                        .tag("endpoint", endpoint)
+                        .tag("result", result)
+                        .description("Total protected endpoint requests")
+                        .register(registry)
+        );
+    }
+
+    private Counter invoicesCreatedCounter(String endpoint) {
+        return invoicesCreatedCounters.computeIfAbsent(endpoint, ep ->
+                Counter.builder("l402.invoices.created")
+                        .tag("endpoint", ep)
+                        .description("Invoices generated")
+                        .register(registry)
+        );
+    }
+
+    private Counter revenueSatsCounter(String endpoint) {
+        return revenueSatsCounters.computeIfAbsent(endpoint, ep ->
+                Counter.builder("l402.revenue.sats")
+                        .tag("endpoint", ep)
+                        .description("Total sats earned")
+                        .register(registry)
+        );
+    }
+
+    private Counter invoicesSettledCounter(String endpoint) {
+        return invoicesSettledCounters.computeIfAbsent(endpoint, ep ->
+                Counter.builder("l402.invoices.settled")
+                        .tag("endpoint", ep)
+                        .description("Invoices paid")
+                        .register(registry)
+        );
     }
 }

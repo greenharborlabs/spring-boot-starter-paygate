@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class LndChannelFactory {
 
-    private static final System.Logger LOG = System.getLogger(LndChannelFactory.class.getName());
+    private static final System.Logger log = System.getLogger(LndChannelFactory.class.getName());
 
     private LndChannelFactory() {
         // utility class
@@ -69,7 +69,7 @@ public final class LndChannelFactory {
     }
 
     private static ManagedChannel buildPlaintextChannel(LndConfig config) {
-        LOG.log(System.Logger.Level.WARNING,
+        log.log(System.Logger.Level.WARNING,
                 "Building plaintext (unencrypted) gRPC channel to {0}:{1} — use TLS in production",
                 config.host(), config.port());
 
@@ -114,7 +114,7 @@ public final class LndChannelFactory {
 
         ManagedChannel channel = builder.build();
 
-        LOG.log(System.Logger.Level.INFO,
+        log.log(System.Logger.Level.INFO,
                 "Built TLS gRPC channel to {0}:{1}", config.host(), config.port());
 
         return channel;
@@ -142,4 +142,5 @@ public final class LndChannelFactory {
             throw new LndException(fileDescription + " file not readable: " + path);
         }
     }
+
 }

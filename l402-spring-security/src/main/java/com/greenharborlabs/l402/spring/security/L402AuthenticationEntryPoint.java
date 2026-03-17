@@ -1,6 +1,5 @@
 package com.greenharborlabs.l402.spring.security;
 
-import com.greenharborlabs.l402.core.util.JsonEscaper;
 import com.greenharborlabs.l402.spring.L402ChallengeResult;
 import com.greenharborlabs.l402.spring.L402ChallengeService;
 import com.greenharborlabs.l402.spring.L402EndpointConfig;
@@ -8,6 +7,7 @@ import com.greenharborlabs.l402.spring.L402EndpointRegistry;
 import com.greenharborlabs.l402.spring.L402LightningUnavailableException;
 import com.greenharborlabs.l402.spring.L402PathUtils;
 import com.greenharborlabs.l402.spring.L402RateLimitedException;
+import com.greenharborlabs.l402.spring.L402ResponseWriter;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -49,67 +49,28 @@ public final class L402AuthenticationEntryPoint implements AuthenticationEntryPo
                 path = normalizePath(request.getRequestURI());
             } catch (Exception e) {
                 log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: {0}", request.getRequestURI());
-                writeServiceUnavailableResponse(response);
+                L402ResponseWriter.writeLightningUnavailable(response);
                 return;
             }
 
             L402EndpointConfig config = endpointRegistry.findConfig(method, path);
             if (config == null) {
-                writeUnauthorizedResponse(response);
+                L402ResponseWriter.writeUnauthorized(response);
                 return;
             }
 
             L402ChallengeResult result = challengeService.createChallenge(request, config);
-            writePaymentRequiredResponse(response, result);
+            L402ResponseWriter.writePaymentRequired(response, result);
 
         } catch (L402RateLimitedException _) {
-            writeRateLimitedResponse(response);
+            L402ResponseWriter.writeRateLimited(response);
         } catch (L402LightningUnavailableException e) {
             log.log(System.Logger.Level.WARNING, "Lightning unavailable during entry point challenge: {0}", e.getMessage());
-            writeServiceUnavailableResponse(response);
+            L402ResponseWriter.writeLightningUnavailable(response);
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Unexpected error in L402 entry point: {0}", e.getMessage());
-            writeServiceUnavailableResponse(response);
+            L402ResponseWriter.writeLightningUnavailable(response);
         }
-    }
-
-    private void writePaymentRequiredResponse(HttpServletResponse response,
-                                               L402ChallengeResult result) throws IOException {
-        response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-        response.setHeader("WWW-Authenticate", result.wwwAuthenticateHeader());
-        response.setContentType("application/json");
-
-        String testPreimageField = "";
-        if (result.testPreimage() != null) {
-            testPreimageField = ", \"test_preimage\": \"" + result.testPreimage() + "\"";
-        }
-
-        response.getWriter().write("""
-                {"code": 402, "message": "Payment required", "price_sats": %d, "description": "%s", "invoice": "%s"%s}"""
-                .formatted(result.priceSats(), JsonEscaper.escape(result.description()), JsonEscaper.escape(result.bolt11()), testPreimageField));
-    }
-
-    private void writeRateLimitedResponse(HttpServletResponse response) throws IOException {
-        response.setStatus(429);
-        response.setHeader("Retry-After", "1");
-        response.setContentType("application/json");
-        response.getWriter().write("""
-                {"code": 429, "error": "RATE_LIMITED", "message": "Too many payment challenge requests. Please try again later."}""");
-    }
-
-    private void writeServiceUnavailableResponse(HttpServletResponse response) throws IOException {
-        response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-        response.setContentType("application/json");
-        response.getWriter().write("""
-                {"code": 503, "error": "LIGHTNING_UNAVAILABLE", "message": "Lightning backend is not available. Please try again later."}""");
-    }
-
-    private void writeUnauthorizedResponse(HttpServletResponse response) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setHeader("WWW-Authenticate", "L402");
-        response.setContentType("application/json");
-        response.getWriter().write("""
-                {"code": 401, "error": "UNAUTHORIZED", "message": "Authentication required"}""");
     }
 
     /**
