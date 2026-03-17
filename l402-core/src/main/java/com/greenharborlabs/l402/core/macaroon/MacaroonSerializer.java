@@ -33,6 +33,8 @@ public final class MacaroonSerializer {
     private static final int FIELD_IDENTIFIER = 2;
     private static final int FIELD_SIGNATURE = 6;
 
+    static final int MAX_CAVEATS = 20;
+
     private MacaroonSerializer() {}
 
     /**
@@ -158,6 +160,10 @@ public final class MacaroonSerializer {
                     throw new IllegalArgumentException("Malformed caveat (no '=' separator): " + caveatStr);
                 }
                 caveats.add(new Caveat(caveatStr.substring(0, eqIdx), caveatStr.substring(eqIdx + 1)));
+                if (caveats.size() > MAX_CAVEATS) {
+                    throw new IllegalArgumentException(
+                            "Too many caveats: %d, max: %d".formatted(caveats.size(), MAX_CAVEATS));
+                }
             }
 
             // EOS after caveat section is mandatory per Go format

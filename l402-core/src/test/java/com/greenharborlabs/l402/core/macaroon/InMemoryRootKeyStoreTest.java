@@ -15,6 +15,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -194,6 +196,65 @@ class InMemoryRootKeyStoreTest {
             assertThat(finished).isTrue();
             // All generated keys should be unique
             assertThat(hexKeys).hasSize(threadCount);
+        }
+
+        @Test
+        @DisplayName("concurrent getRootKey racing with close never returns zeroized bytes")
+        void getRootKeyRacingWithCloseNeverReturnsZeroizedBytes() throws InterruptedException {
+            // Run multiple iterations to increase the chance of hitting the race window
+            for (int iteration = 0; iteration < 50; iteration++) {
+                InMemoryRootKeyStore localStore = new InMemoryRootKeyStore();
+                RootKeyStore.GenerationResult result = localStore.generateRootKey();
+                byte[] keyId = result.tokenId();
+
+                CountDownLatch startGate = new CountDownLatch(1);
+                AtomicReference<Throwable> unexpectedFailure = new AtomicReference<>();
+                AtomicBoolean sawZeroizedKey = new AtomicBoolean(false);
+
+                Thread reader = Thread.ofVirtual().start(() -> {
+                    try {
+                        startGate.await();
+                        SensitiveBytes key = localStore.getRootKey(keyId);
+                        if (key != null) {
+                            byte[] value = key.value();
+                            // The returned key must never be all zeros (zeroized)
+                            boolean allZeros = true;
+                            for (byte b : value) {
+                                if (b != 0) {
+                                    allZeros = false;
+                                    break;
+                                }
+                            }
+                            if (allZeros) {
+                                sawZeroizedKey.set(true);
+                            }
+                        }
+                        // null is acceptable — means close() completed first
+                    } catch (IllegalStateException _) {
+                        // Also acceptable — store was closed before getRootKey acquired the lock
+                    } catch (Throwable t) {
+                        unexpectedFailure.set(t);
+                    }
+                });
+
+                Thread closer = Thread.ofVirtual().start(() -> {
+                    try {
+                        startGate.await();
+                        localStore.close();
+                    } catch (Throwable t) {
+                        unexpectedFailure.set(t);
+                    }
+                });
+
+                startGate.countDown();
+                reader.join(5_000);
+                closer.join(5_000);
+
+                assertThat(unexpectedFailure.get()).isNull();
+                assertThat(sawZeroizedKey.get())
+                        .as("getRootKey must never return zeroized key bytes (iteration %d)", iteration)
+                        .isFalse();
+            }
         }
 
         @Test

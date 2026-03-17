@@ -1,8 +1,13 @@
 package com.greenharborlabs.l402.spring;
 
+import com.greenharborlabs.l402.core.credential.CredentialStore;
 import com.greenharborlabs.l402.core.lightning.Invoice;
 import com.greenharborlabs.l402.core.lightning.InvoiceStatus;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
+import com.greenharborlabs.l402.core.protocol.L402Credential;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -160,6 +165,79 @@ class CachingLightningBackendWrapperTest {
     }
 
     @Test
+    @DisplayName("lastKnownHealthy() returns false when no snapshot exists")
+    void lastKnownHealthyReturnsFalseBeforeAnyCall() {
+        var callCount = new AtomicInteger(0);
+        var healthy = new AtomicBoolean(true);
+        LightningBackend delegate = countingBackend(callCount, healthy);
+
+        var wrapper = new CachingLightningBackendWrapper(delegate, Duration.ofSeconds(10));
+
+        assertThat(wrapper.lastKnownHealthy()).isFalse();
+        assertThat(callCount.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("lastKnownHealthy() returns cached true value without calling delegate")
+    void lastKnownHealthyReturnsCachedTrueValue() {
+        var callCount = new AtomicInteger(0);
+        var healthy = new AtomicBoolean(true);
+        LightningBackend delegate = countingBackend(callCount, healthy);
+
+        var wrapper = new CachingLightningBackendWrapper(delegate, Duration.ofSeconds(10));
+
+        // Populate the cache
+        assertThat(wrapper.isHealthy()).isTrue();
+        assertThat(callCount.get()).isEqualTo(1);
+
+        // lastKnownHealthy() should return true without calling delegate again
+        assertThat(wrapper.lastKnownHealthy()).isTrue();
+        assertThat(callCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("lastKnownHealthy() returns cached false value without calling delegate")
+    void lastKnownHealthyReturnsCachedFalseValue() {
+        var callCount = new AtomicInteger(0);
+        var healthy = new AtomicBoolean(false);
+        LightningBackend delegate = countingBackend(callCount, healthy);
+
+        var wrapper = new CachingLightningBackendWrapper(delegate, Duration.ofSeconds(10));
+
+        // Populate the cache with false
+        assertThat(wrapper.isHealthy()).isFalse();
+        assertThat(callCount.get()).isEqualTo(1);
+
+        // lastKnownHealthy() returns false without calling delegate
+        assertThat(wrapper.lastKnownHealthy()).isFalse();
+        assertThat(callCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("lastKnownHealthy() returns stale value even after TTL expires")
+    void lastKnownHealthyReturnsStaleValueAfterTtlExpiry() throws InterruptedException {
+        var callCount = new AtomicInteger(0);
+        var healthy = new AtomicBoolean(true);
+        LightningBackend delegate = countingBackend(callCount, healthy);
+
+        var wrapper = new CachingLightningBackendWrapper(delegate, Duration.ofMillis(50));
+
+        // Populate the cache
+        assertThat(wrapper.isHealthy()).isTrue();
+        assertThat(callCount.get()).isEqualTo(1);
+
+        // Wait for TTL to expire
+        Thread.sleep(100);
+
+        // Change underlying health
+        healthy.set(false);
+
+        // lastKnownHealthy() still returns the stale true value without calling delegate
+        assertThat(wrapper.lastKnownHealthy()).isTrue();
+        assertThat(callCount.get()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("getDelegate() returns the wrapped backend")
     void getDelegateReturnsWrappedBackend() {
         LightningBackend delegate = countingBackend(new AtomicInteger(), new AtomicBoolean(true));
@@ -191,6 +269,42 @@ class CachingLightningBackendWrapperTest {
         // With a 10-second TTL, there should be very few actual delegate calls
         // (ideally 1, but concurrent first-call race may cause a few more)
         assertThat(callCount.get()).isLessThanOrEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("L402Metrics gauge uses lastKnownHealthy() and does not call delegate")
+    void metricsGaugeUsesLastKnownHealthyNotIsHealthy() {
+        var callCount = new AtomicInteger(0);
+        var healthy = new AtomicBoolean(true);
+        LightningBackend delegate = countingBackend(callCount, healthy);
+
+        var wrapper = new CachingLightningBackendWrapper(delegate, Duration.ofSeconds(10));
+
+        MeterRegistry registry = new SimpleMeterRegistry();
+        CredentialStore stubStore = new CredentialStore() {
+            @Override public void store(String tokenId, L402Credential credential, long ttlSeconds) {}
+            @Override public L402Credential get(String tokenId) { return null; }
+            @Override public void revoke(String tokenId) {}
+            @Override public long activeCount() { return 0; }
+        };
+
+        // Construct L402Metrics — this registers the gauge
+        new L402Metrics(registry, stubStore, wrapper);
+
+        // Before any isHealthy() call, gauge should read 0.0 (lastKnownHealthy returns false)
+        var gauge = registry.find("l402.lightning.healthy").gauge();
+        assertThat(gauge).isNotNull();
+        assertThat(gauge.value()).isEqualTo(0.0);
+        assertThat(callCount.get()).as("gauge must not call delegate").isZero();
+
+        // Populate the cache via an explicit isHealthy() call
+        assertThat(wrapper.isHealthy()).isTrue();
+        assertThat(callCount.get()).isEqualTo(1);
+
+        // Gauge now reads 1.0 from the cached value
+        assertThat(gauge.value()).isEqualTo(1.0);
+        // Still only 1 delegate call — gauge evaluation did not trigger another
+        assertThat(callCount.get()).as("gauge must not trigger additional delegate call").isEqualTo(1);
     }
 
     // --- Auto-configuration integration tests ---

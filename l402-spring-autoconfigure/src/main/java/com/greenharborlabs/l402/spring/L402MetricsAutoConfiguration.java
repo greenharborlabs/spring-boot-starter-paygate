@@ -31,7 +31,9 @@ public class L402MetricsAutoConfiguration {
     public L402Metrics l402Metrics(MeterRegistry meterRegistry,
                                    CredentialStore credentialStore,
                                    LightningBackend lightningBackend) {
-        return new L402Metrics(meterRegistry, credentialStore, lightningBackend);
+        var metrics = new L402Metrics(meterRegistry, credentialStore, lightningBackend);
+        credentialStore.setEvictionListener((tokenId, reason) -> metrics.recordCacheEviction(reason));
+        return metrics;
     }
 
     @Bean

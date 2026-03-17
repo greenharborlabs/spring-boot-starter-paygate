@@ -1,5 +1,7 @@
 package com.greenharborlabs.l402.spring;
 
+import com.greenharborlabs.l402.core.credential.CredentialStore;
+import com.greenharborlabs.l402.core.credential.EvictionReason;
 import com.greenharborlabs.l402.core.lightning.PaymentPreimage;
 import com.greenharborlabs.l402.core.macaroon.Macaroon;
 import com.greenharborlabs.l402.core.protocol.L402Credential;
@@ -11,6 +13,10 @@ import org.junit.jupiter.api.Test;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -246,6 +252,136 @@ class CaffeineCredentialStoreTest {
 
             // Caffeine eviction is asynchronous; cleanUp forces it
             assertThat(smallStore.activeCount()).isLessThanOrEqualTo(5);
+        }
+    }
+
+    @Nested
+    @DisplayName("eviction listener")
+    class EvictionListenerTests {
+
+        @Test
+        @DisplayName("listener called with REVOKED reason on revoke()")
+        void listenerCalledOnRevoke() throws InterruptedException {
+            var latch = new CountDownLatch(1);
+            var capturedId = new AtomicReference<String>();
+            var capturedReason = new AtomicReference<EvictionReason>();
+
+            store.setEvictionListener((tokenId, reason) -> {
+                capturedId.set(tokenId);
+                capturedReason.set(reason);
+                latch.countDown();
+            });
+
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 3600);
+            store.revoke(tokenId);
+
+            // Caffeine removal listener is async
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(capturedId.get()).isEqualTo(tokenId);
+            assertThat(capturedReason.get()).isEqualTo(EvictionReason.REVOKED);
+        }
+
+        @Test
+        @DisplayName("listener called with EXPIRED reason on TTL expiry")
+        void listenerCalledOnTtlExpiry() throws InterruptedException {
+            var latch = new CountDownLatch(1);
+            var capturedId = new AtomicReference<String>();
+            var capturedReason = new AtomicReference<EvictionReason>();
+
+            store.setEvictionListener((tokenId, reason) -> {
+                capturedId.set(tokenId);
+                capturedReason.set(reason);
+                latch.countDown();
+            });
+
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 1); // 1 second TTL
+
+            // Trigger cleanup after expiry
+            Thread.sleep(1500);
+            store.activeCount(); // forces cleanUp
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(capturedId.get()).isEqualTo(tokenId);
+            assertThat(capturedReason.get()).isEqualTo(EvictionReason.EXPIRED);
+        }
+
+        @Test
+        @DisplayName("listener called with CAPACITY reason on size eviction")
+        void listenerCalledOnCapacityEviction() throws InterruptedException {
+            var smallStore = new CaffeineCredentialStore(2);
+            var evictions = new ConcurrentHashMap<String, EvictionReason>();
+            var latch = new CountDownLatch(1);
+
+            smallStore.setEvictionListener((tokenId, reason) -> {
+                evictions.put(tokenId, reason);
+                latch.countDown();
+            });
+
+            // Insert more than max size to trigger capacity eviction
+            for (int i = 0; i < 10; i++) {
+                String tokenId = randomTokenId();
+                smallStore.store(tokenId, createTestCredential(tokenId), 3600);
+            }
+            smallStore.activeCount(); // forces cleanUp
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(evictions.values()).allMatch(r -> r == EvictionReason.CAPACITY);
+        }
+
+        @Test
+        @DisplayName("listener exception is caught and does not propagate")
+        void listenerExceptionIsCaught() throws InterruptedException {
+            var latch = new CountDownLatch(1);
+
+            store.setEvictionListener((tokenId, reason) -> {
+                latch.countDown();
+                throw new RuntimeException("test exception");
+            });
+
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 3600);
+            store.revoke(tokenId);
+
+            // If exception propagated, Caffeine would break; verify listener was called
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // Verify cache still works after listener exception
+            String tokenId2 = randomTokenId();
+            store.store(tokenId2, createTestCredential(tokenId2), 3600);
+            assertThat(store.get(tokenId2)).isNotNull();
+        }
+
+        @Test
+        @DisplayName("null listener results in no-op on eviction")
+        void nullListenerIsNoOp() {
+            // Default state: no listener set
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 3600);
+            store.revoke(tokenId);
+            store.activeCount(); // forces cleanUp — should not throw
+        }
+
+        @Test
+        @DisplayName("listener set after cache construction applies to subsequent evictions")
+        void listenerSetAfterConstructionWorks() throws InterruptedException {
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 3600);
+
+            // Set listener after entries exist
+            var latch = new CountDownLatch(1);
+            var capturedReason = new AtomicReference<EvictionReason>();
+
+            store.setEvictionListener((id, reason) -> {
+                capturedReason.set(reason);
+                latch.countDown();
+            });
+
+            store.revoke(tokenId);
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(capturedReason.get()).isEqualTo(EvictionReason.REVOKED);
         }
     }
 }

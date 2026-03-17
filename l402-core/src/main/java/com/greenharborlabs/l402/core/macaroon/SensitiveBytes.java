@@ -42,7 +42,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
      * @return a fresh copy of the internal byte array
      * @throws IllegalStateException if this instance has been destroyed
      */
-    public byte[] value() {
+    public synchronized byte[] value() {
         if (destroyed) {
             throw new IllegalStateException("Key material has been destroyed");
         }
@@ -78,7 +78,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
      * Two destroyed instances are never equal.
      */
     @Override
-    public boolean equals(Object o) {
+    public synchronized boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof SensitiveBytes other)) return false;
         if (this.destroyed || other.destroyed) return false;
@@ -86,7 +86,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
     }
 
     @Override
-    public int hashCode() {
+    public synchronized int hashCode() {
         if (destroyed) return 0;
         return Arrays.hashCode(data);
     }

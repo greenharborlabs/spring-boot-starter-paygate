@@ -3,6 +3,7 @@ package com.greenharborlabs.l402.core.credential;
 import com.greenharborlabs.l402.core.lightning.PaymentPreimage;
 import com.greenharborlabs.l402.core.macaroon.Macaroon;
 import com.greenharborlabs.l402.core.protocol.L402Credential;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -12,7 +13,9 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,7 +30,14 @@ class InMemoryCredentialStoreTest {
 
     @BeforeEach
     void setUp() {
-        store = new InMemoryCredentialStore();
+        store = new InMemoryCredentialStore(10_000, 0);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (store != null) {
+            store.close();
+        }
     }
 
     private static L402Credential createTestCredential(String tokenId) {
@@ -241,82 +251,137 @@ class InMemoryCredentialStoreTest {
         @Test
         @DisplayName("store never exceeds maxSize")
         void storeNeverExceedsMaxSize() {
-            var boundedStore = new InMemoryCredentialStore(3);
+            try (var boundedStore = new InMemoryCredentialStore(3, 0)) {
+                for (int i = 0; i < 10; i++) {
+                    String tokenId = randomTokenId();
+                    boundedStore.store(tokenId, createTestCredential(tokenId), 3600);
+                }
 
-            for (int i = 0; i < 10; i++) {
-                String tokenId = randomTokenId();
-                boundedStore.store(tokenId, createTestCredential(tokenId), 3600);
+                assertThat(boundedStore.activeCount()).isLessThanOrEqualTo(3);
             }
-
-            assertThat(boundedStore.activeCount()).isLessThanOrEqualTo(3);
         }
 
         @Test
         @DisplayName("evicts expired entries first when at capacity")
         void evictsExpiredEntriesFirst() throws InterruptedException {
-            var boundedStore = new InMemoryCredentialStore(3);
+            try (var boundedStore = new InMemoryCredentialStore(3, 0)) {
+                // Fill with short-TTL entries
+                String shortTtl1 = randomTokenId();
+                String shortTtl2 = randomTokenId();
+                boundedStore.store(shortTtl1, createTestCredential(shortTtl1), 1);
+                boundedStore.store(shortTtl2, createTestCredential(shortTtl2), 1);
 
-            // Fill with short-TTL entries
-            String shortTtl1 = randomTokenId();
-            String shortTtl2 = randomTokenId();
-            boundedStore.store(shortTtl1, createTestCredential(shortTtl1), 1);
-            boundedStore.store(shortTtl2, createTestCredential(shortTtl2), 1);
+                // One long-TTL entry
+                String longTtl = randomTokenId();
+                boundedStore.store(longTtl, createTestCredential(longTtl), 3600);
 
-            // One long-TTL entry
-            String longTtl = randomTokenId();
-            boundedStore.store(longTtl, createTestCredential(longTtl), 3600);
+                // Wait for short-TTL entries to expire
+                Thread.sleep(1200);
 
-            // Wait for short-TTL entries to expire
-            Thread.sleep(1200);
+                // Store a new entry — should evict expired entries, not the long-TTL one
+                String newTokenId = randomTokenId();
+                boundedStore.store(newTokenId, createTestCredential(newTokenId), 3600);
 
-            // Store a new entry — should evict expired entries, not the long-TTL one
-            String newTokenId = randomTokenId();
-            boundedStore.store(newTokenId, createTestCredential(newTokenId), 3600);
-
-            assertThat(boundedStore.get(longTtl)).isNotNull();
-            assertThat(boundedStore.get(newTokenId)).isNotNull();
-            assertThat(boundedStore.activeCount()).isEqualTo(2);
+                assertThat(boundedStore.get(longTtl)).isNotNull();
+                assertThat(boundedStore.get(newTokenId)).isNotNull();
+                assertThat(boundedStore.activeCount()).isEqualTo(2);
+            }
         }
 
         @Test
-        @DisplayName("evicts a random entry when at capacity and no expired entries")
-        void evictsRandomEntryWhenNoExpired() {
-            var boundedStore = new InMemoryCredentialStore(3);
+        @DisplayName("evicts LRU entry when at capacity and no expired entries")
+        void evictsLruEntryWhenNoExpired() {
+            try (var boundedStore = new InMemoryCredentialStore(3, 0)) {
+                String first = randomTokenId();
+                boundedStore.store(first, createTestCredential(first), 3600);
 
-            String first = randomTokenId();
-            boundedStore.store(first, createTestCredential(first), 100);
+                String second = randomTokenId();
+                boundedStore.store(second, createTestCredential(second), 3600);
 
-            String second = randomTokenId();
-            boundedStore.store(second, createTestCredential(second), 200);
+                String third = randomTokenId();
+                boundedStore.store(third, createTestCredential(third), 3600);
 
-            String third = randomTokenId();
-            boundedStore.store(third, createTestCredential(third), 300);
+                // Store a 4th — should evict the LRU (first)
+                String fourth = randomTokenId();
+                boundedStore.store(fourth, createTestCredential(fourth), 3600);
 
-            // Store a 4th — should evict one random entry to make room
-            String fourth = randomTokenId();
-            boundedStore.store(fourth, createTestCredential(fourth), 400);
+                assertThat(boundedStore.get(first)).isNull();
+                assertThat(boundedStore.get(second)).isNotNull();
+                assertThat(boundedStore.get(third)).isNotNull();
+                assertThat(boundedStore.get(fourth)).isNotNull();
+                assertThat(boundedStore.activeCount()).isEqualTo(3);
+            }
+        }
 
-            // The new entry must be present; exactly one of the original three was evicted
-            assertThat(boundedStore.get(fourth)).isNotNull();
-            assertThat(boundedStore.activeCount()).isEqualTo(3);
+        @Test
+        @DisplayName("LRU ordering: accessing an entry prevents its eviction")
+        void lruOrderingAccessPreventsEviction() {
+            try (var boundedStore = new InMemoryCredentialStore(3, 0)) {
+                String first = randomTokenId();
+                boundedStore.store(first, createTestCredential(first), 3600);
+
+                String second = randomTokenId();
+                boundedStore.store(second, createTestCredential(second), 3600);
+
+                String third = randomTokenId();
+                boundedStore.store(third, createTestCredential(third), 3600);
+
+                // Access the first entry — moves it to most-recently-used
+                boundedStore.get(first);
+
+                // Store a 4th — should evict second (now LRU), not first
+                String fourth = randomTokenId();
+                boundedStore.store(fourth, createTestCredential(fourth), 3600);
+
+                assertThat(boundedStore.get(first)).isNotNull();
+                assertThat(boundedStore.get(second)).isNull();
+                assertThat(boundedStore.get(third)).isNotNull();
+                assertThat(boundedStore.get(fourth)).isNotNull();
+            }
         }
 
         @Test
         @DisplayName("updating existing entry does not trigger eviction")
         void updatingExistingEntryDoesNotEvict() {
-            var boundedStore = new InMemoryCredentialStore(2);
+            try (var boundedStore = new InMemoryCredentialStore(2, 0)) {
+                String tokenId1 = randomTokenId();
+                String tokenId2 = randomTokenId();
+                boundedStore.store(tokenId1, createTestCredential(tokenId1), 3600);
+                boundedStore.store(tokenId2, createTestCredential(tokenId2), 3600);
 
-            String tokenId1 = randomTokenId();
-            String tokenId2 = randomTokenId();
-            boundedStore.store(tokenId1, createTestCredential(tokenId1), 3600);
-            boundedStore.store(tokenId2, createTestCredential(tokenId2), 3600);
+                // Update existing entry — should not evict
+                boundedStore.store(tokenId1, createTestCredential(tokenId1), 7200);
 
-            // Update existing entry — should not evict
-            boundedStore.store(tokenId1, createTestCredential(tokenId1), 7200);
+                assertThat(boundedStore.get(tokenId1)).isNotNull();
+                assertThat(boundedStore.get(tokenId2)).isNotNull();
+                assertThat(boundedStore.activeCount()).isEqualTo(2);
+            }
+        }
 
-            assertThat(boundedStore.get(tokenId1)).isNotNull();
-            assertThat(boundedStore.get(tokenId2)).isNotNull();
-            assertThat(boundedStore.activeCount()).isEqualTo(2);
+        @Test
+        @DisplayName("expired entries evicted before LRU when at capacity")
+        void expiredBeforeLruEviction() throws InterruptedException {
+            try (var boundedStore = new InMemoryCredentialStore(3, 0)) {
+                String first = randomTokenId();
+                boundedStore.store(first, createTestCredential(first), 1); // will expire
+
+                String second = randomTokenId();
+                boundedStore.store(second, createTestCredential(second), 3600);
+
+                String third = randomTokenId();
+                boundedStore.store(third, createTestCredential(third), 3600);
+
+                Thread.sleep(1200);
+
+                // Store a 4th — expired first should be evicted, second and third survive
+                String fourth = randomTokenId();
+                boundedStore.store(fourth, createTestCredential(fourth), 3600);
+
+                assertThat(boundedStore.get(first)).isNull();
+                assertThat(boundedStore.get(second)).isNotNull();
+                assertThat(boundedStore.get(third)).isNotNull();
+                assertThat(boundedStore.get(fourth)).isNotNull();
+            }
         }
     }
 
@@ -329,31 +394,76 @@ class InMemoryCredentialStoreTest {
         void concurrentStoresNeverExceedMaxSize() throws InterruptedException {
             int maxSize = 5;
             int threadCount = 20;
-            var boundedStore = new InMemoryCredentialStore(maxSize);
-            var barrier = new CyclicBarrier(threadCount);
+            try (var boundedStore = new InMemoryCredentialStore(maxSize, 0)) {
+                var barrier = new CyclicBarrier(threadCount);
 
-            List<Thread> threads = new ArrayList<>();
-            for (int i = 0; i < threadCount; i++) {
-                Thread t = Thread.ofVirtual().unstarted(() -> {
-                    try {
-                        barrier.await();
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
+                List<Thread> threads = new ArrayList<>();
+                for (int i = 0; i < threadCount; i++) {
+                    Thread t = Thread.ofVirtual().unstarted(() -> {
+                        try {
+                            barrier.await();
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        String tokenId = randomTokenId();
+                        boundedStore.store(tokenId, createTestCredential(tokenId), 3600);
+                    });
+                    threads.add(t);
+                }
+
+                for (Thread t : threads) {
+                    t.start();
+                }
+                for (Thread t : threads) {
+                    t.join(5000);
+                }
+
+                assertThat(boundedStore.activeCount()).isLessThanOrEqualTo(maxSize);
+            }
+        }
+
+        @Test
+        @DisplayName("concurrent get and store operations are safe")
+        void concurrentGetAndStoreAreSafe() throws InterruptedException {
+            int maxSize = 10;
+            int threadCount = 50;
+            try (var boundedStore = new InMemoryCredentialStore(maxSize, 0)) {
+                var barrier = new CyclicBarrier(threadCount);
+                List<String> tokenIds = new ArrayList<>();
+                for (int i = 0; i < maxSize; i++) {
                     String tokenId = randomTokenId();
+                    tokenIds.add(tokenId);
                     boundedStore.store(tokenId, createTestCredential(tokenId), 3600);
-                });
-                threads.add(t);
-            }
+                }
 
-            for (Thread t : threads) {
-                t.start();
-            }
-            for (Thread t : threads) {
-                t.join(5000);
-            }
+                List<Thread> threads = new ArrayList<>();
+                for (int i = 0; i < threadCount; i++) {
+                    final int idx = i;
+                    Thread t = Thread.ofVirtual().unstarted(() -> {
+                        try {
+                            barrier.await();
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        if (idx % 2 == 0) {
+                            String tokenId = randomTokenId();
+                            boundedStore.store(tokenId, createTestCredential(tokenId), 3600);
+                        } else {
+                            boundedStore.get(tokenIds.get(idx % tokenIds.size()));
+                        }
+                    });
+                    threads.add(t);
+                }
 
-            assertThat(boundedStore.activeCount()).isLessThanOrEqualTo(maxSize);
+                for (Thread t : threads) {
+                    t.start();
+                }
+                for (Thread t : threads) {
+                    t.join(5000);
+                }
+
+                assertThat(boundedStore.activeCount()).isLessThanOrEqualTo(maxSize);
+            }
         }
     }
 
@@ -377,4 +487,219 @@ class InMemoryCredentialStoreTest {
             assertThat(store.activeCount()).isZero();
         }
     }
+
+    @Nested
+    @DisplayName("periodic cleanup")
+    class PeriodicCleanup {
+
+        @Test
+        @DisplayName("cleanup thread removes expired entries")
+        void cleanupThreadRemovesExpiredEntries() throws InterruptedException {
+            // Use 1-second cleanup interval for testing
+            try (var cleanupStore = new InMemoryCredentialStore(100, 1)) {
+                String tokenId = randomTokenId();
+                cleanupStore.store(tokenId, createTestCredential(tokenId), 1);
+
+                assertThat(cleanupStore.activeCount()).isEqualTo(1);
+
+                // Wait for expiration + cleanup cycle
+                Thread.sleep(2500);
+
+                // The cleanup should have removed the expired entry
+                assertThat(cleanupStore.get(tokenId)).isNull();
+            }
+        }
+
+        @Test
+        @DisplayName("cleanup is disabled when interval is 0")
+        void cleanupDisabledWhenZero() {
+            // Should not throw, and close should be safe
+            try (var noCleanupStore = new InMemoryCredentialStore(100, 0)) {
+                String tokenId = randomTokenId();
+                noCleanupStore.store(tokenId, createTestCredential(tokenId), 3600);
+                assertThat(noCleanupStore.get(tokenId)).isNotNull();
+            }
+        }
+
+        @Test
+        @DisplayName("close shuts down cleanup executor")
+        void closeShutdownsExecutor() {
+            var cleanupStore = new InMemoryCredentialStore(100, 1);
+            String tokenId = randomTokenId();
+            cleanupStore.store(tokenId, createTestCredential(tokenId), 3600);
+
+            cleanupStore.close();
+
+            // After close, store should still be queryable (just no more cleanup)
+            assertThat(cleanupStore.get(tokenId)).isNotNull();
+        }
+
+        @Test
+        @DisplayName("close is safe to call multiple times")
+        void closeIsSafeMultipleTimes() {
+            var cleanupStore = new InMemoryCredentialStore(100, 1);
+            cleanupStore.close();
+            cleanupStore.close(); // Should not throw
+        }
+
+        @Test
+        @DisplayName("close is safe when cleanup is disabled")
+        void closeIsSafeWhenCleanupDisabled() {
+            var noCleanupStore = new InMemoryCredentialStore(100, 0);
+            noCleanupStore.close(); // Should not throw
+        }
+    }
+
+    @Nested
+    @DisplayName("eviction listener")
+    class EvictionListenerTests {
+
+        @Test
+        @DisplayName("listener is called on expired eviction via get")
+        void listenerCalledOnExpiredEvictionViaGet() throws InterruptedException {
+            var events = new CopyOnWriteArrayList<EvictionEvent>();
+            store.setEvictionListener((tokenId, reason) -> events.add(new EvictionEvent(tokenId, reason)));
+
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 1);
+
+            Thread.sleep(1200);
+
+            store.get(tokenId);
+
+            assertThat(events).hasSize(1);
+            assertThat(events.getFirst().tokenId()).isEqualTo(tokenId);
+            assertThat(events.getFirst().reason()).isEqualTo(EvictionReason.EXPIRED);
+        }
+
+        @Test
+        @DisplayName("listener is called on revoke")
+        void listenerCalledOnRevoke() {
+            var events = new CopyOnWriteArrayList<EvictionEvent>();
+            store.setEvictionListener((tokenId, reason) -> events.add(new EvictionEvent(tokenId, reason)));
+
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 3600);
+            store.revoke(tokenId);
+
+            assertThat(events).hasSize(1);
+            assertThat(events.getFirst().tokenId()).isEqualTo(tokenId);
+            assertThat(events.getFirst().reason()).isEqualTo(EvictionReason.REVOKED);
+        }
+
+        @Test
+        @DisplayName("listener is called with CAPACITY reason on LRU eviction")
+        void listenerCalledOnLruEviction() {
+            try (var boundedStore = new InMemoryCredentialStore(2, 0)) {
+                var events = new CopyOnWriteArrayList<EvictionEvent>();
+                boundedStore.setEvictionListener((tokenId, reason) -> events.add(new EvictionEvent(tokenId, reason)));
+
+                String first = randomTokenId();
+                boundedStore.store(first, createTestCredential(first), 3600);
+
+                String second = randomTokenId();
+                boundedStore.store(second, createTestCredential(second), 3600);
+
+                // Store a 3rd — should evict first (LRU)
+                String third = randomTokenId();
+                boundedStore.store(third, createTestCredential(third), 3600);
+
+                assertThat(events).hasSize(1);
+                assertThat(events.getFirst().tokenId()).isEqualTo(first);
+                assertThat(events.getFirst().reason()).isEqualTo(EvictionReason.CAPACITY);
+            }
+        }
+
+        @Test
+        @DisplayName("listener is called with EXPIRED reason during capacity eviction")
+        void listenerCalledWithExpiredReasonDuringCapacityEviction() throws InterruptedException {
+            try (var boundedStore = new InMemoryCredentialStore(2, 0)) {
+                var events = new CopyOnWriteArrayList<EvictionEvent>();
+                boundedStore.setEvictionListener((tokenId, reason) -> events.add(new EvictionEvent(tokenId, reason)));
+
+                String expired = randomTokenId();
+                boundedStore.store(expired, createTestCredential(expired), 1);
+
+                String alive = randomTokenId();
+                boundedStore.store(alive, createTestCredential(alive), 3600);
+
+                Thread.sleep(1200);
+
+                // Store a 3rd — should evict expired entry
+                String third = randomTokenId();
+                boundedStore.store(third, createTestCredential(third), 3600);
+
+                assertThat(events).hasSize(1);
+                assertThat(events.getFirst().tokenId()).isEqualTo(expired);
+                assertThat(events.getFirst().reason()).isEqualTo(EvictionReason.EXPIRED);
+            }
+        }
+
+        @Test
+        @DisplayName("throwing listener does not block eviction")
+        void throwingListenerDoesNotBlockEviction() {
+            try (var boundedStore = new InMemoryCredentialStore(2, 0)) {
+                boundedStore.setEvictionListener((_, _) -> {
+                    throw new RuntimeException("Listener failure");
+                });
+
+                String first = randomTokenId();
+                boundedStore.store(first, createTestCredential(first), 3600);
+
+                String second = randomTokenId();
+                boundedStore.store(second, createTestCredential(second), 3600);
+
+                // Store a 3rd — listener throws but eviction should still complete
+                String third = randomTokenId();
+                boundedStore.store(third, createTestCredential(third), 3600);
+
+                assertThat(boundedStore.get(first)).isNull();
+                assertThat(boundedStore.get(third)).isNotNull();
+                assertThat(boundedStore.activeCount()).isEqualTo(2);
+            }
+        }
+
+        @Test
+        @DisplayName("revoking unknown tokenId does not invoke listener")
+        void revokingUnknownDoesNotInvokeListener() {
+            AtomicBoolean called = new AtomicBoolean(false);
+            store.setEvictionListener((_, _) -> called.set(true));
+
+            store.revoke(randomTokenId());
+
+            assertThat(called).isFalse();
+        }
+
+        @Test
+        @DisplayName("null listener does not cause NPE")
+        void nullListenerDoesNotCauseNpe() {
+            store.setEvictionListener(null);
+
+            String tokenId = randomTokenId();
+            store.store(tokenId, createTestCredential(tokenId), 3600);
+            store.revoke(tokenId);
+            // Should complete without NPE
+        }
+
+        @Test
+        @DisplayName("default setEvictionListener on CredentialStore interface is no-op")
+        void defaultSetEvictionListenerIsNoOp() {
+            CredentialStore credStore = store;
+            // Should not throw
+            credStore.setEvictionListener((_, _) -> {});
+        }
+    }
+
+    @Nested
+    @DisplayName("AutoCloseable")
+    class AutoCloseableTests {
+
+        @Test
+        @DisplayName("implements AutoCloseable")
+        void implementsAutoCloseable() {
+            assertThat(store).isInstanceOf(AutoCloseable.class);
+        }
+    }
+
+    record EvictionEvent(String tokenId, EvictionReason reason) {}
 }

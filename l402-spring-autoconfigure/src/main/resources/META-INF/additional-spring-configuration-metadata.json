@@ -155,6 +155,24 @@
       "defaultValue": 4194304
     },
     {
+      "name": "l402.parsing.max-tokens",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of L402 tokens (macaroon-preimage pairs) allowed in a single Authorization header. Limits parsing overhead from malformed or adversarial requests.",
+      "defaultValue": 5
+    },
+    {
+      "name": "l402.parsing.max-caveats",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of caveats allowed per macaroon during parsing. Prevents excessive resource consumption from macaroons with an unreasonable number of caveats.",
+      "defaultValue": 20
+    },
+    {
+      "name": "l402.parsing.max-macaroon-bytes",
+      "type": "java.lang.Integer",
+      "description": "Maximum size in bytes of a single base64-decoded macaroon. Rejects oversized macaroons early before full deserialization.",
+      "defaultValue": 4096
+    },
+    {
       "name": "l402.metrics.max-endpoint-cardinality",
       "type": "java.lang.Integer",
       "description": "Maximum number of distinct endpoint tag values tracked in L402 metrics before new values are replaced with the overflow sentinel. Prevents unbounded cardinality in TSDB backends.",

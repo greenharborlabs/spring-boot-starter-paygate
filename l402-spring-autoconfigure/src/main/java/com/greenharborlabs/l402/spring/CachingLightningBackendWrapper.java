@@ -57,6 +57,17 @@ public class CachingLightningBackendWrapper implements LightningBackend {
     }
 
     /**
+     * Returns the last cached health value without triggering a refresh call to the
+     * delegate. Returns {@code false} if no health check has been performed yet.
+     *
+     * <p>Intended for use by metrics gauges that must not block on a real backend call.
+     */
+    public boolean lastKnownHealthy() {
+        HealthSnapshot current = snapshot;
+        return current != null && current.healthy();
+    }
+
+    /**
      * Returns the wrapped backend, useful for unwrapping in tests or diagnostics.
      */
     public LightningBackend getDelegate() {

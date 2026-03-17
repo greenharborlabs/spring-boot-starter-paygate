@@ -381,6 +381,85 @@ class L402CredentialTest {
     }
 
     @Nested
+    @DisplayName("token count limits")
+    class TokenCountLimits {
+
+        @Test
+        @DisplayName("rejects header with 6 tokens (one over MAX_TOKENS)")
+        void rejectsSixTokens() throws NoSuchAlgorithmException {
+            StringBuilder tokens = new StringBuilder(macaroonBase64);
+            for (int i = 1; i < 6; i++) {
+                tokens.append(",").append(mintAdditionalMacaroonBase64());
+            }
+            String header = "L402 " + tokens + ":" + preimageHex;
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .isInstanceOf(L402Exception.class)
+                    .extracting(e -> ((L402Exception) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED_HEADER);
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .hasMessageContaining("Too many tokens in header: 6, max: 5");
+        }
+
+        @Test
+        @DisplayName("accepts header with exactly 5 tokens (at MAX_TOKENS)")
+        void acceptsFiveTokens() throws NoSuchAlgorithmException {
+            StringBuilder tokens = new StringBuilder(macaroonBase64);
+            for (int i = 1; i < 5; i++) {
+                tokens.append(",").append(mintAdditionalMacaroonBase64());
+            }
+            String header = "L402 " + tokens + ":" + preimageHex;
+
+            L402Credential credential = L402Credential.parse(header);
+
+            assertThat(credential).isNotNull();
+            assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
+            assertThat(credential.additionalMacaroons()).hasSize(4);
+        }
+    }
+
+    @Nested
+    @DisplayName("macaroon byte size limits")
+    class MacaroonByteSizeLimits {
+
+        @Test
+        @DisplayName("rejects macaroon with 4097 decoded bytes")
+        void rejects4097Bytes() {
+            byte[] oversized = new byte[4097];
+            RANDOM.nextBytes(oversized);
+            String base64 = Base64.getEncoder().encodeToString(oversized);
+            String header = "L402 " + base64 + ":" + preimageHex;
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .isInstanceOf(L402Exception.class)
+                    .extracting(e -> ((L402Exception) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED_HEADER);
+
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .hasMessageContaining("Macaroon too large: 4097 bytes, max: 4096");
+        }
+
+        @Test
+        @DisplayName("accepts macaroon with exactly 4096 decoded bytes (passes size check, may fail deserialization)")
+        void accepts4096Bytes() {
+            byte[] exactLimit = new byte[4096];
+            RANDOM.nextBytes(exactLimit);
+            String base64 = Base64.getEncoder().encodeToString(exactLimit);
+            String header = "L402 " + base64 + ":" + preimageHex;
+
+            // Size check should pass; deserialization will likely fail since this is random data,
+            // but the error should NOT be about size
+            assertThatThrownBy(() -> L402Credential.parse(header))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(e -> {
+                        assertThat(((L402Exception) e).getErrorCode()).isEqualTo(ErrorCode.MALFORMED_HEADER);
+                        assertThat(e.getMessage()).doesNotContain("Macaroon too large");
+                    });
+        }
+    }
+
+    @Nested
     @DisplayName("parse(L402HeaderComponents)")
     class ParseFromComponents {
 

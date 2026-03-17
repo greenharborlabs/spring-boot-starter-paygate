@@ -9,5 +9,4 @@ server:
 
 l402:
   enabled: true
-  test-mode: true
   service-name: example-api

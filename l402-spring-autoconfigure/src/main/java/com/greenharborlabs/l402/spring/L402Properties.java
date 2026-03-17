@@ -52,6 +52,8 @@ public class L402Properties {
 
     private Metrics metrics = new Metrics();
 
+    private Parsing parsing = new Parsing();
+
     public Lightning getLightning() {
         return lightning;
     }
@@ -66,6 +68,14 @@ public class L402Properties {
 
     public void setMetrics(Metrics metrics) {
         this.metrics = metrics;
+    }
+
+    public Parsing getParsing() {
+        return parsing;
+    }
+
+    public void setParsing(Parsing parsing) {
+        this.parsing = parsing;
     }
 
     public RateLimit getRateLimit() {
@@ -415,6 +425,54 @@ public class L402Properties {
                         "l402.lnd.rpc-deadline-seconds must be > 0, got: " + rpcDeadlineSeconds);
             }
             this.rpcDeadlineSeconds = rpcDeadlineSeconds;
+        }
+    }
+
+    /**
+     * Parsing limit configuration bound from {@code l402.parsing.*}.
+     */
+    public static class Parsing {
+
+        private int maxTokens = 5;
+
+        private int maxCaveats = 20;
+
+        private int maxMacaroonBytes = 4096;
+
+        public int getMaxTokens() {
+            return maxTokens;
+        }
+
+        public void setMaxTokens(int maxTokens) {
+            if (maxTokens < 1) {
+                throw new IllegalArgumentException(
+                        "l402.parsing.max-tokens must be >= 1, got: " + maxTokens);
+            }
+            this.maxTokens = maxTokens;
+        }
+
+        public int getMaxCaveats() {
+            return maxCaveats;
+        }
+
+        public void setMaxCaveats(int maxCaveats) {
+            if (maxCaveats < 1) {
+                throw new IllegalArgumentException(
+                        "l402.parsing.max-caveats must be >= 1, got: " + maxCaveats);
+            }
+            this.maxCaveats = maxCaveats;
+        }
+
+        public int getMaxMacaroonBytes() {
+            return maxMacaroonBytes;
+        }
+
+        public void setMaxMacaroonBytes(int maxMacaroonBytes) {
+            if (maxMacaroonBytes < 1) {
+                throw new IllegalArgumentException(
+                        "l402.parsing.max-macaroon-bytes must be >= 1, got: " + maxMacaroonBytes);
+            }
+            this.maxMacaroonBytes = maxMacaroonBytes;
         }
     }
 

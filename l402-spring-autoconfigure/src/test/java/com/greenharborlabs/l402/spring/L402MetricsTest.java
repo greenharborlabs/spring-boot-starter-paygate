@@ -1,6 +1,7 @@
 package com.greenharborlabs.l402.spring;
 
 import com.greenharborlabs.l402.core.credential.CredentialStore;
+import com.greenharborlabs.l402.core.credential.EvictionReason;
 import com.greenharborlabs.l402.core.lightning.Invoice;
 import com.greenharborlabs.l402.core.lightning.InvoiceStatus;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
@@ -90,6 +91,9 @@ class L402MetricsTest {
 
     @Autowired
     private CredentialStore credentialStore;
+
+    @Autowired
+    private L402Metrics l402Metrics;
 
     // -----------------------------------------------------------------------
     // Test application and configuration
@@ -471,6 +475,67 @@ class L402MetricsTest {
             Double afterRecovery = gaugeValue("l402.lightning.healthy");
             assertThat(afterRecovery).isNotNull();
             assertThat(afterRecovery).isEqualTo(1.0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Cache eviction metrics
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("cache eviction metrics")
+    class CacheEvictionMetrics {
+
+        @Test
+        @DisplayName("recordCacheEviction(EXPIRED) increments l402.cache.evictions with reason=expired")
+        void incrementsExpiredEvictionCounter() {
+            double before = counterValue("l402.cache.evictions", "reason", "expired");
+
+            l402Metrics.recordCacheEviction(EvictionReason.EXPIRED);
+
+            double after = counterValue("l402.cache.evictions", "reason", "expired");
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("recordCacheEviction(CAPACITY) increments l402.cache.evictions with reason=capacity")
+        void incrementsCapacityEvictionCounter() {
+            double before = counterValue("l402.cache.evictions", "reason", "capacity");
+
+            l402Metrics.recordCacheEviction(EvictionReason.CAPACITY);
+
+            double after = counterValue("l402.cache.evictions", "reason", "capacity");
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("recordCacheEviction(REVOKED) increments l402.cache.evictions with reason=revoked")
+        void incrementsRevokedEvictionCounter() {
+            double before = counterValue("l402.cache.evictions", "reason", "revoked");
+
+            l402Metrics.recordCacheEviction(EvictionReason.REVOKED);
+
+            double after = counterValue("l402.cache.evictions", "reason", "revoked");
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("each reason tag is independent — incrementing one does not affect others")
+        void reasonTagsAreIndependent() {
+            double expiredBefore = counterValue("l402.cache.evictions", "reason", "expired");
+            double capacityBefore = counterValue("l402.cache.evictions", "reason", "capacity");
+            double revokedBefore = counterValue("l402.cache.evictions", "reason", "revoked");
+
+            l402Metrics.recordCacheEviction(EvictionReason.EXPIRED);
+            l402Metrics.recordCacheEviction(EvictionReason.EXPIRED);
+            l402Metrics.recordCacheEviction(EvictionReason.CAPACITY);
+
+            assertThat(counterValue("l402.cache.evictions", "reason", "expired"))
+                    .isEqualTo(expiredBefore + 2.0);
+            assertThat(counterValue("l402.cache.evictions", "reason", "capacity"))
+                    .isEqualTo(capacityBefore + 1.0);
+            assertThat(counterValue("l402.cache.evictions", "reason", "revoked"))
+                    .isEqualTo(revokedBefore);
         }
     }
 

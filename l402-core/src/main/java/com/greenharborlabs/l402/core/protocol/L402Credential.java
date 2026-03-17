@@ -39,6 +39,12 @@ public record L402Credential(Macaroon macaroon, PaymentPreimage preimage, String
 
     private static final HexFormat HEX = HexFormat.of();
 
+    /** Maximum number of comma-separated tokens allowed in a single header. */
+    static final int MAX_TOKENS = 5;
+
+    /** Maximum decoded macaroon byte size (base64 can encode up to ~6144 bytes within the 8192-char regex window). */
+    static final int MAX_MACAROON_BYTES = 4096;
+
     /**
      * Parses an L402/LSAT Authorization header into an {@link L402Credential}.
      *
@@ -65,6 +71,12 @@ public record L402Credential(Macaroon macaroon, PaymentPreimage preimage, String
 
         // Split on comma to support multi-token headers: "token1,token2:preimage"
         String[] tokenParts = tokensString.split(",", -1);
+
+        // Reject excessive token count to bound CPU work from comma-separated amplification
+        if (tokenParts.length > MAX_TOKENS) {
+            throw new L402Exception(ErrorCode.MALFORMED_HEADER,
+                    "Too many tokens in header: %d, max: %d".formatted(tokenParts.length, MAX_TOKENS), null);
+        }
 
         // Validate no empty tokens (e.g. from "token1,,token2" or ",token1" or "token1,")
         for (String part : tokenParts) {
@@ -110,6 +122,11 @@ public record L402Credential(Macaroon macaroon, PaymentPreimage preimage, String
         } catch (IllegalArgumentException e) {
             throw new L402Exception(ErrorCode.MALFORMED_HEADER,
                     "Invalid base64 macaroon encoding: " + e.getMessage(), null);
+        }
+
+        if (macaroonBytes.length > MAX_MACAROON_BYTES) {
+            throw new L402Exception(ErrorCode.MALFORMED_HEADER,
+                    "Macaroon too large: %d bytes, max: %d".formatted(macaroonBytes.length, MAX_MACAROON_BYTES), null);
         }
 
         try {

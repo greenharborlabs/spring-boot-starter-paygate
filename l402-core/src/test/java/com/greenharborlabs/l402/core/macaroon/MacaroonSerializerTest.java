@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -510,6 +511,50 @@ class MacaroonSerializerTest {
             }
             pos++; // skip first EOS
             return pos; // this is where the second EOS (or caveat data) starts
+        }
+    }
+
+    @Nested
+    @DisplayName("Caveat count limits")
+    class CaveatCountLimits {
+
+        private List<Caveat> generateCaveats(int count) {
+            List<Caveat> caveats = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                caveats.add(new Caveat("key" + i, "value" + i));
+            }
+            return caveats;
+        }
+
+        @Test
+        @DisplayName("deserializes macaroon with exactly MAX_CAVEATS caveats")
+        void acceptsExactlyMaxCaveats() {
+            byte[] identifier = identifierFilledWith((byte) 0xA1);
+            byte[] signature = signatureFilledWith((byte) 0xB2);
+            List<Caveat> caveats = generateCaveats(MacaroonSerializer.MAX_CAVEATS);
+            var original = new Macaroon(identifier, null, caveats, signature);
+
+            byte[] serialized = MacaroonSerializer.serializeV2(original);
+            Macaroon result = MacaroonSerializer.deserializeV2(serialized);
+
+            assertThat(result.caveats()).hasSize(MacaroonSerializer.MAX_CAVEATS);
+            assertThat(result.caveats()).isEqualTo(caveats);
+        }
+
+        @Test
+        @DisplayName("rejects macaroon with more than MAX_CAVEATS caveats")
+        void rejectsExceedingMaxCaveats() {
+            byte[] identifier = identifierFilledWith((byte) 0xA1);
+            byte[] signature = signatureFilledWith((byte) 0xB2);
+            int count = MacaroonSerializer.MAX_CAVEATS + 1;
+            List<Caveat> caveats = generateCaveats(count);
+            var original = new Macaroon(identifier, null, caveats, signature);
+
+            byte[] serialized = MacaroonSerializer.serializeV2(original);
+
+            assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(serialized))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Too many caveats: %d, max: %d".formatted(count, MacaroonSerializer.MAX_CAVEATS));
         }
     }
 

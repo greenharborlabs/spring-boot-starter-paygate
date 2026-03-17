@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 
 import com.greenharborlabs.l402.core.credential.CredentialStore;
+import com.greenharborlabs.l402.core.credential.EvictionReason;
 import com.greenharborlabs.l402.core.lightning.LightningBackend;
 
 /**
@@ -31,6 +32,9 @@ public class L402Metrics {
 
         Gauge.builder("l402.lightning.healthy", lightningBackend, backend -> {
                     try {
+                        if (backend instanceof CachingLightningBackendWrapper cached) {
+                            return cached.lastKnownHealthy() ? 1.0 : 0.0;
+                        }
                         return backend.isHealthy() ? 1.0 : 0.0;
                     } catch (Exception e) {
                         return 0.0;
@@ -81,6 +85,21 @@ public class L402Metrics {
         Counter.builder("l402.invoices.settled")
                 .tag("endpoint", endpoint)
                 .description("Invoices paid")
+                .register(registry)
+                .increment();
+    }
+
+    /**
+     * Records a cache eviction: increments {@code l402.cache.evictions}
+     * counter tagged with the eviction reason (lowercase).
+     *
+     * <p>Thread-safe: may be called from Caffeine's async removal listener thread.
+     * {@code Counter.builder().register()} is idempotent in Micrometer.
+     */
+    public void recordCacheEviction(EvictionReason reason) {
+        Counter.builder("l402.cache.evictions")
+                .tag("reason", reason.name().toLowerCase())
+                .description("Credential cache evictions")
                 .register(registry)
                 .increment();
     }

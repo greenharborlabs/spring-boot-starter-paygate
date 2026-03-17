@@ -51,7 +51,7 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
      * @return a fresh copy of the internal byte array
      * @throws IllegalStateException if this instance has been destroyed
      */
-    public byte[] value() {
+    public synchronized byte[] value() {
         if (destroyed) {
             throw new IllegalStateException("Preimage has been destroyed");
         }
@@ -65,7 +65,7 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
      * @throws IllegalStateException    if this instance has been destroyed
      * @throws IllegalArgumentException if paymentHash is null or not 32 bytes
      */
-    public boolean matchesHash(byte[] paymentHash) {
+    public synchronized boolean matchesHash(byte[] paymentHash) {
         if (destroyed) {
             throw new IllegalStateException("Preimage has been destroyed");
         }
@@ -85,7 +85,7 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
      *
      * @throws IllegalStateException if this instance has been destroyed
      */
-    public String toHex() {
+    public synchronized String toHex() {
         if (destroyed) {
             throw new IllegalStateException("Preimage has been destroyed");
         }
@@ -141,7 +141,7 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
      * Two destroyed instances are never equal.
      */
     @Override
-    public boolean equals(Object o) {
+    public synchronized boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof PaymentPreimage other)) return false;
         if (this.destroyed || other.destroyed) return false;
@@ -149,7 +149,7 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
     }
 
     @Override
-    public int hashCode() {
+    public synchronized int hashCode() {
         if (destroyed) return 0;
         return Arrays.hashCode(data);
     }
