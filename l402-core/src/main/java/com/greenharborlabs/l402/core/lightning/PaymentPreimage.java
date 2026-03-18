@@ -24,6 +24,8 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
     private static final int SHA256_LENGTH = 32;
     private static final HexFormat HEX = HexFormat.of();
 
+    private static final Object TIEBREAKER_LOCK = new Object();
+
     private final byte[] data;
     private volatile boolean destroyed;
 
@@ -141,17 +143,47 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
      * Two destroyed instances are never equal.
      */
     @Override
-    public synchronized boolean equals(Object o) {
+    public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof PaymentPreimage other)) return false;
+
+        int thisHash = System.identityHashCode(this);
+        int otherHash = System.identityHashCode(other);
+
+        if (thisHash < otherHash) {
+            synchronized (this) {
+                synchronized (other) {
+                    return equalsUnderLock(other);
+                }
+            }
+        } else if (thisHash > otherHash) {
+            synchronized (other) {
+                synchronized (this) {
+                    return equalsUnderLock(other);
+                }
+            }
+        } else {
+            synchronized (TIEBREAKER_LOCK) {
+                synchronized (this) {
+                    synchronized (other) {
+                        return equalsUnderLock(other);
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean equalsUnderLock(PaymentPreimage other) {
         if (this.destroyed || other.destroyed) return false;
         return MacaroonCrypto.constantTimeEquals(this.data, other.data);
     }
 
     @Override
-    public synchronized int hashCode() {
-        if (destroyed) return 0;
-        return Arrays.hashCode(data);
+    public int hashCode() {
+        synchronized (this) {
+            if (destroyed) return 0;
+            return Arrays.hashCode(data);
+        }
     }
 
     /**

@@ -3,6 +3,7 @@ package com.greenharborlabs.l402.spring.security;
 import com.greenharborlabs.l402.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.l402.spring.L402EndpointConfig;
 import com.greenharborlabs.l402.spring.L402EndpointRegistry;
+import com.greenharborlabs.l402.spring.L402PathUtils;
 import com.greenharborlabs.l402.spring.L402ResponseWriter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -88,8 +89,9 @@ public final class L402AuthenticationFilter extends OncePerRequestFilter {
      */
     private String resolveCapability(HttpServletRequest request) {
         try {
+            String path = L402PathUtils.normalizePath(request.getRequestURI());
             L402EndpointConfig config = endpointRegistry.findConfig(
-                    request.getMethod(), request.getRequestURI());
+                    request.getMethod(), path);
             if (config == null) {
                 return null;
             }

@@ -17,6 +17,14 @@ public final class MacaroonCrypto {
     private static final String HMAC_SHA256 = "HmacSHA256";
     private static final byte[] GENERATOR_KEY = "macaroons-key-generator".getBytes(StandardCharsets.UTF_8);
 
+    private static final ThreadLocal<Mac> MAC_PROTOTYPE = ThreadLocal.withInitial(() -> {
+        try {
+            return Mac.getInstance(HMAC_SHA256);
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError("HmacSHA256 must be available", e);
+        }
+    });
+
     private MacaroonCrypto() {}
 
     /**
@@ -47,7 +55,12 @@ public final class MacaroonCrypto {
      */
     public static byte[] hmac(byte[] key, byte[] data) {
         try {
-            Mac mac = Mac.getInstance(HMAC_SHA256);
+            Mac mac;
+            try {
+                mac = (Mac) MAC_PROTOTYPE.get().clone();
+            } catch (CloneNotSupportedException e) {
+                mac = Mac.getInstance(HMAC_SHA256);
+            }
             SecretKeySpec keySpec = new SecretKeySpec(key, HMAC_SHA256);
             try {
                 mac.init(keySpec);

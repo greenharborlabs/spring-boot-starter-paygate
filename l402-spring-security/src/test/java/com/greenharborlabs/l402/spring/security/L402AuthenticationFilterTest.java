@@ -354,6 +354,42 @@ class L402AuthenticationFilterTest {
     }
 
     @Test
+    void normalizesPathTraversalBeforeRegistryLookup() throws ServletException, IOException {
+        request.setMethod("GET");
+        request.setRequestURI("/api/admin/../protected");
+        request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+        var config = new L402EndpointConfig("GET", "/api/protected", 10, 3600, "desc", "", "read");
+        when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(endpointRegistry).findConfig("GET", "/api/protected");
+        ArgumentCaptor<L402AuthenticationToken> captor = ArgumentCaptor.forClass(L402AuthenticationToken.class);
+        verify(authenticationManager).authenticate(captor.capture());
+        assertThat(captor.getValue().getRequestedCapability()).isEqualTo("read");
+    }
+
+    @Test
+    void normalizesPercentEncodedTraversalBeforeRegistryLookup() throws ServletException, IOException {
+        request.setMethod("GET");
+        request.setRequestURI("/api/admin/%2e%2e/protected");
+        request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+        var config = new L402EndpointConfig("GET", "/api/protected", 10, 3600, "desc", "", "write");
+        when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(endpointRegistry).findConfig("GET", "/api/protected");
+        ArgumentCaptor<L402AuthenticationToken> captor = ArgumentCaptor.forClass(L402AuthenticationToken.class);
+        verify(authenticationManager).authenticate(captor.capture());
+        assertThat(captor.getValue().getRequestedCapability()).isEqualTo("write");
+    }
+
+    @Test
     void passesNullCapabilityWhenConfigHasNullCapability() throws ServletException, IOException {
         request.setMethod("GET");
         request.setRequestURI("/api/null-cap");

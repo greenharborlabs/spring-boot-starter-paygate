@@ -1,12 +1,19 @@
 package com.greenharborlabs.l402.core.lightning;
 
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -421,6 +428,99 @@ class PaymentPreimageTest {
         // After destroy, value() throws, confirming data is inaccessible
         assertThatThrownBy(preimage::value)
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    // --- Concurrency ---
+
+    @Nested
+    @DisplayName("Thread safety")
+    class ThreadSafety {
+
+        @Test
+        @DisplayName("equals() racing with destroy() on other instance")
+        void equalsRacingWithDestroy() throws Exception {
+            int iterations = 500;
+            int threadCount = 10;
+            var errors = new ConcurrentLinkedQueue<Throwable>();
+
+            for (int i = 0; i < iterations; i++) {
+                var a = new PaymentPreimage(VALID_32_BYTES.clone());
+                var b = new PaymentPreimage(VALID_32_BYTES.clone());
+                var gate = new CountDownLatch(1);
+                var done = new CountDownLatch(threadCount);
+
+                for (int t = 0; t < threadCount; t++) {
+                    boolean callEquals = (t % 2 == 0);
+                    Thread.ofVirtual().start(() -> {
+                        try {
+                            gate.await();
+                            if (callEquals) {
+                                // Result may be true or false depending on race; must not throw
+                                a.equals(b);
+                            } else {
+                                b.destroy();
+                            }
+                        } catch (Throwable ex) {
+                            errors.add(ex);
+                        } finally {
+                            done.countDown();
+                        }
+                    });
+                }
+
+                gate.countDown();
+                boolean finished = done.await(5, TimeUnit.SECONDS);
+                assertThat(finished).as("All threads should complete within timeout").isTrue();
+            }
+
+            assertThat(errors).as("No errors from equals() racing with destroy()").isEmpty();
+        }
+
+        @Test
+        @DisplayName("symmetric equals() does not deadlock")
+        void symmetricEqualsDoesNotDeadlock() throws Exception {
+            int iterations = 1000;
+
+            for (int i = 0; i < iterations; i++) {
+                var a = new PaymentPreimage(VALID_32_BYTES.clone());
+                var b = new PaymentPreimage(VALID_32_BYTES.clone());
+                var gate = new CountDownLatch(1);
+                var deadlock = new AtomicBoolean(false);
+
+                Thread t1 = Thread.ofVirtual().start(() -> {
+                    try {
+                        gate.await();
+                        a.equals(b);
+                    } catch (InterruptedException _) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+
+                Thread t2 = Thread.ofVirtual().start(() -> {
+                    try {
+                        gate.await();
+                        b.equals(a);
+                    } catch (InterruptedException _) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+
+                gate.countDown();
+
+                t1.join(Duration.ofSeconds(1));
+                t2.join(Duration.ofSeconds(1));
+
+                if (t1.isAlive() || t2.isAlive()) {
+                    deadlock.set(true);
+                    t1.interrupt();
+                    t2.interrupt();
+                }
+
+                assertThat(deadlock.get())
+                        .as("Deadlock detected at iteration " + i)
+                        .isFalse();
+            }
+        }
     }
 
     // --- Helper ---

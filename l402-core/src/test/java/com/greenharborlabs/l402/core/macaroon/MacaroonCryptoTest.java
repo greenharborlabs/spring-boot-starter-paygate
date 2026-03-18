@@ -11,6 +11,9 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -419,6 +422,52 @@ class MacaroonCryptoTest {
             sb.close();
             assertThatThrownBy(() -> MacaroonCrypto.hmac(sb, new byte[]{4, 5}))
                     .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("ThreadSafety")
+    class ThreadSafety {
+
+        @Test
+        @DisplayName("hmac() is thread-safe across 100 virtual threads with unique keys")
+        void hmacConcurrentWithUniqueKeys() throws Exception {
+            int threadCount = 100;
+            byte[] sharedData = "shared-test-data".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var gate = new CountDownLatch(1);
+            var done = new CountDownLatch(threadCount);
+            var errors = new ConcurrentLinkedQueue<Throwable>();
+
+            for (int t = 0; t < threadCount; t++) {
+                // Each thread gets a unique key
+                byte[] uniqueKey = new byte[32];
+                uniqueKey[0] = (byte) (t >> 8);
+                uniqueKey[1] = (byte) t;
+                for (int i = 2; i < 32; i++) {
+                    uniqueKey[i] = (byte) (t + i);
+                }
+                // Pre-compute expected result single-threaded
+                byte[] expected = referenceHmac(uniqueKey, sharedData);
+
+                Thread.ofVirtual().start(() -> {
+                    try {
+                        gate.await();
+                        byte[] result = MacaroonCrypto.hmac(uniqueKey, sharedData);
+                        assertThat(result)
+                                .as("hmac() result must match single-threaded reference")
+                                .isEqualTo(expected);
+                    } catch (Throwable ex) {
+                        errors.add(ex);
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+
+            gate.countDown();
+            boolean finished = done.await(10, TimeUnit.SECONDS);
+            assertThat(finished).as("All threads should complete within timeout").isTrue();
+            assertThat(errors).as("No errors from concurrent hmac()").isEmpty();
         }
     }
 
