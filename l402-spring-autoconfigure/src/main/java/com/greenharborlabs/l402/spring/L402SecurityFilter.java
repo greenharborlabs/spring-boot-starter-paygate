@@ -202,7 +202,8 @@ public class L402SecurityFilter implements Filter {
                         return LongStream.of(Long.parseLong(c.value()));
                     } catch (NumberFormatException e) {
                         log.log(System.Logger.Level.WARNING,
-                                "Ignoring unparseable valid_until caveat value: {0}", c.value());
+                                "Ignoring unparseable valid_until caveat for key {0}: {1}",
+                                caveatKey, e.getMessage());
                         return LongStream.empty();
                     }
                 })
