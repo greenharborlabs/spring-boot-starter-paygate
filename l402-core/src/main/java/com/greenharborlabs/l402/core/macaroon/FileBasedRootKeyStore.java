@@ -12,6 +12,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -71,13 +72,14 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
 
             String hexKeyId = HEX.formatHex(tokenId);
 
-            lock.writeLock().lock();
+            Lock writeLock = lock.writeLock();
+            writeLock.lock();
             try {
                 ensureOpen();
                 writeKeyFile(hexKeyId, rootKey);
                 cache.put(hexKeyId, rootKey.clone());
             } finally {
-                lock.writeLock().unlock();
+                writeLock.unlock();
             }
 
             return new GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
@@ -93,7 +95,8 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
         Path keyFile = resolveKeyFile(hexKeyId);
 
         // Fast path: read lock for cache hit (safe because accessOrder=false)
-        lock.readLock().lock();
+        Lock readLock = lock.readLock();
+        readLock.lock();
         try {
             ensureOpen();
             byte[] cached = cache.get(hexKeyId);
@@ -101,11 +104,12 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
                 return new SensitiveBytes(cached.clone());
             }
         } finally {
-            lock.readLock().unlock();
+            readLock.unlock();
         }
 
         // Slow path: write lock for disk read + cache population
-        lock.writeLock().lock();
+        Lock writeLock = lock.writeLock();
+        writeLock.lock();
         try {
             ensureOpen();
             // Double-check after lock promotion
@@ -127,7 +131,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read root key: " + hexKeyId, e);
         } finally {
-            lock.writeLock().unlock();
+            writeLock.unlock();
         }
     }
 
@@ -137,7 +141,8 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
         String hexKeyId = HEX.formatHex(keyId);
         Path keyFile = resolveKeyFile(hexKeyId);
 
-        lock.writeLock().lock();
+        Lock writeLock = lock.writeLock();
+        writeLock.lock();
         try {
             ensureOpen();
             Files.deleteIfExists(keyFile);
@@ -146,7 +151,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to revoke root key: " + hexKeyId, e);
         } finally {
-            lock.writeLock().unlock();
+            writeLock.unlock();
         }
     }
 
@@ -155,7 +160,8 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
         if (closed) {
             return;
         }
-        lock.writeLock().lock();
+        Lock writeLock = lock.writeLock();
+        writeLock.lock();
         try {
             if (closed) {
                 return;
@@ -166,7 +172,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
             cache.clear();
             closed = true;
         } finally {
-            lock.writeLock().unlock();
+            writeLock.unlock();
         }
     }
 
