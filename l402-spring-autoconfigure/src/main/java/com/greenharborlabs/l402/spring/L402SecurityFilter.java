@@ -128,7 +128,7 @@ public class L402SecurityFilter implements Filter {
                 L402Credential credential = result.credential();
 
                 // Success: add expiry header and pass through
-                log.log(System.Logger.Level.DEBUG, "L402 credential validated successfully, tokenId={0}", credential.tokenId());
+                log.log(System.Logger.Level.DEBUG, "L402 credential validated successfully");
                 httpResponse.setHeader("X-L402-Credential-Expires",
                         resolveCredentialExpiry(credential, config).toString());
 
