@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -73,7 +75,8 @@ class GoInteropIT {
 
             // -- Assertions --
             assertThat(output.exitCode())
-                    .as("Go process exit code")
+                    .as("Go process exit code (stderr: %s, stdout: %s)".formatted(
+                            output.stderr().strip(), output.stdout().strip()))
                     .isZero();
 
             assertThat(output.stdout())
@@ -133,7 +136,8 @@ class GoInteropIT {
             GoOutput output = runGoVerify(base64Macaroon);
 
             assertThat(output.exitCode())
-                    .as("Go process exit code")
+                    .as("Go process exit code (stderr: %s, stdout: %s)".formatted(
+                            output.stderr().strip(), output.stdout().strip()))
                     .isZero();
 
             assertThat(output.stdout())
@@ -169,7 +173,8 @@ class GoInteropIT {
             GoOutput output = runGoVerify(base64Macaroon);
 
             assertThat(output.exitCode())
-                    .as("Go process exit code")
+                    .as("Go process exit code (stderr: %s, stdout: %s)".formatted(
+                            output.stderr().strip(), output.stdout().strip()))
                     .isZero();
 
             assertThat(output.stdout())
@@ -199,6 +204,12 @@ class GoInteropIT {
 
         Process process = pb.start();
 
+        // Read stdout/stderr concurrently to avoid pipe buffer deadlock
+        CompletableFuture<String> stdoutFuture = CompletableFuture.supplyAsync(
+                () -> readStream(process.getInputStream()));
+        CompletableFuture<String> stderrFuture = CompletableFuture.supplyAsync(
+                () -> readStream(process.getErrorStream()));
+
         // Write base64 macaroon to stdin, then close
         try (OutputStream stdin = process.getOutputStream()) {
             stdin.write(base64Macaroon.getBytes(StandardCharsets.UTF_8));
@@ -213,8 +224,8 @@ class GoInteropIT {
                     "Go verify process timed out after %d seconds".formatted(PROCESS_TIMEOUT_SECONDS));
         }
 
-        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+        String stdout = stdoutFuture.join();
+        String stderr = stderrFuture.join();
 
         if (process.exitValue() != 0) {
             System.err.println("Go verify stderr: " + stderr);
@@ -222,6 +233,14 @@ class GoInteropIT {
         }
 
         return new GoOutput(process.exitValue(), stdout, stderr);
+    }
+
+    private static String readStream(InputStream stream) {
+        try {
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "ERROR reading stream: " + e.getMessage();
+        }
     }
 
     private static void ensureGoDependencies() throws IOException, InterruptedException {
