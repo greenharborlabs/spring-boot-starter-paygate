@@ -344,9 +344,10 @@ server:
 
 l402:
   enabled: true
-  test-mode: true
   service-name: example-api
 ```
+
+> **Note:** Test mode is enabled via the `dev` profile in `application-dev.yml` (which sets `l402.test-mode: true`), not in the base `application.yml`. The `dev` profile is activated by default via `spring.profiles.active: dev` above.
 
 ### Property Reference
 
@@ -536,7 +537,7 @@ l402:
   lnd:
     host: localhost
     port: 10009
-    cert-path: /path/to/tls.cert
+    tls-cert-path: /path/to/tls.cert
     macaroon-path: /path/to/invoice.macaroon
 ```
 

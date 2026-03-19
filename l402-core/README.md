@@ -83,6 +83,7 @@ l402-core/
       CaveatVerifier.java           Interface for verifying individual caveats
       ServicesCaveatVerifier.java   Verifier for "services" caveats
       ValidUntilCaveatVerifier.java Verifier for time-expiry caveats
+      CapabilitiesCaveatVerifier.java Verifier for capabilities caveats
       L402VerificationContext.java  Context object passed to caveat verifiers
       Macaroon.java                 Immutable macaroon representation
       MacaroonIdentifier.java       66-byte binary identifier record
@@ -253,6 +254,7 @@ During macaroon verification, `MacaroonVerifier` matches each caveat to a regist
 |----------|-----------|----------|
 | `ServicesCaveatVerifier` | `services` | Parses a comma-separated list of `name:tier` entries. Verifies that the service name from `L402VerificationContext` appears in the list. Throws `L402Exception(INVALID_SERVICE)` if not found. |
 | `ValidUntilCaveatVerifier` | `{serviceName}_valid_until` | Parses the caveat value as a Unix epoch timestamp. Throws `L402Exception(EXPIRED_CREDENTIAL)` if the timestamp is not strictly after the current time from `L402VerificationContext`. |
+| `CapabilitiesCaveatVerifier` | `capabilities` | Verifies that the macaroon grants the required capabilities for the request. |
 
 ### L402VerificationContext
 
@@ -620,7 +622,7 @@ Reads test vectors from `src/test/resources/test-vectors/go-macaroon-vectors.jso
 | Round-trip encode/decode returns original value | Lossless encoding |
 | Rejects negative values, null data, out-of-bounds offsets, truncated input | Input validation |
 
-#### Caveat Records and Verifiers (`CaveatTest`, `ServicesCaveatVerifierTest`, `ValidUntilCaveatVerifierTest`)
+#### Caveat Records and Verifiers (`CaveatTest`, `ServicesCaveatVerifierTest`, `ValidUntilCaveatVerifierTest`, `CapabilitiesCaveatVerifierTest`)
 
 | Test Case | What It Verifies |
 |-----------|-----------------|

@@ -94,6 +94,8 @@ All properties are bound from the `l402.*` namespace via `L402Properties`.
 |----------|------|---------|----------|-------------|
 | `l402.lnbits.url` | `string` | -- | When `l402.backend=lnbits` | Base URL of the LNbits instance. |
 | `l402.lnbits.api-key` | `string` | -- | When `l402.backend=lnbits` | LNbits Invoice/read API key. Keep this value secret. |
+| `l402.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout override. |
+| `l402.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout override. |
 
 ### LND Backend Properties
 
@@ -104,6 +106,11 @@ All properties are bound from the `l402.*` namespace via `L402Properties`.
 | `l402.lnd.tls-cert-path` | `string` | -- | When `l402.backend=lnd` (unless plaintext) | Path to the LND TLS certificate (`tls.cert`). |
 | `l402.lnd.macaroon-path` | `string` | -- | No | Path to the LND admin macaroon file (`admin.macaroon`). |
 | `l402.lnd.allow-plaintext` | `boolean` | `false` | No | Allow plaintext gRPC (no TLS). For local development only. |
+| `l402.lnd.keep-alive-time-seconds` | `int` | `60` | No | gRPC keepalive ping interval. |
+| `l402.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Keepalive ping ack timeout. |
+| `l402.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle connection timeout. |
+| `l402.lnd.max-inbound-message-size` | `int` | `4194304` | No | Max inbound gRPC message size. |
+| `l402.lnd.rpc-deadline-seconds` | `Integer` | -- | No | Per-call gRPC deadline. |
 
 ### Example application.yml
 
@@ -143,6 +150,8 @@ The following table shows every bean created by `L402AutoConfiguration`, the con
 | `l402EndpointRegistry` | `L402EndpointRegistry` | `@ConditionalOnMissingBean` | Scans `@L402Protected` annotations from Spring MVC handler mappings |
 | `l402RateLimiter` | `L402RateLimiter` | `@ConditionalOnMissingBean` | `TokenBucketRateLimiter` with configured burst size and refill rate |
 | `l402EarningsTracker` | `L402EarningsTracker` | `@ConditionalOnMissingBean` | In-memory tracker; resets on restart |
+| `l402ChallengeService` | `L402ChallengeService` | `@ConditionalOnMissingBean` | Encapsulates challenge generation and invoice creation logic |
+| `l402SecurityModeResolver` | `L402SecurityModeResolver` | `@ConditionalOnMissingBean` | Determines which security integration mode to use (servlet filter vs Spring Security) |
 | `l402SecurityFilter` | `L402SecurityFilter` | `@ConditionalOnMissingBean` | The core servlet filter. Receives metrics, earnings tracker, and rate limiter via setter injection (all optional) |
 | `l402SecurityFilterRegistration` | `FilterRegistrationBean<L402SecurityFilter>` | Always (when auto-config is active) | Registered at `Ordered.HIGHEST_PRECEDENCE + 10`, matching `/*` |
 | `lightningBackend` (LNbits) | `LightningBackend` | `l402.backend=lnbits` + `LnbitsBackend` on classpath + `@ConditionalOnMissingBean` | Creates `LnbitsBackend` with 10-second connect timeout `HttpClient` |
@@ -564,6 +573,8 @@ l402-spring-autoconfigure/
     L402MetricsAutoConfiguration.java     Micrometer metrics auto-configuration
     TestModeAutoConfiguration.java        Test-mode auto-configuration
     L402Properties.java                   @ConfigurationProperties binding class
+    L402ChallengeService.java             Challenge generation and invoice creation
+    L402SecurityModeResolver.java         Resolves servlet filter vs Spring Security mode
     L402SecurityFilter.java               Jakarta Servlet Filter enforcing L402
     L402EndpointRegistry.java             Registry of @L402Protected endpoints
     L402EndpointConfig.java               Immutable endpoint configuration record

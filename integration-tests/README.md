@@ -117,5 +117,5 @@ docker compose -f docker-compose-lnd.yml exec l402-example-app ls -la /lnd/data/
 
 ## See Also
 
-- `PLAYBOOK.md` (to be created) for step-by-step manual testing scenarios
+- [PLAYBOOK.md](PLAYBOOK.md) for step-by-step manual testing scenarios
 - Root `docker-compose.yml` for a simpler test-mode-only setup

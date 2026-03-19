@@ -673,7 +673,7 @@ Contributions are welcome. Please follow these guidelines:
 2. **Fork and branch** from `main`
 3. **Follow existing code conventions** -- Java 25 idioms (records, sealed classes, pattern matching), Javadoc on public types
 4. **Maintain the zero-dependency constraint** on `l402-core` -- no external libraries
-5. **Add tests** -- the project enforces a minimum 40% code coverage via JaCoCo
+5. **Add tests** -- the project enforces code coverage via JaCoCo (80% for l402-core, 60% for most modules, 40% for example app)
 6. **All secret comparisons must be constant-time** (XOR accumulation)
 7. **Never log full macaroon values** -- only token IDs
 

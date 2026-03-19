@@ -146,6 +146,11 @@ l402.lnd.macaroon-path=/path/to/invoice.macaroon
 | `l402.lnd.tls-cert-path` | `string` | `null` | Yes* | Absolute path to the LND TLS certificate file (`tls.cert`). Required unless `allow-plaintext=true`. |
 | `l402.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup, hex-encoded, and attached to every gRPC call. |
 | `l402.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC connections. Intended only for local development with a localhost LND node. A warning is logged when active. |
+| `l402.lnd.keep-alive-time-seconds` | `int` | `60` | No | Interval between gRPC keepalive pings. |
+| `l402.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Timeout for keepalive ping acknowledgement. |
+| `l402.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle gRPC connection timeout. |
+| `l402.lnd.max-inbound-message-size` | `int` | `4194304` | No | Maximum inbound gRPC message size in bytes (4 MB). |
+| `l402.lnd.rpc-deadline-seconds` | `Integer` | -- | No | Per-call gRPC deadline. Overrides `l402.lightning.timeout-seconds`. |
 
 *If `tls-cert-path` is not set and `allow-plaintext` is `false` (the default), the application will fail to start with an `IllegalStateException`.
 

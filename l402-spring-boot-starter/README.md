@@ -139,7 +139,7 @@ All properties live under the `l402.*` prefix. The starter auto-configures defau
 | `l402.root-key-store` | `file` | Root key storage: `file` (persistent) or `memory` (ephemeral). |
 | `l402.root-key-store-path` | `~/.l402/keys` | File path for persistent root key storage. |
 | `l402.credential-cache-max-size` | `10000` | Maximum cached credentials. |
-| `l402.test-mode` | `false` | When `true`, skips Lightning payment verification (development only). |
+| `l402.test-mode` | `false` | When `true`, uses a dummy Lightning backend that auto-settles invoices (development only). Full L402 verification still runs. |
 | `l402.health-cache.enabled` | `true` | Cache `isHealthy()` results to avoid hammering the backend. |
 | `l402.health-cache.ttl-seconds` | `5` | Health cache TTL. |
 

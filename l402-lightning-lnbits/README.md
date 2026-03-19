@@ -109,6 +109,8 @@ l402.lnbits.api-key=${LNBITS_API_KEY}
 | `l402.backend` | `string` | -- | Yes | Must be set to `lnbits` to activate this module. |
 | `l402.lnbits.url` | `string` | -- | Yes | Base URL of the LNbits instance (e.g., `https://lnbits.example.com`). Trailing slashes are stripped automatically. |
 | `l402.lnbits.api-key` | `string` | -- | Yes | Invoice/read API key for authentication. Sent as the `X-Api-Key` header on all requests. |
+| `l402.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout. Overrides default 5s. |
+| `l402.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout. Overrides default 10s. |
 
 ### Security: Handling the API Key
 
@@ -132,6 +134,7 @@ l402-lightning-lnbits/
     LnbitsBackend.java       LightningBackend implementation
     LnbitsConfig.java        Immutable configuration record
     LnbitsException.java     Runtime exception for API failures
+    LnbitsTimeoutException.java  Timeout-specific subclass of LnbitsException
   src/test/java/com/greenharborlabs/l402/lightning/lnbits/
     LnbitsBackendTest.java   Integration tests using MockWebServer
     LnbitsConfigTest.java    Config validation and redaction tests
@@ -142,8 +145,17 @@ l402-lightning-lnbits/
 A Java `record` holding the `baseUrl` and `apiKey`. The compact constructor validates that neither field is null or blank. The `toString()` method redacts the API key to prevent accidental exposure in logs.
 
 ```java
-public record LnbitsConfig(String baseUrl, String apiKey) { ... }
+public record LnbitsConfig(
+    String baseUrl,
+    String apiKey,
+    int requestTimeoutSeconds,
+    int connectTimeoutSeconds
+) { ... }
 ```
+
+A convenience constructor `LnbitsConfig(String baseUrl, String apiKey)` is available, which defaults to 5 seconds for request timeout and 10 seconds for connect timeout.
+
+The `baseUrl` is validated to use an `http` or `https` scheme; other schemes are rejected with `IllegalArgumentException`.
 
 ### LnbitsBackend
 
@@ -165,7 +177,7 @@ The constructor accepts three dependencies:
 | `lookupInvoice(byte[] paymentHash)` | `GET /api/v1/payments/{hash}` | Checks payment status by payment hash. Returns `SETTLED` or `PENDING` with preimage when available. |
 | `isHealthy()` | `GET /api/v1/wallet` | Returns `true` if the LNbits wallet endpoint responds with HTTP 200. |
 
-All API requests include the `X-Api-Key` header and have a **5-second timeout**. The connect timeout on the `HttpClient` is **10 seconds** (configured in auto-configuration).
+All API requests include the `X-Api-Key` header and have a configurable per-request timeout (default **5 seconds**, overridable via `l402.lnbits.request-timeout-seconds`). The connect timeout on the `HttpClient` is configurable as well (default **10 seconds**, overridable via `l402.lnbits.connect-timeout-seconds`).
 
 Invoice expiry is set to **1 hour** from creation time by default.
 

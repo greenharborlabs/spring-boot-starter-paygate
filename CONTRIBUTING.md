@@ -31,6 +31,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 | `l402-spring-security` | Spring Security integration (optional) |
 | `l402-spring-boot-starter` | Dependency aggregator (no source) |
 | `l402-example-app` | Reference implementation |
+| `integration-tests` | Docker Compose integration test environments |
 
 ## Submitting Changes
 
