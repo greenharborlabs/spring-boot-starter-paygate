@@ -7,7 +7,7 @@ plugins {
 }
 
 val springBootVersion = "4.0.3"
-val caffeineVersion = "3.1.8"
+val caffeineVersion = "3.2.3"
 val grpcVersion = "1.68.1"
 val protobufVersion = "4.29.3"
 val jacksonVersion = "2.18.2"
