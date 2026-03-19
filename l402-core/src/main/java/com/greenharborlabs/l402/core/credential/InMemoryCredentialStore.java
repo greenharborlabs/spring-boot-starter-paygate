@@ -201,7 +201,7 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
             try {
                 listener.onEviction(tokenId, reason);
             } catch (Exception e) {
-                log.log(System.Logger.Level.WARNING, "Eviction listener threw exception for tokenId: " + tokenId, e);
+                log.log(System.Logger.Level.WARNING, "Eviction listener threw exception", e);
             }
         }
     }
