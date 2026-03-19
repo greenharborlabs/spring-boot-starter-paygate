@@ -81,7 +81,7 @@ jobs:
 
       - name: Publish test results
         if: github.event_name == 'pull_request' && always()
-        uses: dorny/test-reporter@31a54ee7ebcbf28f078b4b1e68a36c2daf476cda  # v1.9.1
+        uses: dorny/test-reporter@v2
         with:
           name: Test Results
           path: '**/build/test-results/test/*.xml'
