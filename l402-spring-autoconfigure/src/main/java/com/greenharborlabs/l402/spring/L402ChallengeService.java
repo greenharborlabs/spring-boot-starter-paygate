@@ -217,22 +217,31 @@ public class L402ChallengeService {
     }
 
     /**
-     * Strips characters from a bolt11 string that could enable HTTP header injection
-     * or break the WWW-Authenticate header format. Removes double quotes, carriage
-     * returns, and newlines.
+     * Validates that a bolt11 invoice string contains no characters that could enable
+     * HTTP header injection or break the {@code WWW-Authenticate} header format per
+     * RFC 7230. Rejects all C0 control characters (0x00-0x1F), DEL (0x7F), and
+     * double-quote ({@code "}) with {@link IllegalArgumentException} — a modified
+     * bolt11 invoice is unpayable, so silent stripping would mask upstream bugs.
+     *
+     * <p>Aligned with {@code L402Challenge.sanitizeBolt11ForHeader()} in l402-core.
+     *
+     * @param bolt11 the bolt11 invoice string, or {@code null}
+     * @return the validated bolt11 string unchanged, or {@code ""} if input is null
+     * @throws IllegalArgumentException if the input contains a control character or double-quote
      */
     static String sanitizeBolt11ForHeader(String bolt11) {
         if (bolt11 == null) {
             return "";
         }
-        var sb = new StringBuilder(bolt11.length());
         for (int i = 0; i < bolt11.length(); i++) {
             char c = bolt11.charAt(i);
-            if (c != '"' && c != '\r' && c != '\n') {
-                sb.append(c);
+            if (c <= 0x1F || c == 0x7F || c == '"') {
+                throw new IllegalArgumentException(
+                        "bolt11 invoice contains illegal character at index " + i
+                                + ": 0x" + Integer.toHexString(c));
             }
         }
-        return sb.toString();
+        return bolt11;
     }
 
     /**

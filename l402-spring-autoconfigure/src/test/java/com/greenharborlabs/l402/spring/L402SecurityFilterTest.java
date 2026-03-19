@@ -714,11 +714,11 @@ class L402SecurityFilterTest {
     class Bolt11Sanitization {
 
         @Test
-        @DisplayName("strips header injection chars from bolt11 in WWW-Authenticate and escapes in JSON body")
-        void sanitizesMaliciousBolt11() throws Exception {
+        @DisplayName("rejects malicious bolt11 with control chars — returns 503 (fail closed)")
+        void rejectsMaliciousBolt11() throws Exception {
             ((StubLightningBackend) lightningBackend).setHealthy(true);
 
-            // Craft a malicious bolt11 with header injection and JSON breaking characters
+            // Craft a malicious bolt11 with header injection characters
             String maliciousBolt11 = "lnbc100n1p0test\r\nEvil-Header: injected\"\r\nAnother: bad";
             byte[] paymentHash = new byte[32];
             new SecureRandom().nextBytes(paymentHash);
@@ -735,30 +735,10 @@ class L402SecurityFilterTest {
             );
             ((StubLightningBackend) lightningBackend).setNextInvoice(maliciousInvoice);
 
-            var result = mockMvc.perform(get(PROTECTED_PATH))
-                    .andExpect(status().isPaymentRequired())
-                    .andReturn();
-
-            // Verify WWW-Authenticate header has no \r, \n, or " from bolt11
-            String wwwAuth = result.getResponse().getHeader("WWW-Authenticate");
-            assertThat(wwwAuth).isNotNull();
-            // Extract the invoice value from the header
-            String invoiceInHeader = wwwAuth.split("invoice=\"")[1];
-            invoiceInHeader = invoiceInHeader.substring(0, invoiceInHeader.lastIndexOf('"'));
-            // CR, LF, and double-quote must be stripped — these enable header injection
-            assertThat(invoiceInHeader).doesNotContain("\r");
-            assertThat(invoiceInHeader).doesNotContain("\n");
-            assertThat(invoiceInHeader).doesNotContain("\"");
-            // The remaining text should be a continuous string with injection chars removed
-            assertThat(invoiceInHeader).isEqualTo("lnbc100n1p0testEvil-Header: injectedAnother: bad");
-
-            // Verify JSON body has the bolt11 properly escaped (no raw control chars or unescaped quotes)
-            String body = result.getResponse().getContentAsString();
-            // Raw CR/LF must not appear in the JSON body
-            assertThat(body).doesNotContain("\r");
-            assertThat(body).doesNotContain(maliciousBolt11);
-            // The JSON should contain escaped versions of the special chars from bolt11
-            assertThat(body).contains("\\r\\nEvil-Header: injected\\\"\\r\\nAnother: bad");
+            // sanitizeBolt11ForHeader now rejects (throws) instead of stripping,
+            // so the filter's generic catch block returns 503 — fail closed
+            mockMvc.perform(get(PROTECTED_PATH))
+                    .andExpect(status().isServiceUnavailable());
         }
     }
 

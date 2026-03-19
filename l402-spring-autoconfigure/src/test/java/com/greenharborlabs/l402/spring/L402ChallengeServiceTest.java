@@ -24,6 +24,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -432,11 +433,55 @@ class L402ChallengeServiceTest {
         }
 
         @Test
-        @DisplayName("strips quotes, CR, and LF from input")
-        void stripsInjectionCharacters() {
-            String dirty = "lnbc500n1p0test\"inject\r\nheader";
-            assertThat(L402ChallengeService.sanitizeBolt11ForHeader(dirty))
-                    .isEqualTo("lnbc500n1p0testinjectheader");
+        @DisplayName("rejects double quote with IllegalArgumentException")
+        void rejectsDoubleQuote() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> L402ChallengeService.sanitizeBolt11ForHeader("lnbc\"test"))
+                    .withMessageContaining("illegal character at index 4");
+        }
+
+        @Test
+        @DisplayName("rejects CR and LF with IllegalArgumentException")
+        void rejectsCrLf() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> L402ChallengeService.sanitizeBolt11ForHeader("lnbc\r\ntest"))
+                    .withMessageContaining("illegal character at index 4");
+        }
+
+        @Test
+        @DisplayName("rejects null byte (0x00)")
+        void rejectsNullByte() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> L402ChallengeService.sanitizeBolt11ForHeader("lnbc\0test"))
+                    .withMessageContaining("illegal character at index 4")
+                    .withMessageContaining("0x0");
+        }
+
+        @Test
+        @DisplayName("rejects tab character (0x09)")
+        void rejectsTab() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> L402ChallengeService.sanitizeBolt11ForHeader("lnbc\ttest"))
+                    .withMessageContaining("illegal character at index 4")
+                    .withMessageContaining("0x9");
+        }
+
+        @Test
+        @DisplayName("rejects DEL character (0x7F)")
+        void rejectsDel() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> L402ChallengeService.sanitizeBolt11ForHeader("lnbc\u007Ftest"))
+                    .withMessageContaining("illegal character at index 4")
+                    .withMessageContaining("0x7f");
+        }
+
+        @Test
+        @DisplayName("rejects mid-range control character (0x1A SUB)")
+        void rejectsMidRangeControl() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> L402ChallengeService.sanitizeBolt11ForHeader("abc\u001Adef"))
+                    .withMessageContaining("illegal character at index 3")
+                    .withMessageContaining("0x1a");
         }
 
         @Test
