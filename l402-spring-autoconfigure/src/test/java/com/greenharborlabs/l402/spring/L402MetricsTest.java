@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.web.servlet.MockMvc;
@@ -42,6 +43,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -154,11 +156,14 @@ class L402MetricsTest {
                 RootKeyStore rootKeyStore,
                 CredentialStore credentialStore,
                 List<CaveatVerifier> caveatVerifiers,
-                L402Metrics l402Metrics
+                L402Metrics l402Metrics,
+                ApplicationContext applicationContext
         ) {
+            var properties = new L402Properties();
+            properties.setServiceName("test-service");
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
             var challengeService = new L402ChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, null, null);
+                    rootKeyStore, lightningBackendBean, properties, applicationContext, null, null);
             return new L402SecurityFilter(
                     endpointRegistry, validator, challengeService, "test-service",
                     l402Metrics, null, null);
@@ -425,6 +430,7 @@ class L402MetricsTest {
         @DisplayName("l402.lightning.healthy gauge reports 1.0 when Lightning is healthy")
         void lightningHealthyGaugeReportsOne() throws Exception {
             ((StubLightningBackend) lightningBackend).setHealthy(true);
+            l402Metrics.refreshHealth();
 
             // Trigger a request so gauges are registered
             mockMvc.perform(get(PROTECTED_PATH))
@@ -439,6 +445,7 @@ class L402MetricsTest {
         @DisplayName("l402.lightning.healthy gauge reports 0.0 when Lightning is unhealthy")
         void lightningHealthyGaugeReportsZero() throws Exception {
             ((StubLightningBackend) lightningBackend).setHealthy(false);
+            l402Metrics.refreshHealth();
 
             // Trigger a request — will get 503 but gauge should still be set
             mockMvc.perform(get(PROTECTED_PATH))
@@ -453,6 +460,7 @@ class L402MetricsTest {
         @DisplayName("l402.lightning.healthy gauge reports 0.0 when isHealthy() throws exception")
         void lightningHealthyGaugeReportsZeroOnException() {
             ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(true);
+            l402Metrics.refreshHealth();
 
             Double gaugeValue = gaugeValue("l402.lightning.healthy");
             assertThat(gaugeValue).isNotNull();
@@ -463,6 +471,7 @@ class L402MetricsTest {
         @DisplayName("l402.lightning.healthy gauge recovers to 1.0 after exception clears")
         void lightningHealthyGaugeRecoversAfterException() {
             ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(true);
+            l402Metrics.refreshHealth();
 
             Double duringException = gaugeValue("l402.lightning.healthy");
             assertThat(duringException).isNotNull();
@@ -471,10 +480,29 @@ class L402MetricsTest {
             // Backend recovers
             ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(false);
             ((StubLightningBackend) lightningBackend).setHealthy(true);
+            l402Metrics.refreshHealth();
 
             Double afterRecovery = gaugeValue("l402.lightning.healthy");
             assertThat(afterRecovery).isNotNull();
             assertThat(afterRecovery).isEqualTo(1.0);
+        }
+
+        @Test
+        @DisplayName("gauge supplier never calls isHealthy() — reads from cached field only")
+        void lightningHealthyGaugeNeverCallsIsHealthyDuringGaugeScrape() {
+            // Ensure known state and reset call count after any prior calls
+            ((StubLightningBackend) lightningBackend).setHealthy(true);
+            l402Metrics.refreshHealth();
+            ((StubLightningBackend) lightningBackend).resetIsHealthyCallCount();
+
+            // Read the gauge multiple times — should NOT trigger isHealthy()
+            for (int i = 0; i < 10; i++) {
+                gaugeValue("l402.lightning.healthy");
+            }
+
+            assertThat(((StubLightningBackend) lightningBackend).getIsHealthyCallCount())
+                    .as("Gauge reads must not call isHealthy() on the backend")
+                    .isZero();
         }
     }
 
@@ -722,6 +750,7 @@ class L402MetricsTest {
         private volatile boolean healthy = true;
         private volatile boolean throwOnHealthCheck = false;
         private volatile Invoice nextInvoice;
+        private final AtomicInteger isHealthyCallCount = new AtomicInteger(0);
 
         void setHealthy(boolean healthy) {
             this.healthy = healthy;
@@ -758,8 +787,17 @@ class L402MetricsTest {
             return null;
         }
 
+        int getIsHealthyCallCount() {
+            return isHealthyCallCount.get();
+        }
+
+        void resetIsHealthyCallCount() {
+            isHealthyCallCount.set(0);
+        }
+
         @Override
         public boolean isHealthy() {
+            isHealthyCallCount.incrementAndGet();
             if (throwOnHealthCheck) {
                 throw new RuntimeException("Lightning backend health check failed");
             }

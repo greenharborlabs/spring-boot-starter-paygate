@@ -28,7 +28,7 @@ public class L402EndpointRegistry {
 
     private final long defaultTimeoutSeconds;
     private final Map<String, L402EndpointConfig> configs = new ConcurrentHashMap<>();
-    private final Map<String, PathPattern> parsedPatterns = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, PathPattern>> patternsByMethod = new ConcurrentHashMap<>();
 
     /**
      * Creates a registry that resolves the {@code -1} sentinel timeout to the given default.
@@ -52,9 +52,11 @@ public class L402EndpointRegistry {
      * @param config the endpoint configuration
      */
     public void register(L402EndpointConfig config) {
-        String key = toKey(config.httpMethod(), config.pathPattern());
+        var key = toKey(config.httpMethod(), config.pathPattern());
         configs.put(key, config);
-        parsedPatterns.put(key, PATTERN_PARSER.parse(config.pathPattern()));
+        patternsByMethod
+                .computeIfAbsent(config.httpMethod().toUpperCase(), _ -> new ConcurrentHashMap<>())
+                .put(key, PATTERN_PARSER.parse(config.pathPattern()));
     }
 
     /**
@@ -73,20 +75,30 @@ public class L402EndpointRegistry {
             return exact;
         }
 
-        // Slow path: iterate all registered patterns and match
-        PathContainer pathContainer = PathContainer.parsePath(path);
-        String methodUpper = method.toUpperCase();
+        // Slow path: only iterate patterns for the matching method + wildcard "*"
+        var pathContainer = PathContainer.parsePath(path);
+        var methodUpper = method.toUpperCase();
 
-        for (Map.Entry<String, PathPattern> entry : parsedPatterns.entrySet()) {
-            String key = entry.getKey();
-            // Check that the HTTP method portion matches
-            if (!key.startsWith(methodUpper + ":") && !key.startsWith("*:")) {
-                continue;
-            }
-            if (entry.getValue().matches(pathContainer)) {
-                return configs.get(key);
+        // Check method-specific patterns first
+        var methodPatterns = patternsByMethod.get(methodUpper);
+        if (methodPatterns != null) {
+            for (var entry : methodPatterns.entrySet()) {
+                if (entry.getValue().matches(pathContainer)) {
+                    return configs.get(entry.getKey());
+                }
             }
         }
+
+        // Then check wildcard "*" patterns
+        var wildcardPatterns = patternsByMethod.get("*");
+        if (wildcardPatterns != null) {
+            for (var entry : wildcardPatterns.entrySet()) {
+                if (entry.getValue().matches(pathContainer)) {
+                    return configs.get(entry.getKey());
+                }
+            }
+        }
+
         return null;
     }
 

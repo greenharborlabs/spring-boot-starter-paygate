@@ -69,9 +69,14 @@ public final class MacaroonVerifier {
     public static void verifyCaveats(List<Caveat> caveats,
                                      List<CaveatVerifier> caveatVerifiers,
                                      L402VerificationContext context) {
+        Map<String, CaveatVerifier> verifiersByKey = new HashMap<>(caveatVerifiers.size());
+        for (CaveatVerifier cv : caveatVerifiers) {
+            verifiersByKey.put(cv.getKey(), cv);
+        }
+
         Map<String, Caveat> lastSeenByKey = new HashMap<>();
         for (Caveat caveat : caveats) {
-            CaveatVerifier verifier = findVerifier(caveatVerifiers, caveat.key());
+            CaveatVerifier verifier = verifiersByKey.get(caveat.key());
             if (verifier == null) {
                 // Unknown caveats are skipped per the L402 spec
                 continue;
@@ -99,14 +104,5 @@ public final class MacaroonVerifier {
                                 + requestedCapability + "'", null);
             }
         }
-    }
-
-    private static CaveatVerifier findVerifier(List<CaveatVerifier> verifiers, String key) {
-        for (CaveatVerifier v : verifiers) {
-            if (v.getKey().equals(key)) {
-                return v;
-            }
-        }
-        return null;
     }
 }

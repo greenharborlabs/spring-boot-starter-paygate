@@ -272,7 +272,7 @@ class CachingLightningBackendWrapperTest {
     }
 
     @Test
-    @DisplayName("L402Metrics gauge uses lastKnownHealthy() and does not call delegate")
+    @DisplayName("L402Metrics gauge reads cached health and does not call delegate on scrape")
     void metricsGaugeUsesLastKnownHealthyNotIsHealthy() {
         var callCount = new AtomicInteger(0);
         var healthy = new AtomicBoolean(true);
@@ -288,23 +288,24 @@ class CachingLightningBackendWrapperTest {
             @Override public long activeCount() { return 0; }
         };
 
-        // Construct L402Metrics — this registers the gauge
-        new L402Metrics(registry, stubStore, wrapper);
+        // Construct L402Metrics — this registers the gauge and does one initial health check
+        var metrics = new L402Metrics(registry, stubStore, wrapper);
 
-        // Before any isHealthy() call, gauge should read 0.0 (lastKnownHealthy returns false)
         var gauge = registry.find("l402.lightning.healthy").gauge();
         assertThat(gauge).isNotNull();
-        assertThat(gauge.value()).isEqualTo(0.0);
-        assertThat(callCount.get()).as("gauge must not call delegate").isZero();
-
-        // Populate the cache via an explicit isHealthy() call
-        assertThat(wrapper.isHealthy()).isTrue();
-        assertThat(callCount.get()).isEqualTo(1);
-
-        // Gauge now reads 1.0 from the cached value
+        // Initial sync call in constructor populated the cached state as healthy
         assertThat(gauge.value()).isEqualTo(1.0);
-        // Still only 1 delegate call — gauge evaluation did not trigger another
-        assertThat(callCount.get()).as("gauge must not trigger additional delegate call").isEqualTo(1);
+        int callsAfterConstruction = callCount.get();
+        assertThat(callsAfterConstruction).as("constructor performs initial health check").isGreaterThanOrEqualTo(1);
+
+        // Reading the gauge multiple times must NOT trigger additional delegate calls
+        for (int i = 0; i < 10; i++) {
+            gauge.value();
+        }
+        assertThat(callCount.get()).as("gauge reads must not trigger additional delegate calls")
+                .isEqualTo(callsAfterConstruction);
+
+        metrics.close();
     }
 
     // --- Auto-configuration integration tests ---

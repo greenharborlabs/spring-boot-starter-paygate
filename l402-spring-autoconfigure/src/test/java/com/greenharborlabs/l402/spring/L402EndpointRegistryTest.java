@@ -71,4 +71,83 @@ class L402EndpointRegistryTest {
         assertThat(config).isNotNull();
         assertThat(config.capability()).isEqualTo("analyze");
     }
+
+    @Test
+    @DisplayName("findConfig matches path variables via pattern matching")
+    void findConfigMatchesPathVariables() {
+        var registry = new L402EndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+        registry.register(new L402EndpointConfig("GET", "/api/items/{id}", 10, 600, "", "", ""));
+
+        var config = registry.findConfig("GET", "/api/items/42");
+        assertThat(config).isNotNull();
+        assertThat(config.pathPattern()).isEqualTo("/api/items/{id}");
+    }
+
+    @Test
+    @DisplayName("wildcard * method matches any HTTP method")
+    void wildcardMethodMatchesAnyMethod() {
+        var registry = new L402EndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+        registry.register(new L402EndpointConfig("*", "/api/universal", 10, 600, "", "", ""));
+
+        assertThat(registry.findConfig("GET", "/api/universal")).isNotNull();
+        assertThat(registry.findConfig("POST", "/api/universal")).isNotNull();
+        assertThat(registry.findConfig("DELETE", "/api/universal")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("wildcard * method with path variables matches any method")
+    void wildcardMethodWithPathVariablesMatchesAnyMethod() {
+        var registry = new L402EndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+        registry.register(new L402EndpointConfig("*", "/api/resources/{id}", 10, 600, "", "", ""));
+
+        assertThat(registry.findConfig("GET", "/api/resources/99")).isNotNull();
+        assertThat(registry.findConfig("PUT", "/api/resources/99")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("GET pattern does not match POST request (method isolation)")
+    void methodIsolationGetDoesNotMatchPost() {
+        var registry = new L402EndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+        registry.register(new L402EndpointConfig("GET", "/api/items/{id}", 10, 600, "", "", ""));
+
+        assertThat(registry.findConfig("GET", "/api/items/1")).isNotNull();
+        assertThat(registry.findConfig("POST", "/api/items/1")).isNull();
+    }
+
+    @Test
+    @DisplayName("different methods on the same path are independently registered and found")
+    void differentMethodsSamePathAreIndependent() {
+        var registry = new L402EndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+        registry.register(new L402EndpointConfig("GET", "/api/data", 10, 600, "get data", "", "read"));
+        registry.register(new L402EndpointConfig("POST", "/api/data", 20, 1200, "post data", "", "write"));
+
+        var getConfig = registry.findConfig("GET", "/api/data");
+        var postConfig = registry.findConfig("POST", "/api/data");
+
+        assertThat(getConfig).isNotNull();
+        assertThat(getConfig.priceSats()).isEqualTo(10);
+        assertThat(getConfig.capability()).isEqualTo("read");
+
+        assertThat(postConfig).isNotNull();
+        assertThat(postConfig.priceSats()).isEqualTo(20);
+        assertThat(postConfig.capability()).isEqualTo("write");
+    }
+
+    @Test
+    @DisplayName("method-specific pattern takes precedence; wildcard still matches other methods")
+    void specificMethodAndWildcardCoexist() {
+        var registry = new L402EndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+        registry.register(new L402EndpointConfig("GET", "/api/mixed", 10, 600, "", "", "read"));
+        registry.register(new L402EndpointConfig("*", "/api/mixed", 5, 300, "", "", "any"));
+
+        // GET should match the GET-specific registration (exact key match)
+        var getConfig = registry.findConfig("GET", "/api/mixed");
+        assertThat(getConfig).isNotNull();
+        assertThat(getConfig.capability()).isEqualTo("read");
+
+        // POST should fall through to wildcard
+        var postConfig = registry.findConfig("POST", "/api/mixed");
+        assertThat(postConfig).isNotNull();
+        assertThat(postConfig.capability()).isEqualTo("any");
+    }
 }

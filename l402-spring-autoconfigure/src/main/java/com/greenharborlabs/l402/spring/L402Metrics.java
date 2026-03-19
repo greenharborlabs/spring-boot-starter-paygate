@@ -5,6 +5,9 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import com.greenharborlabs.l402.core.credential.CredentialStore;
 import com.greenharborlabs.l402.core.credential.EvictionReason;
@@ -19,9 +22,14 @@ import com.greenharborlabs.l402.core.lightning.LightningBackend;
  * per combination. Gauges for credential store size and Lightning health are
  * registered eagerly during construction so they are available before any requests.
  */
-public class L402Metrics {
+public class L402Metrics implements AutoCloseable {
+
+    private static final long HEALTH_REFRESH_SECONDS = 5;
 
     private final MeterRegistry registry;
+    private final LightningBackend lightningBackend;
+    private final ScheduledExecutorService healthRefreshExecutor;
+    private volatile boolean lastKnownHealthy;
 
     // Cache key for l402.requests: "endpoint\0result"
     private final ConcurrentHashMap<String, Counter> requestCounters = new ConcurrentHashMap<>();
@@ -34,24 +42,46 @@ public class L402Metrics {
                        CredentialStore credentialStore,
                        LightningBackend lightningBackend) {
         this.registry = registry;
+        this.lightningBackend = lightningBackend;
+
+        // Populate initial health state synchronously (best-effort)
+        try {
+            this.lastKnownHealthy = lightningBackend.isHealthy();
+        } catch (Exception e) {
+            this.lastKnownHealthy = false;
+        }
+
+        // Schedule periodic background health refresh so the gauge never blocks
+        this.healthRefreshExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "l402-health-refresh");
+            t.setDaemon(true);
+            return t;
+        });
+        healthRefreshExecutor.scheduleWithFixedDelay(
+                this::refreshHealth,
+                HEALTH_REFRESH_SECONDS, HEALTH_REFRESH_SECONDS, TimeUnit.SECONDS);
 
         // Register gauges eagerly
         Gauge.builder("l402.credentials.active", credentialStore, CredentialStore::activeCount)
                 .description("Currently cached credentials")
                 .register(registry);
 
-        Gauge.builder("l402.lightning.healthy", lightningBackend, backend -> {
-                    try {
-                        if (backend instanceof CachingLightningBackendWrapper cached) {
-                            return cached.lastKnownHealthy() ? 1.0 : 0.0;
-                        }
-                        return backend.isHealthy() ? 1.0 : 0.0;
-                    } catch (Exception e) {
-                        return 0.0;
-                    }
-                })
+        Gauge.builder("l402.lightning.healthy", this, self -> self.lastKnownHealthy ? 1.0 : 0.0)
                 .description("1=healthy, 0=unhealthy")
                 .register(registry);
+    }
+
+    void refreshHealth() {
+        try {
+            lastKnownHealthy = lightningBackend.isHealthy();
+        } catch (Exception e) {
+            lastKnownHealthy = false;
+        }
+    }
+
+    @Override
+    public void close() {
+        healthRefreshExecutor.shutdownNow();
     }
 
     /**
