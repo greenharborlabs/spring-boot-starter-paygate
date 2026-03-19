@@ -230,6 +230,15 @@ public final class L402Validator {
             if (validUntilKey.equals(caveat.key())) {
                 try {
                     long expiryEpoch = Long.parseLong(caveat.value());
+                    // Guard against pathological values that could cause overflow in arithmetic.
+                    // Accept only expiry values within a reasonable window around now.
+                    long minAllowedExpiry = nowEpoch - defaultTtlSeconds;
+                    long maxAllowedExpiry = nowEpoch + defaultTtlSeconds + 86_400L; // +1 day margin
+                    if (expiryEpoch < minAllowedExpiry || expiryEpoch > maxAllowedExpiry) {
+                        // Skip unreasonable expiry values; caveat verifier enforces semantic validity.
+                        continue;
+                    }
+
                     long remaining = expiryEpoch - nowEpoch;
                     // Floor at 1 second — the caveat verifier already rejected expired tokens,
                     // so remaining should be positive, but guard against clock skew.
