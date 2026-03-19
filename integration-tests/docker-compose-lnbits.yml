@@ -1,0 +1,49 @@
+services:
+
+  lnbits:
+    image: lnbits/lnbits:0.12.11
+    restart: unless-stopped
+    environment:
+      LNBITS_BACKEND_WALLET_CLASS: "FakeWallet"
+      LNBITS_DATA_FOLDER: "/data"
+      FAKE_WALLET_SECRET: "ToTheMoon1"
+      LNBITS_ADMIN_UI: "true"
+    ports:
+      - "${LNBITS_PORT:-5000}:5000"
+    volumes:
+      - lnbits-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  l402-example-app:
+    build:
+      context: ..
+      dockerfile: l402-example-app/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      lnbits:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: "dev"
+      L402_ENABLED: "true"
+      L402_TEST_MODE: "false"
+      L402_SERVICE_NAME: "example-api"
+      L402_BACKEND: "lnbits"
+      L402_ROOT_KEY_STORE: "memory"
+      L402_LNBITS_URL: "http://lnbits:5000"
+      # L402_LNBITS_API_KEY is auto-created by docker-entrypoint.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  lnbits-data:

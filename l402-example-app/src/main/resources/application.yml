@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: l402-example-app
+  profiles:
+    active: dev
+
+server:
+  port: 8080
+
+l402:
+  enabled: true
+  service-name: example-api

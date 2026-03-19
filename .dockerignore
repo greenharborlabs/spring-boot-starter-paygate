@@ -1,0 +1,16 @@
+.git
+.github
+.gradle
+.claude
+.vscode
+.specify
+**/build/
+**/out/
+**/*.class
+plans/
+specs/
+*.md
+!l402-example-app/README.md
+LICENSE
+
+CLAUDE.md
