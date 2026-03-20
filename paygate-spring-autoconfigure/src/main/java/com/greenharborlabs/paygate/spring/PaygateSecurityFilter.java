@@ -87,7 +87,7 @@ public class PaygateSecurityFilter implements Filter {
             path = normalizePath(httpRequest.getRequestURI());
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING,
-                    "Rejected request with malformed URI: {0}", httpRequest.getRequestURI());
+                    "Rejected request with malformed URI: {0}", sanitizeForLog(httpRequest.getRequestURI()));
             httpResponse.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             httpResponse.setContentType("application/json");
             httpResponse.getWriter().write(
@@ -250,6 +250,16 @@ public class PaygateSecurityFilter implements Filter {
      */
     static String normalizePath(String rawPath) {
         return PaygatePathUtils.normalizePath(rawPath);
+    }
+
+    static String sanitizeForLog(String value) {
+        if (value == null) {
+            return "null";
+        }
+        return value.codePoints()
+                .filter(cp -> cp >= 0x20 && cp != 0x7F)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                .toString();
     }
 
 }

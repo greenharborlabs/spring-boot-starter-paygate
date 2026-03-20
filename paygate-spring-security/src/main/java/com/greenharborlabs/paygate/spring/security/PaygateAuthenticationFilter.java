@@ -102,8 +102,18 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
             return capability;
         } catch (RuntimeException e) {
             log.log(System.Logger.Level.DEBUG, "Failed to resolve capability for {0} {1}; proceeding without capability enforcement",
-                    request.getMethod(), request.getRequestURI(), e);
+                    request.getMethod(), sanitizeForLog(request.getRequestURI()), e);
             return null;
         }
+    }
+
+    static String sanitizeForLog(String value) {
+        if (value == null) {
+            return "null";
+        }
+        return value.codePoints()
+                .filter(cp -> cp >= 0x20 && cp != 0x7F)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                .toString();
     }
 }

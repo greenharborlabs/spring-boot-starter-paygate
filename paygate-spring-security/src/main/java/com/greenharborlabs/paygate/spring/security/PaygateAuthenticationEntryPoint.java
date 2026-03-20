@@ -48,7 +48,8 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
             try {
                 path = normalizePath(request.getRequestURI());
             } catch (Exception e) {
-                log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: {0}", request.getRequestURI());
+                log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: {0}",
+                        sanitizeForLog(request.getRequestURI()));
                 PaygateResponseWriter.writeLightningUnavailable(response);
                 return;
             }
@@ -78,5 +79,18 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
      */
     static String normalizePath(String rawPath) {
         return PaygatePathUtils.normalizePath(rawPath);
+    }
+
+    /**
+     * Strips newlines and control characters from user input to prevent log injection.
+     */
+    static String sanitizeForLog(String value) {
+        if (value == null) {
+            return "null";
+        }
+        return value.codePoints()
+                .filter(cp -> cp >= 0x20 && cp != 0x7F)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                .toString();
     }
 }
