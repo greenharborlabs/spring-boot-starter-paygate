@@ -1,6 +1,6 @@
-# l402-lightning-lnbits
+# paygate-lightning-lnbits
 
-[LNbits](https://lnbits.com/) REST backend for the `spring-boot-starter-l402` project. This module implements the `LightningBackend` interface from `l402-core` using the LNbits REST API, enabling L402 payment-gated authentication with any LNbits instance.
+[LNbits](https://lnbits.com/) REST backend for the `spring-boot-starter-paygate` project. This module implements the `LightningBackend` interface from `paygate-core` using the LNbits REST API, enabling L402 payment-gated authentication with any LNbits instance.
 
 LNbits is a lightweight, account-based Lightning wallet system with a simple REST API. It is the easiest Lightning backend to get started with -- you can use a hosted instance or self-host one in minutes.
 
@@ -31,7 +31,7 @@ LNbits is a lightweight, account-based Lightning wallet system with a simple RES
 1. Log in to your LNbits instance (e.g., `https://lnbits.example.com`)
 2. Open the wallet you want to use for receiving L402 payments
 3. Click **API Info** in the wallet sidebar
-4. Copy the **Invoice/read key** -- this is the key you will configure as `l402.lnbits.api-key`
+4. Copy the **Invoice/read key** -- this is the key you will configure as `paygate.lnbits.api-key`
 
 The Invoice/read key has permission to create invoices and check payment status, which is all this module requires. Do not use the Admin key unless you have a specific reason to do so.
 
@@ -44,8 +44,8 @@ Add this module alongside the starter. You must include both the starter (which 
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")
 ```
 
 **Maven:**
@@ -53,12 +53,12 @@ implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0")
 ```xml
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-spring-boot-starter</artifactId>
+    <artifactId>paygate-spring-boot-starter</artifactId>
     <version>0.1.0</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-lightning-lnbits</artifactId>
+    <artifactId>paygate-lightning-lnbits</artifactId>
     <version>0.1.0</version>
 </dependency>
 ```
@@ -69,7 +69,7 @@ This module depends on:
 
 | Dependency | Purpose |
 |------------|---------|
-| `l402-core` | `LightningBackend` interface, `Invoice` record, `InvoiceStatus` enum |
+| `paygate-core` | `LightningBackend` interface, `Invoice` record, `InvoiceStatus` enum |
 | `jackson-databind` (2.18.2) | JSON serialization/deserialization for LNbits API requests and responses |
 
 HTTP communication uses `java.net.http.HttpClient` from the JDK -- no additional HTTP client library is required.
@@ -78,12 +78,12 @@ HTTP communication uses `java.net.http.HttpClient` from the JDK -- no additional
 
 ## Configuration
 
-Set `l402.backend=lnbits` to select this module, then provide your LNbits instance URL and API key.
+Set `paygate.backend=lnbits` to select this module, then provide your LNbits instance URL and API key.
 
 ### application.yml
 
 ```yaml
-l402:
+paygate:
   enabled: true
   backend: lnbits
   service-name: my-api
@@ -95,28 +95,28 @@ l402:
 ### application.properties
 
 ```properties
-l402.enabled=true
-l402.backend=lnbits
-l402.service-name=my-api
-l402.lnbits.url=https://your-lnbits-instance.com
-l402.lnbits.api-key=${LNBITS_API_KEY}
+paygate.enabled=true
+paygate.backend=lnbits
+paygate.service-name=my-api
+paygate.lnbits.url=https://your-lnbits-instance.com
+paygate.lnbits.api-key=${LNBITS_API_KEY}
 ```
 
 ### Configuration Properties
 
 | Property | Type | Default | Required | Description |
 |----------|------|---------|----------|-------------|
-| `l402.backend` | `string` | -- | Yes | Must be set to `lnbits` to activate this module. |
-| `l402.lnbits.url` | `string` | -- | Yes | Base URL of the LNbits instance (e.g., `https://lnbits.example.com`). Trailing slashes are stripped automatically. |
-| `l402.lnbits.api-key` | `string` | -- | Yes | Invoice/read API key for authentication. Sent as the `X-Api-Key` header on all requests. |
-| `l402.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout. Overrides default 5s. |
-| `l402.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout. Overrides default 10s. |
+| `paygate.backend` | `string` | -- | Yes | Must be set to `lnbits` to activate this module. |
+| `paygate.lnbits.url` | `string` | -- | Yes | Base URL of the LNbits instance (e.g., `https://lnbits.example.com`). Trailing slashes are stripped automatically. |
+| `paygate.lnbits.api-key` | `string` | -- | Yes | Invoice/read API key for authentication. Sent as the `X-Api-Key` header on all requests. |
+| `paygate.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout. Overrides default 5s. |
+| `paygate.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout. Overrides default 10s. |
 
 ### Security: Handling the API Key
 
 The API key is a secret credential. Do not commit it to source control. Recommended approaches:
 
-- **Environment variable**: `l402.lnbits.api-key=${LNBITS_API_KEY}` (shown above)
+- **Environment variable**: `paygate.lnbits.api-key=${LNBITS_API_KEY}` (shown above)
 - **Spring Cloud Config / Vault**: Inject via external configuration
 - **Docker secrets**: Mount as a file and reference with `spring.config.import`
 
@@ -126,10 +126,10 @@ The `LnbitsConfig` record redacts the API key in its `toString()` output (`apiKe
 
 ## Architecture
 
-The module contains three classes, all in the `com.greenharborlabs.l402.lightning.lnbits` package:
+The module contains three classes, all in the `com.greenharborlabs.paygate.lightning.lnbits` package:
 
 ```
-l402-lightning-lnbits/
+paygate-lightning-lnbits/
   src/main/java/com/greenharborlabs/l402/lightning/lnbits/
     LnbitsBackend.java       LightningBackend implementation
     LnbitsConfig.java        Immutable configuration record
@@ -159,7 +159,7 @@ The `baseUrl` is validated to use an `http` or `https` scheme; other schemes are
 
 ### LnbitsBackend
 
-Implements the `LightningBackend` interface from `l402-core`. It uses `java.net.http.HttpClient` for HTTP communication and Jackson `ObjectMapper` for JSON processing.
+Implements the `LightningBackend` interface from `paygate-core`. It uses `java.net.http.HttpClient` for HTTP communication and Jackson `ObjectMapper` for JSON processing.
 
 The constructor accepts three dependencies:
 
@@ -177,7 +177,7 @@ The constructor accepts three dependencies:
 | `lookupInvoice(byte[] paymentHash)` | `GET /api/v1/payments/{hash}` | Checks payment status by payment hash. Returns `SETTLED` or `PENDING` with preimage when available. |
 | `isHealthy()` | `GET /api/v1/wallet` | Returns `true` if the LNbits wallet endpoint responds with HTTP 200. |
 
-All API requests include the `X-Api-Key` header and have a configurable per-request timeout (default **5 seconds**, overridable via `l402.lnbits.request-timeout-seconds`). The connect timeout on the `HttpClient` is configurable as well (default **10 seconds**, overridable via `l402.lnbits.connect-timeout-seconds`).
+All API requests include the `X-Api-Key` header and have a configurable per-request timeout (default **5 seconds**, overridable via `paygate.lnbits.request-timeout-seconds`). The connect timeout on the `HttpClient` is configurable as well (default **10 seconds**, overridable via `paygate.lnbits.connect-timeout-seconds`).
 
 Invoice expiry is set to **1 hour** from creation time by default.
 
@@ -194,20 +194,20 @@ A `RuntimeException` subclass thrown when any LNbits API call fails. This includ
 
 ## Auto-Configuration
 
-When the following conditions are met, the `L402AutoConfiguration` class in `l402-spring-autoconfigure` automatically creates an `LnbitsBackend` bean:
+When the following conditions are met, the `PaygateAutoConfiguration` class in `paygate-spring-autoconfigure` automatically creates an `LnbitsBackend` bean:
 
-1. `l402.enabled=true`
-2. `l402.backend=lnbits`
-3. The class `com.greenharborlabs.l402.lightning.lnbits.LnbitsBackend` is on the classpath
+1. `paygate.enabled=true`
+2. `paygate.backend=lnbits`
+3. The class `com.greenharborlabs.paygate.lightning.lnbits.LnbitsBackend` is on the classpath
 4. No existing `LightningBackend` bean has been registered
 
 The auto-configuration:
 
-- Reads `l402.lnbits.url` and `l402.lnbits.api-key` from `L402Properties`
+- Reads `paygate.lnbits.url` and `paygate.lnbits.api-key` from `PaygateProperties`
 - Creates an `LnbitsConfig` record from those values
 - Uses the Spring-managed `ObjectMapper` from the application context
 - Creates a `java.net.http.HttpClient` with a 10-second connect timeout
-- Wraps the backend in a `CachingLightningBackendWrapper` (if `l402.health-cache.enabled=true`, which is the default) to cache `isHealthy()` results
+- Wraps the backend in a `CachingLightningBackendWrapper` (if `paygate.health-cache.enabled=true`, which is the default) to cache `isHealthy()` results
 
 ### Overriding the Auto-Configured Backend
 
@@ -237,9 +237,9 @@ public class CustomLnbitsConfiguration {
 
 ## Usage
 
-Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LnbitsBackend` directly -- the `L402SecurityFilter` calls it automatically when:
+Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LnbitsBackend` directly -- the `PaygateSecurityFilter` calls it automatically when:
 
-1. A request hits an `@L402Protected` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
+1. A request hits an `@PaygateProtected` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
 2. A request presents L402 credentials, triggering `lookupInvoice()` to verify the payment was made
 3. The health indicator or filter checks backend availability via `isHealthy()`
 
@@ -250,7 +250,7 @@ Once configured, the module works transparently with the rest of the L402 stack.
 @RequestMapping("/api/v1")
 public class MyController {
 
-    @L402Protected(priceSats = 10)
+    @PaygateProtected(priceSats = 10)
     @GetMapping("/premium")
     public Map<String, String> premium() {
         return Map.of("data", "premium content");
@@ -260,7 +260,7 @@ public class MyController {
 
 ```yaml
 # application.yml
-l402:
+paygate:
   enabled: true
   backend: lnbits
   service-name: my-api
@@ -280,7 +280,7 @@ Requests to `GET /api/v1/premium` without credentials receive HTTP 402 with a Li
 This module follows the project-wide **fail-closed** security model:
 
 - If LNbits is unreachable (network error, timeout, DNS failure), `isHealthy()` returns `false`
-- When the backend is unhealthy, the `L402SecurityFilter` returns **HTTP 503 Service Unavailable** for protected endpoints
+- When the backend is unhealthy, the `PaygateSecurityFilter` returns **HTTP 503 Service Unavailable** for protected endpoints
 - Protected content is **never** returned with HTTP 200 when the Lightning backend cannot be reached
 
 This ensures that infrastructure failures do not accidentally grant free access to paid content.
@@ -328,7 +328,7 @@ The module validates required fields in LNbits API responses and throws `LnbitsE
 From the project root:
 
 ```bash
-./gradlew :l402-lightning-lnbits:test
+./gradlew :paygate-lightning-lnbits:test
 ```
 
 ### Test Architecture
@@ -468,16 +468,16 @@ This module uses the following LNbits REST API endpoints. For full API documenta
 
 ## Comparison with LND Backend
 
-| Aspect | l402-lightning-lnbits | l402-lightning-lnd |
+| Aspect | paygate-lightning-lnbits | paygate-lightning-lnd |
 |--------|----------------------|-------------------|
 | Protocol | REST/JSON | gRPC/Protobuf |
 | Dependencies | Jackson | gRPC, Protobuf, Netty |
 | Setup complexity | Low (API key only) | Higher (TLS cert, macaroon file, gRPC channel) |
 | Self-hosted required | No (hosted instances available) | Yes (you run your own LND node) |
 | Best for | Getting started, hosted setups, smaller deployments | Production deployments with your own Lightning node |
-| Configuration | `l402.lnbits.url` + `l402.lnbits.api-key` | `l402.lnd.host` + `l402.lnd.port` + TLS cert + macaroon |
+| Configuration | `paygate.lnbits.url` + `paygate.lnbits.api-key` | `paygate.lnd.host` + `paygate.lnd.port` + TLS cert + macaroon |
 
-Both backends implement the same `LightningBackend` interface. Switching between them requires only changing the `l402.backend` property and the corresponding connection configuration -- no application code changes are needed.
+Both backends implement the same `LightningBackend` interface. Switching between them requires only changing the `paygate.backend` property and the corresponding connection configuration -- no application code changes are needed.
 
 ---
 

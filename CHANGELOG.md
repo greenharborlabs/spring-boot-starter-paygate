@@ -5,41 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: Rebranded from `spring-boot-starter-l402` to `spring-boot-starter-paygate`.** All module names changed from `l402-*` to `paygate-*` (e.g., `l402-core` is now `paygate-core`). Maven artifact IDs updated accordingly. Infrastructure class names renamed (e.g., `L402AutoConfiguration` -> `PaygateAutoConfiguration`, `L402SecurityFilter` -> `PaygateSecurityFilter`, `L402Properties` -> `PaygateProperties`, `@L402Protected` -> `@PaygateProtected`). Configuration property prefix changed from `l402.*` to `paygate.*`. L402 protocol classes (`L402Validator`, `L402Credential`, `L402Challenge`, etc.) retain their names as they represent the L402 protocol itself.
+
 ## [0.1.0] - Unreleased
 
 ### Added
 
-- **l402-core**: Macaroon V2 binary serialization/deserialization, byte-level compatible with Go `go-macaroon`
-- **l402-core**: HMAC-SHA256 crypto chain with key derivation (`HMAC-SHA256(key="macaroons-key-generator", data=rootKey)`)
-- **l402-core**: Macaroon identifier layout: `[version:2B BE][payment_hash:32B][token_id:32B]` (66 bytes)
-- **l402-core**: First-party caveat support with built-in verifiers (service, capabilities, expiry)
-- **l402-core**: Capabilities caveat verifier for fine-grained access control
-- **l402-core**: Monotonic restriction validation for caveats
-- **l402-core**: Constant-time equality checks for all secret comparisons (XOR accumulation)
-- **l402-core**: `SensitiveBytes` wrapper for root key zeroization on close
-- **l402-core**: `RootKeyStore` implementations: file-based (with caching/eviction) and in-memory
-- **l402-core**: `InMemoryCredentialStore` with configurable max size and eviction policies
-- **l402-core**: L402 protocol flow: 402 challenge issuance and credential validation with preimage verification
-- **l402-core**: Multi-token `Authorization` header parsing
-- **l402-core**: LSAT backward compatibility in header parsing
-- **l402-lightning-lnd**: LND gRPC Lightning backend with invoice creation and settlement verification
-- **l402-lightning-lnbits**: LNbits REST Lightning backend with invoice creation and settlement verification
-- **l402-spring-autoconfigure**: Spring Boot auto-configuration for all L402 components
-- **l402-spring-autoconfigure**: `@L402Protected` annotation for declarative endpoint protection
-- **l402-spring-autoconfigure**: Servlet filter for L402 challenge/validation lifecycle
-- **l402-spring-autoconfigure**: Pluggable `L402PricingStrategy` for dynamic per-request pricing
-- **l402-spring-autoconfigure**: Credential caching with Caffeine-backed store and dynamic TTL from `valid_until` caveats
-- **l402-spring-autoconfigure**: `CachingLightningBackendWrapper` for health check result caching
-- **l402-spring-autoconfigure**: `TokenBucketRateLimiter` for rate-limiting challenge issuance
-- **l402-spring-autoconfigure**: Micrometer metrics integration (challenge count, validation count, latency)
-- **l402-spring-autoconfigure**: Spring Boot Actuator health indicator (`L402LightningHealthIndicator`)
-- **l402-spring-autoconfigure**: Test mode with auto-settle invoices (blocked in `prod` profiles)
-- **l402-spring-autoconfigure**: IDE autocomplete via `additional-spring-configuration-metadata.json`
-- **l402-spring-security**: `L402AuthenticationProvider` for Spring Security integration
-- **l402-spring-security**: `L402AuthenticationFilter` for servlet-based authentication
-- **l402-spring-security**: `L402AuthenticationToken` for the Spring Security authentication model
-- **l402-spring-boot-starter**: Dependency aggregator module for single-dependency adoption
-- **l402-example-app**: Reference application demonstrating dynamic pricing and protected endpoints
+- **paygate-core**: Macaroon V2 binary serialization/deserialization, byte-level compatible with Go `go-macaroon`
+- **paygate-core**: HMAC-SHA256 crypto chain with key derivation (`HMAC-SHA256(key="macaroons-key-generator", data=rootKey)`)
+- **paygate-core**: Macaroon identifier layout: `[version:2B BE][payment_hash:32B][token_id:32B]` (66 bytes)
+- **paygate-core**: First-party caveat support with built-in verifiers (service, capabilities, expiry)
+- **paygate-core**: Capabilities caveat verifier for fine-grained access control
+- **paygate-core**: Monotonic restriction validation for caveats
+- **paygate-core**: Constant-time equality checks for all secret comparisons (XOR accumulation)
+- **paygate-core**: `SensitiveBytes` wrapper for root key zeroization on close
+- **paygate-core**: `RootKeyStore` implementations: file-based (with caching/eviction) and in-memory
+- **paygate-core**: `InMemoryCredentialStore` with configurable max size and eviction policies
+- **paygate-core**: L402 protocol flow: 402 challenge issuance and credential validation with preimage verification
+- **paygate-core**: Multi-token `Authorization` header parsing
+- **paygate-core**: LSAT backward compatibility in header parsing
+- **paygate-lightning-lnd**: LND gRPC Lightning backend with invoice creation and settlement verification
+- **paygate-lightning-lnbits**: LNbits REST Lightning backend with invoice creation and settlement verification
+- **paygate-spring-autoconfigure**: Spring Boot auto-configuration for all L402 components
+- **paygate-spring-autoconfigure**: `@PaygateProtected` annotation for declarative endpoint protection
+- **paygate-spring-autoconfigure**: Servlet filter for L402 challenge/validation lifecycle
+- **paygate-spring-autoconfigure**: Pluggable `PaygatePricingStrategy` for dynamic per-request pricing
+- **paygate-spring-autoconfigure**: Credential caching with Caffeine-backed store and dynamic TTL from `valid_until` caveats
+- **paygate-spring-autoconfigure**: `CachingLightningBackendWrapper` for health check result caching
+- **paygate-spring-autoconfigure**: `TokenBucketRateLimiter` for rate-limiting challenge issuance
+- **paygate-spring-autoconfigure**: Micrometer metrics integration (challenge count, validation count, latency)
+- **paygate-spring-autoconfigure**: Spring Boot Actuator health indicator (`PaygateLightningHealthIndicator`)
+- **paygate-spring-autoconfigure**: Test mode with auto-settle invoices (blocked in `prod` profiles)
+- **paygate-spring-autoconfigure**: IDE autocomplete via `additional-spring-configuration-metadata.json`
+- **paygate-spring-security**: `L402AuthenticationProvider` for Spring Security integration
+- **paygate-spring-security**: `L402AuthenticationFilter` for servlet-based authentication
+- **paygate-spring-security**: `L402AuthenticationToken` for the Spring Security authentication model
+- **paygate-spring-boot-starter**: Dependency aggregator module for single-dependency adoption
+- **paygate-example-app**: Reference application demonstrating dynamic pricing and protected endpoints
 - Docker support: `Dockerfile` and `docker-compose.yml` for containerized deployment
 - CI/CD: GitHub Actions workflows for CI, release (Sonatype staging), and snapshot publishing
 - CI/CD: Dependabot configuration for automated dependency updates
@@ -51,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Go interop test automation for cross-platform macaroon compatibility
 - `.editorconfig` for consistent formatting across editors
 - Smoke test script for manual Lightning validation
-- Configuration properties under `l402.*` prefix with sensible defaults
+- Configuration properties under `paygate.*` prefix with sensible defaults
 
 ### Security
 

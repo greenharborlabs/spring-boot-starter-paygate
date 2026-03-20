@@ -1,6 +1,6 @@
-# l402-example-app
+# paygate-example-app
 
-A reference Spring Boot application demonstrating how to use `spring-boot-starter-l402` to protect API endpoints with Lightning payments using the [L402 protocol](https://docs.lightning.engineering/the-lightning-network/l402).
+A reference Spring Boot application demonstrating how to use `spring-boot-starter-paygate` to protect API endpoints with Lightning payments using the [L402 protocol](https://docs.lightning.engineering/the-lightning-network/l402).
 
 This application runs in **test mode** by default, so no real Lightning node is required. You can exercise the complete L402 flow -- challenge, payment, and credential presentation -- entirely on your local machine.
 
@@ -75,7 +75,7 @@ Client                              Server
 
 ## How Test Mode Works
 
-When `l402.test-mode=true`, the starter replaces the real Lightning backend (LND, LNbits, etc.) with a `TestModeLightningBackend`. This backend:
+When `paygate.test-mode=true`, the starter replaces the real Lightning backend (LND, LNbits, etc.) with a `TestModeLightningBackend`. This backend:
 
 - **Creates invoices with random payment hashes.** When the server issues a 402 challenge, the invoice contains a randomly generated 32-byte payment hash and a fake bolt11 string (e.g., `lntb10test7a3b...`). No real Lightning node is contacted.
 - **Reports all invoices as settled.** When the validator checks whether an invoice has been paid, the test backend always answers "yes, it's settled" and returns a random preimage.
@@ -93,13 +93,13 @@ To enable end-to-end testing with curl, the test backend includes the preimage i
 
 ### With Gradle
 
-From the **project root** (not from inside `l402-example-app/`):
+From the **project root** (not from inside `paygate-example-app/`):
 
 ```bash
-./gradlew :l402-example-app:bootRun
+./gradlew :paygate-example-app:bootRun
 ```
 
-The `gradlew` wrapper lives in the project root. The `:l402-example-app:` prefix tells Gradle which submodule to run.
+The `gradlew` wrapper lives in the project root. The `:paygate-example-app:` prefix tells Gradle which submodule to run.
 
 The application starts on `http://localhost:8080`.
 
@@ -122,7 +122,7 @@ docker compose up --build -d
 To view logs while running detached:
 
 ```bash
-docker compose logs -f l402-example-app
+docker compose logs -f paygate-example-app
 ```
 
 To stop:
@@ -143,19 +143,19 @@ See [Docker Setup Details](#docker-setup-details) for more information on the Do
 | GET    | `/api/v1/data`    | Yes       | 10 sats  | Returns premium content. Fixed price.    |
 | POST   | `/api/v1/analyze` | Yes       | 50+ sats | Content analysis. Dynamic pricing.       |
 
-Endpoints are protected by annotating the controller method with `@L402Protected`:
+Endpoints are protected by annotating the controller method with `@PaygateProtected`:
 
 ```java
-@L402Protected(priceSats = 10, timeoutSeconds = 3600)
+@PaygateProtected(priceSats = 10, timeoutSeconds = 3600)
 @GetMapping("/data")
 public DataResponse data() { ... }
 ```
 
-The `L402SecurityFilter` automatically discovers all `@L402Protected` methods at startup and enforces payment for matching requests.
+The `PaygateSecurityFilter` automatically discovers all `@PaygateProtected` methods at startup and enforces payment for matching requests.
 
 ### Dynamic Pricing
 
-The `/api/v1/analyze` endpoint uses `AnalysisPricingStrategy`, a custom implementation of the `L402PricingStrategy` interface that scales the invoice price based on request content length:
+The `/api/v1/analyze` endpoint uses `AnalysisPricingStrategy`, a custom implementation of the `PaygatePricingStrategy` interface that scales the invoice price based on request content length:
 
 - Requests up to 1,000 bytes pay the base price (50 sats)
 - Larger payloads add 1 sat per 100 bytes of content beyond the threshold
@@ -163,7 +163,7 @@ The `/api/v1/analyze` endpoint uses `AnalysisPricingStrategy`, a custom implemen
 The pricing strategy is wired to the endpoint via the `pricingStrategy` attribute:
 
 ```java
-@L402Protected(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
+@PaygateProtected(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
 @PostMapping("/analyze")
 public AnalyzeResponse analyze(@RequestBody AnalyzeRequest request) { ... }
 ```
@@ -210,7 +210,7 @@ Notice the `test_preimage` field -- this only appears in test mode. In a real de
 
 What happened behind the scenes:
 
-1. The filter matched `GET /api/v1/data` against the endpoint registry and found the `@L402Protected(priceSats = 10)` configuration.
+1. The filter matched `GET /api/v1/data` against the endpoint registry and found the `@PaygateProtected(priceSats = 10)` configuration.
 2. It checked the Lightning backend health (test backend always returns healthy).
 3. No `Authorization` header was present, so it generated a new root key and token ID.
 4. It called `TestModeLightningBackend.createInvoice(10, "")`, which generated a random 32-byte preimage, computed `paymentHash = SHA-256(preimage)`, and returned both.
@@ -311,20 +311,20 @@ This application is a minimal but complete reference implementation covering the
 
 | Feature | Where |
 |---------|-------|
-| Fixed-price endpoint protection | `ExampleController.data()` with `@L402Protected(priceSats = 10)` |
+| Fixed-price endpoint protection | `ExampleController.data()` with `@PaygateProtected(priceSats = 10)` |
 | Dynamic pricing | `ExampleController.analyze()` with `pricingStrategy = "analysisPricer"` |
-| Custom pricing strategy | `AnalysisPricingStrategy` implementing `L402PricingStrategy` |
+| Custom pricing strategy | `AnalysisPricingStrategy` implementing `PaygatePricingStrategy` |
 | Unprotected endpoints alongside protected ones | `ExampleController.health()` with no annotation |
-| Test mode configuration | `application.yml` with `l402.test-mode=true` |
+| Test mode configuration | `application.yml` with `paygate.test-mode=true` |
 | Spring Boot auto-configuration | No manual bean wiring -- the starter auto-configures everything |
 | Integration testing | `ExampleAppIntegrationTest` exercising the full verification path |
 | Docker deployment | Multi-stage Dockerfile and docker-compose.yml |
 
 ### Key patterns to adopt in your own application
 
-1. **Annotate controller methods** with `@L402Protected` to mark them as payment-gated. The filter discovers them automatically.
-2. **Implement `L402PricingStrategy`** and register it as a Spring `@Component` to create dynamic pricing. Reference it by bean name in the annotation.
-3. **Use test mode during development**. Set `l402.test-mode=true` and exercise the full flow without a Lightning node. Switch to a real backend (LNbits or LND) for staging and production.
+1. **Annotate controller methods** with `@PaygateProtected` to mark them as payment-gated. The filter discovers them automatically.
+2. **Implement `PaygatePricingStrategy`** and register it as a Spring `@Component` to create dynamic pricing. Reference it by bean name in the annotation.
+3. **Use test mode during development**. Set `paygate.test-mode=true` and exercise the full flow without a Lightning node. Switch to a real backend (LNbits or LND) for staging and production.
 
 ---
 
@@ -335,27 +335,27 @@ The example uses this configuration (`src/main/resources/application.yml`):
 ```yaml
 spring:
   application:
-    name: l402-example-app
+    name: paygate-example-app
   profiles:
     active: dev
 
 server:
   port: 8080
 
-l402:
+paygate:
   enabled: true
   service-name: example-api
 ```
 
-> **Note:** Test mode is enabled via the `dev` profile in `application-dev.yml` (which sets `l402.test-mode: true`), not in the base `application.yml`. The `dev` profile is activated by default via `spring.profiles.active: dev` above.
+> **Note:** Test mode is enabled via the `dev` profile in `application-dev.yml` (which sets `paygate.test-mode: true`), not in the base `application.yml`. The `dev` profile is activated by default via `spring.profiles.active: dev` above.
 
 ### Property Reference
 
 | Property            | Value         | Effect                                                       |
 |---------------------|---------------|--------------------------------------------------------------|
-| `l402.enabled`      | `true`        | Activates the L402 filter and auto-configuration.            |
-| `l402.test-mode`    | `true`        | Uses `TestModeLightningBackend` instead of a real node.      |
-| `l402.service-name` | `example-api` | Appears in macaroon caveats (e.g., `services=example-api:0`).|
+| `paygate.enabled`      | `true`        | Activates the L402 filter and auto-configuration.            |
+| `paygate.test-mode`    | `true`        | Uses `TestModeLightningBackend` instead of a real node.      |
+| `paygate.service-name` | `example-api` | Appears in macaroon caveats (e.g., `services=example-api:0`).|
 
 ### Additional Properties (defaults)
 
@@ -363,13 +363,13 @@ These properties are not set explicitly in the example but take effect via their
 
 | Property | Default | Effect |
 |----------|---------|--------|
-| `l402.default-price-sats` | `10` | Fallback price if `@L402Protected` does not specify one. |
-| `l402.default-timeout-seconds` | `3600` | Fallback credential lifetime (1 hour). |
-| `l402.root-key-store` | `file` | Root key persistence. Use `memory` for ephemeral keys (Docker, tests). |
-| `l402.root-key-store-path` | `~/.l402/keys` | File system path for persisted root keys. |
-| `l402.credential-cache-max-size` | `10000` | Maximum cached credentials before eviction. |
-| `l402.health-cache.enabled` | `true` | Cache backend health check results. |
-| `l402.health-cache.ttl-seconds` | `5` | TTL for cached health check results. |
+| `paygate.default-price-sats` | `10` | Fallback price if `@PaygateProtected` does not specify one. |
+| `paygate.default-timeout-seconds` | `3600` | Fallback credential lifetime (1 hour). |
+| `paygate.root-key-store` | `file` | Root key persistence. Use `memory` for ephemeral keys (Docker, tests). |
+| `paygate.root-key-store-path` | `~/.paygate/keys` | File system path for persisted root keys. |
+| `paygate.credential-cache-max-size` | `10000` | Maximum cached credentials before eviction. |
+| `paygate.health-cache.enabled` | `true` | Cache backend health check results. |
+| `paygate.health-cache.ttl-seconds` | `5` | TTL for cached health check results. |
 
 To connect to a real Lightning backend, disable test mode and configure one of the supported backends. See [Connecting a Real Lightning Backend](#connecting-a-real-lightning-backend).
 
@@ -378,11 +378,11 @@ To connect to a real Lightning backend, disable test mode and configure one of t
 ## Project Structure
 
 ```
-l402-example-app/
+paygate-example-app/
   src/main/java/com/greenharborlabs/l402/example/
     ExampleApplication.java         Main class (@SpringBootApplication)
-    ExampleController.java          REST endpoints with @L402Protected
-    AnalysisPricingStrategy.java    Dynamic pricing implementation (L402PricingStrategy)
+    ExampleController.java          REST endpoints with @PaygateProtected
+    AnalysisPricingStrategy.java    Dynamic pricing implementation (PaygatePricingStrategy)
   src/main/resources/
     application.yml                 Configuration
   src/test/java/
@@ -398,8 +398,8 @@ Declared in `build.gradle.kts`:
 
 | Dependency | Scope | Purpose |
 |------------|-------|---------|
-| `l402-spring-boot-starter` | implementation | Pulls in core, auto-configuration, and transitive dependencies |
-| `l402-lightning-lnbits` | implementation | LNbits backend (on the classpath for real deployments; test mode overrides it) |
+| `paygate-spring-boot-starter` | implementation | Pulls in core, auto-configuration, and transitive dependencies |
+| `paygate-lightning-lnbits` | implementation | LNbits backend (on the classpath for real deployments; test mode overrides it) |
 | `spring-boot-starter-web` | implementation | Spring MVC, embedded Tomcat |
 | `spring-boot-starter-test` | testImplementation | JUnit 5, MockMvc, AssertJ |
 | `spring-boot-starter-webmvc-test` | testImplementation | `@AutoConfigureMockMvc` support |
@@ -413,7 +413,7 @@ The integration tests exercise the **complete L402 flow** including credential v
 From the project root:
 
 ```bash
-./gradlew :l402-example-app:test
+./gradlew :paygate-example-app:test
 ```
 
 ### What the tests cover
@@ -445,12 +445,12 @@ This exercises the full verification path: root key lookup, macaroon signature c
 
 ### Dockerfile
 
-The Dockerfile at `l402-example-app/Dockerfile` uses a **multi-stage build**:
+The Dockerfile at `paygate-example-app/Dockerfile` uses a **multi-stage build**:
 
 **Stage 1 -- Build** (`eclipse-temurin:25-jdk`):
 
 1. Copies Gradle wrapper and all module build files first for Docker layer caching. Dependency downloads are cached unless build files change.
-2. Copies proto files required by the `l402-lightning-lnd` module for compilation.
+2. Copies proto files required by the `paygate-lightning-lnd` module for compilation.
 3. Downloads dependencies in a separate layer (`./gradlew dependencies`).
 4. Copies all source code and builds the example app boot JAR, skipping tests for faster image builds.
 
@@ -467,10 +467,10 @@ The Compose file at the project root defines one service:
 
 ```yaml
 services:
-  l402-example-app:
+  paygate-example-app:
     build:
       context: .
-      dockerfile: l402-example-app/Dockerfile
+      dockerfile: paygate-example-app/Dockerfile
     ports:
       - "8080:8080"
     environment:
@@ -482,8 +482,8 @@ services:
 
 Key details:
 
-- The build context is the **project root** (not `l402-example-app/`) because the multi-module build needs access to all submodules.
-- Environment variables use Spring Boot's relaxed binding (e.g., `L402_TEST_MODE` maps to `l402.test-mode`).
+- The build context is the **project root** (not `paygate-example-app/`) because the multi-module build needs access to all submodules.
+- Environment variables use Spring Boot's relaxed binding (e.g., `L402_TEST_MODE` maps to `paygate.test-mode`).
 - `L402_ROOT_KEY_STORE=memory` is used because file-based key storage would require a persistent volume. For production, mount a volume and use `file` instead.
 
 ### Building the Docker image manually
@@ -491,7 +491,7 @@ Key details:
 If you prefer to build the image without Compose:
 
 ```bash
-docker build -f l402-example-app/Dockerfile -t l402-example-app .
+docker build -f paygate-example-app/Dockerfile -t paygate-example-app .
 ```
 
 Run it:
@@ -502,7 +502,7 @@ docker run -p 8080:8080 \
   -e L402_TEST_MODE=true \
   -e L402_SERVICE_NAME=example-api \
   -e L402_ROOT_KEY_STORE=memory \
-  l402-example-app
+  paygate-example-app
 ```
 
 ---
@@ -514,7 +514,7 @@ To use this example with a real Lightning node instead of test mode, update the 
 ### With LNbits
 
 ```yaml
-l402:
+paygate:
   enabled: true
   test-mode: false
   backend: lnbits
@@ -524,12 +524,12 @@ l402:
     api-key: ${LNBITS_API_KEY}
 ```
 
-See [`l402-lightning-lnbits/README.md`](../l402-lightning-lnbits/README.md) for details on obtaining an API key and configuring the LNbits backend.
+See [`paygate-lightning-lnbits/README.md`](../paygate-lightning-lnbits/README.md) for details on obtaining an API key and configuring the LNbits backend.
 
 ### With LND
 
 ```yaml
-l402:
+paygate:
   enabled: true
   test-mode: false
   backend: lnd
@@ -541,7 +541,7 @@ l402:
     macaroon-path: /path/to/invoice.macaroon
 ```
 
-See [`l402-lightning-lnd/README.md`](../l402-lightning-lnd/README.md) for details on configuring the LND backend.
+See [`paygate-lightning-lnd/README.md`](../paygate-lightning-lnd/README.md) for details on configuring the LND backend.
 
 ### Docker with a real backend
 
@@ -555,7 +555,7 @@ docker run -p 8080:8080 \
   -e L402_SERVICE_NAME=example-api \
   -e L402_LNBITS_URL=https://your-lnbits-instance.com \
   -e L402_LNBITS_API_KEY=your-api-key \
-  l402-example-app
+  paygate-example-app
 ```
 
 ---

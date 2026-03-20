@@ -1,8 +1,8 @@
-# l402-spring-security
+# paygate-spring-security
 
-Optional [Spring Security](https://spring.io/projects/spring-security) integration for the `spring-boot-starter-l402` project. This module bridges L402 payment authentication into Spring Security's filter chain, providing an `AuthenticationFilter`, `AuthenticationProvider`, and `AuthenticationToken` that let you protect endpoints using standard Spring Security patterns -- `SecurityFilterChain`, `@PreAuthorize`, role-based access, and the `SecurityContextHolder`.
+Optional [Spring Security](https://spring.io/projects/spring-security) integration for the `spring-boot-starter-paygate` project. This module bridges L402 payment authentication into Spring Security's filter chain, providing an `AuthenticationFilter`, `AuthenticationProvider`, and `AuthenticationToken` that let you protect endpoints using standard Spring Security patterns -- `SecurityFilterChain`, `@PreAuthorize`, role-based access, and the `SecurityContextHolder`.
 
-If you do not use Spring Security, you do not need this module. The base `l402-spring-autoconfigure` module provides a standalone servlet `Filter` (`L402SecurityFilter`) and `@L402Protected` annotation that work without Spring Security on the classpath.
+If you do not use Spring Security, you do not need this module. The base `paygate-spring-autoconfigure` module provides a standalone servlet `Filter` (`PaygateSecurityFilter`) and `@PaygateProtected` annotation that work without Spring Security on the classpath.
 
 ---
 
@@ -25,17 +25,17 @@ If you do not use Spring Security, you do not need this module. The base `l402-s
 
 ## When to Use This Module
 
-Use `l402-spring-security` when your application already uses Spring Security and you want L402 authentication to participate in the security filter chain alongside other authentication mechanisms (OAuth2, HTTP Basic, form login, etc.).
+Use `paygate-spring-security` when your application already uses Spring Security and you want L402 authentication to participate in the security filter chain alongside other authentication mechanisms (OAuth2, HTTP Basic, form login, etc.).
 
-Use the base `l402-spring-autoconfigure` module (with `@L402Protected`) when you have a simpler setup without Spring Security, or when you want annotation-driven L402 protection that operates independently of any security framework.
+Use the base `paygate-spring-autoconfigure` module (with `@PaygateProtected`) when you have a simpler setup without Spring Security, or when you want annotation-driven L402 protection that operates independently of any security framework.
 
 | Scenario | Recommended Module |
 |----------|-------------------|
-| No Spring Security dependency | `l402-spring-autoconfigure` with `@L402Protected` |
-| Spring Security is present, L402 is the only auth mechanism | `l402-spring-security` |
-| Spring Security with mixed auth (L402 + OAuth2/JWT/Basic) | `l402-spring-security` |
-| Need `@PreAuthorize` expressions based on L402 caveats | `l402-spring-security` |
-| Need `ROLE_L402` authority for access control | `l402-spring-security` |
+| No Spring Security dependency | `paygate-spring-autoconfigure` with `@PaygateProtected` |
+| Spring Security is present, L402 is the only auth mechanism | `paygate-spring-security` |
+| Spring Security with mixed auth (L402 + OAuth2/JWT/Basic) | `paygate-spring-security` |
+| Need `@PreAuthorize` expressions based on L402 caveats | `paygate-spring-security` |
+| Need `ROLE_L402` authority for access control | `paygate-spring-security` |
 
 ---
 
@@ -43,21 +43,21 @@ Use the base `l402-spring-autoconfigure` module (with `@L402Protected`) when you
 
 - **Java 25** (LTS)
 - **Spring Boot 4.0.3** with **Spring Security** on the classpath
-- **A configured Lightning backend** (`l402-lightning-lnbits` or `l402-lightning-lnd`) -- required for the `L402Validator` bean that this module depends on
-- **`l402.enabled=true`** in application properties
+- **A configured Lightning backend** (`paygate-lightning-lnbits` or `paygate-lightning-lnd`) -- required for the `L402Validator` bean that this module depends on
+- **`paygate.enabled=true`** in application properties
 
 ---
 
 ## Installation
 
-Add this module alongside the starter and a Lightning backend. The starter pulls in `l402-core` and `l402-spring-autoconfigure` transitively.
+Add this module alongside the starter and a Lightning backend. The starter pulls in `paygate-core` and `paygate-spring-autoconfigure` transitively.
 
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:l402-spring-security:0.1.0")
-implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0") // or l402-lightning-lnd
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-security:0.1.0")
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0") // or paygate-lightning-lnd
 ```
 
 **Maven:**
@@ -65,17 +65,17 @@ implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0") // or l402-lig
 ```xml
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-spring-boot-starter</artifactId>
+    <artifactId>paygate-spring-boot-starter</artifactId>
     <version>0.1.0</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-spring-security</artifactId>
+    <artifactId>paygate-spring-security</artifactId>
     <version>0.1.0</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-lightning-lnbits</artifactId>
+    <artifactId>paygate-lightning-lnbits</artifactId>
     <version>0.1.0</version>
 </dependency>
 ```
@@ -84,7 +84,7 @@ implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0") // or l402-lig
 
 | Dependency | Purpose |
 |------------|---------|
-| `l402-core` | `L402Validator`, `L402Credential`, `Macaroon`, `Caveat` -- core protocol types |
+| `paygate-core` | `L402Validator`, `L402Credential`, `Macaroon`, `Caveat` -- core protocol types |
 | `spring-security-core` | `AuthenticationProvider`, `AbstractAuthenticationToken`, `GrantedAuthority` |
 | `spring-security-web` | `OncePerRequestFilter` for the authentication filter |
 | `spring-security-config` | `@EnableWebSecurity` detection for conditional auto-configuration |
@@ -97,13 +97,13 @@ implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0") // or l402-lig
 The module contains five classes, all in the `com.greenharborlabs.l402.spring.security` package:
 
 ```
-l402-spring-security/
+paygate-spring-security/
   src/main/java/com/greenharborlabs/l402/spring/security/
     L402AuthenticationEntryPoint.java      Issues 402 challenges with Lightning invoices
     L402AuthenticationFilter.java          Extracts L402 credentials from Authorization header
     L402AuthenticationProvider.java        Validates credentials via L402Validator
     L402AuthenticationToken.java           Spring Security token (unauthenticated and authenticated states)
-    L402SecurityAutoConfiguration.java     Registers beans when Spring Security is present
+    PaygateSecurityAutoConfiguration.java     Registers beans when Spring Security is present
   src/main/resources/META-INF/spring/
     org.springframework.boot.autoconfigure.AutoConfiguration.imports
   src/test/java/com/greenharborlabs/l402/spring/security/
@@ -126,7 +126,7 @@ L402AuthenticationFilter (OncePerRequestFilter)
      |-- Header present, matches L402/LSAT pattern?
      |       |
      |       v
-     |   Resolve capability from L402EndpointRegistry (if configured)
+     |   Resolve capability from PaygateEndpointRegistry (if configured)
      |       |
      |       v
      |   AuthenticationManager.authenticate(unauthenticatedToken)
@@ -171,7 +171,7 @@ The token has two states:
 |----------|-------|
 | `credential` | Validated `L402Credential` object |
 | `tokenId` | Hex-encoded 32-byte token identifier |
-| `serviceName` | Service name from configuration (`l402.service-name`) |
+| `serviceName` | Service name from configuration (`paygate.service-name`) |
 | `authenticated` | `true` |
 | `authorities` | `[ROLE_L402]` + `[L402_CAPABILITY_*]` for each capability in the `{serviceName}_capabilities` caveat |
 | `principal` | token ID string |
@@ -207,7 +207,7 @@ Implements `AuthenticationProvider`. Accepts only `L402AuthenticationToken` inst
 
 ## Auto-Configuration
 
-`L402SecurityAutoConfiguration` is registered via Spring Boot's `AutoConfiguration.imports` mechanism and activates when both conditions are met:
+`PaygateSecurityAutoConfiguration` is registered via Spring Boot's `AutoConfiguration.imports` mechanism and activates when both conditions are met:
 
 1. `EnableWebSecurity` and `L402Validator` classes are on the classpath (`@ConditionalOnClass`)
 2. An `L402Validator` bean exists in the application context (`@ConditionalOnBean`)
@@ -216,9 +216,9 @@ It registers three beans:
 
 | Bean | Condition | Description |
 |------|-----------|-------------|
-| `L402AuthenticationProvider` | `@ConditionalOnMissingBean` | Validates L402 tokens using the `L402Validator` and `l402.service-name` property |
+| `L402AuthenticationProvider` | `@ConditionalOnMissingBean` | Validates L402 tokens using the `L402Validator` and `paygate.service-name` property |
 | `L402AuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
-| `L402AuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `L402ChallengeService` and `L402EndpointRegistry` from `l402-spring-autoconfigure`. |
+| `L402AuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
 
 The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). This gives you full control over filter ordering and which paths are protected.
 
@@ -293,7 +293,7 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http,
 ### application.yml
 
 ```yaml
-l402:
+paygate:
   enabled: true
   backend: lnbits
   service-name: my-api
@@ -408,19 +408,19 @@ L402 tokens can carry fine-grained capabilities that restrict what a paid creden
 
 ### How Capabilities Are Minted
 
-When an endpoint is configured with a capability via `@L402Protected(capability = "analyze")`, the `L402ChallengeService` includes a `{serviceName}_capabilities` caveat in the minted macaroon. For example, with `l402.service-name=myapi`:
+When an endpoint is configured with a capability via `@PaygateProtected(capability = "analyze")`, the `PaygateChallengeService` includes a `{serviceName}_capabilities` caveat in the minted macaroon. For example, with `paygate.service-name=myapi`:
 
 ```
 myapi_capabilities = analyze
 ```
 
-Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@L402Protected` without `capability`, or `capability = ""`), no capabilities caveat is added.
+Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@PaygateProtected` without `capability`, or `capability = ""`), no capabilities caveat is added.
 
 ### How Capabilities Are Enforced
 
 Capability enforcement happens at two levels:
 
-1. **Macaroon verification (core layer):** The `L402AuthenticationProvider` builds an `L402VerificationContext` with the `requestedCapability` resolved from the endpoint's `@L402Protected` configuration. The `CapabilitiesCaveatVerifier` checks that the requested capability is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
+1. **Macaroon verification (core layer):** The `L402AuthenticationProvider` builds an `L402VerificationContext` with the `requestedCapability` resolved from the endpoint's `@PaygateProtected` configuration. The `CapabilitiesCaveatVerifier` checks that the requested capability is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
 
 2. **Spring Security authorization (security layer):** The `L402AuthenticationToken.authenticated()` factory method parses the `{serviceName}_capabilities` caveat and maps each capability to a `GrantedAuthority` named `L402_CAPABILITY_{name}`. These authorities are available to `@PreAuthorize` expressions and `authorizeHttpRequests` rules.
 
@@ -448,17 +448,17 @@ public AnalysisResult analyzeAlt() { ... }
 Capability enforcement is fully backward-compatible:
 
 - **Tokens without capabilities caveats** receive only `ROLE_L402`. No `L402_CAPABILITY_*` authorities are added. Existing tokens continue to work for endpoints that do not require a specific capability.
-- **Endpoints without a capability configured** (`@L402Protected` without `capability`) do not trigger capability verification. The `CapabilitiesCaveatVerifier` receives a `null` requested capability and passes without checking.
+- **Endpoints without a capability configured** (`@PaygateProtected` without `capability`) do not trigger capability verification. The `CapabilitiesCaveatVerifier` receives a `null` requested capability and passes without checking.
 - **Existing `hasRole('L402')` rules** are unaffected. Capability authorities are additive.
 
 ---
 
 ## Comparison with Non-Spring-Security Approach
 
-| Aspect | `l402-spring-autoconfigure` (`L402SecurityFilter`) | `l402-spring-security` |
+| Aspect | `paygate-spring-autoconfigure` (`PaygateSecurityFilter`) | `paygate-spring-security` |
 |--------|---------------------------------------------------|----------------------|
 | Spring Security dependency | Not required | Required |
-| Protection mechanism | `@L402Protected` annotation on controller methods | `SecurityFilterChain` with `authorizeHttpRequests` |
+| Protection mechanism | `@PaygateProtected` annotation on controller methods | `SecurityFilterChain` with `authorizeHttpRequests` |
 | Filter type | Jakarta `Filter` registered via `FilterRegistrationBean` | `OncePerRequestFilter` added to Spring Security filter chain |
 | Invoice generation | Built-in: generates 402 response with invoice | Built-in via `L402AuthenticationEntryPoint`: generates 402 response with invoice when configured as the exception handling entry point |
 | Mixed auth support | L402 only | L402 + OAuth2 + JWT + Basic + any Spring Security provider |
@@ -469,11 +469,11 @@ Capability enforcement is fully backward-compatible:
 | Session management | Stateless (no session) | Configurable (STATELESS recommended) |
 | 402 challenge response | Automatic with invoice | Automatic via `L402AuthenticationEntryPoint` when configured as the entry point in `SecurityFilterChain` |
 
-### Mutual Exclusion via `l402.security-mode`
+### Mutual Exclusion via `paygate.security-mode`
 
-The servlet filter and Spring Security paths are mutually exclusive. The `l402.security-mode` property controls which one is active:
+The servlet filter and Spring Security paths are mutually exclusive. The `paygate.security-mode` property controls which one is active:
 
-| Value | Servlet filter (`L402SecurityFilter`) | Spring Security (`L402AuthenticationFilter` + entry point) |
+| Value | Servlet filter (`PaygateSecurityFilter`) | Spring Security (`L402AuthenticationFilter` + entry point) |
 |-------|--------------------------------------|----------------------------------------------------------|
 | `auto` (default) | Active when Spring Security is **not** on the classpath | Active when Spring Security **is** on the classpath |
 | `servlet` | Always active | Disabled, even if Spring Security is on the classpath |
@@ -486,7 +486,7 @@ When using `spring-security` mode, the `L402AuthenticationEntryPoint` replaces t
 Set the mode explicitly when both modules are on the classpath:
 
 ```yaml
-l402:
+paygate:
   enabled: true
   security-mode: spring-security
 ```
@@ -495,8 +495,8 @@ l402:
 
 The entry point implements Spring Security's `AuthenticationEntryPoint` interface. When an unauthenticated request reaches a protected endpoint, it:
 
-1. Looks up the endpoint's L402 configuration from the `L402EndpointRegistry` (price, timeout, pricing strategy)
-2. Delegates to `L402ChallengeService` to create a Lightning invoice and mint a macaroon
+1. Looks up the endpoint's L402 configuration from the `PaygateEndpointRegistry` (price, timeout, pricing strategy)
+2. Delegates to `PaygateChallengeService` to create a Lightning invoice and mint a macaroon
 3. Returns HTTP 402 with a `WWW-Authenticate: L402 macaroon="...", invoice="..."` header
 4. Falls back to 503 if the Lightning backend is unavailable (fail-closed)
 5. Returns 429 with `Retry-After` if the rate limiter rejects the request
@@ -527,7 +527,7 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http,
 }
 ```
 
-If the requested path is not registered in the `L402EndpointRegistry` (i.e., it has no `@L402Protected` annotation), the entry point returns a plain 401 Unauthorized response instead of a 402 challenge.
+If the requested path is not registered in the `PaygateEndpointRegistry` (i.e., it has no `@PaygateProtected` annotation), the entry point returns a plain 401 Unauthorized response instead of a 402 challenge.
 
 ---
 
@@ -538,7 +538,7 @@ If the requested path is not registered in the `L402EndpointRegistry` (i.e., it 
 From the project root:
 
 ```bash
-./gradlew :l402-spring-security:test
+./gradlew :paygate-spring-security:test
 ```
 
 ### Test Architecture
@@ -568,7 +568,7 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `skipsWhenMacaroonContainsInvalidCharacters` | Macaroon with invalid characters: filter chain continues without authentication attempt |
 | `extractsMultiTokenHeaderAndAuthenticates` | Comma-separated multi-token macaroon: extracted as single raw value, authenticates |
 | `skipsWhenMultiTokenExceedsMaxLength` | Oversized multi-token macaroon: filter chain continues without authentication attempt |
-| `passesCapabilityFromRegistryToToken` | Capability from `L402EndpointRegistry` is set on the unauthenticated token |
+| `passesCapabilityFromRegistryToToken` | Capability from `PaygateEndpointRegistry` is set on the unauthenticated token |
 | `passesNullCapabilityWhenConfigNotFound` | No registry config: null capability (permissive) |
 | `passesNullCapabilityWhenConfigHasEmptyCapability` | Empty capability string: null capability (permissive) |
 | `passesNullCapabilityWhenConfigHasBlankCapability` | Blank capability string: null capability (permissive) |

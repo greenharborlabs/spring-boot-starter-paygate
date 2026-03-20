@@ -1,8 +1,8 @@
-# l402-core
+# paygate-core
 
-The foundational module of the `spring-boot-starter-l402` project. This is a **pure Java library with zero external dependencies** -- it relies only on JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.io`). It implements the Macaroon V2 binary format, L402 protocol primitives, cryptographic operations, and the abstractions that all other modules build upon.
+The foundational module of the `spring-boot-starter-paygate` project. This is a **pure Java library with zero external dependencies** -- it relies only on JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.io`). It implements the Macaroon V2 binary format, L402 protocol primitives, cryptographic operations, and the abstractions that all other modules build upon.
 
-Every module in the project -- `l402-lightning-lnd`, `l402-lightning-lnbits`, `l402-spring-autoconfigure`, `l402-spring-security` -- depends on `l402-core`.
+Every module in the project -- `paygate-lightning-lnd`, `paygate-lightning-lnbits`, `paygate-spring-autoconfigure`, `paygate-spring-security` -- depends on `paygate-core`.
 
 ---
 
@@ -41,7 +41,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 ```
 
 **Maven:**
@@ -49,15 +49,15 @@ implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
 ```xml
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-spring-boot-starter</artifactId>
+    <artifactId>paygate-spring-boot-starter</artifactId>
     <version>0.1.0</version>
 </dependency>
 ```
 
-If you need to depend on `l402-core` directly (for example, to implement a custom `LightningBackend` or `RootKeyStore`):
+If you need to depend on `paygate-core` directly (for example, to implement a custom `LightningBackend` or `RootKeyStore`):
 
 ```kotlin
-implementation("com.greenharborlabs:l402-core:0.1.0")
+implementation("com.greenharborlabs:paygate-core:0.1.0")
 ```
 
 ### Build Dependencies
@@ -76,7 +76,7 @@ implementation("com.greenharborlabs:l402-core:0.1.0")
 The module is organized into four packages:
 
 ```
-l402-core/
+paygate-core/
   src/main/java/com/greenharborlabs/l402/core/
     macaroon/
       Caveat.java                   First-party caveat (key=value record)
@@ -246,7 +246,7 @@ public interface CaveatVerifier {
 }
 ```
 
-During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by key. If no verifier is found for a caveat, that caveat is **skipped** — verification continues without evaluating it. This follows the L402 cross-service delegation model, where a macaroon may carry caveats intended for other services that this service does not understand. Note that this differs from the original macaroons paper, which recommends failing closed on unknown caveats. If your application requires strict unknown-caveat rejection, register a custom `CaveatVerifier` that rejects all unrecognized keys.
+During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by key. If no verifier is found for a caveat, that caveat is **skipped** -- verification continues without evaluating it. This follows the L402 cross-service delegation model, where a macaroon may carry caveats intended for other services that this service does not understand. Note that this differs from the original macaroons paper, which recommends failing closed on unknown caveats. If your application requires strict unknown-caveat rejection, register a custom `CaveatVerifier` that rejects all unrecognized keys.
 
 ### Built-in Caveat Verifiers
 
@@ -296,7 +296,7 @@ public class IpAddressCaveatVerifier implements CaveatVerifier {
 
 ## Lightning Backend Interface
 
-The `LightningBackend` interface defines the contract that Lightning Network implementations must fulfill. It is implemented by `l402-lightning-lnd` (gRPC) and `l402-lightning-lnbits` (REST).
+The `LightningBackend` interface defines the contract that Lightning Network implementations must fulfill. It is implemented by `paygate-lightning-lnd` (gRPC) and `paygate-lightning-lnbits` (REST).
 
 ```java
 public interface LightningBackend {
@@ -522,7 +522,7 @@ All byte array fields in immutable types are defensively copied on construction 
 From the project root:
 
 ```bash
-./gradlew :l402-core:test
+./gradlew :paygate-core:test
 ```
 
 ### Test Architecture
@@ -694,26 +694,26 @@ Reads test vectors from `src/test/resources/test-vectors/go-macaroon-vectors.jso
 ## Module Dependency Graph
 
 ```
-l402-core  (this module -- zero external dependencies)
+paygate-core  (this module -- zero external dependencies)
     ^
     |
-    +--- l402-lightning-lnd        (gRPC/Protobuf + l402-core)
+    +--- paygate-lightning-lnd        (gRPC/Protobuf + paygate-core)
     |
-    +--- l402-lightning-lnbits     (Jackson + l402-core)
+    +--- paygate-lightning-lnbits     (Jackson + paygate-core)
     |
-    +--- l402-spring-autoconfigure (Spring Boot + l402-core + conditional on lnd/lnbits)
+    +--- paygate-spring-autoconfigure (Spring Boot + paygate-core + conditional on lnd/lnbits)
     |        ^
     |        |
-    |        +--- l402-spring-security (Spring Security + l402-spring-autoconfigure)
+    |        +--- paygate-spring-security (Spring Security + paygate-spring-autoconfigure)
     |        |
-    |        +--- l402-spring-boot-starter (dependency aggregator, no source)
+    |        +--- paygate-spring-boot-starter (dependency aggregator, no source)
     |
-    +--- l402-example-app          (reference implementation)
+    +--- paygate-example-app          (reference implementation)
 ```
 
-All modules depend on `l402-core` for:
+All modules depend on `paygate-core` for:
 
-- The `LightningBackend` interface (implemented by `l402-lightning-lnd` and `l402-lightning-lnbits`)
+- The `LightningBackend` interface (implemented by `paygate-lightning-lnd` and `paygate-lightning-lnbits`)
 - The `RootKeyStore` and `CredentialStore` interfaces
 - Macaroon creation, serialization, and verification
 - The L402 protocol types (`L402Challenge`, `L402Credential`, `L402Validator`, `L402Exception`, `ErrorCode`)

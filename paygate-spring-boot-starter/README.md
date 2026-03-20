@@ -1,6 +1,6 @@
-# l402-spring-boot-starter
+# paygate-spring-boot-starter
 
-Dependency aggregator starter for the `spring-boot-starter-l402` project. This module contains **no source code** -- it exists solely to provide a single dependency that pulls in everything needed to add L402 payment-gated authentication to a Spring Boot application.
+Dependency aggregator starter for the `spring-boot-starter-paygate` project. This module contains **no source code** -- it exists solely to provide a single dependency that pulls in everything needed to add L402 payment-gated authentication to a Spring Boot application.
 
 This follows the [standard Spring Boot starter pattern](https://docs.spring.io/spring-boot/reference/using/build-systems.html#using.build-systems.starters): one dependency gives you auto-configuration, core library, and sensible defaults.
 
@@ -24,8 +24,8 @@ Adding this starter transitively pulls in:
 
 | Module | Purpose |
 |--------|---------|
-| `l402-core` | Macaroon V2 minting and verification, `LightningBackend` interface, credential stores, root key management |
-| `l402-spring-autoconfigure` | Spring Boot auto-configuration: `L402SecurityFilter`, properties binding, health indicator, Caffeine caching, Micrometer metrics |
+| `paygate-core` | Macaroon V2 minting and verification, `LightningBackend` interface, credential stores, root key management |
+| `paygate-spring-autoconfigure` | Spring Boot auto-configuration: `PaygateSecurityFilter`, properties binding, health indicator, Caffeine caching, Micrometer metrics |
 
 This starter does **not** include a Lightning backend module. You must add one separately -- see [Choosing a Lightning Backend](#choosing-a-lightning-backend) below.
 
@@ -38,13 +38,13 @@ Add the starter to your project. The group ID is `com.greenharborlabs` and the c
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 ```
 
 **Gradle (Groovy DSL):**
 
 ```groovy
-implementation 'com.greenharborlabs:l402-spring-boot-starter:0.1.0'
+implementation 'com.greenharborlabs:paygate-spring-boot-starter:0.1.0'
 ```
 
 **Maven:**
@@ -52,7 +52,7 @@ implementation 'com.greenharborlabs:l402-spring-boot-starter:0.1.0'
 ```xml
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-spring-boot-starter</artifactId>
+    <artifactId>paygate-spring-boot-starter</artifactId>
     <version>0.1.0</version>
 </dependency>
 ```
@@ -65,8 +65,8 @@ implementation 'com.greenharborlabs:l402-spring-boot-starter:0.1.0'
 
     ```kotlin
     // build.gradle.kts
-    implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
-    implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0")  // or l402-lightning-lnd
+    implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+    implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")  // or paygate-lightning-lnd
     ```
 
 2. Configure your `application.yml`:
@@ -88,7 +88,7 @@ implementation 'com.greenharborlabs:l402-spring-boot-starter:0.1.0'
     @RequestMapping("/api/v1")
     public class MyController {
 
-        @L402Protected(priceSats = 10)
+        @PaygateProtected(priceSats = 10)
         @GetMapping("/premium")
         public Map<String, String> premium() {
             return Map.of("data", "premium content");
@@ -106,19 +106,19 @@ The starter provides the framework, but you need exactly one Lightning backend m
 
 | Module | Backend | Protocol | When to Choose |
 |--------|---------|----------|----------------|
-| `l402-lightning-lnbits` | [LNbits](https://lnbits.com/) | REST/JSON | Easiest setup. Works with hosted instances. Good for development and smaller deployments. |
-| `l402-lightning-lnd` | [LND](https://github.com/lightningnetwork/lnd) | gRPC/Protobuf | Production deployments with your own Lightning node. Requires TLS cert and macaroon file. |
+| `paygate-lightning-lnbits` | [LNbits](https://lnbits.com/) | REST/JSON | Easiest setup. Works with hosted instances. Good for development and smaller deployments. |
+| `paygate-lightning-lnd` | [LND](https://github.com/lightningnetwork/lnd) | gRPC/Protobuf | Production deployments with your own Lightning node. Requires TLS cert and macaroon file. |
 
 **Gradle examples:**
 
 ```kotlin
 // Option A: LNbits backend
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")
 
 // Option B: LND backend
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:l402-lightning-lnd:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
 ```
 
 Both backends implement the same `LightningBackend` interface. Switching between them requires only changing dependencies and configuration properties -- no application code changes.
@@ -127,25 +127,25 @@ Both backends implement the same `LightningBackend` interface. Switching between
 
 ## Configuration Overview
 
-All properties live under the `l402.*` prefix. The starter auto-configures defaults for most of them.
+All properties live under the `paygate.*` prefix. The starter auto-configures defaults for most of them.
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `l402.enabled` | `false` | Master switch. Must be `true` to activate L402 protection. |
-| `l402.backend` | -- | `lnbits` or `lnd`. Determines which backend module is used. |
-| `l402.service-name` | -- | Service name embedded in macaroon caveats. |
-| `l402.default-price-sats` | `10` | Default price in satoshis when `@L402Protected` does not specify one. |
-| `l402.default-timeout-seconds` | `3600` | Default credential validity period (1 hour). |
-| `l402.root-key-store` | `file` | Root key storage: `file` (persistent) or `memory` (ephemeral). |
-| `l402.root-key-store-path` | `~/.l402/keys` | File path for persistent root key storage. |
-| `l402.credential-cache-max-size` | `10000` | Maximum cached credentials. |
-| `l402.test-mode` | `false` | When `true`, uses a dummy Lightning backend that auto-settles invoices (development only). Full L402 verification still runs. |
-| `l402.health-cache.enabled` | `true` | Cache `isHealthy()` results to avoid hammering the backend. |
-| `l402.health-cache.ttl-seconds` | `5` | Health cache TTL. |
+| `paygate.enabled` | `false` | Master switch. Must be `true` to activate L402 protection. |
+| `paygate.backend` | -- | `lnbits` or `lnd`. Determines which backend module is used. |
+| `paygate.service-name` | -- | Service name embedded in macaroon caveats. |
+| `paygate.default-price-sats` | `10` | Default price in satoshis when `@PaygateProtected` does not specify one. |
+| `paygate.default-timeout-seconds` | `3600` | Default credential validity period (1 hour). |
+| `paygate.root-key-store` | `file` | Root key storage: `file` (persistent) or `memory` (ephemeral). |
+| `paygate.root-key-store-path` | `~/.paygate/keys` | File path for persistent root key storage. |
+| `paygate.credential-cache-max-size` | `10000` | Maximum cached credentials. |
+| `paygate.test-mode` | `false` | When `true`, uses a dummy Lightning backend that auto-settles invoices (development only). Full L402 verification still runs. |
+| `paygate.health-cache.enabled` | `true` | Cache `isHealthy()` results to avoid hammering the backend. |
+| `paygate.health-cache.ttl-seconds` | `5` | Health cache TTL. |
 
-Backend-specific properties (`l402.lnbits.*`, `l402.lnd.*`) are documented in their respective module READMEs.
+Backend-specific properties (`paygate.lnbits.*`, `paygate.lnd.*`) are documented in their respective module READMEs.
 
-For the full property reference and auto-configuration details, see the `l402-spring-autoconfigure` module.
+For the full property reference and auto-configuration details, see the `paygate-spring-autoconfigure` module.
 
 ---
 
@@ -155,7 +155,7 @@ These modules provide additional capabilities and can be added alongside the sta
 
 | Module | Purpose | Dependency |
 |--------|---------|------------|
-| `l402-spring-security` | Spring Security integration for L402 authentication | `com.greenharborlabs:l402-spring-security:0.1.0` |
+| `paygate-spring-security` | Spring Security integration for L402 authentication | `com.greenharborlabs:paygate-spring-security:0.1.0` |
 
 Optional libraries detected by auto-configuration:
 
@@ -171,12 +171,12 @@ Optional libraries detected by auto-configuration:
 
 | Module | README | Description |
 |--------|--------|-------------|
-| `l402-core` | [README](../l402-core/README.md) | Pure-Java macaroon and credential library (zero external dependencies) |
-| `l402-lightning-lnbits` | [README](../l402-lightning-lnbits/README.md) | LNbits REST backend |
-| `l402-lightning-lnd` | [README](../l402-lightning-lnd/README.md) | LND gRPC backend |
-| `l402-spring-autoconfigure` | [README](../l402-spring-autoconfigure/README.md) | Auto-configuration, properties, filters, health indicators |
-| `l402-spring-security` | [README](../l402-spring-security/README.md) | Spring Security integration |
-| `l402-example-app` | [README](../l402-example-app/README.md) | Working reference application |
+| `paygate-core` | [README](../paygate-core/README.md) | Pure-Java macaroon and credential library (zero external dependencies) |
+| `paygate-lightning-lnbits` | [README](../paygate-lightning-lnbits/README.md) | LNbits REST backend |
+| `paygate-lightning-lnd` | [README](../paygate-lightning-lnd/README.md) | LND gRPC backend |
+| `paygate-spring-autoconfigure` | [README](../paygate-spring-autoconfigure/README.md) | Auto-configuration, properties, filters, health indicators |
+| `paygate-spring-security` | [README](../paygate-spring-security/README.md) | Spring Security integration |
+| `paygate-example-app` | [README](../paygate-example-app/README.md) | Working reference application |
 
 ---
 

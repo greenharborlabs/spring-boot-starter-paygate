@@ -1,8 +1,8 @@
 services:
-  l402-example-app:
+  paygate-example-app:
     build:
       context: .
-      dockerfile: l402-example-app/Dockerfile
+      dockerfile: paygate-example-app/Dockerfile
     ports:
       - "8080:8080"
     environment:

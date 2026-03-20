@@ -42,7 +42,7 @@ docker compose -f docker-compose-lnbits.yml up -d lnbits
 bash scripts/setup-lnbits.sh
 
 # Now start the example app (picks up LNBITS_API_KEY from .env)
-docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 
 # Verify
 curl http://localhost:8080/actuator/health
@@ -103,7 +103,7 @@ LNbits 0.12.x may require a super-user key for API wallet creation. If `setup-ln
 2. Create a wallet through the UI
 3. Copy the Admin API key from the wallet settings
 4. Add it to `.env`: `LNBITS_API_KEY=<your-key>`
-5. Restart the example app: `docker compose -f docker-compose-lnbits.yml up -d l402-example-app`
+5. Restart the example app: `docker compose -f docker-compose-lnbits.yml up -d paygate-example-app`
 
 ### Example app fails to connect to LND
 
@@ -111,8 +111,8 @@ Ensure the LND TLS cert and macaroon are accessible. The compose file mounts the
 
 ```bash
 # Verify the files exist inside the container
-docker compose -f docker-compose-lnd.yml exec l402-example-app ls -la /lnd/tls.cert
-docker compose -f docker-compose-lnd.yml exec l402-example-app ls -la /lnd/data/chain/bitcoin/regtest/admin.macaroon
+docker compose -f docker-compose-lnd.yml exec paygate-example-app ls -la /lnd/tls.cert
+docker compose -f docker-compose-lnd.yml exec paygate-example-app ls -la /lnd/data/chain/bitcoin/regtest/admin.macaroon
 ```
 
 ## See Also

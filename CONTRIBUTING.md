@@ -1,4 +1,4 @@
-# Contributing to spring-boot-starter-l402
+# Contributing to spring-boot-starter-paygate
 
 Thank you for your interest in contributing! This guide will help you get started.
 
@@ -17,20 +17,20 @@ Thank you for your interest in contributing! This guide will help you get starte
 
 ```bash
 ./gradlew test                   # All modules
-./gradlew :l402-core:test       # Core module only
+./gradlew :paygate-core:test    # Core module only
 ```
 
 ## Module Structure
 
 | Module | Purpose |
 |--------|---------|
-| `l402-core` | Pure Java macaroon and L402 logic (zero external dependencies) |
-| `l402-lightning-lnd` | LND gRPC lightning backend |
-| `l402-lightning-lnbits` | LNbits REST lightning backend |
-| `l402-spring-autoconfigure` | Spring Boot auto-configuration |
-| `l402-spring-security` | Spring Security integration (optional) |
-| `l402-spring-boot-starter` | Dependency aggregator (no source) |
-| `l402-example-app` | Reference implementation |
+| `paygate-core` | Pure Java macaroon and L402 logic (zero external dependencies) |
+| `paygate-lightning-lnd` | LND gRPC lightning backend |
+| `paygate-lightning-lnbits` | LNbits REST lightning backend |
+| `paygate-spring-autoconfigure` | Spring Boot auto-configuration |
+| `paygate-spring-security` | Spring Security integration (optional) |
+| `paygate-spring-boot-starter` | Dependency aggregator (no source) |
+| `paygate-example-app` | Reference implementation |
 | `integration-tests` | Docker Compose integration test environments |
 
 ## Submitting Changes

@@ -1,6 +1,6 @@
-# l402-lightning-lnd
+# paygate-lightning-lnd
 
-[LND](https://github.com/lightningnetwork/lnd) gRPC backend for the `spring-boot-starter-l402` project. This module implements the `LightningBackend` interface from `l402-core` using LND's gRPC API, enabling L402 payment-gated authentication with any LND node.
+[LND](https://github.com/lightningnetwork/lnd) gRPC backend for the `spring-boot-starter-paygate` project. This module implements the `LightningBackend` interface from `paygate-core` using LND's gRPC API, enabling L402 payment-gated authentication with any LND node.
 
 LND (Lightning Network Daemon) is the most widely deployed Lightning Network implementation. It exposes a gRPC API for invoice creation, payment verification, and node management. This module communicates with LND over a TLS-encrypted gRPC channel, authenticating with macaroon credentials -- the same authentication model LND uses natively.
 
@@ -60,8 +60,8 @@ Add this module alongside the starter. You must include both the starter (which 
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:l402-lightning-lnd:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
 ```
 
 **Maven:**
@@ -69,12 +69,12 @@ implementation("com.greenharborlabs:l402-lightning-lnd:0.1.0")
 ```xml
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-spring-boot-starter</artifactId>
+    <artifactId>paygate-spring-boot-starter</artifactId>
     <version>0.1.0</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-lightning-lnd</artifactId>
+    <artifactId>paygate-lightning-lnd</artifactId>
     <version>0.1.0</version>
 </dependency>
 ```
@@ -85,7 +85,7 @@ This module depends on:
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| `l402-core` | -- | `LightningBackend` interface, `Invoice` record, `InvoiceStatus` enum |
+| `paygate-core` | -- | `LightningBackend` interface, `Invoice` record, `InvoiceStatus` enum |
 | `io.grpc:grpc-netty-shaded` | 1.68.1 | gRPC transport with shaded Netty (no Netty version conflicts) |
 | `io.grpc:grpc-protobuf` | 1.68.1 | Protobuf message marshalling for gRPC |
 | `io.grpc:grpc-stub` | 1.68.1 | Generated gRPC stub classes |
@@ -95,12 +95,12 @@ This module depends on:
 
 ## Configuration
 
-Set `l402.backend=lnd` to select this module, then provide your LND node's connection details.
+Set `paygate.backend=lnd` to select this module, then provide your LND node's connection details.
 
 ### application.yml (Production -- TLS + Macaroon)
 
 ```yaml
-l402:
+paygate:
   enabled: true
   backend: lnd
   service-name: my-api
@@ -114,7 +114,7 @@ l402:
 ### application.yml (Local Development -- Plaintext)
 
 ```yaml
-l402:
+paygate:
   enabled: true
   backend: lnd
   service-name: my-api
@@ -127,30 +127,30 @@ l402:
 ### application.properties
 
 ```properties
-l402.enabled=true
-l402.backend=lnd
-l402.service-name=my-api
-l402.lnd.host=127.0.0.1
-l402.lnd.port=10009
-l402.lnd.tls-cert-path=/path/to/tls.cert
-l402.lnd.macaroon-path=/path/to/invoice.macaroon
+paygate.enabled=true
+paygate.backend=lnd
+paygate.service-name=my-api
+paygate.lnd.host=127.0.0.1
+paygate.lnd.port=10009
+paygate.lnd.tls-cert-path=/path/to/tls.cert
+paygate.lnd.macaroon-path=/path/to/invoice.macaroon
 ```
 
 ### Configuration Properties
 
 | Property | Type | Default | Required | Description |
 |----------|------|---------|----------|-------------|
-| `l402.backend` | `string` | -- | Yes | Must be set to `lnd` to activate this module. |
-| `l402.lnd.host` | `string` | `localhost` | No | Hostname or IP address of the LND gRPC endpoint. |
-| `l402.lnd.port` | `int` | `10009` | No | Port number of the LND gRPC endpoint. LND defaults to `10009`. |
-| `l402.lnd.tls-cert-path` | `string` | `null` | Yes* | Absolute path to the LND TLS certificate file (`tls.cert`). Required unless `allow-plaintext=true`. |
-| `l402.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup, hex-encoded, and attached to every gRPC call. |
-| `l402.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC connections. Intended only for local development with a localhost LND node. A warning is logged when active. |
-| `l402.lnd.keep-alive-time-seconds` | `int` | `60` | No | Interval between gRPC keepalive pings. |
-| `l402.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Timeout for keepalive ping acknowledgement. |
-| `l402.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle gRPC connection timeout. |
-| `l402.lnd.max-inbound-message-size` | `int` | `4194304` | No | Maximum inbound gRPC message size in bytes (4 MB). |
-| `l402.lnd.rpc-deadline-seconds` | `Integer` | -- | No | Per-call gRPC deadline. Overrides `l402.lightning.timeout-seconds`. |
+| `paygate.backend` | `string` | -- | Yes | Must be set to `lnd` to activate this module. |
+| `paygate.lnd.host` | `string` | `localhost` | No | Hostname or IP address of the LND gRPC endpoint. |
+| `paygate.lnd.port` | `int` | `10009` | No | Port number of the LND gRPC endpoint. LND defaults to `10009`. |
+| `paygate.lnd.tls-cert-path` | `string` | `null` | Yes* | Absolute path to the LND TLS certificate file (`tls.cert`). Required unless `allow-plaintext=true`. |
+| `paygate.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup, hex-encoded, and attached to every gRPC call. |
+| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC connections. Intended only for local development with a localhost LND node. A warning is logged when active. |
+| `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | Interval between gRPC keepalive pings. |
+| `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Timeout for keepalive ping acknowledgement. |
+| `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle gRPC connection timeout. |
+| `paygate.lnd.max-inbound-message-size` | `int` | `4194304` | No | Maximum inbound gRPC message size in bytes (4 MB). |
+| `paygate.lnd.rpc-deadline-seconds` | `Integer` | -- | No | Per-call gRPC deadline. Overrides `paygate.lightning.timeout-seconds`. |
 
 *If `tls-cert-path` is not set and `allow-plaintext` is `false` (the default), the application will fail to start with an `IllegalStateException`.
 
@@ -158,7 +158,7 @@ l402.lnd.macaroon-path=/path/to/invoice.macaroon
 
 The TLS certificate and macaroon file are sensitive credentials. Recommended approaches:
 
-- **File paths via environment variables**: `l402.lnd.tls-cert-path=${LND_TLS_CERT_PATH}`
+- **File paths via environment variables**: `paygate.lnd.tls-cert-path=${LND_TLS_CERT_PATH}`
 - **Docker volume mounts**: Mount LND credential files into the container and reference the mount paths
 - **Kubernetes secrets**: Mount as files via secret volumes
 
@@ -168,10 +168,10 @@ The macaroon file is read once at startup and held in memory as a hex string. Th
 
 ## Architecture
 
-The module contains three classes, all in the `com.greenharborlabs.l402.lightning.lnd` package:
+The module contains three classes, all in the `com.greenharborlabs.paygate.lightning.lnd` package:
 
 ```
-l402-lightning-lnd/
+paygate-lightning-lnd/
   src/main/java/com/greenharborlabs/l402/lightning/lnd/
     LndBackend.java       LightningBackend implementation using gRPC
     LndConfig.java        Immutable configuration record
@@ -192,7 +192,7 @@ public record LndConfig(String host, int port, String tlsCertPath, String macaro
 
 ### LndBackend
 
-Implements the `LightningBackend` interface from `l402-core`. The constructor accepts a `ManagedChannel` (a gRPC abstraction), from which it creates a blocking stub for synchronous RPC calls.
+Implements the `LightningBackend` interface from `paygate-core`. The constructor accepts a `ManagedChannel` (a gRPC abstraction), from which it creates a blocking stub for synchronous RPC calls.
 
 ```java
 public LndBackend(ManagedChannel channel) { ... }
@@ -212,7 +212,7 @@ All RPC calls use a **5-second deadline** (`withDeadlineAfter(5, TimeUnit.SECOND
 
 ### Invoice State Mapping
 
-LND uses a four-state model. This module maps it to the `InvoiceStatus` enum from `l402-core`:
+LND uses a four-state model. This module maps it to the `InvoiceStatus` enum from `paygate-core`:
 
 | LND `InvoiceState` | `InvoiceStatus` | Meaning |
 |-------------------|-----------------|---------|
@@ -230,28 +230,28 @@ The channel is built in one of two modes:
 
 **TLS mode** (production): Uses `NettyChannelBuilder` with an `SslContext` built from the LND TLS certificate. If a macaroon path is configured, a `MacaroonClientInterceptor` is attached to inject the hex-encoded macaroon into the `macaroon` metadata key on every gRPC call.
 
-**Plaintext mode** (development only): Uses `ManagedChannelBuilder.forAddress().usePlaintext()`. Requires `l402.lnd.allow-plaintext=true`. A warning is logged at startup.
+**Plaintext mode** (development only): Uses `ManagedChannelBuilder.forAddress().usePlaintext()`. Requires `paygate.lnd.allow-plaintext=true`. A warning is logged at startup.
 
 ### MacaroonClientInterceptor
 
-A gRPC `ClientInterceptor` (defined in `l402-spring-autoconfigure`) that attaches the LND macaroon as gRPC metadata on every outgoing call. The macaroon is read from the file at startup, hex-encoded, and injected into the `macaroon` metadata key -- matching LND's expected authentication format.
+A gRPC `ClientInterceptor` (defined in `paygate-spring-autoconfigure`) that attaches the LND macaroon as gRPC metadata on every outgoing call. The macaroon is read from the file at startup, hex-encoded, and injected into the `macaroon` metadata key -- matching LND's expected authentication format.
 
 ---
 
 ## Auto-Configuration
 
-When the following conditions are met, the `L402AutoConfiguration` class in `l402-spring-autoconfigure` automatically creates the LND backend beans:
+When the following conditions are met, the `PaygateAutoConfiguration` class in `paygate-spring-autoconfigure` automatically creates the LND backend beans:
 
-1. `l402.enabled=true`
-2. `l402.backend=lnd`
-3. The class `com.greenharborlabs.l402.lightning.lnd.LndBackend` is on the classpath
+1. `paygate.enabled=true`
+2. `paygate.backend=lnd`
+3. The class `com.greenharborlabs.paygate.lightning.lnd.LndBackend` is on the classpath
 4. No existing `LightningBackend` bean has been registered
 
 The auto-configuration creates two beans:
 
 ### `lndManagedChannel` (ManagedChannel)
 
-- Built from `l402.lnd.*` properties
+- Built from `paygate.lnd.*` properties
 - TLS + macaroon in production; plaintext when explicitly allowed
 - Registered with `destroyMethod = "shutdown"` for clean lifecycle management
 - Guarded by `@ConditionalOnMissingBean(ManagedChannel.class)` -- provide your own to customize
@@ -259,7 +259,7 @@ The auto-configuration creates two beans:
 ### `lightningBackend` (LightningBackend)
 
 - An `LndBackend` instance wrapping the managed channel
-- Automatically wrapped in a `CachingLightningBackendWrapper` (when `l402.health-cache.enabled=true`, which is the default) to cache `isHealthy()` results for the configured TTL (default: 5 seconds)
+- Automatically wrapped in a `CachingLightningBackendWrapper` (when `paygate.health-cache.enabled=true`, which is the default) to cache `isHealthy()` results for the configured TTL (default: 5 seconds)
 - Guarded by `@ConditionalOnMissingBean(LightningBackend.class)`
 
 ### Overriding the Auto-Configured Backend
@@ -305,9 +305,9 @@ public ManagedChannel lndManagedChannel() {
 
 ## Usage
 
-Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LndBackend` directly -- the `L402SecurityFilter` calls it automatically when:
+Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LndBackend` directly -- the `PaygateSecurityFilter` calls it automatically when:
 
-1. A request hits an `@L402Protected` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
+1. A request hits an `@PaygateProtected` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
 2. A request presents L402 credentials, triggering `lookupInvoice()` to verify the payment was made
 3. The health indicator or filter checks backend availability via `isHealthy()`
 
@@ -318,7 +318,7 @@ Once configured, the module works transparently with the rest of the L402 stack.
 @RequestMapping("/api/v1")
 public class MyController {
 
-    @L402Protected(priceSats = 10)
+    @PaygateProtected(priceSats = 10)
     @GetMapping("/premium")
     public Map<String, String> premium() {
         return Map.of("data", "premium content");
@@ -328,7 +328,7 @@ public class MyController {
 
 ```yaml
 # application.yml
-l402:
+paygate:
   enabled: true
   backend: lnd
   service-name: my-api
@@ -348,7 +348,7 @@ When running alongside an LND node in Docker Compose, mount the credential files
 ```yaml
 services:
   app:
-    image: my-l402-app:latest
+    image: my-paygate-app:latest
     environment:
       L402_ENABLED: "true"
       L402_BACKEND: lnd
@@ -377,7 +377,7 @@ volumes:
 This module follows the project-wide **fail-closed** security model:
 
 - If LND is unreachable (network error, gRPC `UNAVAILABLE`, deadline exceeded), `isHealthy()` returns `false`
-- When the backend is unhealthy, the `L402SecurityFilter` returns **HTTP 503 Service Unavailable** for protected endpoints
+- When the backend is unhealthy, the `PaygateSecurityFilter` returns **HTTP 503 Service Unavailable** for protected endpoints
 - Protected content is **never** returned with HTTP 200 when the Lightning backend cannot be reached
 
 This ensures that infrastructure failures do not accidentally grant free access to paid content.
@@ -414,7 +414,7 @@ The `isHealthy()` method returns `true` only when LND reports `synced_to_chain=t
 From the project root:
 
 ```bash
-./gradlew :l402-lightning-lnd:test
+./gradlew :paygate-lightning-lnd:test
 ```
 
 ### Test Architecture
@@ -633,7 +633,7 @@ Returns general information about the LND node.
 
 ## Comparison with LNbits Backend
 
-| Aspect | l402-lightning-lnd | l402-lightning-lnbits |
+| Aspect | paygate-lightning-lnd | paygate-lightning-lnbits |
 |--------|-------------------|----------------------|
 | Protocol | gRPC/Protobuf | REST/JSON |
 | Dependencies | gRPC, Protobuf, Netty (shaded) | Jackson |
@@ -644,9 +644,9 @@ Returns general information about the LND node.
 | RPC deadline / timeout | 5-second gRPC deadline per call | 5-second HTTP timeout per request |
 | Connection management | gRPC `ManagedChannel` (persistent, multiplexed) | `HttpClient` (connection pooling by JDK) |
 | Best for | Production deployments with your own Lightning node | Getting started, hosted setups, smaller deployments |
-| Configuration | `l402.lnd.host` + `l402.lnd.port` + TLS cert + macaroon | `l402.lnbits.url` + `l402.lnbits.api-key` |
+| Configuration | `paygate.lnd.host` + `paygate.lnd.port` + TLS cert + macaroon | `paygate.lnbits.url` + `paygate.lnbits.api-key` |
 
-Both backends implement the same `LightningBackend` interface. Switching between them requires only changing the `l402.backend` property and the corresponding connection configuration -- no application code changes are needed.
+Both backends implement the same `LightningBackend` interface. Switching between them requires only changing the `paygate.backend` property and the corresponding connection configuration -- no application code changes are needed.
 
 ---
 
