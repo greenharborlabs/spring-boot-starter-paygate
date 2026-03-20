@@ -8,7 +8,7 @@ plugins {
 
 val springBootVersion = "4.0.3"
 val caffeineVersion = "3.1.8"
-val grpcVersion = "1.68.1"
+val grpcVersion = "1.80.0"
 val protobufVersion = "4.29.3"
 val jacksonVersion = "2.18.2"
 val assertjVersion = "3.27.3"
