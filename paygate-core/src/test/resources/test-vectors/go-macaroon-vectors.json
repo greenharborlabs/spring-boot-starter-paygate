@@ -1,0 +1,51 @@
+{
+  "formatVersion": 1,
+  "description": "Test vectors for Macaroon V2 binary format, compatible with Go go-macaroon library. Key derivation uses HMAC-SHA256(key=\"macaroons-key-generator\", data=rootKey). Identifier layout: [version:2 bytes BE][paymentHash:32][tokenId:32] = 66 bytes. V2 binary format: version byte 0x02, then field packets (fieldType varint, length varint, data), with 0x00 as EOS markers.",
+  "vectors": [
+    {
+      "description": "Simple macaroon - no caveats, no location",
+      "rootKey": "0101010101010101010101010101010101010101010101010101010101010101",
+      "identifier": "0000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "location": null,
+      "caveats": [],
+      "expectedSignature": "1790bc6dc1964456355926bd4863e204d96b42629e94087abc906f85e91ccf93",
+      "expectedSerializedV2": "0202420000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb000006201790bc6dc1964456355926bd4863e204d96b42629e94087abc906f85e91ccf93",
+      "expectedBase64": "AgJCAACqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqru7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7AAAGIBeQvG3BlkRWNVkmvUhj4gTZa0JinpQIeryQb4XpHM+T"
+    },
+    {
+      "description": "Macaroon with location, no caveats",
+      "rootKey": "0202020202020202020202020202020202020202020202020202020202020202",
+      "identifier": "0000ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "location": "https://example.com",
+      "caveats": [],
+      "expectedSignature": "bf72e98fc5e23788a53dc0f03b6e5032689149d512847c463153d205c66642ac",
+      "expectedSerializedV2": "02011368747470733a2f2f6578616d706c652e636f6d02420000ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd00000620bf72e98fc5e23788a53dc0f03b6e5032689149d512847c463153d205c66642ac",
+      "expectedBase64": "AgETaHR0cHM6Ly9leGFtcGxlLmNvbQJCAADMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzN3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3dAAAGIL9y6Y/F4jeIpT3A8DtuUDJokUnVEoR8RjFT0gXGZkKs"
+    },
+    {
+      "description": "Macaroon with one caveat",
+      "rootKey": "0303030303030303030303030303030303030303030303030303030303030303",
+      "identifier": "0000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "location": null,
+      "caveats": [
+        { "key": "services", "value": "my_api:0" }
+      ],
+      "expectedSignature": "c794ae0e80b2b4af8ac81285f50e8d7af72722b79d06ea5ddb35beb1dd24b385",
+      "expectedSerializedV2": "0202420000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00021173657276696365733d6d795f6170693a3000000620c794ae0e80b2b4af8ac81285f50e8d7af72722b79d06ea5ddb35beb1dd24b385",
+      "expectedBase64": "AgJCAADu7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7v//////////////////////////////////////////AAIRc2VydmljZXM9bXlfYXBpOjAAAAYgx5SuDoCytK+KyBKF9Q6NevcnIredBupd2zW+sd0ks4U="
+    },
+    {
+      "description": "Macaroon with multiple caveats",
+      "rootKey": "0404040404040404040404040404040404040404040404040404040404040404",
+      "identifier": "0000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+      "location": "https://api.example.com",
+      "caveats": [
+        { "key": "services", "value": "my_api:0" },
+        { "key": "my_api_valid_until", "value": "1735689600" }
+      ],
+      "expectedSignature": "ac9a2b0d1d1feb3611a3cb4d2f4fffe7d0667d1824103751b188a0c59a5ca809",
+      "expectedSerializedV2": "02011768747470733a2f2f6170692e6578616d706c652e636f6d02420000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f00021173657276696365733d6d795f6170693a3000021d6d795f6170695f76616c69645f756e74696c3d3137333536383936303000000620ac9a2b0d1d1feb3611a3cb4d2f4fffe7d0667d1824103751b188a0c59a5ca809",
+      "expectedBase64": "AgEXaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20CQgAAEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ubwACEXNlcnZpY2VzPW15X2FwaTowAAIdbXlfYXBpX3ZhbGlkX3VudGlsPTE3MzU2ODk2MDAAAAYgrJorDR0f6zYRo8tNL0//59BmfRgkEDdRsYigxZpcqAk="
+    }
+  ]
+}

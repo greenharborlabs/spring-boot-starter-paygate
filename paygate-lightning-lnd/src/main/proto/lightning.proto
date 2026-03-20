@@ -1,0 +1,52 @@
+// Minimal LND Lightning proto — only RPCs needed by LndBackend.
+// Derived from lnd/lnrpc/lightning.proto; kept intentionally small.
+syntax = "proto3";
+
+package lnrpc;
+
+option java_package = "lnrpc";
+option java_outer_classname = "Lnrpc";
+
+service Lightning {
+    rpc AddInvoice (Invoice) returns (AddInvoiceResponse);
+    rpc LookupInvoice (PaymentHash) returns (Invoice);
+    rpc GetInfo (GetInfoRequest) returns (GetInfoResponse);
+}
+
+message Invoice {
+    enum InvoiceState {
+        OPEN = 0;
+        SETTLED = 1;
+        CANCELED = 2;
+        ACCEPTED = 3;
+    }
+
+    string memo = 1;
+    int64 value = 5;
+    bytes r_preimage = 3;
+    bytes r_hash = 4;
+    string payment_request = 6;
+    InvoiceState state = 15;
+    int64 creation_date = 7;
+    int64 expiry = 11;
+    int64 settle_date = 12;
+}
+
+message AddInvoiceResponse {
+    bytes r_hash = 1;
+    string payment_request = 2;
+    bytes payment_addr = 4;
+}
+
+message PaymentHash {
+    bytes r_hash = 1;
+}
+
+message GetInfoRequest {
+}
+
+message GetInfoResponse {
+    bool synced_to_chain = 9;
+    bool synced_to_graph = 13;
+    string version = 14;
+}

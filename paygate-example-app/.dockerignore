@@ -1,0 +1,16 @@
+# This file documents ignored patterns for Docker builds.
+# Note: The effective .dockerignore is at the project root since the
+# build context is set to the repository root (for multi-module builds).
+.git
+.github
+.gradle
+.claude
+.vscode
+.specify
+**/build/
+**/out/
+**/*.class
+plans/
+specs/
+*.md
+LICENSE
