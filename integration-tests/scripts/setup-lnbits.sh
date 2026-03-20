@@ -34,7 +34,7 @@ echo "    LNbits is ready."
 echo "==> Creating a new wallet..."
 RESPONSE=$(curl -sf -X POST "${LNBITS_URL}/api/v1/wallet" \
   -H "Content-Type: application/json" \
-  -d '{"name": "l402-test-wallet"}')
+  -d '{"name": "paygate-test-wallet"}')
 
 if [ -z "$RESPONSE" ]; then
   echo "ERROR: Failed to create wallet. LNbits may require a super-user key."
@@ -74,4 +74,4 @@ fi
 echo ""
 echo "==> Setup complete."
 echo "    Restart the example app to pick up the new API key:"
-echo "      docker compose -f $COMPOSE_FILE up -d l402-example-app"
+echo "      docker compose -f $COMPOSE_FILE up -d paygate-example-app"

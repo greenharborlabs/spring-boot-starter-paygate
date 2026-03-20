@@ -1,0 +1,4 @@
+com.greenharborlabs.paygate.spring.PaygateAutoConfiguration
+com.greenharborlabs.paygate.spring.PaygateActuatorAutoConfiguration
+com.greenharborlabs.paygate.spring.PaygateMetricsAutoConfiguration
+com.greenharborlabs.paygate.spring.TestModeAutoConfiguration

@@ -19,10 +19,10 @@ services:
       retries: 30
       start_period: 10s
 
-  l402-example-app:
+  paygate-example-app:
     build:
       context: ..
-      dockerfile: l402-example-app/Dockerfile
+      dockerfile: paygate-example-app/Dockerfile
     restart: unless-stopped
     depends_on:
       lnbits:

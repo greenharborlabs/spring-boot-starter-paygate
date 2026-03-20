@@ -82,9 +82,9 @@ subprojects {
     }
 
     val coverageMinimum = when (project.name) {
-        "l402-core" -> "0.80"
-        "l402-example-app" -> "0.40"
-        "l402-integration-tests" -> "0.0"
+        "paygate-core" -> "0.80"
+        "paygate-example-app" -> "0.40"
+        "paygate-integration-tests" -> "0.0"
         else -> "0.60"
     }
     tasks.withType<JacocoCoverageVerification> {
@@ -115,12 +115,12 @@ subprojects {
     extra["mockWebServerVersion"] = mockWebServerVersion
 
     // CycloneDX SBOM generation (skip example app and starter aggregator)
-    if (project.name != "l402-example-app" && project.name != "l402-spring-boot-starter" && project.name != "l402-integration-tests") {
+    if (project.name != "paygate-example-app" && project.name != "paygate-spring-boot-starter" && project.name != "paygate-integration-tests") {
         apply(plugin = "org.cyclonedx.bom")
     }
 
     // Publishing configuration (skip example app)
-    if (project.name != "l402-example-app" && project.name != "l402-integration-tests") {
+    if (project.name != "paygate-example-app" && project.name != "paygate-integration-tests") {
         apply(plugin = "maven-publish")
         apply(plugin = "signing")
 
@@ -136,7 +136,7 @@ subprojects {
 
                         pom {
                             name.set(project.name)
-                            description.set("L402 protocol implementation for Spring Boot - ${project.name}")
+                            description.set("Paygate payment gateway for Spring Boot - ${project.name}")
                             url.set("https://github.com/greenharborlabs/spring-boot-starter-l402")
                             licenses {
                                 license {
@@ -182,7 +182,7 @@ tasks.register<Javadoc>("aggregateJavadoc") {
     description = "Generates aggregate Javadoc for all modules."
 
     val javadocSubprojects = subprojects.filter { sub ->
-        sub.plugins.hasPlugin("java-library") && sub.name != "l402-spring-boot-starter" && sub.name != "l402-example-app"
+        sub.plugins.hasPlugin("java-library") && sub.name != "paygate-spring-boot-starter" && sub.name != "paygate-example-app"
     }
 
     dependsOn(javadocSubprojects.map { it.tasks.named("classes") })

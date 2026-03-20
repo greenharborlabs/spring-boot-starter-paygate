@@ -96,7 +96,7 @@ ELAPSED=0
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do
   if [ "$ELAPSED" -ge "$HEALTH_TIMEOUT" ]; then
     fail "App did not become healthy within ${HEALTH_TIMEOUT}s"
-    echo "Check container logs: docker compose -f docker-compose-lnbits.yml logs l402-example-app"
+    echo "Check container logs: docker compose -f docker-compose-lnbits.yml logs paygate-example-app"
     exit 1
   fi
   sleep 2

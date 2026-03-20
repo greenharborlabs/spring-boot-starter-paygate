@@ -18,3 +18,9 @@ CLAUDE.md
 # IDE
 .idea/
 *.iml
+
+# Eclipse / Buildship (compiled output + project metadata)
+bin/
+.project
+.classpath
+.settings/

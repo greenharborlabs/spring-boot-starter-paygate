@@ -1,9 +1,9 @@
-# spring-boot-starter-l402
+# spring-boot-starter-paygate
 
-A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-lightning-network/l402) (Lightning HTTP 402) payment-gated authentication to your Spring Boot APIs. Protect any endpoint with a single annotation and get paid in Bitcoin over the Lightning Network.
+A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-lightning-network/l402) (Lightning HTTP 402) payment-gated authentication to your Spring Boot APIs. Paygate is a payment gateway for the agent economy -- protect any endpoint with a single annotation and get paid in Bitcoin over the Lightning Network.
 
 [![CI](https://github.com/greenharborlabs/spring-boot-starter-l402/actions/workflows/ci.yml/badge.svg)](https://github.com/greenharborlabs/spring-boot-starter-l402/actions/workflows/ci.yml)
-[![Maven Central](https://img.shields.io/maven-central/v/com.greenharborlabs/l402-spring-boot-starter)](https://central.sonatype.com/artifact/com.greenharborlabs/l402-spring-boot-starter)
+[![Maven Central](https://img.shields.io/maven-central/v/com.greenharborlabs/paygate-spring-boot-starter)](https://central.sonatype.com/artifact/com.greenharborlabs/paygate-spring-boot-starter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java 25](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
 [![Spring Boot 4.0](https://img.shields.io/badge/Spring%20Boot-4.0.3-green.svg)](https://spring.io/projects/spring-boot)
@@ -67,22 +67,22 @@ Client                              Server
 
 ## Features
 
-- **Annotation-driven** -- protect any Spring MVC endpoint with `@L402Protected(priceSats = 10)`
-- **Spring Security integration** -- optional `l402-spring-security` module provides `AuthenticationProvider`, `AuthenticationFilter`, and `L402AuthenticationToken` for use in Spring Security filter chains
+- **Annotation-driven** -- protect any Spring MVC endpoint with `@PaygateProtected(priceSats = 10)`
+- **Spring Security integration** -- optional `paygate-spring-security` module provides `AuthenticationProvider`, `AuthenticationFilter`, and `L402AuthenticationToken` for use in Spring Security filter chains
 - **Pluggable Lightning backends** -- LND (gRPC) and LNbits (REST) included; implement `LightningBackend` for others
-- **Dynamic pricing** -- implement `L402PricingStrategy` to price based on request content, user tier, or time of day
+- **Dynamic pricing** -- implement `PaygatePricingStrategy` to price based on request content, user tier, or time of day
 - **Macaroon V2** -- binary-compatible with the Go [go-macaroon](https://github.com/go-macaroon/macaroon) library
 - **Caveats** -- built-in `services` and `valid_until` verifiers; add custom `CaveatVerifier` implementations
 - **Credential caching** -- Caffeine-backed cache with configurable size (falls back to in-memory)
 - **Health check caching** -- `CachingLightningBackendWrapper` caches `isHealthy()` results with configurable TTL to avoid hammering the Lightning node
 - **Rate limiting** -- built-in `TokenBucketRateLimiter` prevents invoice flooding attacks on challenge issuance
 - **Micrometer metrics** -- counters for challenges, passes, rejections, revenue; gauges for credential cache size and Lightning health
-- **Health indicator** -- `L402LightningHealthIndicator` integrates with Spring Boot Actuator health checks
-- **Actuator endpoint** -- `GET /actuator/l402` for runtime status, protected endpoints, and earnings
+- **Health indicator** -- `PaygateLightningHealthIndicator` integrates with Spring Boot Actuator health checks
+- **Actuator endpoint** -- `GET /actuator/paygate` for runtime status, protected endpoints, and earnings
 - **Test mode** -- develop and test without a real Lightning node
 - **Fail-closed** -- Lightning backend unreachable returns 503, never leaks protected content
 - **LSAT backward compatibility** -- accepts both `L402` and `LSAT` authorization schemes
-- **Zero-dependency core** -- `l402-core` uses only the JDK (no external libraries)
+- **Zero-dependency core** -- `paygate-core` uses only the JDK (no external libraries)
 - **Constant-time security** -- all secret comparisons use XOR accumulation to prevent timing attacks
 
 ---
@@ -94,12 +94,12 @@ Client                              Server
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 
 // Choose ONE Lightning backend:
-implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0")  // LNbits (REST)
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")  // LNbits (REST)
 // OR
-implementation("com.greenharborlabs:l402-lightning-lnd:0.1.0")     // LND (gRPC)
+implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")     // LND (gRPC)
 ```
 
 **Maven:**
@@ -107,14 +107,14 @@ implementation("com.greenharborlabs:l402-lightning-lnd:0.1.0")     // LND (gRPC)
 ```xml
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-spring-boot-starter</artifactId>
+    <artifactId>paygate-spring-boot-starter</artifactId>
     <version>0.1.0</version>
 </dependency>
 
 <!-- Choose ONE Lightning backend -->
 <dependency>
     <groupId>com.greenharborlabs</groupId>
-    <artifactId>l402-lightning-lnbits</artifactId>
+    <artifactId>paygate-lightning-lnbits</artifactId>
     <version>0.1.0</version>
 </dependency>
 ```
@@ -123,7 +123,7 @@ implementation("com.greenharborlabs:l402-lightning-lnd:0.1.0")     // LND (gRPC)
 
 ```yaml
 # application.yml
-l402:
+paygate:
   enabled: true
   backend: lnbits                    # or "lnd"
   service-name: my-api
@@ -141,13 +141,13 @@ l402:
 @RequestMapping("/api/v1")
 public class PremiumController {
 
-    @L402Protected(priceSats = 10)
+    @PaygateProtected(priceSats = 10)
     @GetMapping("/data")
     public DataResponse getData() {
         return new DataResponse("premium content");
     }
 
-    @L402Protected(priceSats = 50, description = "AI analysis")
+    @PaygateProtected(priceSats = 50, description = "AI analysis")
     @PostMapping("/analyze")
     public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
         // expensive computation here
@@ -158,78 +158,78 @@ public class PremiumController {
 
 That is it. Unauthenticated requests to `/api/v1/data` now receive a 402 response with a Lightning invoice. After payment, the client includes the credential in the `Authorization` header and receives the content.
 
-Endpoints without `@L402Protected` are unaffected and pass through normally.
+Endpoints without `@PaygateProtected` are unaffected and pass through normally.
 
 ---
 
 ## Configuration Reference
 
-All properties are under the `l402.*` prefix.
+All properties are under the `paygate.*` prefix.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `l402.enabled` | `boolean` | `false` | Master switch. L402 filter is only active when `true`. |
-| `l402.backend` | `string` | -- | Lightning backend to use: `lnbits` or `lnd`. |
-| `l402.service-name` | `string` | -- | Service name embedded in macaroon caveats. Falls back to `"default"` at runtime if unset. |
-| `l402.default-price-sats` | `long` | `10` | Fallback price when not specified in `@L402Protected`. |
-| `l402.default-timeout-seconds` | `long` | `3600` | Credential TTL in seconds. |
-| `l402.root-key-store` | `string` | `file` | Root key storage: `file` or `memory`. |
-| `l402.root-key-store-path` | `string` | `~/.l402/keys` | Directory for file-based root key storage. |
-| `l402.credential-cache-max-size` | `int` | `10000` | Maximum cached credentials. |
-| `l402.security-mode` | `string` | `auto` | Security integration mode: `auto`, `servlet`, or `spring-security`. See [Spring Security Integration](#spring-security-integration). |
-| `l402.test-mode` | `boolean` | `false` | Enable test mode (dummy invoices, auto-settle). |
-| `l402.trust-forwarded-headers` | `boolean` | `false` | Trust `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. |
+| `paygate.enabled` | `boolean` | `false` | Master switch. Paygate filter is only active when `true`. |
+| `paygate.backend` | `string` | -- | Lightning backend to use: `lnbits` or `lnd`. |
+| `paygate.service-name` | `string` | -- | Service name embedded in macaroon caveats. Falls back to `"default"` at runtime if unset. |
+| `paygate.default-price-sats` | `long` | `10` | Fallback price when not specified in `@PaygateProtected`. |
+| `paygate.default-timeout-seconds` | `long` | `3600` | Credential TTL in seconds. |
+| `paygate.root-key-store` | `string` | `file` | Root key storage: `file` or `memory`. |
+| `paygate.root-key-store-path` | `string` | `~/.paygate/keys` | Directory for file-based root key storage. |
+| `paygate.credential-cache-max-size` | `int` | `10000` | Maximum cached credentials. |
+| `paygate.security-mode` | `string` | `auto` | Security integration mode: `auto`, `servlet`, or `spring-security`. See [Spring Security Integration](#spring-security-integration). |
+| `paygate.test-mode` | `boolean` | `false` | Enable test mode (dummy invoices, auto-settle). |
+| `paygate.trust-forwarded-headers` | `boolean` | `false` | Trust `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. |
 
 ### Rate Limiting
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `l402.rate-limit.requests-per-second` | `double` | `10.0` | Token refill rate per second for the challenge rate limiter. |
-| `l402.rate-limit.burst-size` | `int` | `20` | Maximum burst size (token bucket capacity) for the challenge rate limiter. |
+| `paygate.rate-limit.requests-per-second` | `double` | `10.0` | Token refill rate per second for the challenge rate limiter. |
+| `paygate.rate-limit.burst-size` | `int` | `20` | Maximum burst size (token bucket capacity) for the challenge rate limiter. |
 
 ### Lightning Backend Timeout
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `l402.lightning.timeout-seconds` | `int` | `5` | Global timeout in seconds for Lightning backend RPC/HTTP calls. Backend-specific properties override this when set. |
+| `paygate.lightning.timeout-seconds` | `int` | `5` | Global timeout in seconds for Lightning backend RPC/HTTP calls. Backend-specific properties override this when set. |
 
 ### Health Check Caching
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `l402.health-cache.enabled` | `boolean` | `true` | Enable health check result caching for the Lightning backend. |
-| `l402.health-cache.ttl-seconds` | `int` | `5` | TTL in seconds for cached health check results. |
+| `paygate.health-cache.enabled` | `boolean` | `true` | Enable health check result caching for the Lightning backend. |
+| `paygate.health-cache.ttl-seconds` | `int` | `5` | TTL in seconds for cached health check results. |
 
 ### LNbits Backend
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `l402.lnbits.url` | `string` | -- | LNbits instance URL. |
-| `l402.lnbits.api-key` | `string` | -- | LNbits admin API key. |
-| `l402.lnbits.request-timeout-seconds` | `int` | -- | HTTP request timeout. Overrides `l402.lightning.timeout-seconds` when set. |
-| `l402.lnbits.connect-timeout-seconds` | `int` | `10` | TCP connect timeout in seconds. |
+| `paygate.lnbits.url` | `string` | -- | LNbits instance URL. |
+| `paygate.lnbits.api-key` | `string` | -- | LNbits admin API key. |
+| `paygate.lnbits.request-timeout-seconds` | `int` | -- | HTTP request timeout. Overrides `paygate.lightning.timeout-seconds` when set. |
+| `paygate.lnbits.connect-timeout-seconds` | `int` | `10` | TCP connect timeout in seconds. |
 
 ### LND Backend
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `l402.lnd.host` | `string` | `localhost` | LND gRPC host. |
-| `l402.lnd.port` | `int` | `10009` | LND gRPC port. |
-| `l402.lnd.tls-cert-path` | `string` | -- | Path to LND TLS certificate. Omit for plaintext (dev only). |
-| `l402.lnd.macaroon-path` | `string` | -- | Path to LND admin macaroon file. |
-| `l402.lnd.allow-plaintext` | `boolean` | `false` | Allow plaintext gRPC (no TLS). Dev only. |
-| `l402.lnd.rpc-deadline-seconds` | `int` | -- | Per-call gRPC deadline. Overrides `l402.lightning.timeout-seconds` when set. |
-| `l402.lnd.keep-alive-time-seconds` | `int` | `60` | Interval between gRPC keepalive pings. |
-| `l402.lnd.keep-alive-timeout-seconds` | `int` | `20` | Timeout for keepalive ping acknowledgement. |
-| `l402.lnd.idle-timeout-minutes` | `int` | `5` | Idle gRPC connection timeout. |
-| `l402.lnd.max-inbound-message-size` | `int` | `4194304` | Maximum inbound gRPC message size in bytes. |
+| `paygate.lnd.host` | `string` | `localhost` | LND gRPC host. |
+| `paygate.lnd.port` | `int` | `10009` | LND gRPC port. |
+| `paygate.lnd.tls-cert-path` | `string` | -- | Path to LND TLS certificate. Omit for plaintext (dev only). |
+| `paygate.lnd.macaroon-path` | `string` | -- | Path to LND admin macaroon file. |
+| `paygate.lnd.allow-plaintext` | `boolean` | `false` | Allow plaintext gRPC (no TLS). Dev only. |
+| `paygate.lnd.rpc-deadline-seconds` | `int` | -- | Per-call gRPC deadline. Overrides `paygate.lightning.timeout-seconds` when set. |
+| `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | Interval between gRPC keepalive pings. |
+| `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | Timeout for keepalive ping acknowledgement. |
+| `paygate.lnd.idle-timeout-minutes` | `int` | `5` | Idle gRPC connection timeout. |
+| `paygate.lnd.max-inbound-message-size` | `int` | `4194304` | Maximum inbound gRPC message size in bytes. |
 
 ### Metrics
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `l402.metrics.max-endpoint-cardinality` | `int` | `100` | Maximum distinct endpoint tag values before overflow bucketing. |
-| `l402.metrics.overflow-tag-value` | `string` | `_other` | Tag value used when the endpoint cardinality cap is exceeded. |
+| `paygate.metrics.max-endpoint-cardinality` | `int` | `100` | Maximum distinct endpoint tag values before overflow bucketing. |
+| `paygate.metrics.overflow-tag-value` | `string` | `_other` | Tag value used when the endpoint cardinality cap is exceeded. |
 
 ---
 
@@ -244,7 +244,7 @@ All properties are under the `l402.*` prefix.
 3. Configure:
 
 ```yaml
-l402:
+paygate:
   enabled: true
   backend: lnbits
   lnbits:
@@ -255,7 +255,7 @@ l402:
 **Dependency:**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0")
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")
 ```
 
 ### LND
@@ -267,7 +267,7 @@ implementation("com.greenharborlabs:l402-lightning-lnbits:0.1.0")
 3. Configure:
 
 ```yaml
-l402:
+paygate:
   enabled: true
   backend: lnd
   lnd:
@@ -280,7 +280,7 @@ l402:
 **Dependency:**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-lightning-lnd:0.1.0")
+implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
 ```
 
 ### Custom Backend
@@ -314,11 +314,11 @@ When a custom `LightningBackend` bean is present, auto-configuration will not cr
 
 ## Dynamic Pricing
 
-For endpoints where the price depends on request content, implement `L402PricingStrategy`:
+For endpoints where the price depends on request content, implement `PaygatePricingStrategy`:
 
 ```java
 @Component("analysisPricer")
-public class AnalysisPricingStrategy implements L402PricingStrategy {
+public class AnalysisPricingStrategy implements PaygatePricingStrategy {
 
     @Override
     public long calculatePrice(HttpServletRequest request, long defaultPrice) {
@@ -335,7 +335,7 @@ public class AnalysisPricingStrategy implements L402PricingStrategy {
 Reference the strategy by bean name in the annotation:
 
 ```java
-@L402Protected(priceSats = 50, pricingStrategy = "analysisPricer")
+@PaygateProtected(priceSats = 50, pricingStrategy = "analysisPricer")
 @PostMapping("/analyze")
 public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
     // ...
@@ -348,12 +348,12 @@ If the named pricing strategy bean is not found at runtime, the filter falls bac
 
 ## Spring Security Integration
 
-For applications that use Spring Security, the optional `l402-spring-security` module provides first-class integration with Spring Security filter chains.
+For applications that use Spring Security, the optional `paygate-spring-security` module provides first-class integration with Spring Security filter chains.
 
 **Add the dependency:**
 
 ```kotlin
-implementation("com.greenharborlabs:l402-spring-security:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-security:0.1.0")
 ```
 
 When both Spring Security and an `L402Validator` bean are present, the module auto-configures:
@@ -363,20 +363,20 @@ When both Spring Security and an `L402Validator` bean are present, the module au
 - **`L402AuthenticationToken`** -- carries the validated credential, token ID, service name, and caveat-derived attributes accessible via SpEL in `@PreAuthorize` expressions
 - **`L402AuthenticationEntryPoint`** -- issues HTTP 402 Payment Required challenges with Lightning invoices when an unauthenticated request hits a protected endpoint, replacing the default 401 response
 
-### Security Mode (`l402.security-mode`)
+### Security Mode (`paygate.security-mode`)
 
-The `l402.security-mode` property controls how L402 protection is applied. This determines whether the standalone servlet filter or the Spring Security integration handles requests.
+The `paygate.security-mode` property controls how L402 protection is applied. This determines whether the standalone servlet filter or the Spring Security integration handles requests.
 
 | Value | Behavior |
 |-------|----------|
 | `auto` (default) | Detects Spring Security on the classpath. If present, uses `spring-security` mode; otherwise, uses `servlet` mode. |
-| `servlet` | Forces the standalone `L402SecurityFilter` (from `l402-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@L402Protected` handling. |
+| `servlet` | Forces the standalone `PaygateSecurityFilter` (from `paygate-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@PaygateProtected` handling. |
 | `spring-security` | Forces the Spring Security path. The standalone servlet filter is disabled. Fails at startup if Spring Security is not on the classpath. |
 
 The two modes are mutually exclusive -- only one is active at a time. Configure the mode explicitly when both modules are on the classpath and you want deterministic behavior:
 
 ```yaml
-l402:
+paygate:
   enabled: true
   security-mode: spring-security   # or "servlet" or "auto"
 ```
@@ -385,7 +385,7 @@ l402:
 
 The `L402AuthenticationEntryPoint` bridges Spring Security's exception handling with the L402 payment flow. When an unauthenticated request reaches a protected endpoint, the entry point:
 
-1. Looks up the endpoint's L402 configuration (price, timeout, pricing strategy)
+1. Looks up the endpoint's Paygate configuration (price, timeout, pricing strategy)
 2. Creates a Lightning invoice via the configured backend
 3. Returns HTTP 402 with a `WWW-Authenticate: L402` header containing the macaroon and invoice
 
@@ -431,7 +431,7 @@ public Response protectedEndpoint(Authentication auth) {
 }
 ```
 
-See the [l402-spring-security README](l402-spring-security/README.md) for detailed documentation, SpEL examples, and mixed-auth patterns. A complete `SecurityFilterChain` example is available in `l402-example-app/src/main/java/.../example/SecurityConfig.java` (commented out by default).
+See the [paygate-spring-security README](paygate-spring-security/README.md) for detailed documentation, SpEL examples, and mixed-auth patterns. A complete `SecurityFilterChain` example is available in `paygate-example-app/src/main/java/.../example/SecurityConfig.java` (commented out by default).
 
 ---
 
@@ -443,18 +443,18 @@ When [Micrometer](https://micrometer.io/) is on the classpath, the starter autom
 
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|
-| `l402.requests` | Counter | `endpoint`, `result` | Total requests to protected endpoints. `result` is `challenged`, `passed`, or `rejected`. |
-| `l402.invoices.created` | Counter | `endpoint` | Lightning invoices generated. |
-| `l402.invoices.settled` | Counter | `endpoint` | Invoices confirmed paid. |
-| `l402.revenue.sats` | Counter | `endpoint` | Total satoshis earned. |
-| `l402.credentials.active` | Gauge | -- | Currently cached credentials. |
-| `l402.lightning.healthy` | Gauge | -- | Lightning backend health: `1` = healthy, `0` = unhealthy. |
+| `paygate.requests` | Counter | `endpoint`, `result` | Total requests to protected endpoints. `result` is `challenged`, `passed`, or `rejected`. |
+| `paygate.invoices.created` | Counter | `endpoint` | Lightning invoices generated. |
+| `paygate.invoices.settled` | Counter | `endpoint` | Invoices confirmed paid. |
+| `paygate.revenue.sats` | Counter | `endpoint` | Total satoshis earned. |
+| `paygate.credentials.active` | Gauge | -- | Currently cached credentials. |
+| `paygate.lightning.healthy` | Gauge | -- | Lightning backend health: `1` = healthy, `0` = unhealthy. |
 
 No additional configuration is needed. Add `spring-boot-starter-actuator` and your preferred metrics registry (Prometheus, Datadog, etc.) to export these metrics.
 
 ### Actuator Endpoint
 
-When Spring Boot Actuator is on the classpath, a custom endpoint is available at `GET /actuator/l402`:
+When Spring Boot Actuator is on the classpath, a custom endpoint is available at `GET /actuator/paygate`:
 
 ```json
 {
@@ -492,7 +492,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,l402
+        include: health,info,paygate
 ```
 
 ---
@@ -502,7 +502,7 @@ management:
 For development and testing without a real Lightning node, enable test mode:
 
 ```yaml
-l402:
+paygate:
   enabled: true
   test-mode: true
   service-name: my-api
@@ -514,7 +514,7 @@ In test mode:
 - All invoices are treated as immediately settled
 - The full L402 flow (challenge, credential validation) still executes
 
-The example app activates test mode via the `dev` profile (`application-dev.yml` sets `l402.test-mode: true`), not directly in `application.yml`.
+The example app activates test mode via the `dev` profile (`application-dev.yml` sets `paygate.test-mode: true`), not directly in `application.yml`.
 
 **Safety guard:** Test mode refuses to start if any active Spring profile is `production` or `prod`, throwing an `IllegalStateException` at application startup.
 
@@ -524,38 +524,39 @@ The example app activates test mode via the `dev` profile (`application-dev.yml`
 
 ```
 +-------------------------------+
-|  l402-spring-boot-starter     |   Dependency aggregator (no code)
+|  paygate-spring-boot-starter  |   Dependency aggregator (no code)
 |  (user adds this dependency)  |   Pulls in autoconfigure + core
 +-------------------------------+
          |              |
          v              v
 +----------------+  +---------------------------+  +-------------------------+
-|  l402-core     |  |  l402-spring-autoconfigure |  |  l402-spring-security   |
-|                |  |                            |  |                         |
-|  Macaroon V2   |  |  L402AutoConfiguration     |  |  L402Authentication-    |
-|  HMAC-SHA256   |  |  L402SecurityFilter        |  |    Provider             |
-|  Credential    |  |  L402Properties            |  |  L402Authentication-    |
-|    Store       |  |  @L402Protected            |  |    Filter               |
-|  Lightning     |  |  L402PricingStrategy       |  |  L402Authentication-    |
-|    Backend     |  |  L402Metrics               |  |    Token                |
-|    (interface) |  |  L402ActuatorEndpoint      |  |                         |
-|                |  |  CachingLightning-         |  |  Integrates with       |
-|  ZERO external |  |    BackendWrapper          |  |  Spring Security       |
-|  dependencies  |  |  TokenBucketRateLimiter    |  |  filter chains         |
-+----------------+  |  TestModeAutoConfiguration |  +-------------------------+
+|  paygate-core  |  |  paygate-spring-           |  |  paygate-spring-        |
+|                |  |    autoconfigure           |  |    security             |
+|  Macaroon V2   |  |                            |  |                         |
+|  HMAC-SHA256   |  |  PaygateAutoConfiguration  |  |  L402Authentication-    |
+|  Credential    |  |  PaygateSecurityFilter     |  |    Provider             |
+|    Store       |  |  PaygateProperties         |  |  L402Authentication-    |
+|  Lightning     |  |  @PaygateProtected         |  |    Filter               |
+|    Backend     |  |  PaygatePricingStrategy    |  |  L402Authentication-    |
+|    (interface) |  |  PaygateMetrics            |  |    Token                |
+|                |  |  PaygateActuatorEndpoint   |  |                         |
+|  ZERO external |  |  CachingLightning-         |  |  Integrates with       |
+|  dependencies  |  |    BackendWrapper          |  |  Spring Security       |
++----------------+  |  TokenBucketRateLimiter    |  |  filter chains         |
+                    |  TestModeAutoConfiguration |  +-------------------------+
                     +---------------------------+
                          |              |
                          v              v
                   +-------------+  +---------------+
-                  | l402-light- |  | l402-light-   |
-                  | ning-lnbits |  | ning-lnd      |
-                  |             |  |               |
-                  | REST/JSON   |  | gRPC/Protobuf |
-                  | Jackson     |  | Netty         |
+                  | paygate-    |  | paygate-       |
+                  | lightning-  |  | lightning-lnd  |
+                  | lnbits      |  |                |
+                  | REST/JSON   |  | gRPC/Protobuf  |
+                  | Jackson     |  | Netty          |
                   +-------------+  +---------------+
 
 +-------------------------------+
-|  l402-example-app             |   Reference implementation
+|  paygate-example-app          |   Reference implementation
 |  (not published as artifact)  |   Shows annotation + dynamic pricing
 +-------------------------------+
 ```
@@ -564,17 +565,17 @@ The example app activates test mode via the `dev` profile (`application-dev.yml`
 
 | Module | Description | External Dependencies |
 |--------|-------------|----------------------|
-| `l402-core` | Macaroon V2 serialization, HMAC-SHA256 crypto, credential store interface, Lightning backend interface, L402 protocol validation | **None** (JDK only) |
-| `l402-lightning-lnbits` | `LightningBackend` implementation using the LNbits REST API | Jackson |
-| `l402-lightning-lnd` | `LightningBackend` implementation using the LND gRPC API | gRPC, Protobuf, Netty |
-| `l402-spring-autoconfigure` | Spring Boot auto-configuration, servlet filter, annotation scanning, metrics, actuator, health caching, rate limiting | Spring Boot, Spring MVC, Caffeine (optional), Micrometer (optional), Actuator (optional) |
-| `l402-spring-security` | Spring Security integration: `L402AuthenticationProvider`, `L402AuthenticationFilter`, and `L402AuthenticationToken` for use in security filter chains | Spring Security |
-| `l402-spring-boot-starter` | Dependency aggregator. No source code. | -- |
-| `l402-example-app` | Runnable reference application with dynamic pricing | Spring Boot Web |
+| `paygate-core` | Macaroon V2 serialization, HMAC-SHA256 crypto, credential store interface, Lightning backend interface, L402 protocol validation | **None** (JDK only) |
+| `paygate-lightning-lnbits` | `LightningBackend` implementation using the LNbits REST API | Jackson |
+| `paygate-lightning-lnd` | `LightningBackend` implementation using the LND gRPC API | gRPC, Protobuf, Netty |
+| `paygate-spring-autoconfigure` | Spring Boot auto-configuration, servlet filter, annotation scanning, metrics, actuator, health caching, rate limiting | Spring Boot, Spring MVC, Caffeine (optional), Micrometer (optional), Actuator (optional) |
+| `paygate-spring-security` | Spring Security integration: `L402AuthenticationProvider`, `L402AuthenticationFilter`, and `L402AuthenticationToken` for use in security filter chains | Spring Security |
+| `paygate-spring-boot-starter` | Dependency aggregator. No source code. | -- |
+| `paygate-example-app` | Runnable reference application with dynamic pricing | Spring Boot Web |
 
 ### Key Design Decisions
 
-- **l402-core has zero external dependencies.** All cryptography uses `javax.crypto` and `java.security` from the JDK. This makes the core portable and auditable.
+- **paygate-core has zero external dependencies.** All cryptography uses `javax.crypto` and `java.security` from the JDK. This makes the core portable and auditable.
 - **Macaroon V2 binary format is byte-level compatible with Go `go-macaroon`.** Cross-language interoperability is a first-class requirement.
 - **Identifier layout is fixed at 66 bytes:** `[version:2 bytes BE][payment_hash:32][token_id:32]`. This ensures deterministic parsing.
 - **All beans are guarded with `@ConditionalOnMissingBean`.** Users can override any component by declaring their own bean.
@@ -595,7 +596,7 @@ This library handles payment credentials and cryptographic tokens. The following
 
 ### Operational Security
 
-- **Root key storage** defaults to file-based storage at `~/.l402/keys`. In production, ensure this directory has restricted permissions (`chmod 700`)
+- **Root key storage** defaults to file-based storage at `~/.paygate/keys`. In production, ensure this directory has restricted permissions (`chmod 700`)
 - **Never log full macaroon values** -- only token IDs appear in logs
 - **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`), not plaintext in configuration files
 - **Test mode is blocked in production** -- the `TestModeAutoConfiguration` throws at startup if `prod` or `production` profiles are active
@@ -606,8 +607,8 @@ This library handles payment credentials and cryptographic tokens. The following
 1. Use file-based root key storage with proper filesystem permissions
 2. Store Lightning credentials in environment variables or a secrets manager
 3. Enable TLS for LND connections (do not use plaintext in production)
-4. Monitor the `l402.lightning.healthy` gauge and alert when it drops to 0
-5. Set `l402.credential-cache-max-size` based on your expected concurrent credential volume
+4. Monitor the `paygate.lightning.healthy` gauge and alert when it drops to 0
+5. Set `paygate.credential-cache-max-size` based on your expected concurrent credential volume
 6. Review and rotate root keys periodically
 
 ---
@@ -648,7 +649,7 @@ Run all tests:
 Run tests for a specific module:
 
 ```bash
-./gradlew :l402-core:test
+./gradlew :paygate-core:test
 ```
 
 Test coverage reports (JaCoCo) are generated at `build/reports/jacoco/` in each module and aggregated at the root.
@@ -659,7 +660,7 @@ Test coverage reports (JaCoCo) are generated at `build/reports/jacoco/` in each 
 
 ### Price Unit: Satoshis vs Milli-satoshis
 
-The L402 `protocol-specification.md` recommends expressing prices in milli-satoshis (1/1000th of a satoshi). This library uses **satoshis** as the price unit (`l402.default-price-sats`, `@L402Protected(priceSats = ...)`).
+The L402 `protocol-specification.md` recommends expressing prices in milli-satoshis (1/1000th of a satoshi). This library uses **satoshis** as the price unit (`paygate.default-price-sats`, `@PaygateProtected(priceSats = ...)`).
 
 **Rationale:** Satoshis are the practical unit for most L402 use cases. BOLT 11 invoices handle the conversion to milli-satoshis internally. Using whole satoshis avoids fractional pricing complexity for the vast majority of API monetization scenarios where sub-satoshi granularity is unnecessary.
 
@@ -672,8 +673,8 @@ Contributions are welcome. Please follow these guidelines:
 1. **Open an issue first** for significant changes to discuss the approach
 2. **Fork and branch** from `main`
 3. **Follow existing code conventions** -- Java 25 idioms (records, sealed classes, pattern matching), Javadoc on public types
-4. **Maintain the zero-dependency constraint** on `l402-core` -- no external libraries
-5. **Add tests** -- the project enforces code coverage via JaCoCo (80% for l402-core, 60% for most modules, 40% for example app)
+4. **Maintain the zero-dependency constraint** on `paygate-core` -- no external libraries
+5. **Add tests** -- the project enforces code coverage via JaCoCo (80% for paygate-core, 60% for most modules, 40% for example app)
 6. **All secret comparisons must be constant-time** (XOR accumulation)
 7. **Never log full macaroon values** -- only token IDs
 

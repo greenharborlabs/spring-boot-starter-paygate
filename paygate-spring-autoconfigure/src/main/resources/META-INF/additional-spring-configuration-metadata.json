@@ -1,0 +1,215 @@
+{
+  "properties": [
+    {
+      "name": "paygate.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether L402 payment-gated access is enabled. When false, the L402 security filter is not registered and all endpoints are accessible without payment.",
+      "defaultValue": false
+    },
+    {
+      "name": "paygate.backend",
+      "type": "java.lang.String",
+      "description": "Lightning Network backend to use for invoice creation and payment verification. Must match a configured backend module on the classpath."
+    },
+    {
+      "name": "paygate.default-price-sats",
+      "type": "java.lang.Long",
+      "description": "Default price in satoshis charged for L402-protected endpoints. Individual endpoints can override this via @PaygateProtected annotation or a custom PaygatePricingStrategy.",
+      "defaultValue": 10
+    },
+    {
+      "name": "paygate.default-timeout-seconds",
+      "type": "java.lang.Long",
+      "description": "Default invoice expiry timeout in seconds. The Lightning invoice will expire and become unpayable after this duration.",
+      "defaultValue": 3600
+    },
+    {
+      "name": "paygate.service-name",
+      "type": "java.lang.String",
+      "description": "Logical name of the service, embedded in macaroon caveats for service-scoped authorization. Used by ServicesCaveatVerifier to restrict tokens to specific services."
+    },
+    {
+      "name": "paygate.root-key-store",
+      "type": "java.lang.String",
+      "description": "Root key storage backend for macaroon signing keys. 'file' persists keys to disk; 'memory' keeps keys in-memory (lost on restart).",
+      "defaultValue": "file"
+    },
+    {
+      "name": "paygate.root-key-store-path",
+      "type": "java.lang.String",
+      "description": "File system path for the file-based root key store. Only used when paygate.root-key-store=file. The directory is created automatically if it does not exist.",
+      "defaultValue": "~/.paygate/keys"
+    },
+    {
+      "name": "paygate.credential-cache-max-size",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of validated credentials to cache. Higher values use more memory but reduce re-verification overhead.",
+      "defaultValue": 10000
+    },
+    {
+      "name": "paygate.security-mode",
+      "type": "java.lang.String",
+      "description": "Security mode controlling which L402 authentication path is active. 'auto' (default) detects Spring Security on the classpath and uses spring-security mode if present. 'servlet' forces the PaygateSecurityFilter servlet path. 'spring-security' forces the Spring Security integration path.",
+      "defaultValue": "auto"
+    },
+    {
+      "name": "paygate.test-mode",
+      "type": "java.lang.Boolean",
+      "description": "Enable test mode which uses an in-memory Lightning backend that auto-settles invoices. Must NOT be used in production. When enabled, no real Lightning node connection is required.",
+      "defaultValue": false
+    },
+    {
+      "name": "paygate.trust-forwarded-headers",
+      "type": "java.lang.Boolean",
+      "description": "Whether to trust X-Forwarded-For headers for client IP resolution. When false (default), the filter always uses the direct connection remote address, preventing rate-limit bypass via header spoofing. Enable only when running behind a trusted reverse proxy.",
+      "defaultValue": false
+    },
+    {
+      "name": "paygate.rate-limit.requests-per-second",
+      "type": "java.lang.Double",
+      "description": "Token refill rate per second for the challenge rate limiter. Controls the sustained request rate allowed per client IP before 402 challenges are throttled.",
+      "defaultValue": 10.0
+    },
+    {
+      "name": "paygate.rate-limit.burst-size",
+      "type": "java.lang.Integer",
+      "description": "Maximum burst size (token bucket capacity) for the challenge rate limiter. Allows short bursts of requests above the sustained rate before throttling kicks in.",
+      "defaultValue": 20
+    },
+    {
+      "name": "paygate.lightning.timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "Global timeout in seconds for Lightning backend RPC/HTTP calls. Used as the default for both LND and LNbits backends. Backend-specific properties (paygate.lnd.rpc-deadline-seconds, paygate.lnbits.request-timeout-seconds) override this value when set.",
+      "defaultValue": 5
+    },
+    {
+      "name": "paygate.lnbits.request-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "HTTP request timeout in seconds for LNbits API calls. Overrides paygate.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."
+    },
+    {
+      "name": "paygate.lnbits.connect-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "TCP connect timeout in seconds for the LNbits HTTP client. Defaults to 10 seconds if not set.",
+      "defaultValue": 10
+    },
+    {
+      "name": "paygate.lnd.rpc-deadline-seconds",
+      "type": "java.lang.Integer",
+      "description": "Deadline in seconds for individual LND gRPC calls. Overrides paygate.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."
+    },
+    {
+      "name": "paygate.lnbits.url",
+      "type": "java.lang.String",
+      "description": "Base URL of the LNbits instance (e.g., https://lnbits.example.com). Required when paygate.backend=lnbits."
+    },
+    {
+      "name": "paygate.lnbits.api-key",
+      "type": "java.lang.String",
+      "description": "LNbits admin API key for invoice creation and payment lookup. Required when paygate.backend=lnbits. Keep this value secret."
+    },
+    {
+      "name": "paygate.lnd.host",
+      "type": "java.lang.String",
+      "description": "Hostname or IP address of the LND gRPC endpoint. Required when paygate.backend=lnd.",
+      "defaultValue": "localhost"
+    },
+    {
+      "name": "paygate.lnd.port",
+      "type": "java.lang.Integer",
+      "description": "Port number of the LND gRPC endpoint.",
+      "defaultValue": 10009
+    },
+    {
+      "name": "paygate.lnd.tls-cert-path",
+      "type": "java.lang.String",
+      "description": "File system path to the LND TLS certificate (tls.cert). Required when paygate.backend=lnd for secure gRPC connections."
+    },
+    {
+      "name": "paygate.lnd.macaroon-path",
+      "type": "java.lang.String",
+      "description": "File system path to the LND admin macaroon file (admin.macaroon). Required when paygate.backend=lnd for authenticated gRPC calls."
+    },
+    {
+      "name": "paygate.lnd.keep-alive-time-seconds",
+      "type": "java.lang.Integer",
+      "description": "Interval in seconds between gRPC keepalive pings sent to the LND node. Helps detect broken connections and keep the channel alive through firewalls and load balancers.",
+      "defaultValue": 60
+    },
+    {
+      "name": "paygate.lnd.keep-alive-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "Timeout in seconds to wait for a keepalive ping acknowledgement from the LND node. If no response is received within this duration, the connection is considered dead.",
+      "defaultValue": 20
+    },
+    {
+      "name": "paygate.lnd.idle-timeout-minutes",
+      "type": "java.lang.Integer",
+      "description": "Duration in minutes after which an idle gRPC connection to the LND node is closed. Helps free resources when the connection is not actively used.",
+      "defaultValue": 5
+    },
+    {
+      "name": "paygate.lnd.max-inbound-message-size",
+      "type": "java.lang.Integer",
+      "description": "Maximum size in bytes for inbound gRPC messages from the LND node. Increase if LND responses (e.g., large channel lists) exceed the default 4 MB limit.",
+      "defaultValue": 4194304
+    },
+    {
+      "name": "paygate.metrics.max-endpoint-cardinality",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of distinct endpoint tag values tracked in L402 metrics before new values are replaced with the overflow sentinel. Prevents unbounded cardinality in TSDB backends.",
+      "defaultValue": 100
+    },
+    {
+      "name": "paygate.metrics.overflow-tag-value",
+      "type": "java.lang.String",
+      "description": "Tag value used for the endpoint dimension when the cardinality cap is exceeded. All overflow endpoints are bucketed under this single value.",
+      "defaultValue": "_other"
+    }
+  ],
+  "hints": [
+    {
+      "name": "paygate.security-mode",
+      "values": [
+        {
+          "value": "auto",
+          "description": "Auto-detect: use spring-security mode if Spring Security is on the classpath, otherwise use servlet mode."
+        },
+        {
+          "value": "servlet",
+          "description": "Force servlet filter mode. PaygateSecurityFilter handles all authentication and challenge issuance."
+        },
+        {
+          "value": "spring-security",
+          "description": "Force Spring Security mode. Uses L402AuthenticationFilter and L402AuthenticationEntryPoint within the Spring Security filter chain."
+        }
+      ]
+    },
+    {
+      "name": "paygate.backend",
+      "values": [
+        {
+          "value": "lnbits",
+          "description": "Use LNbits REST API as the Lightning backend."
+        },
+        {
+          "value": "lnd",
+          "description": "Use LND gRPC as the Lightning backend."
+        }
+      ]
+    },
+    {
+      "name": "paygate.root-key-store",
+      "values": [
+        {
+          "value": "file",
+          "description": "Persist root keys to the file system at the configured path."
+        },
+        {
+          "value": "memory",
+          "description": "Keep root keys in memory only. Keys are lost on application restart."
+        }
+      ]
+    }
+  ]
+}

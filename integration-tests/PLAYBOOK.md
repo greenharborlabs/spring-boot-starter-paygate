@@ -49,7 +49,7 @@ bash scripts/setup-lnbits.sh
 This waits for LNbits to become healthy, creates a test wallet, and stores `LNBITS_API_KEY` in `.env`. After it finishes, restart the example app so it picks up the key:
 
 ```bash
-docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 ```
 
 **3. Run the automated smoke test:**
@@ -224,7 +224,7 @@ Same flow as scenario 1, but using the LNbits FakeWallet backend. The FakeWallet
 ```bash
 docker compose -f docker-compose-lnbits.yml up -d lnbits
 bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
 echo "App is ready."
@@ -349,7 +349,7 @@ bash scripts/setup-lnbits.sh
 
 # Start the app with a 30-second credential timeout
 L402_DEFAULT_TIMEOUT_SECONDS=30 \
-  docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+  docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
 echo "App is ready."
@@ -358,7 +358,7 @@ echo "App is ready."
 **Alternative:** If the timeout is not configurable via environment variable at the container level, modify the `@L402Protected` annotation or set it in `application.yml` and rebuild:
 
 ```bash
-# Override via Docker Compose environment (add to the l402-example-app service)
+# Override via Docker Compose environment (add to the paygate-example-app service)
 # L402_DEFAULT_TIMEOUT_SECONDS: "30"
 ```
 
@@ -424,7 +424,7 @@ docker compose -f docker-compose-lnbits.yml down -v
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| Still 200 after timeout | Timeout override not applied | Verify with `docker compose exec l402-example-app env \| grep TIMEOUT` |
+| Still 200 after timeout | Timeout override not applied | Verify with `docker compose exec paygate-example-app env \| grep TIMEOUT` |
 | 401 immediately | Credential validation failed | Check preimage extraction in step 3.2 |
 
 ---
@@ -439,7 +439,7 @@ Verify that the server rejects tampered macaroons and mismatched preimages.
 # Quick setup (if not already running)
 docker compose -f docker-compose-lnbits.yml up -d
 bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
 
 # Get a valid credential
@@ -679,7 +679,7 @@ Use LNbits for simplicity:
 ```bash
 docker compose -f docker-compose-lnbits.yml up -d
 bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
 ```
 
@@ -735,11 +735,11 @@ docker compose -f docker-compose-lnbits.yml down -v
 
 ## 7. Spring Security Integration Test
 
-Verify the L402 flow works with the `l402-spring-security` module, confirming that the `SecurityContext` is populated with an `L402AuthenticationToken`.
+Verify the L402 flow works with the `paygate-spring-security` module, confirming that the `SecurityContext` is populated with an `L402AuthenticationToken`.
 
 ### 7.1 Prerequisites
 
-The example app must include the `l402-spring-security` dependency and have Spring Security enabled. Verify the app configuration includes:
+The example app must include the `paygate-spring-security` dependency and have Spring Security enabled. Verify the app configuration includes:
 
 ```yaml
 # In the example app's application.yml or via environment variables
@@ -753,7 +753,7 @@ Use either LND or LNbits. This example uses LNbits:
 ```bash
 docker compose -f docker-compose-lnbits.yml up -d
 bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
 ```
 
@@ -802,7 +802,7 @@ echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
 **Expected:** If available, the response should show an `L402AuthenticationToken` with the token ID as the principal. If no such endpoint exists, verify via application logs:
 
 ```bash
-docker compose -f docker-compose-lnbits.yml logs l402-example-app | grep -i "L402Auth"
+docker compose -f docker-compose-lnbits.yml logs paygate-example-app | grep -i "L402Auth"
 ```
 
 ### 7.6 Verify that non-L402 auth headers are handled correctly
@@ -833,7 +833,7 @@ docker compose -f docker-compose-lnbits.yml down -v
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | 403 instead of 402 | Spring Security rejecting before L402 filter | Check filter order -- L402 filter must run before default auth |
-| 401 with valid L402 | `L402AuthenticationProvider` not registered | Verify `l402-spring-security` is on the classpath |
+| 401 with valid L402 | `L402AuthenticationProvider` not registered | Verify `paygate-spring-security` is on the classpath |
 | 200 without auth | Security not enabled | Check `spring.security.enabled` and `@EnableWebSecurity` |
 
 ---
@@ -849,7 +849,7 @@ Use LNbits for speed:
 ```bash
 docker compose -f docker-compose-lnbits.yml up -d
 bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits.yml up -d l402-example-app
+docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
 
 # Obtain a credential (same as scenario 2)
@@ -940,8 +940,8 @@ Verify byte-level compatibility between the Java macaroon implementation and the
 Clone or use the Go interop test utility. A minimal Go program is needed:
 
 ```bash
-mkdir -p /tmp/l402-go-interop
-cat > /tmp/l402-go-interop/main.go << 'GOEOF'
+mkdir -p /tmp/paygate-go-interop
+cat > /tmp/paygate-go-interop/main.go << 'GOEOF'
 package main
 
 import (
@@ -1014,15 +1014,15 @@ func main() {
 }
 GOEOF
 
-cat > /tmp/l402-go-interop/go.mod << 'MODEOF'
-module l402-go-interop
+cat > /tmp/paygate-go-interop/go.mod << 'MODEOF'
+module paygate-go-interop
 
 go 1.21
 
 require gopkg.in/macaroon.v2 v2.1.0
 MODEOF
 
-cd /tmp/l402-go-interop && go mod tidy && go build -o l402-go-interop .
+cd /tmp/paygate-go-interop && go mod tidy && go build -o paygate-go-interop .
 ```
 
 ### 9.2 Java-to-Go: Mint in Java, verify in Go
@@ -1039,7 +1039,7 @@ MACAROON=$(curl -sI "$PROTECTED_ENDPOINT" | \
 echo "Java macaroon: ${MACAROON:0:40}..."
 
 # Verify with Go
-/tmp/l402-go-interop/l402-go-interop verify "$MACAROON"
+/tmp/paygate-go-interop/paygate-go-interop verify "$MACAROON"
 ```
 
 **Expected:**
@@ -1049,20 +1049,20 @@ echo "Java macaroon: ${MACAROON:0:40}..."
 
 ### 9.3 Go-to-Java: Mint in Go, verify in Java
 
-This test requires access to the app's root key, which is only practical in test mode. The unit-level cross-language tests in `l402-core` (see `src/test/resources/go-macaroon-fixtures/`) provide more rigorous coverage of this direction.
+This test requires access to the app's root key, which is only practical in test mode. The unit-level cross-language tests in `paygate-core` (see `src/test/resources/go-macaroon-fixtures/`) provide more rigorous coverage of this direction.
 
 For a manual smoke test:
 
 ```bash
 # Mint a simple macaroon with Go
-GO_MACAROON=$(/tmp/l402-go-interop/l402-go-interop mint "test-root-key" "test-identifier")
+GO_MACAROON=$(/tmp/paygate-go-interop/paygate-go-interop mint "test-root-key" "test-identifier")
 echo "Go macaroon: ${GO_MACAROON:0:40}..."
 
 # The Java app cannot verify this directly (different root key),
 # but we can test deserialization via a dedicated test endpoint if available,
 # or via the unit test suite:
 cd /Users/mark/code/greenharborlabs/spring-boot-starter-l402
-./gradlew :l402-core:test --tests "*MacaroonInterop*" --tests "*GoMacaroon*"
+./gradlew :paygate-core:test --tests "*MacaroonInterop*" --tests "*GoMacaroon*"
 ```
 
 **Expected:** The unit tests that cover Go fixture files pass, confirming byte-level compatibility.
@@ -1070,7 +1070,7 @@ cd /Users/mark/code/greenharborlabs/spring-boot-starter-l402
 ### 9.4 Cleanup
 
 ```bash
-rm -rf /tmp/l402-go-interop
+rm -rf /tmp/paygate-go-interop
 ```
 
 ### Troubleshooting
@@ -1116,10 +1116,10 @@ curl -v -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" "$PROTECTED_ENDPOINT"
 
 ```bash
 # LND stack
-docker compose -f docker-compose-lnd.yml logs -f l402-example-app
+docker compose -f docker-compose-lnd.yml logs -f paygate-example-app
 
 # LNbits stack
-docker compose -f docker-compose-lnbits.yml logs -f l402-example-app
+docker compose -f docker-compose-lnbits.yml logs -f paygate-example-app
 ```
 
 ### Reset everything
