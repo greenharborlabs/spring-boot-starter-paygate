@@ -1,5 +1,8 @@
 package com.greenharborlabs.paygate.spring;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -37,6 +40,10 @@ public class PaygateProperties {
     private boolean testMode = false;
 
     private boolean trustForwardedHeaders = false;
+
+    private List<String> trustedProxyAddresses = new ArrayList<>();
+
+    private Caveat caveat = new Caveat();
 
     private RateLimit rateLimit = new RateLimit();
 
@@ -184,6 +191,22 @@ public class PaygateProperties {
 
     public void setTrustForwardedHeaders(boolean trustForwardedHeaders) {
         this.trustForwardedHeaders = trustForwardedHeaders;
+    }
+
+    public List<String> getTrustedProxyAddresses() {
+        return trustedProxyAddresses;
+    }
+
+    public void setTrustedProxyAddresses(List<String> trustedProxyAddresses) {
+        this.trustedProxyAddresses = trustedProxyAddresses;
+    }
+
+    public Caveat getCaveat() {
+        return caveat;
+    }
+
+    public void setCaveat(Caveat caveat) {
+        this.caveat = caveat;
     }
 
     /**
@@ -449,6 +472,22 @@ public class PaygateProperties {
 
         public void setOverflowTagValue(String overflowTagValue) {
             this.overflowTagValue = overflowTagValue;
+        }
+    }
+
+    /**
+     * Caveat configuration bound from {@code paygate.caveat.*}.
+     */
+    public static class Caveat {
+
+        private int maxValuesPerCaveat = 50;
+
+        public int getMaxValuesPerCaveat() {
+            return maxValuesPerCaveat;
+        }
+
+        public void setMaxValuesPerCaveat(int maxValuesPerCaveat) {
+            this.maxValuesPerCaveat = maxValuesPerCaveat;
         }
     }
 }
