@@ -9,14 +9,9 @@ import java.lang.annotation.Target;
 /**
  * Marks a controller method as requiring payment before access is granted.
  *
- * <p>This is the protocol-neutral equivalent of {@link PaygateProtected}.
- * When applied, requests to the annotated endpoint must include a valid
+ * <p>When applied, requests to the annotated endpoint must include a valid
  * payment credential in the {@code Authorization} header or a 402 Payment Required
  * response will be returned with an invoice for the specified price.
- *
- * <p>If both {@code @PaymentRequired} and {@code @PaygateProtected} are present
- * on the same method, {@code @PaymentRequired} takes precedence and a warning
- * is logged.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)

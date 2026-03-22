@@ -2,7 +2,7 @@
 
 Optional [Spring Security](https://spring.io/projects/spring-security) integration for the `spring-boot-starter-paygate` project. This module bridges L402 payment authentication into Spring Security's filter chain, providing an `AuthenticationFilter`, `AuthenticationProvider`, and `AuthenticationToken` that let you protect endpoints using standard Spring Security patterns -- `SecurityFilterChain`, `@PreAuthorize`, role-based access, and the `SecurityContextHolder`.
 
-If you do not use Spring Security, you do not need this module. The base `paygate-spring-autoconfigure` module provides a standalone servlet `Filter` (`PaygateSecurityFilter`) and `@PaygateProtected` annotation that work without Spring Security on the classpath.
+If you do not use Spring Security, you do not need this module. The base `paygate-spring-autoconfigure` module provides a standalone servlet `Filter` (`PaygateSecurityFilter`) and `@PaymentRequired` annotation that work without Spring Security on the classpath.
 
 ---
 
@@ -27,11 +27,11 @@ If you do not use Spring Security, you do not need this module. The base `paygat
 
 Use `paygate-spring-security` when your application already uses Spring Security and you want L402 authentication to participate in the security filter chain alongside other authentication mechanisms (OAuth2, HTTP Basic, form login, etc.).
 
-Use the base `paygate-spring-autoconfigure` module (with `@PaygateProtected`) when you have a simpler setup without Spring Security, or when you want annotation-driven L402 protection that operates independently of any security framework.
+Use the base `paygate-spring-autoconfigure` module (with `@PaymentRequired`) when you have a simpler setup without Spring Security, or when you want annotation-driven L402 protection that operates independently of any security framework.
 
 | Scenario | Recommended Module |
 |----------|-------------------|
-| No Spring Security dependency | `paygate-spring-autoconfigure` with `@PaygateProtected` |
+| No Spring Security dependency | `paygate-spring-autoconfigure` with `@PaymentRequired` |
 | Spring Security is present, L402 is the only auth mechanism | `paygate-spring-security` |
 | Spring Security with mixed auth (L402 + OAuth2/JWT/Basic) | `paygate-spring-security` |
 | Need `@PreAuthorize` expressions based on L402 caveats | `paygate-spring-security` |
@@ -408,19 +408,19 @@ L402 tokens can carry fine-grained capabilities that restrict what a paid creden
 
 ### How Capabilities Are Minted
 
-When an endpoint is configured with a capability via `@PaygateProtected(capability = "analyze")`, the `PaygateChallengeService` includes a `{serviceName}_capabilities` caveat in the minted macaroon. For example, with `paygate.service-name=myapi`:
+When an endpoint is configured with a capability via `@PaymentRequired(capability = "analyze")`, the `PaygateChallengeService` includes a `{serviceName}_capabilities` caveat in the minted macaroon. For example, with `paygate.service-name=myapi`:
 
 ```
 myapi_capabilities = analyze
 ```
 
-Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@PaygateProtected` without `capability`, or `capability = ""`), no capabilities caveat is added.
+Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@PaymentRequired` without `capability`, or `capability = ""`), no capabilities caveat is added.
 
 ### How Capabilities Are Enforced
 
 Capability enforcement happens at two levels:
 
-1. **Macaroon verification (core layer):** The `L402AuthenticationProvider` builds an `L402VerificationContext` with the `requestedCapability` resolved from the endpoint's `@PaygateProtected` configuration. The `CapabilitiesCaveatVerifier` checks that the requested capability is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
+1. **Macaroon verification (core layer):** The `L402AuthenticationProvider` builds an `L402VerificationContext` with the `requestedCapability` resolved from the endpoint's `@PaymentRequired` configuration. The `CapabilitiesCaveatVerifier` checks that the requested capability is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
 
 2. **Spring Security authorization (security layer):** The `L402AuthenticationToken.authenticated()` factory method parses the `{serviceName}_capabilities` caveat and maps each capability to a `GrantedAuthority` named `L402_CAPABILITY_{name}`. These authorities are available to `@PreAuthorize` expressions and `authorizeHttpRequests` rules.
 
@@ -448,7 +448,7 @@ public AnalysisResult analyzeAlt() { ... }
 Capability enforcement is fully backward-compatible:
 
 - **Tokens without capabilities caveats** receive only `ROLE_L402`. No `L402_CAPABILITY_*` authorities are added. Existing tokens continue to work for endpoints that do not require a specific capability.
-- **Endpoints without a capability configured** (`@PaygateProtected` without `capability`) do not trigger capability verification. The `CapabilitiesCaveatVerifier` receives a `null` requested capability and passes without checking.
+- **Endpoints without a capability configured** (`@PaymentRequired` without `capability`) do not trigger capability verification. The `CapabilitiesCaveatVerifier` receives a `null` requested capability and passes without checking.
 - **Existing `hasRole('L402')` rules** are unaffected. Capability authorities are additive.
 
 ---
@@ -458,7 +458,7 @@ Capability enforcement is fully backward-compatible:
 | Aspect | `paygate-spring-autoconfigure` (`PaygateSecurityFilter`) | `paygate-spring-security` |
 |--------|---------------------------------------------------|----------------------|
 | Spring Security dependency | Not required | Required |
-| Protection mechanism | `@PaygateProtected` annotation on controller methods | `SecurityFilterChain` with `authorizeHttpRequests` |
+| Protection mechanism | `@PaymentRequired` annotation on controller methods | `SecurityFilterChain` with `authorizeHttpRequests` |
 | Filter type | Jakarta `Filter` registered via `FilterRegistrationBean` | `OncePerRequestFilter` added to Spring Security filter chain |
 | Invoice generation | Built-in: generates 402 response with invoice | Built-in via `L402AuthenticationEntryPoint`: generates 402 response with invoice when configured as the exception handling entry point |
 | Mixed auth support | L402 only | L402 + OAuth2 + JWT + Basic + any Spring Security provider |
@@ -527,7 +527,7 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http,
 }
 ```
 
-If the requested path is not registered in the `PaygateEndpointRegistry` (i.e., it has no `@PaygateProtected` annotation), the entry point returns a plain 401 Unauthorized response instead of a 402 challenge.
+If the requested path is not registered in the `PaygateEndpointRegistry` (i.e., it has no `@PaymentRequired` annotation), the entry point returns a plain 401 Unauthorized response instead of a 402 challenge.
 
 ---
 

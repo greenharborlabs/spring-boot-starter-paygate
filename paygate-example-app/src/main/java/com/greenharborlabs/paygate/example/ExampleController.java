@@ -2,7 +2,6 @@ package com.greenharborlabs.paygate.example;
 
 import java.time.Instant;
 
-import com.greenharborlabs.paygate.spring.PaygateProtected;
 import com.greenharborlabs.paygate.spring.PaymentRequired;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -40,13 +39,13 @@ public class ExampleController {
         );
     }
 
-    @PaygateProtected(priceSats = 10, timeoutSeconds = 3600)
+    @PaymentRequired(priceSats = 10, timeoutSeconds = 3600)
     @GetMapping(value = "/data", produces = MediaType.APPLICATION_JSON_VALUE)
     public DataResponse data() {
         return new DataResponse("premium content", Instant.now().toString());
     }
 
-    @PaygateProtected(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
+    @PaymentRequired(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
     @PostMapping(value = "/analyze", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     public AnalyzeResponse analyze(@RequestBody AnalyzeRequest request) {

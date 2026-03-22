@@ -14,10 +14,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Registry of L402-protected endpoints. Supports both manual registration via
+ * Registry of payment-protected endpoints. Supports both manual registration via
  * {@link #register(PaygateEndpointConfig)} and automatic scanning of
- * {@link PaygateProtected} and {@link PaymentRequired} annotations from
- * Spring MVC handler mappings.
+ * {@link PaymentRequired} annotations from Spring MVC handler mappings.
  *
  * <p>Path matching supports both exact paths and Spring path patterns
  * (e.g. {@code /api/items/{id}}).
@@ -105,11 +104,7 @@ public class PaygateEndpointRegistry {
     }
 
     /**
-     * Scans all handler methods annotated with {@link PaygateProtected} and/or
-     * {@link PaymentRequired} and registers them.
-     *
-     * <p>If a method carries both annotations, {@link PaymentRequired} takes precedence
-     * and a warning is logged.
+     * Scans all handler methods annotated with {@link PaymentRequired} and registers them.
      *
      * @param handlerMapping the Spring MVC request mapping handler mapping
      */
@@ -118,18 +113,9 @@ public class PaygateEndpointRegistry {
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : methods.entrySet()) {
             HandlerMethod handlerMethod = entry.getValue();
             PaymentRequired paymentRequired = handlerMethod.getMethodAnnotation(PaymentRequired.class);
-            PaygateProtected paygateProtected = handlerMethod.getMethodAnnotation(PaygateProtected.class);
 
-            if (paymentRequired == null && paygateProtected == null) {
+            if (paymentRequired == null) {
                 continue;
-            }
-
-            if (paymentRequired != null && paygateProtected != null) {
-                log.log(System.Logger.Level.WARNING,
-                        "Method {0}#{1} has both @PaymentRequired and @PaygateProtected; "
-                                + "using @PaymentRequired values",
-                        handlerMethod.getBeanType().getSimpleName(),
-                        handlerMethod.getMethod().getName());
             }
 
             RequestMappingInfo mappingInfo = entry.getKey();
@@ -143,18 +129,10 @@ public class PaygateEndpointRegistry {
 
             for (String pattern : patterns) {
                 if (httpMethods.isEmpty()) {
-                    if (paymentRequired != null) {
-                        register(toConfig("*", pattern, paymentRequired));
-                    } else {
-                        register(toConfig("*", pattern, paygateProtected));
-                    }
+                    register(toConfig("*", pattern, paymentRequired));
                 } else {
                     for (org.springframework.web.bind.annotation.RequestMethod httpMethod : httpMethods) {
-                        if (paymentRequired != null) {
-                            register(toConfig(httpMethod.name(), pattern, paymentRequired));
-                        } else {
-                            register(toConfig(httpMethod.name(), pattern, paygateProtected));
-                        }
+                        register(toConfig(httpMethod.name(), pattern, paymentRequired));
                     }
                 }
             }
@@ -173,21 +151,6 @@ public class PaygateEndpointRegistry {
      */
     public int size() {
         return configs.size();
-    }
-
-    private PaygateEndpointConfig toConfig(String method, String path, PaygateProtected annotation) {
-        long timeout = annotation.timeoutSeconds() == -1
-                ? defaultTimeoutSeconds
-                : annotation.timeoutSeconds();
-        return new PaygateEndpointConfig(
-                method,
-                path,
-                annotation.priceSats(),
-                timeout,
-                annotation.description(),
-                annotation.pricingStrategy(),
-                annotation.capability()
-        );
     }
 
     private PaygateEndpointConfig toConfig(String method, String path, PaymentRequired annotation) {

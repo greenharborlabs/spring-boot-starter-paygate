@@ -180,7 +180,7 @@ class PaygateMetricsTest {
     @RestController
     static class TestController {
 
-        @PaygateProtected(priceSats = 21, description = "Paid endpoint")
+        @PaymentRequired(priceSats = 21, description = "Paid endpoint")
         @GetMapping(PROTECTED_PATH)
         String paidEndpoint() {
             return "paid-content";

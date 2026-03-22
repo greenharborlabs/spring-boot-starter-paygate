@@ -91,7 +91,7 @@ implementation 'com.greenharborlabs:paygate-spring-boot-starter:0.1.0'
     @RequestMapping("/api/v1")
     public class MyController {
 
-        @PaygateProtected(priceSats = 10)
+        @PaymentRequired(priceSats = 10)
         @GetMapping("/premium")
         public Map<String, String> premium() {
             return Map.of("data", "premium content");
@@ -137,7 +137,7 @@ All properties live under the `paygate.*` prefix. The starter auto-configures de
 | `paygate.enabled` | `false` | Master switch. Must be `true` to activate L402 protection. |
 | `paygate.backend` | -- | `lnbits` or `lnd`. Determines which backend module is used. |
 | `paygate.service-name` | -- | Service name embedded in macaroon caveats. |
-| `paygate.default-price-sats` | `10` | Default price in satoshis when `@PaygateProtected` does not specify one. |
+| `paygate.default-price-sats` | `10` | Default price in satoshis when `@PaymentRequired` does not specify one. |
 | `paygate.default-timeout-seconds` | `3600` | Default credential validity period (1 hour). |
 | `paygate.root-key-store` | `file` | Root key storage: `file` (persistent) or `memory` (ephemeral). |
 | `paygate.root-key-store-path` | `~/.paygate/keys` | File path for persistent root key storage. |

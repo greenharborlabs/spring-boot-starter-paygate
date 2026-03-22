@@ -43,7 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * TDD test for pricing strategy fallback behavior (T087).
  *
- * <p>Verifies that when {@code @PaygateProtected(priceSats = 50, pricingStrategy = "nonExistentPricer")}
+ * <p>Verifies that when {@code @PaymentRequired(priceSats = 50, pricingStrategy = "nonExistentPricer")}
  * references a bean name that does not exist in the application context, the system falls back
  * to the static {@code priceSats} value of 50 rather than failing.
  *
@@ -136,7 +136,7 @@ class PricingFallbackTest {
     @RestController
     static class PricingFallbackController {
 
-        @PaygateProtected(priceSats = 50, pricingStrategy = "nonExistentPricer")
+        @PaymentRequired(priceSats = 50, pricingStrategy = "nonExistentPricer")
         @GetMapping(FALLBACK_PATH)
         String fallbackPriceEndpoint() {
             return "fallback-content";

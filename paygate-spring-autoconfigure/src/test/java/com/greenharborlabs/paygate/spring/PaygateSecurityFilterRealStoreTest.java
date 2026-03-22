@@ -210,7 +210,7 @@ class PaygateSecurityFilterRealStoreTest {
     @RestController
     static class RealStoreTestController {
 
-        @PaygateProtected(priceSats = 10, description = "Real store test endpoint")
+        @PaymentRequired(priceSats = 10, description = "Real store test endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "real-store-content";

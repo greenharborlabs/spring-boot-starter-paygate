@@ -544,7 +544,7 @@ class PaygateRateLimitingTest {
     @RestController
     static class TestController {
 
-        @PaygateProtected(priceSats = 10, description = "Rate limited endpoint")
+        @PaymentRequired(priceSats = 10, description = "Rate limited endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "protected-content";

@@ -311,7 +311,7 @@ public ManagedChannel lndManagedChannel() {
 
 Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LndBackend` directly -- the `PaygateSecurityFilter` calls it automatically when:
 
-1. A request hits an `@PaygateProtected` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
+1. A request hits an `@PaymentRequired` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
 2. A request presents L402 credentials, triggering `lookupInvoice()` to verify the payment was made
 3. The health indicator or filter checks backend availability via `isHealthy()`
 
@@ -322,7 +322,7 @@ Once configured, the module works transparently with the rest of the L402 stack.
 @RequestMapping("/api/v1")
 public class MyController {
 
-    @PaygateProtected(priceSats = 10)
+    @PaymentRequired(priceSats = 10)
     @GetMapping("/premium")
     public Map<String, String> premium() {
         return Map.of("data", "premium content");

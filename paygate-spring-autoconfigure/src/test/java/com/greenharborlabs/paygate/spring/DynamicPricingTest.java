@@ -42,9 +42,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * T086: Verifies that dynamic pricing via {@link PaygatePricingStrategy} overrides
- * the static {@code priceSats} value from the {@link PaygateProtected} annotation.
+ * the static {@code priceSats} value from the {@link PaymentRequired} annotation.
  *
- * <p>Scenario: {@code @PaygateProtected(priceSats = 50, pricingStrategy = "myPricer")}
+ * <p>Scenario: {@code @PaymentRequired(priceSats = 50, pricingStrategy = "myPricer")}
  * with a bean "myPricer" returning 150 must produce an invoice for 150 sats,
  * not the annotation's default of 50.
  */
@@ -176,7 +176,7 @@ class DynamicPricingTest {
     @RestController
     static class DynamicPriceController {
 
-        @PaygateProtected(priceSats = 50, pricingStrategy = "myPricer")
+        @PaymentRequired(priceSats = 50, pricingStrategy = "myPricer")
         @GetMapping(DYNAMIC_PATH)
         String dynamicPriceEndpoint() {
             return "dynamic-content";

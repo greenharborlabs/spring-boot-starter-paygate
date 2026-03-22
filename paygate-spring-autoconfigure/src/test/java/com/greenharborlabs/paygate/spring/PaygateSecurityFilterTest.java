@@ -184,13 +184,13 @@ class PaygateSecurityFilterTest {
     @RestController
     static class TestController {
 
-        @PaygateProtected(priceSats = 10, description = "Test protected endpoint")
+        @PaymentRequired(priceSats = 10, description = "Test protected endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "protected-content";
         }
 
-        @PaygateProtected(priceSats = 10, description = "Capability protected endpoint", capability = "search")
+        @PaymentRequired(priceSats = 10, description = "Capability protected endpoint", capability = "search")
         @GetMapping(CAPABILITY_PROTECTED_PATH)
         String capabilityProtectedEndpoint() {
             return "capability-protected-content";

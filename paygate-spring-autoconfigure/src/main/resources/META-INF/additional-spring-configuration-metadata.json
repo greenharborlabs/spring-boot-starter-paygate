@@ -14,7 +14,7 @@
     {
       "name": "paygate.default-price-sats",
       "type": "java.lang.Long",
-      "description": "Default price in satoshis charged for L402-protected endpoints. Individual endpoints can override this via @PaygateProtected annotation or a custom PaygatePricingStrategy.",
+      "description": "Default price in satoshis charged for payment-protected endpoints. Individual endpoints can override this via @PaymentRequired annotation or a custom PaygatePricingStrategy.",
       "defaultValue": 10
     },
     {

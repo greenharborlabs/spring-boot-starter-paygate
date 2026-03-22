@@ -188,8 +188,7 @@ The `PaymentProtocol` SPI (`paygate-api`) is the extension point. Each protocol 
 ## Features
 
 - **Dual-protocol support** -- L402 + MPP via the `PaymentProtocol` SPI; both served simultaneously with multiple `WWW-Authenticate` headers
-- **Annotation-driven** -- protect any Spring MVC endpoint with `@PaygateProtected(priceSats = 10)` or the protocol-neutral `@PaymentRequired(priceSats = 10)`
-- **`@PaymentRequired` annotation** -- protocol-neutral alternative to `@PaygateProtected`, works with any enabled protocol
+- **Annotation-driven** -- protect any Spring MVC endpoint with `@PaymentRequired(priceSats = 10)`
 - **MPP challenge binding** -- HMAC-SHA256 stateless challenge verification (no credential cache needed for MPP)
 - **`Payment-Receipt` response header** -- MPP returns a receipt after successful validation as proof of payment
 - **Delegation caveat verifiers** -- `path`, `method`, `client_ip` caveats with glob matching (`*` and `**`) and IPv6 normalization
@@ -269,13 +268,13 @@ paygate:
 @RequestMapping("/api/v1")
 public class PremiumController {
 
-    @PaygateProtected(priceSats = 10)
+    @PaymentRequired(priceSats = 10)
     @GetMapping("/data")
     public DataResponse getData() {
         return new DataResponse("premium content");
     }
 
-    @PaygateProtected(priceSats = 50, description = "AI analysis")
+    @PaymentRequired(priceSats = 50, description = "AI analysis")
     @PostMapping("/analyze")
     public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
         // expensive computation here
@@ -286,21 +285,7 @@ public class PremiumController {
 
 That is it. Unauthenticated requests to `/api/v1/data` now receive a 402 response with a Lightning invoice. After payment, the client includes the credential in the `Authorization` header and receives the content.
 
-Endpoints without `@PaygateProtected` are unaffected and pass through normally.
-
-### `@PaymentRequired` -- Protocol-Neutral Alternative
-
-`@PaymentRequired` is a protocol-neutral alternative to `@PaygateProtected`. Both annotations work identically -- the only difference is naming. Use `@PaymentRequired` when you want to emphasize that the endpoint works with any enabled protocol (L402, MPP, or both):
-
-```java
-@PaymentRequired(priceSats = 5, description = "quote")
-@GetMapping("/quote")
-public QuoteResponse getQuote() {
-    return new QuoteResponse("...");
-}
-```
-
-If both `@PaymentRequired` and `@PaygateProtected` are present on the same method, `@PaymentRequired` takes precedence and a warning is logged.
+Endpoints without `@PaymentRequired` are unaffected and pass through normally.
 
 ---
 
@@ -313,7 +298,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.enabled` | `boolean` | `false` | Master switch. Paygate filter is only active when `true`. |
 | `paygate.backend` | `string` | -- | Lightning backend to use: `lnbits` or `lnd`. |
 | `paygate.service-name` | `string` | -- | Service name embedded in macaroon caveats. Falls back to `"default"` at runtime if unset. |
-| `paygate.default-price-sats` | `long` | `10` | Fallback price when not specified in `@PaygateProtected`. |
+| `paygate.default-price-sats` | `long` | `10` | Fallback price when not specified in `@PaymentRequired`. |
 | `paygate.default-timeout-seconds` | `long` | `3600` | Credential TTL in seconds. |
 | `paygate.root-key-store` | `string` | `file` | Root key storage: `file` or `memory`. |
 | `paygate.root-key-store-path` | `string` | `~/.paygate/keys` | Directory for file-based root key storage. |
@@ -492,7 +477,7 @@ public class AnalysisPricingStrategy implements PaygatePricingStrategy {
 Reference the strategy by bean name in the annotation:
 
 ```java
-@PaygateProtected(priceSats = 50, pricingStrategy = "analysisPricer")
+@PaymentRequired(priceSats = 50, pricingStrategy = "analysisPricer")
 @PostMapping("/analyze")
 public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
     // ...
@@ -587,7 +572,7 @@ The `paygate.security-mode` property controls how L402 protection is applied. Th
 | Value | Behavior |
 |-------|----------|
 | `auto` (default) | Detects Spring Security on the classpath. If present, uses `spring-security` mode; otherwise, uses `servlet` mode. |
-| `servlet` | Forces the standalone `PaygateSecurityFilter` (from `paygate-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@PaygateProtected` handling. |
+| `servlet` | Forces the standalone `PaygateSecurityFilter` (from `paygate-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@PaymentRequired` handling. |
 | `spring-security` | Forces the Spring Security path. The standalone servlet filter is disabled. Fails at startup if Spring Security is not on the classpath. |
 
 The two modes are mutually exclusive -- only one is active at a time. Configure the mode explicitly when both modules are on the classpath and you want deterministic behavior:
@@ -753,8 +738,8 @@ The example app activates test mode via the `dev` profile (`application-dev.yml`
 |  HMAC-SHA256   |  |  PaygateAutoConfiguration  |  |  L402Authentication-    |
 |  Credential    |  |  PaygateSecurityFilter     |  |    Provider             |
 |    Store       |  |  PaygateProperties         |  |  L402Authentication-    |
-|  Lightning     |  |  @PaygateProtected         |  |    Filter               |
-|    Backend     |  |  @PaymentRequired          |  |  L402Authentication-    |
+|  Lightning     |  |  @PaymentRequired          |  |    Filter               |
+|    Backend     |  |                            |  |  L402Authentication-    |
 |    (interface) |  |  PaygatePricingStrategy    |  |    Token                |
 |  Delegation    |  |  PaygateMetrics            |  |                         |
 |    Caveats     |  |  PaygateActuatorEndpoint   |  |  Integrates with       |
@@ -923,7 +908,7 @@ Test coverage reports (JaCoCo) are generated at `build/reports/jacoco/` in each 
 
 ### Price Unit: Satoshis vs Milli-satoshis
 
-The L402 `protocol-specification.md` recommends expressing prices in milli-satoshis (1/1000th of a satoshi). This library uses **satoshis** as the price unit (`paygate.default-price-sats`, `@PaygateProtected(priceSats = ...)`).
+The L402 `protocol-specification.md` recommends expressing prices in milli-satoshis (1/1000th of a satoshi). This library uses **satoshis** as the price unit (`paygate.default-price-sats`, `@PaymentRequired(priceSats = ...)`).
 
 **Rationale:** Satoshis are the practical unit for most L402 use cases. BOLT 11 invoices handle the conversion to milli-satoshis internally. Using whole satoshis avoids fractional pricing complexity for the vast majority of API monetization scenarios where sub-satoshi granularity is unnecessary.
 

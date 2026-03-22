@@ -133,7 +133,7 @@ class FailClosedTest {
     @RestController
     static class FailClosedTestController {
 
-        @PaygateProtected(priceSats = 10, description = "Test protected endpoint")
+        @PaymentRequired(priceSats = 10, description = "Test protected endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "protected-content";

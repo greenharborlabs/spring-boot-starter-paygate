@@ -83,7 +83,7 @@ class BackwardCompatibilityTest {
     @RestController
     static class BackwardCompatController {
 
-        @PaygateProtected(priceSats = 42, description = "Backward compat protected endpoint")
+        @PaymentRequired(priceSats = 42, description = "Backward compat protected endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "protected-content";

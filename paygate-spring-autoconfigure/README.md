@@ -112,7 +112,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.enabled` | `boolean` | `false` | Master switch. When `false`, no L402 beans are registered. |
 | `paygate.backend` | `string` | -- | Lightning backend to use: `lnbits` or `lnd`. Must match a backend module on the classpath. |
 | `paygate.service-name` | `string` | `"default"` | Logical service name embedded in macaroon caveats. Used by `ServicesCaveatVerifier` for service-scoped authorization. |
-| `paygate.default-price-sats` | `long` | `10` | Default price in satoshis for L402-protected endpoints. Individual endpoints override this via `@PaygateProtected(priceSats = ...)`. |
+| `paygate.default-price-sats` | `long` | `10` | Default price in satoshis for payment-protected endpoints. Individual endpoints override this via `@PaymentRequired(priceSats = ...)`. |
 | `paygate.default-timeout-seconds` | `long` | `3600` | Default invoice expiry in seconds. |
 | `paygate.test-mode` | `boolean` | `false` | Enables test mode with an in-memory Lightning backend. Must not be used in production. See [Test Mode](#test-mode). |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Whether to read `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. See [Rate Limiting](#rate-limiting). |
@@ -215,7 +215,7 @@ The following table shows every bean created by `PaygateAutoConfiguration`, the 
 | `mppProtocol` | `PaymentProtocol` | `MppProtocol` on classpath + `MppEnabledCondition` + `@ConditionalOnMissingBean(name="mppProtocol")` | MPP protocol implementation with HMAC challenge binding secret |
 | `protocolStartupValidator` | `ProtocolStartupValidator` | Always (when auto-config is active) | Validates protocol configuration and secret requirements at startup |
 | `clientIpResolver` | `ClientIpResolver` | `@ConditionalOnMissingBean` | Resolves client IP from request, with optional X-Forwarded-For and trusted proxy support |
-| `l402EndpointRegistry` | `PaygateEndpointRegistry` | `@ConditionalOnMissingBean` | Scans `@PaygateProtected` and `@PaymentRequired` annotations from Spring MVC handler mappings |
+| `l402EndpointRegistry` | `PaygateEndpointRegistry` | `@ConditionalOnMissingBean` | Scans `@PaymentRequired` annotations from Spring MVC handler mappings |
 | `l402RateLimiter` | `PaygateRateLimiter` | `@ConditionalOnMissingBean` | `TokenBucketRateLimiter` with configured burst size and refill rate |
 | `l402EarningsTracker` | `PaygateEarningsTracker` | `@ConditionalOnMissingBean` | In-memory tracker; resets on restart |
 | `l402ChallengeService` | `PaygateChallengeService` | `@ConditionalOnMissingBean` | Encapsulates challenge generation and invoice creation logic |
@@ -284,7 +284,7 @@ Validated L402 credentials are cached to avoid re-verifying macaroon signatures 
 
 ## @PaymentRequired Annotation
 
-`@PaymentRequired` is a protocol-neutral alternative to `@PaygateProtected` for marking controller methods as requiring payment. Both annotations are supported; the difference is naming convention (protocol-neutral vs. L402-specific).
+`@PaymentRequired` marks controller methods as requiring payment. The `PaygateSecurityFilter` discovers annotated methods at startup and enforces payment for matching requests.
 
 ```java
 @PaymentRequired(priceSats = 5, description = "Premium quote of the day")
@@ -292,11 +292,9 @@ Validated L402 credentials are cached to avoid re-verifying macaroon signatures 
 public QuoteResponse quote() { ... }
 ```
 
-**Precedence rule:** If both `@PaymentRequired` and `@PaygateProtected` are present on the same method, `@PaymentRequired` takes precedence and a warning is logged.
-
 **Attributes:** `priceSats`, `timeoutSeconds` (default `-1` for global default), `description`, `pricingStrategy`, `capability`.
 
-`PaygateEndpointRegistry` scans for both annotations during `scanAnnotatedEndpoints()`.
+`PaygateEndpointRegistry` scans for `@PaymentRequired` annotations during `scanAnnotatedEndpoints()`.
 
 ---
 
@@ -324,7 +322,7 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 
 ### Request Flow
 
-1. **Match**: The filter checks if the request path and HTTP method match any `@PaygateProtected` endpoint in the `PaygateEndpointRegistry`. If no match, the request passes through untouched.
+1. **Match**: The filter checks if the request path and HTTP method match any `@PaymentRequired` endpoint in the `PaygateEndpointRegistry`. If no match, the request passes through untouched.
 2. **Credential validation**: If the `Authorization` header contains an `L402` or `LSAT` prefix, the credential is validated locally via `L402Validator` (no Lightning network call needed). Valid credentials pass through; malformed headers get HTTP 400; expired or invalid credentials get the appropriate error status.
 3. **Health check**: If no valid credential is present, the Lightning backend's `isHealthy()` is checked. If the backend is down, the filter returns HTTP 503 (fail-closed).
 4. **Rate limit check**: Before creating an invoice, the filter checks the `PaygateRateLimiter`. If the client IP has exceeded the rate limit, HTTP 429 is returned with a `Retry-After: 1` header.
@@ -529,10 +527,10 @@ curl -H "Authorization: L402 <macaroon_base64>:<preimage_hex>" \
 
 ## Dynamic Pricing
 
-Endpoints can use dynamic pricing by specifying a pricing strategy bean name in the `@PaygateProtected` annotation:
+Endpoints can use dynamic pricing by specifying a pricing strategy bean name in the `@PaymentRequired` annotation:
 
 ```java
-@PaygateProtected(priceSats = 10, pricingStrategy = "surgePricing")
+@PaymentRequired(priceSats = 10, pricingStrategy = "surgePricing")
 @GetMapping("/api/v1/premium")
 public Map<String, String> premium() {
     return Map.of("data", "premium content");
@@ -693,10 +691,9 @@ paygate-spring-autoconfigure/
     PaygateResponseWriter.java               Static utility for writing HTTP error responses
     PaygateSecurityModeResolver.java         Resolves servlet filter vs Spring Security mode
     PaygateSecurityFilter.java               Jakarta Servlet Filter enforcing payment auth
-    PaygateEndpointRegistry.java             Registry of @PaygateProtected/@PaymentRequired endpoints
+    PaygateEndpointRegistry.java             Registry of @PaymentRequired endpoints
     PaygateEndpointConfig.java               Immutable endpoint configuration record
-    PaygateProtected.java                    Annotation for marking protected endpoints (L402-style)
-    PaymentRequired.java                     Protocol-neutral annotation for protected endpoints
+    PaymentRequired.java                     Annotation for marking protected endpoints
     ClientIpResolver.java                    Client IP resolution with X-Forwarded-For and trusted proxy support
     PaygatePathUtils.java                    Path normalization utilities
     L402Validator                            (from paygate-core) Wired as a bean

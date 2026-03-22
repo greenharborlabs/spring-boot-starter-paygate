@@ -150,7 +150,7 @@ class LsatChallengeSchemeTest {
     @RestController
     static class SchemeTestController {
 
-        @PaygateProtected(priceSats = 10, description = "Scheme test endpoint")
+        @PaymentRequired(priceSats = 10, description = "Scheme test endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "scheme-test-content";

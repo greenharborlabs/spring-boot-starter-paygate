@@ -15,7 +15,7 @@ package com.greenharborlabs.paygate.example;
  *   participate in the security filter chain alongside those mechanisms.
  *
  *   If you only need L402 protection and do not use Spring Security, the
- *   default servlet filter mode with @PaygateProtected annotations is simpler
+ *   default servlet filter mode with @PaymentRequired annotations is simpler
  *   and requires no SecurityFilterChain configuration.
  *
  * TO ENABLE:
@@ -96,7 +96,7 @@ public class SecurityConfig {
 
     // --- Capability-Based Authorization with @PreAuthorize ---
     //
-    // When endpoints are annotated with @PaygateProtected(capability = "analyze"),
+    // When endpoints are annotated with @PaymentRequired(capability = "analyze"),
     // the minted macaroon includes a {serviceName}_capabilities caveat, and
     // the authenticated PaygateAuthenticationToken carries L402_CAPABILITY_*
     // GrantedAuthority entries. Use @PreAuthorize to enforce them:
@@ -110,7 +110,7 @@ public class SecurityConfig {
     //   @GetMapping("/api/v1/search")
     //   public SearchResult search() { ... }
     //
-    // If no capability is configured on the endpoint (@PaygateProtected without
+    // If no capability is configured on the endpoint (@PaymentRequired without
     // capability, or capability = ""), the token has only ROLE_L402 and
     // capability checks are permissive (backward-compatible).
 }

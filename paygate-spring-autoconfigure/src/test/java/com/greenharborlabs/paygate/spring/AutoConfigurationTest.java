@@ -126,7 +126,7 @@ class AutoConfigurationTest {
                 .withBean("testController", SentinelTimeoutController.class, SentinelTimeoutController::new)
                 .run(context -> {
                     PaygateEndpointRegistry registry = context.getBean(PaygateEndpointRegistry.class);
-                    // The controller endpoint uses @PaygateProtected(priceSats=5) with default timeoutSeconds=-1
+                    // The controller endpoint uses @PaymentRequired(priceSats=5) with default timeoutSeconds=-1
                     PaygateEndpointConfig config = registry.findConfig("GET", "/api/sentinel-test");
                     assertThat(config).isNotNull();
                     assertThat(config.timeoutSeconds()).isEqualTo(9999);
@@ -515,7 +515,7 @@ class AutoConfigurationTest {
     @org.springframework.web.bind.annotation.RestController
     static class SentinelTimeoutController {
 
-        @PaygateProtected(priceSats = 5)
+        @PaymentRequired(priceSats = 5)
         @org.springframework.web.bind.annotation.GetMapping("/api/sentinel-test")
         String sentinelEndpoint() {
             return "sentinel";
