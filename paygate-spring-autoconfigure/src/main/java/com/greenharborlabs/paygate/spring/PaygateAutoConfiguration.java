@@ -12,6 +12,9 @@ import com.greenharborlabs.paygate.core.macaroon.InMemoryRootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.ObservableRootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ClientIpCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.PathCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
@@ -170,8 +173,17 @@ public class PaygateAutoConfiguration {
         if (svcName == null || svcName.isBlank()) {
             svcName = "default";
         }
+        int maxValues = properties.getCaveat().getMaxValuesPerCaveat();
         return List.of(new ServicesCaveatVerifier(), new ValidUntilCaveatVerifier(svcName),
-                new CapabilitiesCaveatVerifier(svcName));
+                new CapabilitiesCaveatVerifier(svcName), new PathCaveatVerifier(maxValues),
+                new MethodCaveatVerifier(maxValues), new ClientIpCaveatVerifier(maxValues));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ClientIpResolver clientIpResolver(PaygateProperties properties) {
+        return new ClientIpResolver(properties.isTrustForwardedHeaders(),
+                properties.getTrustedProxyAddresses());
     }
 
     @Bean
@@ -221,11 +233,12 @@ public class PaygateAutoConfiguration {
                                                   L402Validator paygateValidator,
                                                   PaygateChallengeService paygateChallengeService,
                                                   PaygateProperties properties,
+                                                  @Autowired(required = false) ClientIpResolver clientIpResolver,
                                                   @Autowired(required = false) PaygateMetrics paygateMetrics,
                                                   @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
                                                   @Autowired(required = false) PaygateRateLimiter paygateRateLimiter) {
         return new PaygateSecurityFilter(registry, paygateValidator, paygateChallengeService,
-                properties.getServiceName(), paygateMetrics, paygateEarningsTracker, paygateRateLimiter);
+                properties.getServiceName(), clientIpResolver, paygateMetrics, paygateEarningsTracker, paygateRateLimiter);
     }
 
     @Bean

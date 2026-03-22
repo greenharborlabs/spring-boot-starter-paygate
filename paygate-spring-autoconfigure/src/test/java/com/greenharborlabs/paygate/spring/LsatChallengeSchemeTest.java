@@ -136,7 +136,7 @@ class LsatChallengeSchemeTest {
                     rootKeyStore, lightningBackendBean, null, null, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, "test-service",
-                    null, null, null);
+                    null, null, null, null);
         }
 
         @Bean

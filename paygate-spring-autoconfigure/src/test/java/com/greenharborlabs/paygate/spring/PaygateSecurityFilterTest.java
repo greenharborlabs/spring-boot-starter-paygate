@@ -167,7 +167,7 @@ class PaygateSecurityFilterTest {
                     rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, "test-service",
-                    null, paygateEarningsTracker, null);
+                    null, null, paygateEarningsTracker, null);
         }
 
         @Bean

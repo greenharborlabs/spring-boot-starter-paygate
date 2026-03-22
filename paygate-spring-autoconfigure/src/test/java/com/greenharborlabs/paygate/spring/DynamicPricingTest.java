@@ -162,7 +162,7 @@ class DynamicPricingTest {
                     rootKeyStore, lightningBackendBean, null, applicationContext, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, "test-service",
-                    null, null, null);
+                    null, null, null, null);
         }
 
         @Bean

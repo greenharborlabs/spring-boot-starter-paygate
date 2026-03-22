@@ -1,9 +1,11 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateSpringSecurityModeCondition;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -48,9 +50,11 @@ public class PaygateSecurityAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(PaygateAuthenticationFilter.class)
     @ConditionalOnBean(AuthenticationManager.class)
-    public PaygateAuthenticationFilter paygateAuthenticationFilter(AuthenticationManager authenticationManager,
-                                                                PaygateEndpointRegistry paygateEndpointRegistry) {
-        return new PaygateAuthenticationFilter(authenticationManager, paygateEndpointRegistry);
+    public PaygateAuthenticationFilter paygateAuthenticationFilter(
+            AuthenticationManager authenticationManager,
+            PaygateEndpointRegistry paygateEndpointRegistry,
+            @Autowired(required = false) ClientIpResolver clientIpResolver) {
+        return new PaygateAuthenticationFilter(authenticationManager, paygateEndpointRegistry, clientIpResolver);
     }
 
     @Bean

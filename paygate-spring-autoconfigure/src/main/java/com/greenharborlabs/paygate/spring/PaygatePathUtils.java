@@ -88,7 +88,17 @@ public final class PaygatePathUtils {
                 int hi = Character.digit(path.charAt(i + 1), 16);
                 int lo = Character.digit(path.charAt(i + 2), 16);
                 if (hi >= 0 && lo >= 0) {
-                    out.write((hi << 4) | lo);
+                    int decoded = (hi << 4) | lo;
+                    // Preserve %2F/%2f (encoded slash) per FR-003b — encoded slashes
+                    // must not become literal '/' so that PathCaveatVerifier can detect
+                    // path traversal via encoded slashes.
+                    if (decoded == '/') {
+                        out.write('%');
+                        out.write(path.charAt(i + 1));
+                        out.write(path.charAt(i + 2));
+                    } else {
+                        out.write(decoded);
+                    }
                     i += 3;
                 } else {
                     // Invalid hex digits — pass '%' through unchanged

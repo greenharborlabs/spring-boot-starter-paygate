@@ -214,6 +214,18 @@ class PaygateAuthenticationEntryPointTest {
     }
 
     @Test
+    void normalizePathPreservesEncodedSlash() {
+        // FR-003b: %2F must not be decoded to '/' — it must survive normalization
+        assertThat(PaygateAuthenticationEntryPoint.normalizePath("/api/v1%2Fbypass")).isEqualTo("/api/v1%2Fbypass");
+    }
+
+    @Test
+    void normalizePathPreservesLowercaseEncodedSlash() {
+        // FR-003b: %2f (lowercase) must also be preserved
+        assertThat(PaygateAuthenticationEntryPoint.normalizePath("/api/v1%2fbypass")).isEqualTo("/api/v1%2fbypass");
+    }
+
+    @Test
     void writes503WhenEndpointRegistryThrows() throws Exception {
         when(endpointRegistry.findConfig("GET", "/api/protected"))
                 .thenThrow(new RuntimeException("Registry broken"));

@@ -1,6 +1,8 @@
 package com.greenharborlabs.paygate.spring.security;
 
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygatePathUtils;
@@ -16,6 +18,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -37,13 +41,21 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
     private final AuthenticationManager authenticationManager;
     private final PaygateEndpointRegistry endpointRegistry;
+    private final ClientIpResolver clientIpResolver;
 
     public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
                                      PaygateEndpointRegistry endpointRegistry) {
+        this(authenticationManager, endpointRegistry, null);
+    }
+
+    public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
+                                     PaygateEndpointRegistry endpointRegistry,
+                                     ClientIpResolver clientIpResolver) {
         this.authenticationManager = Objects.requireNonNull(authenticationManager,
                 "authenticationManager must not be null");
         this.endpointRegistry = Objects.requireNonNull(endpointRegistry,
                 "endpointRegistry must not be null");
+        this.clientIpResolver = clientIpResolver;
     }
 
     @Override
@@ -60,8 +72,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         }
 
         var components = componentsOpt.get();
-        String capability = resolveCapability(request);
-        var unauthenticatedToken = new PaygateAuthenticationToken(components, capability);
+        String normalizedPath = PaygatePathUtils.normalizePath(request.getRequestURI());
+        String capability = resolveCapability(request, normalizedPath);
+        Map<String, String> requestMetadata = extractRequestMetadata(request, normalizedPath);
+        var unauthenticatedToken = new PaygateAuthenticationToken(components, capability, requestMetadata);
 
         try {
             Authentication authenticated = authenticationManager.authenticate(unauthenticatedToken);
@@ -82,16 +96,26 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
+    private Map<String, String> extractRequestMetadata(HttpServletRequest request, String normalizedPath) {
+        Map<String, String> metadata = new HashMap<>(3);
+        metadata.put(VerificationContextKeys.REQUEST_PATH, normalizedPath);
+        metadata.put(VerificationContextKeys.REQUEST_METHOD, request.getMethod());
+        String clientIp = clientIpResolver != null
+                ? clientIpResolver.resolve(request)
+                : request.getRemoteAddr();
+        metadata.put(VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
+        return metadata;
+    }
+
     /**
      * Resolves the capability for the current request by looking up the endpoint registry.
      * Returns {@code null} (permissive) if no config is found, the capability is blank,
      * or any error occurs during lookup.
      */
-    private String resolveCapability(HttpServletRequest request) {
+    private String resolveCapability(HttpServletRequest request, String normalizedPath) {
         try {
-            String path = PaygatePathUtils.normalizePath(request.getRequestURI());
             PaygateEndpointConfig config = endpointRegistry.findConfig(
-                    request.getMethod(), path);
+                    request.getMethod(), normalizedPath);
             if (config == null) {
                 return null;
             }

@@ -166,7 +166,7 @@ class PaygateMetricsTest {
                     rootKeyStore, lightningBackendBean, properties, applicationContext, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, "test-service",
-                    paygateMetrics, null, null);
+                    null, paygateMetrics, null, null);
         }
 
         @Bean
@@ -568,6 +568,206 @@ class PaygateMetricsTest {
     }
 
     // -----------------------------------------------------------------------
+    // Caveat verification metrics — timer and rejection counter
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("caveat verification metrics")
+    class CaveatVerificationMetrics {
+
+        @Test
+        @DisplayName("verify duration timer recorded on successful validation")
+        void verifyDurationTimerRecordedOnSuccess() throws Exception {
+            long before = timerCount("paygate.caveats.verify.duration");
+
+            mockMvc.perform(get(PROTECTED_PATH)
+                            .header("Authorization", buildValidAuthHeader()))
+                    .andExpect(status().isOk());
+
+            long after = timerCount("paygate.caveats.verify.duration");
+            assertThat(after).isEqualTo(before + 1);
+        }
+
+        @Test
+        @DisplayName("verify duration timer recorded on rejected validation")
+        void verifyDurationTimerRecordedOnRejection() throws Exception {
+            long before = timerCount("paygate.caveats.verify.duration");
+
+            mockMvc.perform(get(PROTECTED_PATH)
+                            .header("Authorization", buildInvalidAuthHeader()))
+                    .andExpect(status().isUnauthorized());
+
+            long after = timerCount("paygate.caveats.verify.duration");
+            assertThat(after).isEqualTo(before + 1);
+        }
+
+        @Test
+        @DisplayName("no verify duration timer recorded for non-L402 requests")
+        void noTimerForNonL402Requests() throws Exception {
+            long before = timerCount("paygate.caveats.verify.duration");
+
+            mockMvc.perform(get(PUBLIC_PATH))
+                    .andExpect(status().isOk());
+
+            long after = timerCount("paygate.caveats.verify.duration");
+            assertThat(after).isEqualTo(before);
+        }
+
+        @Test
+        @DisplayName("no verify duration timer recorded for 402 challenge (no auth header)")
+        void noTimerForChallengeRequests() throws Exception {
+            long before = timerCount("paygate.caveats.verify.duration");
+
+            mockMvc.perform(get(PROTECTED_PATH))
+                    .andExpect(status().isPaymentRequired());
+
+            long after = timerCount("paygate.caveats.verify.duration");
+            assertThat(after).isEqualTo(before);
+        }
+
+        @Test
+        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=path")
+        void recordCaveatRejectedPathType() {
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "path");
+
+            paygateMetrics.recordCaveatRejected("path");
+
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "path");
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=method")
+        void recordCaveatRejectedMethodType() {
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "method");
+
+            paygateMetrics.recordCaveatRejected("method");
+
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "method");
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=client_ip")
+        void recordCaveatRejectedClientIpType() {
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip");
+
+            paygateMetrics.recordCaveatRejected("client_ip");
+
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip");
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=escalation")
+        void recordCaveatRejectedEscalationType() {
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "escalation");
+
+            paygateMetrics.recordCaveatRejected("escalation");
+
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "escalation");
+            assertThat(after).isEqualTo(before + 1.0);
+        }
+
+        @Test
+        @DisplayName("each caveat_type tag is independent — incrementing one does not affect others")
+        void caveatTypeTagsAreIndependent() {
+            double pathBefore = counterValue("paygate.caveats.rejected", "caveat_type", "path");
+            double methodBefore = counterValue("paygate.caveats.rejected", "caveat_type", "method");
+            double clientIpBefore = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip");
+
+            paygateMetrics.recordCaveatRejected("path");
+            paygateMetrics.recordCaveatRejected("path");
+            paygateMetrics.recordCaveatRejected("method");
+
+            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "path"))
+                    .isEqualTo(pathBefore + 2.0);
+            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "method"))
+                    .isEqualTo(methodBefore + 1.0);
+            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "client_ip"))
+                    .isEqualTo(clientIpBefore);
+        }
+
+        @Test
+        @DisplayName("recordCaveatVerifyDuration records timer correctly")
+        void recordCaveatVerifyDuration() {
+            long before = timerCount("paygate.caveats.verify.duration");
+
+            paygateMetrics.recordCaveatVerifyDuration(1_000_000L);
+
+            long after = timerCount("paygate.caveats.verify.duration");
+            assertThat(after).isEqualTo(before + 1);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // classifyCaveatType — unit tests for caveat type classification
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("classifyCaveatType")
+    class ClassifyCaveatTypeTests {
+
+        @Test
+        @DisplayName("classifies path rejection messages correctly")
+        void classifiesPathRejection() {
+            assertThat(PaygateSecurityFilter.classifyCaveatType("Request path does not match any allowed path pattern"))
+                    .isEqualTo("path");
+            assertThat(PaygateSecurityFilter.classifyCaveatType("Invalid path pattern: bad glob"))
+                    .isEqualTo("path");
+            assertThat(PaygateSecurityFilter.classifyCaveatType("Request path contains encoded slash"))
+                    .isEqualTo("path");
+        }
+
+        @Test
+        @DisplayName("classifies method rejection messages correctly")
+        void classifiesMethodRejection() {
+            assertThat(PaygateSecurityFilter.classifyCaveatType("Request method does not match any allowed method"))
+                    .isEqualTo("method");
+            assertThat(PaygateSecurityFilter.classifyCaveatType("Empty method in caveat value"))
+                    .isEqualTo("method");
+        }
+
+        @Test
+        @DisplayName("classifies client_ip rejection messages correctly")
+        void classifiesClientIpRejection() {
+            assertThat(PaygateSecurityFilter.classifyCaveatType("Request client IP does not match any allowed IP"))
+                    .isEqualTo("client_ip");
+            assertThat(PaygateSecurityFilter.classifyCaveatType("Client IP missing from verification context"))
+                    .isEqualTo("client_ip");
+        }
+
+        @Test
+        @DisplayName("classifies escalation messages correctly")
+        void classifiesEscalation() {
+            assertThat(PaygateSecurityFilter.classifyCaveatType("caveat escalation detected for key: path"))
+                    .isEqualTo("escalation");
+        }
+
+        @Test
+        @DisplayName("escalation takes priority over other keywords")
+        void escalationTakesPriority() {
+            // escalation message may contain "key: path" but should classify as escalation
+            assertThat(PaygateSecurityFilter.classifyCaveatType("caveat escalation detected for key: path"))
+                    .isEqualTo("escalation");
+        }
+
+        @Test
+        @DisplayName("returns unknown for null message")
+        void returnsUnknownForNull() {
+            assertThat(PaygateSecurityFilter.classifyCaveatType(null))
+                    .isEqualTo("unknown");
+        }
+
+        @Test
+        @DisplayName("returns unknown for unrecognized message")
+        void returnsUnknownForUnrecognized() {
+            assertThat(PaygateSecurityFilter.classifyCaveatType("some other error"))
+                    .isEqualTo("unknown");
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Unprotected endpoint — should not increment any L402 counters
     // -----------------------------------------------------------------------
 
@@ -668,6 +868,11 @@ class PaygateMetricsTest {
     private double counterValue(String name, String... tags) {
         Counter counter = meterRegistry.find(name).tags(tags).counter();
         return counter != null ? counter.count() : 0.0;
+    }
+
+    private long timerCount(String name, String... tags) {
+        var timer = meterRegistry.find(name).tags(tags).timer();
+        return timer != null ? timer.count() : 0L;
     }
 
     private Double gaugeValue(String name, String... tags) {

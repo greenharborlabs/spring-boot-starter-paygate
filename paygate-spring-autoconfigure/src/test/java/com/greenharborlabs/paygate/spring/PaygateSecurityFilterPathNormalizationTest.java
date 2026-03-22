@@ -196,5 +196,52 @@ class PaygateSecurityFilterPathNormalizationTest {
             // U+00E9 (e-acute) = UTF-8 bytes C3 A9
             assertThat(PaygatePathUtils.percentDecodePath("%C3%A9")).isEqualTo("\u00e9");
         }
+
+        @Test
+        @DisplayName("FR-003b: preserves %2F (uppercase) encoded slash")
+        void preservesUppercaseEncodedSlash() {
+            assertThat(PaygatePathUtils.percentDecodePath("/api/v1%2Fbypass"))
+                    .isEqualTo("/api/v1%2Fbypass");
+        }
+
+        @Test
+        @DisplayName("FR-003b: preserves %2f (lowercase) encoded slash")
+        void preservesLowercaseEncodedSlash() {
+            assertThat(PaygatePathUtils.percentDecodePath("/api/v1%2fbypass"))
+                    .isEqualTo("/api/v1%2fbypass");
+        }
+
+        @Test
+        @DisplayName("FR-003b: still decodes %2E for traversal protection alongside preserved %2F")
+        void decodesDotsButPreservesSlashes() {
+            assertThat(PaygatePathUtils.percentDecodePath("/api/%2e%2e/v1%2Fbypass"))
+                    .isEqualTo("/api/../v1%2Fbypass");
+        }
+    }
+
+    @Nested
+    @DisplayName("normalizePath — %2F preservation (FR-003b)")
+    class NormalizePathEncodedSlash {
+
+        @Test
+        @DisplayName("FR-003b: %2F preserved through full normalization")
+        void encodedSlashPreservedThroughNormalization() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/v1%2Fbypass"))
+                    .isEqualTo("/api/v1%2Fbypass");
+        }
+
+        @Test
+        @DisplayName("FR-003b: %2f (lowercase) preserved through full normalization")
+        void lowercaseEncodedSlashPreservedThroughNormalization() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/v1%2fbypass"))
+                    .isEqualTo("/api/v1%2fbypass");
+        }
+
+        @Test
+        @DisplayName("FR-003b: %2E traversal still decoded and collapsed with %2F preserved")
+        void traversalDecodedWhileSlashPreserved() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/%2e%2e/v1%2Fbypass"))
+                    .isEqualTo("/v1%2Fbypass");
+        }
     }
 }

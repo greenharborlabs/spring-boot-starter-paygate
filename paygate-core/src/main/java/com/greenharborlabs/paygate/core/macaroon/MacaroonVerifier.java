@@ -48,7 +48,8 @@ public final class MacaroonVerifier {
                 throw new MacaroonVerificationException("signature verification failed");
             }
 
-            verifyCaveats(macaroon.caveats(), caveatVerifiers, context);
+            Map<String, CaveatVerifier> verifiersByKey = buildVerifierMap(caveatVerifiers);
+            verifyCaveats(macaroon.caveats(), verifiersByKey, context);
         } finally {
             KeyMaterial.zeroize(derivedKey, sig);
         }
@@ -61,6 +62,11 @@ public final class MacaroonVerifier {
      * For caveats whose key appears more than once, each subsequent occurrence must be
      * at least as restrictive as the previous one (monotonic restriction).
      *
+     * <p>This overload builds the verifier lookup map on each call. For repeated
+     * invocations with the same verifier list, prefer
+     * {@link #verifyCaveats(List, Map, L402VerificationContext)} with a pre-built map
+     * from {@link #buildVerifierMap(List)}.
+     *
      * @param caveats         the caveats to verify
      * @param caveatVerifiers registered verifiers for known caveat keys
      * @param context         verification context (service name, current time, etc.)
@@ -69,11 +75,24 @@ public final class MacaroonVerifier {
     public static void verifyCaveats(List<Caveat> caveats,
                                      List<CaveatVerifier> caveatVerifiers,
                                      L402VerificationContext context) {
-        Map<String, CaveatVerifier> verifiersByKey = new HashMap<>(caveatVerifiers.size());
-        for (CaveatVerifier cv : caveatVerifiers) {
-            verifiersByKey.put(cv.getKey(), cv);
-        }
+        verifyCaveats(caveats, buildVerifierMap(caveatVerifiers), context);
+    }
 
+    /**
+     * Verifies a list of caveats using a pre-built verifier lookup map.
+     *
+     * <p>Unknown caveats (no registered verifier for the key) are silently skipped.
+     * For caveats whose key appears more than once, each subsequent occurrence must be
+     * at least as restrictive as the previous one (monotonic restriction).
+     *
+     * @param caveats        the caveats to verify
+     * @param verifiersByKey pre-built map from caveat key to verifier (see {@link #buildVerifierMap(List)})
+     * @param context        verification context (service name, current time, etc.)
+     * @throws MacaroonVerificationException if a caveat escalation is detected or a verifier rejects
+     */
+    public static void verifyCaveats(List<Caveat> caveats,
+                                     Map<String, CaveatVerifier> verifiersByKey,
+                                     L402VerificationContext context) {
         Map<String, Caveat> lastSeenByKey = new HashMap<>();
         for (Caveat caveat : caveats) {
             CaveatVerifier verifier = verifiersByKey.get(caveat.key());
@@ -104,5 +123,21 @@ public final class MacaroonVerifier {
                                 + requestedCapability + "'", null);
             }
         }
+    }
+
+    /**
+     * Builds a lookup map from caveat key to verifier. The resulting map can be reused
+     * across multiple calls to {@link #verifyCaveats(List, Map, L402VerificationContext)}
+     * to avoid rebuilding it per request.
+     *
+     * @param caveatVerifiers the verifier list to index
+     * @return unmodifiable map from caveat key to verifier
+     */
+    public static Map<String, CaveatVerifier> buildVerifierMap(List<CaveatVerifier> caveatVerifiers) {
+        Map<String, CaveatVerifier> map = new HashMap<>(caveatVerifiers.size());
+        for (CaveatVerifier cv : caveatVerifiers) {
+            map.put(cv.getKey(), cv);
+        }
+        return Map.copyOf(map);
     }
 }

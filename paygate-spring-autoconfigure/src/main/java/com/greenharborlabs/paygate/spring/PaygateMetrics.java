@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -37,6 +38,8 @@ public class PaygateMetrics implements AutoCloseable {
     private final ConcurrentHashMap<String, Counter> revenueSatsCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> invoicesSettledCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<EvictionReason, Counter> evictionCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> caveatRejectedCounters = new ConcurrentHashMap<>();
+    private final Timer caveatVerifyTimer;
 
     public PaygateMetrics(MeterRegistry registry,
                        CredentialStore credentialStore,
@@ -68,6 +71,10 @@ public class PaygateMetrics implements AutoCloseable {
 
         Gauge.builder("paygate.lightning.healthy", this, self -> self.lastKnownHealthy ? 1.0 : 0.0)
                 .description("1=healthy, 0=unhealthy")
+                .register(registry);
+
+        this.caveatVerifyTimer = Timer.builder("paygate.caveats.verify.duration")
+                .description("Duration of caveat verification per request")
                 .register(registry);
     }
 
@@ -125,6 +132,27 @@ public class PaygateMetrics implements AutoCloseable {
      */
     public void recordRejected(String endpoint) {
         requestCounter(endpoint, "rejected").increment();
+    }
+
+    /**
+     * Records the duration of caveat verification in nanoseconds.
+     * Called after every successful or failed caveat verification attempt.
+     */
+    public void recordCaveatVerifyDuration(long nanos) {
+        caveatVerifyTimer.record(nanos, TimeUnit.NANOSECONDS);
+    }
+
+    /**
+     * Records a caveat rejection: increments {@code paygate.caveats.rejected}
+     * counter tagged with the caveat type (e.g. path, method, client_ip, escalation).
+     */
+    public void recordCaveatRejected(String caveatType) {
+        caveatRejectedCounters.computeIfAbsent(caveatType, ct ->
+                Counter.builder("paygate.caveats.rejected")
+                        .tag("caveat_type", ct)
+                        .description("Caveat verification rejections by type")
+                        .register(registry)
+        ).increment();
     }
 
     private Counter requestCounter(String endpoint, String result) {

@@ -4,8 +4,14 @@ import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
+import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ClientIpCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.PathCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +20,8 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -170,6 +178,102 @@ class AutoConfigurationTest {
             assertThat(store).isInstanceOf(
                     com.greenharborlabs.paygate.core.macaroon.ObservableRootKeyStore.class);
         });
+    }
+
+    @Test
+    @DisplayName("default caveatVerifiers contains delegation verifiers (PathCaveatVerifier, MethodCaveatVerifier, ClientIpCaveatVerifier)")
+    @SuppressWarnings("unchecked")
+    void defaultCaveatVerifiersContainsDelegationVerifiers() {
+        contextRunner.run(context -> {
+            List<CaveatVerifier> verifiers = (List<CaveatVerifier>) context.getBean("caveatVerifiers");
+            assertThat(verifiers)
+                    .hasAtLeastOneElementOfType(PathCaveatVerifier.class)
+                    .hasAtLeastOneElementOfType(MethodCaveatVerifier.class)
+                    .hasAtLeastOneElementOfType(ClientIpCaveatVerifier.class);
+        });
+    }
+
+    @Test
+    @DisplayName("default caveatVerifiers still contains existing verifiers (ServicesCaveatVerifier, ValidUntilCaveatVerifier, CapabilitiesCaveatVerifier)")
+    @SuppressWarnings("unchecked")
+    void defaultCaveatVerifiersContainsExistingVerifiers() {
+        contextRunner.run(context -> {
+            List<CaveatVerifier> verifiers = (List<CaveatVerifier>) context.getBean("caveatVerifiers");
+            assertThat(verifiers)
+                    .hasAtLeastOneElementOfType(ServicesCaveatVerifier.class)
+                    .hasAtLeastOneElementOfType(ValidUntilCaveatVerifier.class)
+                    .hasAtLeastOneElementOfType(CapabilitiesCaveatVerifier.class);
+        });
+    }
+
+    @Test
+    @DisplayName("custom caveatVerifiers bean overrides all defaults")
+    @SuppressWarnings("unchecked")
+    void customCaveatVerifiersBeanOverridesDefaults() {
+        contextRunner
+                .withUserConfiguration(CustomCaveatVerifiersConfig.class)
+                .run(context -> {
+                    List<CaveatVerifier> verifiers = (List<CaveatVerifier>) context.getBean("caveatVerifiers");
+                    assertThat(verifiers).hasSize(1);
+                    assertThat(verifiers.getFirst()).isInstanceOf(ServicesCaveatVerifier.class);
+                });
+    }
+
+    @Test
+    @DisplayName("ClientIpResolver bean is created when paygate.enabled=true")
+    void clientIpResolverBeanCreated() {
+        contextRunner.run(context ->
+                assertThat(context).hasSingleBean(ClientIpResolver.class));
+    }
+
+    @Test
+    @DisplayName("trustedProxyAddresses binds from properties")
+    void trustedProxyAddressesBindFromProperties() {
+        contextRunner
+                .withPropertyValues("paygate.trusted-proxy-addresses=10.0.0.1,10.0.0.2")
+                .run(context -> {
+                    PaygateProperties props = context.getBean(PaygateProperties.class);
+                    assertThat(props.getTrustedProxyAddresses())
+                            .containsExactly("10.0.0.1", "10.0.0.2");
+                });
+    }
+
+    @Test
+    @DisplayName("trustedProxyAddresses defaults to empty list")
+    void trustedProxyAddressesDefaultIsEmpty() {
+        contextRunner.run(context -> {
+            PaygateProperties props = context.getBean(PaygateProperties.class);
+            assertThat(props.getTrustedProxyAddresses()).isEmpty();
+        });
+    }
+
+    @Test
+    @DisplayName("maxValuesPerCaveat binds from properties")
+    void maxValuesPerCaveatBindsFromProperties() {
+        contextRunner
+                .withPropertyValues("paygate.caveat.max-values-per-caveat=25")
+                .run(context -> {
+                    PaygateProperties props = context.getBean(PaygateProperties.class);
+                    assertThat(props.getCaveat().getMaxValuesPerCaveat()).isEqualTo(25);
+                });
+    }
+
+    @Test
+    @DisplayName("maxValuesPerCaveat defaults to 50")
+    void maxValuesPerCaveatDefaultIs50() {
+        contextRunner.run(context -> {
+            PaygateProperties props = context.getBean(PaygateProperties.class);
+            assertThat(props.getCaveat().getMaxValuesPerCaveat()).isEqualTo(50);
+        });
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class CustomCaveatVerifiersConfig {
+
+        @Bean
+        List<CaveatVerifier> caveatVerifiers() {
+            return List.of(new ServicesCaveatVerifier());
+        }
     }
 
     /**

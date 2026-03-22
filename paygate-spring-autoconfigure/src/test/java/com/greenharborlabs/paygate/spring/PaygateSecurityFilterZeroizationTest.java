@@ -114,7 +114,7 @@ class PaygateSecurityFilterZeroizationTest {
 
         assertThatNullPointerException()
                 .isThrownBy(() -> new PaygateSecurityFilter(
-                        registry, validator, null, SERVICE_NAME, null, null, null))
+                        registry, validator, null, SERVICE_NAME, null, null, null, null))
                 .withMessageContaining("challengeService");
     }
 
@@ -135,7 +135,7 @@ class PaygateSecurityFilterZeroizationTest {
                 rootKeyStore, lightningBackend, properties, mock(ApplicationContext.class), null, null);
         return new PaygateSecurityFilter(
                 registry, validator, challengeService, SERVICE_NAME,
-                null, null, null);
+                null, null, null, null);
     }
 
     private static Invoice createStubInvoice() {

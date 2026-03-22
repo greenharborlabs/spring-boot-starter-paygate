@@ -311,7 +311,7 @@ class PaygateRateLimitingTest {
                     rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, SERVICE_NAME,
-                    null, paygateEarningsTracker, paygateRateLimiter);
+                    null, null, paygateEarningsTracker, paygateRateLimiter);
         }
 
         @Bean
@@ -378,7 +378,7 @@ class PaygateRateLimitingTest {
                     rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, SERVICE_NAME,
-                    null, paygateEarningsTracker, null);
+                    null, null, paygateEarningsTracker, null);
         }
 
         @Bean
@@ -452,7 +452,7 @@ class PaygateRateLimitingTest {
                     rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, SERVICE_NAME,
-                    null, paygateEarningsTracker, paygateRateLimiter);
+                    null, null, paygateEarningsTracker, paygateRateLimiter);
         }
 
         @Bean
@@ -527,7 +527,7 @@ class PaygateRateLimitingTest {
                     rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter);
             return new PaygateSecurityFilter(
                     endpointRegistry, validator, challengeService, SERVICE_NAME,
-                    null, paygateEarningsTracker, paygateRateLimiter);
+                    null, null, paygateEarningsTracker, paygateRateLimiter);
         }
 
         @Bean

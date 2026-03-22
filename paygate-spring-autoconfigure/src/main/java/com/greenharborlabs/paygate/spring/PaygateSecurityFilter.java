@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -16,9 +17,12 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import org.jspecify.annotations.Nullable;
 
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
+
 import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.stream.LongStream;
@@ -46,6 +50,7 @@ public class PaygateSecurityFilter implements Filter {
     private final L402Validator validator;
     private final PaygateChallengeService challengeService;
     private final String serviceName;
+    private final ClientIpResolver clientIpResolver;
     private final PaygateMetrics metrics;
     private final PaygateEarningsTracker earningsTracker;
     private final PaygateRateLimiter rateLimiter;
@@ -59,6 +64,7 @@ public class PaygateSecurityFilter implements Filter {
                               L402Validator validator,
                               PaygateChallengeService challengeService,
                               String serviceName,
+                              @Nullable ClientIpResolver clientIpResolver,
                               @Nullable PaygateMetrics metrics,
                               @Nullable PaygateEarningsTracker earningsTracker,
                               @Nullable PaygateRateLimiter rateLimiter) {
@@ -66,6 +72,7 @@ public class PaygateSecurityFilter implements Filter {
         this.validator = Objects.requireNonNull(validator, "validator must not be null");
         this.challengeService = Objects.requireNonNull(challengeService, "challengeService must not be null");
         this.serviceName = (serviceName == null || serviceName.isBlank()) ? "default" : serviceName;
+        this.clientIpResolver = clientIpResolver;
         this.metrics = metrics;
         this.earningsTracker = earningsTracker;
         this.rateLimiter = rateLimiter;
@@ -117,12 +124,20 @@ public class PaygateSecurityFilter implements Filter {
         if (componentsOpt.isPresent()) {
             var components = componentsOpt.get();
             // Header matches L402/LSAT format — attempt validation (purely local, no Lightning needed)
+            long verifyStart = System.nanoTime();
             try {
                 // Build per-request context with capability from endpoint config
+                String clientIp = clientIpResolver != null
+                        ? clientIpResolver.resolve(httpRequest)
+                        : httpRequest.getRemoteAddr();
                 L402VerificationContext context = L402VerificationContext.builder()
                         .serviceName(serviceName)
                         .currentTime(Instant.now())
                         .requestedCapability(config.capability().isEmpty() ? null : config.capability())
+                        .requestMetadata(Map.of(
+                                VerificationContextKeys.REQUEST_PATH, path,
+                                VerificationContextKeys.REQUEST_METHOD, method,
+                                VerificationContextKeys.REQUEST_CLIENT_IP, clientIp))
                         .build();
                 L402Validator.ValidationResult result = validator.validate(components, context);
                 L402Credential credential = result.credential();
@@ -133,10 +148,13 @@ public class PaygateSecurityFilter implements Filter {
                         resolveCredentialExpiry(credential, config).toString());
 
                 chain.doFilter(request, response);
+                recordCaveatVerifyDuration(verifyStart);
                 recordPassed(config.pathPattern(), config.priceSats(), result.freshValidation());
                 return;
 
             } catch (L402Exception e) {
+                recordCaveatVerifyDuration(verifyStart);
+                recordCaveatRejected(e.getMessage());
                 // Consume rate limiter token on auth failure to penalize brute-force probing
                 PaygateRateLimiter limiter = this.rateLimiter;
                 if (limiter != null) {
@@ -158,6 +176,10 @@ public class PaygateSecurityFilter implements Filter {
                 recordRejected(config.pathPattern());
                 return;
             } catch (Exception e) {
+                recordCaveatVerifyDuration(verifyStart);
+                if (e instanceof MacaroonVerificationException) {
+                    recordCaveatRejected(e.getMessage());
+                }
                 // Fail closed: any unexpected exception from validation produces 503, never 500
                 log.log(System.Logger.Level.WARNING, "Unexpected error during L402 validation for {0} {1}: {2}", method, path, e.getMessage());
                 if (!httpResponse.isCommitted()) {
@@ -243,6 +265,53 @@ public class PaygateSecurityFilter implements Filter {
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record rejected metric: {0}", e.getMessage());
         }
+    }
+
+    private void recordCaveatVerifyDuration(long startNanos) {
+        try {
+            if (metrics != null) { metrics.recordCaveatVerifyDuration(System.nanoTime() - startNanos); }
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Failed to record caveat verify duration metric: {0}", e.getMessage());
+        }
+    }
+
+    private void recordCaveatRejected(String exceptionMessage) {
+        try {
+            if (metrics != null) { metrics.recordCaveatRejected(classifyCaveatType(exceptionMessage)); }
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Failed to record caveat rejected metric: {0}", e.getMessage());
+        }
+    }
+
+    /**
+     * Classifies the caveat type from an exception message thrown during caveat verification.
+     * Uses known message patterns from the delegation caveat verifiers:
+     * <ul>
+     *   <li>{@code path} — PathCaveatVerifier messages contain "path"</li>
+     *   <li>{@code method} — MethodCaveatVerifier messages contain "method" (but not "Request method missing")</li>
+     *   <li>{@code client_ip} — ClientIpCaveatVerifier messages contain "client IP" or "Client IP"</li>
+     *   <li>{@code escalation} — MacaroonVerificationException messages contain "escalation"</li>
+     * </ul>
+     * Falls back to {@code "unknown"} if no pattern matches.
+     */
+    static String classifyCaveatType(String message) {
+        if (message == null) {
+            return "unknown";
+        }
+        String lower = message.toLowerCase();
+        if (lower.contains("escalation")) {
+            return "escalation";
+        }
+        if (lower.contains("client ip")) {
+            return "client_ip";
+        }
+        if (lower.contains("path")) {
+            return "path";
+        }
+        if (lower.contains("method")) {
+            return "method";
+        }
+        return "unknown";
     }
 
     /**
