@@ -103,7 +103,7 @@ public class PaygateSecurityFilter implements Filter {
             httpResponse.setContentType("application/json");
             httpResponse.getWriter().write(
                 "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
-            recordRejected("_malformed");
+            recordRejected("_malformed", "unknown");
             return;
         }
 
@@ -165,7 +165,7 @@ public class PaygateSecurityFilter implements Filter {
                         recordCaveatVerifyDuration(verifyStart);
                         // Treat all validated credentials as freshValidation=true; the credential
                         // cache inside L402Validator handles deduplication internally.
-                        recordPassed(config.pathPattern(), config.priceSats(), true);
+                        recordPassed(config.pathPattern(), config.priceSats(), true, protocol.scheme());
                         return;
 
                     } catch (PaymentValidationException e) {
@@ -182,7 +182,7 @@ public class PaygateSecurityFilter implements Filter {
 
                         if (e.getErrorCode() == PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED) {
                             PaygateResponseWriter.writeMethodUnsupported(httpResponse, e.getMessage());
-                            recordRejected(config.pathPattern());
+                            recordRejected(config.pathPattern(), protocol.scheme());
                             return;
                         }
 
@@ -192,7 +192,7 @@ public class PaygateSecurityFilter implements Filter {
                             log.log(System.Logger.Level.WARNING, "Malformed L402 header for token {0}: {1}",
                                     tokenDetail, e.getMessage());
                             PaygateResponseWriter.writeMalformedHeader(httpResponse, e.getMessage(), e.getTokenId());
-                            recordRejected(config.pathPattern());
+                            recordRejected(config.pathPattern(), protocol.scheme());
                             return;
                         }
 
@@ -208,7 +208,7 @@ public class PaygateSecurityFilter implements Filter {
                             // If challenge creation fails, write the error without challenges
                             PaygateResponseWriter.writeMppError(httpResponse, e, List.of());
                         }
-                        recordRejected(config.pathPattern());
+                        recordRejected(config.pathPattern(), protocol.scheme());
                         return;
 
                     } catch (Exception e) {
@@ -235,7 +235,7 @@ public class PaygateSecurityFilter implements Filter {
             ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
             List<ChallengeResponse> challenges = buildChallenges(challengeContext);
             PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
-            recordChallenge(config.pathPattern());
+            recordChallenge(config.pathPattern(), "all");
         } catch (PaygateRateLimitedException _) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
         } catch (PaygateLightningUnavailableException e) {
@@ -327,17 +327,17 @@ public class PaygateSecurityFilter implements Filter {
         return Instant.now().plus(config.timeoutSeconds(), ChronoUnit.SECONDS);
     }
 
-    private void recordChallenge(String endpoint) {
+    private void recordChallenge(String endpoint, String protocol) {
         try {
-            if (metrics != null) { metrics.recordChallenge(endpoint); }
+            if (metrics != null) { metrics.recordChallenge(endpoint, protocol); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record challenge metric: {0}", e.getMessage());
         }
     }
 
-    private void recordPassed(String endpoint, long priceSats, boolean freshValidation) {
+    private void recordPassed(String endpoint, long priceSats, boolean freshValidation, String protocol) {
         try {
-            if (metrics != null) { metrics.recordPassed(endpoint, priceSats); }
+            if (metrics != null) { metrics.recordPassed(endpoint, priceSats, protocol); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record passed metric: {0}", e.getMessage());
         }
@@ -350,9 +350,9 @@ public class PaygateSecurityFilter implements Filter {
         }
     }
 
-    private void recordRejected(String endpoint) {
+    private void recordRejected(String endpoint, String protocol) {
         try {
-            if (metrics != null) { metrics.recordRejected(endpoint); }
+            if (metrics != null) { metrics.recordRejected(endpoint, protocol); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record rejected metric: {0}", e.getMessage());
         }

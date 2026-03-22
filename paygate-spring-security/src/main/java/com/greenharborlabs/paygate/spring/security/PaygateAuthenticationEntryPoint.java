@@ -1,5 +1,7 @@
 package com.greenharborlabs.paygate.spring.security;
 
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -15,6 +17,8 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -30,11 +34,14 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
 
     private final PaygateChallengeService challengeService;
     private final PaygateEndpointRegistry endpointRegistry;
+    private final List<PaymentProtocol> protocols;
 
     public PaygateAuthenticationEntryPoint(PaygateChallengeService challengeService,
-                                         PaygateEndpointRegistry endpointRegistry) {
+                                         PaygateEndpointRegistry endpointRegistry,
+                                         List<PaymentProtocol> protocols) {
         this.challengeService = Objects.requireNonNull(challengeService, "challengeService must not be null");
         this.endpointRegistry = Objects.requireNonNull(endpointRegistry, "endpointRegistry must not be null");
+        this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     }
 
     @Override
@@ -59,9 +66,12 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
                 return;
             }
 
-            // TODO(T029): Wire protocol-specific formatters to produce ChallengeResponse list
             var challengeContext = challengeService.createChallenge(request, config);
-            PaygateResponseWriter.writePaymentRequired(response, challengeContext, java.util.List.of());
+            List<ChallengeResponse> challenges = new ArrayList<>();
+            for (PaymentProtocol protocol : protocols) {
+                challenges.add(protocol.formatChallenge(challengeContext));
+            }
+            PaygateResponseWriter.writePaymentRequired(response, challengeContext, challenges);
 
         } catch (PaygateRateLimitedException _) {
             PaygateResponseWriter.writeRateLimited(response);
@@ -69,7 +79,7 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
             log.log(System.Logger.Level.WARNING, "Lightning unavailable during entry point challenge: {0}", e.getMessage());
             PaygateResponseWriter.writeLightningUnavailable(response);
         } catch (Exception e) {
-            log.log(System.Logger.Level.WARNING, "Unexpected error in L402 entry point: {0}", e.getMessage());
+            log.log(System.Logger.Level.WARNING, "Unexpected error in payment entry point: {0}", e.getMessage());
             PaygateResponseWriter.writeLightningUnavailable(response);
         }
     }

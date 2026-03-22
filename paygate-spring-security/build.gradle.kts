@@ -1,5 +1,6 @@
 dependencies {
     api(project(":paygate-core"))
+    api(project(":paygate-api"))
     implementation(project(":paygate-spring-autoconfigure"))
 
     implementation("org.springframework.boot:spring-boot-autoconfigure")

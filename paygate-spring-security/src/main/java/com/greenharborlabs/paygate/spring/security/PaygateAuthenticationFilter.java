@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.spring.security;
 
+import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
@@ -19,18 +20,22 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Spring Security filter that extracts L402 credentials from the Authorization header
+ * Spring Security filter that extracts payment credentials from the Authorization header
  * and delegates authentication to the {@link AuthenticationManager}.
  *
- * <p>Parses headers matching {@code Authorization: L402 <macaroon>:<preimage>} (also accepts
- * the legacy {@code LSAT} scheme). On successful authentication the {@link SecurityContextHolder}
+ * <p>First attempts to parse L402/LSAT credentials ({@code Authorization: L402 <macaroon>:<preimage>}).
+ * If the header does not match L402/LSAT, iterates the registered {@link PaymentProtocol} instances
+ * to detect other credential formats (e.g., MPP {@code Payment} scheme).
+ *
+ * <p>On successful authentication the {@link SecurityContextHolder}
  * is populated with an authenticated {@link PaygateAuthenticationToken}.
  *
- * <p>If the header is absent or does not match the L402/LSAT pattern, the filter chain
+ * <p>If the header is absent or does not match any known protocol, the filter chain
  * continues without setting authentication, allowing other filters to handle the request.
  */
 public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
@@ -40,19 +45,23 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     private static final String AUTHORIZATION_HEADER = "Authorization";
 
     private final AuthenticationManager authenticationManager;
+    private final List<PaymentProtocol> protocols;
     private final PaygateEndpointRegistry endpointRegistry;
     private final ClientIpResolver clientIpResolver;
 
     public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
+                                     List<PaymentProtocol> protocols,
                                      PaygateEndpointRegistry endpointRegistry) {
-        this(authenticationManager, endpointRegistry, null);
+        this(authenticationManager, protocols, endpointRegistry, null);
     }
 
     public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
+                                     List<PaymentProtocol> protocols,
                                      PaygateEndpointRegistry endpointRegistry,
                                      ClientIpResolver clientIpResolver) {
         this.authenticationManager = Objects.requireNonNull(authenticationManager,
                 "authenticationManager must not be null");
+        this.protocols = protocols != null ? List.copyOf(protocols) : List.of();
         this.endpointRegistry = Objects.requireNonNull(endpointRegistry,
                 "endpointRegistry must not be null");
         this.clientIpResolver = clientIpResolver;
@@ -65,17 +74,36 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         String authHeader = request.getHeader(AUTHORIZATION_HEADER);
-        var componentsOpt = L402HeaderComponents.extract(authHeader);
-        if (componentsOpt.isEmpty()) {
+        if (authHeader == null || authHeader.isBlank()) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        var components = componentsOpt.get();
         String normalizedPath = PaygatePathUtils.normalizePath(request.getRequestURI());
-        String capability = resolveCapability(request, normalizedPath);
+
+        String capability;
+        try {
+            capability = resolveCapability(request, normalizedPath);
+        } catch (RuntimeException e) {
+            SecurityContextHolder.clearContext();
+            PaygateResponseWriter.writeLightningUnavailable(response);
+            return;
+        }
+
         Map<String, String> requestMetadata = extractRequestMetadata(request, normalizedPath);
-        var unauthenticatedToken = new PaygateAuthenticationToken(components, capability, requestMetadata);
+
+        PaygateAuthenticationToken unauthenticatedToken;
+        var componentsOpt = L402HeaderComponents.extract(authHeader);
+        if (componentsOpt.isPresent()) {
+            unauthenticatedToken = new PaygateAuthenticationToken(
+                    componentsOpt.get(), capability, requestMetadata);
+        } else if (matchesAnyProtocol(authHeader)) {
+            unauthenticatedToken = PaygateAuthenticationToken.unauthenticated(
+                    authHeader, capability, requestMetadata);
+        } else {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         try {
             Authentication authenticated = authenticationManager.authenticate(unauthenticatedToken);
@@ -87,13 +115,22 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
             PaygateResponseWriter.writeAuthenticationFailed(response);
             return;
         } catch (RuntimeException e) {
-            log.log(System.Logger.Level.WARNING, "L402 authentication encountered an unexpected error", e);
+            log.log(System.Logger.Level.WARNING, "Payment authentication encountered an unexpected error", e);
             SecurityContextHolder.clearContext();
             PaygateResponseWriter.writeLightningUnavailable(response);
             return;
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean matchesAnyProtocol(String authHeader) {
+        for (PaymentProtocol protocol : protocols) {
+            if (protocol.canHandle(authHeader)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Map<String, String> extractRequestMetadata(HttpServletRequest request, String normalizedPath) {
@@ -109,8 +146,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
     /**
      * Resolves the capability for the current request by looking up the endpoint registry.
-     * Returns {@code null} (permissive) if no config is found, the capability is blank,
-     * or any error occurs during lookup.
+     * Returns {@code null} (permissive) if no config is found or the capability is blank.
+     * Re-throws {@link RuntimeException} to enforce fail-closed behavior.
      */
     private String resolveCapability(HttpServletRequest request, String normalizedPath) {
         try {
@@ -125,9 +162,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
             }
             return capability;
         } catch (RuntimeException e) {
-            log.log(System.Logger.Level.DEBUG, "Failed to resolve capability for {0} {1}; proceeding without capability enforcement",
+            log.log(System.Logger.Level.WARNING,
+                    "Failed to resolve capability for {0} {1}; denying request",
                     request.getMethod(), sanitizeForLog(request.getRequestURI()), e);
-            return null;
+            throw e;
         }
     }
 

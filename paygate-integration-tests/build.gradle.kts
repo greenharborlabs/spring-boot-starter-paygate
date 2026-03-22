@@ -8,6 +8,9 @@ plugins {
 dependencies {
     testImplementation(project(":paygate-example-app"))
     testImplementation(project(":paygate-core"))
+    testImplementation(project(":paygate-api"))
+    testImplementation(project(":paygate-protocol-l402"))
+    testImplementation(project(":paygate-protocol-mpp"))
     testImplementation(project(":paygate-spring-boot-starter"))
     testImplementation(project(":paygate-spring-autoconfigure"))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
