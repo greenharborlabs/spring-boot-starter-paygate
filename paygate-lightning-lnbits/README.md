@@ -130,12 +130,12 @@ The module contains three classes, all in the `com.greenharborlabs.paygate.light
 
 ```
 paygate-lightning-lnbits/
-  src/main/java/com/greenharborlabs/l402/lightning/lnbits/
+  src/main/java/com/greenharborlabs/paygate/lightning/lnbits/
     LnbitsBackend.java       LightningBackend implementation
     LnbitsConfig.java        Immutable configuration record
     LnbitsException.java     Runtime exception for API failures
     LnbitsTimeoutException.java  Timeout-specific subclass of LnbitsException
-  src/test/java/com/greenharborlabs/l402/lightning/lnbits/
+  src/test/java/com/greenharborlabs/paygate/lightning/lnbits/
     LnbitsBackendTest.java   Integration tests using MockWebServer
     LnbitsConfigTest.java    Config validation and redaction tests
 ```

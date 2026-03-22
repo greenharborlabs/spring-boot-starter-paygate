@@ -25,6 +25,9 @@ Adding this starter transitively pulls in:
 | Module | Purpose |
 |--------|---------|
 | `paygate-core` | Macaroon V2 minting and verification, `LightningBackend` interface, credential stores, root key management |
+| `paygate-api` | Protocol abstraction API (zero external dependencies) |
+| `paygate-protocol-l402` | L402 protocol implementation |
+| `paygate-protocol-mpp` | MPP (Modern Payment Protocol) implementation |
 | `paygate-spring-autoconfigure` | Spring Boot auto-configuration: `PaygateSecurityFilter`, properties binding, health indicator, Caffeine caching, Micrometer metrics |
 
 This starter does **not** include a Lightning backend module. You must add one separately -- see [Choosing a Lightning Backend](#choosing-a-lightning-backend) below.
@@ -72,7 +75,7 @@ implementation 'com.greenharborlabs:paygate-spring-boot-starter:0.1.0'
 2. Configure your `application.yml`:
 
     ```yaml
-    l402:
+    paygate:
       enabled: true
       backend: lnbits        # or "lnd"
       service-name: my-api
@@ -145,6 +148,16 @@ All properties live under the `paygate.*` prefix. The starter auto-configures de
 
 Backend-specific properties (`paygate.lnbits.*`, `paygate.lnd.*`) are documented in their respective module READMEs.
 
+### Protocol Configuration
+
+The starter supports dual-protocol operation (L402 + MPP). Protocol behavior is controlled under the `paygate.protocols.*` prefix:
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `paygate.protocols.l402.enabled` | `true` | Enable or disable the L402 protocol. |
+| `paygate.protocols.mpp.enabled` | `auto` | MPP activation mode: `auto` enables MPP when a challenge-binding secret is present, `true` requires the secret (fails if missing), `false` disables MPP entirely. |
+| `paygate.protocols.mpp.challenge-binding-secret` | -- | HMAC secret for MPP challenge binding. Must be at least 32 bytes. When set, MPP challenges appear alongside L402 in 402 responses. |
+
 For the full property reference and auto-configuration details, see the `paygate-spring-autoconfigure` module.
 
 ---
@@ -172,6 +185,9 @@ Optional libraries detected by auto-configuration:
 | Module | README | Description |
 |--------|--------|-------------|
 | `paygate-core` | [README](../paygate-core/README.md) | Pure-Java macaroon and credential library (zero external dependencies) |
+| `paygate-api` | [README](../paygate-api/README.md) | Protocol abstraction API (zero external dependencies) |
+| `paygate-protocol-l402` | [README](../paygate-protocol-l402/README.md) | L402 protocol implementation |
+| `paygate-protocol-mpp` | [README](../paygate-protocol-mpp/README.md) | MPP (Modern Payment Protocol) implementation |
 | `paygate-lightning-lnbits` | [README](../paygate-lightning-lnbits/README.md) | LNbits REST backend |
 | `paygate-lightning-lnd` | [README](../paygate-lightning-lnd/README.md) | LND gRPC backend |
 | `paygate-spring-autoconfigure` | [README](../paygate-spring-autoconfigure/README.md) | Auto-configuration, properties, filters, health indicators |

@@ -172,13 +172,17 @@ The module contains three classes, all in the `com.greenharborlabs.paygate.light
 
 ```
 paygate-lightning-lnd/
-  src/main/java/com/greenharborlabs/l402/lightning/lnd/
+  src/main/java/com/greenharborlabs/paygate/lightning/lnd/
     LndBackend.java       LightningBackend implementation using gRPC
+    LndChannelFactory.java  Factory for building gRPC ManagedChannel instances
     LndConfig.java        Immutable configuration record
+    LndException.java     Runtime exception for gRPC failures
+    LndTimeoutException.java  Timeout-specific subclass of LndException
+    MacaroonClientInterceptor.java  gRPC interceptor for LND macaroon auth
     package-info.java     Package documentation
   src/main/proto/
     lightning.proto        Minimal LND proto definitions (3 RPCs)
-  src/test/java/com/greenharborlabs/l402/lightning/lnd/
+  src/test/java/com/greenharborlabs/paygate/lightning/lnd/
     LndBackendTest.java   Unit tests using gRPC in-process transport
 ```
 

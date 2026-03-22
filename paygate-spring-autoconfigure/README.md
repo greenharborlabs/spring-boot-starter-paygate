@@ -1,6 +1,6 @@
 # paygate-spring-autoconfigure
 
-Spring Boot auto-configuration module for the `spring-boot-starter-paygate` project. This module wires up all L402 protocol components -- Lightning backends, root key stores, credential caches, the security filter, health indicators, rate limiting, metrics, and actuator endpoints -- based on application properties under the `paygate.*` prefix.
+Spring Boot auto-configuration module for the `spring-boot-starter-paygate` project. This module wires up all payment protocol components -- Lightning backends, root key stores, credential caches, the security filter, health indicators, rate limiting, metrics, actuator endpoints, and dual-protocol support (L402 + MPP) -- based on application properties under the `paygate.*` prefix.
 
 You do not use this module directly. Instead, add the `paygate-spring-boot-starter` dependency, which pulls in this module along with `paygate-core`. Then add whichever Lightning backend module you need (`paygate-lightning-lnbits` or `paygate-lightning-lnd`) and set `paygate.enabled=true`.
 
@@ -9,10 +9,13 @@ You do not use this module directly. Instead, add the `paygate-spring-boot-start
 ## Table of Contents
 
 - [How Auto-Configuration Works](#how-auto-configuration-works)
+- [Dual-Protocol Auto-Configuration](#dual-protocol-auto-configuration)
 - [Configuration Properties](#configuration-properties)
 - [Bean Creation and Conditions](#bean-creation-and-conditions)
 - [Lightning Backend Selection](#lightning-backend-selection)
 - [Root Key Store](#root-key-store)
+- [@PaymentRequired Annotation](#paymentrequired-annotation)
+- [PaygateResponseWriter](#paygateresponsewriter)
 - [Security Filter](#security-filter)
 - [Rate Limiting](#rate-limiting)
 - [Health Cache](#health-cache)
@@ -42,6 +45,59 @@ The module registers four `@AutoConfiguration` classes, declared in `META-INF/sp
 When `paygate.enabled` is `false` or absent, no L402 beans are created. The entire auto-configuration is skipped and all endpoints are accessible without payment.
 
 All beans are guarded with `@ConditionalOnMissingBean`, so you can override any component by defining your own bean of the same type.
+
+---
+
+## Dual-Protocol Auto-Configuration
+
+The auto-configuration supports two payment protocols that can run simultaneously: L402 and MPP (Modern Payment Protocol). Protocol beans are created by nested `@Configuration` classes inside `PaygateAutoConfiguration`.
+
+### L402ProtocolConfiguration
+
+- **Condition:** `L402Protocol` class on classpath + `paygate.protocols.l402.enabled=true` (default)
+- **Bean:** `l402Protocol` (`PaymentProtocol`) -- wraps `L402Validator` and the configured service name
+- L402 uses macaroons with HMAC-SHA256 signature chains and standard base64 encoding
+
+### MppProtocolConfiguration
+
+- **Condition:** `MppProtocol` class on classpath + `MppEnabledCondition` matches
+- **Bean:** `mppProtocol` (`PaymentProtocol`) -- initialized with the challenge binding secret
+- MPP uses HMAC-SHA256 challenge binding with base64url encoding (no padding) and RFC 8785 JCS
+
+### MppEnabledCondition
+
+The MPP protocol has a three-state enable flag:
+
+| `paygate.protocols.mpp.enabled` | Behavior |
+|----------------------------------|----------|
+| `false` | MPP is disabled |
+| `true` | MPP is enabled; startup fails if `challenge-binding-secret` is missing or too short |
+| `auto` (default) | MPP is enabled only if `challenge-binding-secret` is present and non-blank |
+
+### ProtocolStartupValidator
+
+Created unconditionally by `PaygateAutoConfiguration`. Validates at startup that:
+
+1. If `paygate.protocols.mpp.enabled=true`, the `challenge-binding-secret` must be present
+2. If a secret is present, it must be at least 32 UTF-8 bytes
+3. At least one protocol must be active (when protocol JARs are on the classpath)
+
+Startup fails with `IllegalStateException` if any validation fails.
+
+### Protocol Configuration Properties
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paygate.protocols.l402.enabled` | `boolean` | `true` | Enable/disable the L402 protocol |
+| `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present; `true` requires secret; `false` disables |
+| `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 UTF-8 bytes. |
+
+### Delegation Caveat Properties
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paygate.caveat.max-values-per-caveat` | `int` | `50` | Maximum comma-separated values per delegation caveat (path, method, client_ip) |
+| `paygate.trusted-proxy-addresses` | `List<String>` | empty | Trusted reverse proxy IPs for X-Forwarded-For resolution by `ClientIpResolver` |
 
 ---
 
@@ -124,12 +180,20 @@ paygate:
   root-key-store: file
   root-key-store-path: ~/.paygate/keys
   credential-cache-max-size: 10000
+  caveat:
+    max-values-per-caveat: 50
   rate-limit:
     requests-per-second: 10.0
     burst-size: 20
   health-cache:
     enabled: true
     ttl-seconds: 5
+  protocols:
+    l402:
+      enabled: true
+    mpp:
+      enabled: auto
+      challenge-binding-secret: ${PAYGATE_MPP_SECRET:}
   lnbits:
     url: https://lnbits.example.com
     api-key: ${LNBITS_API_KEY}
@@ -145,14 +209,18 @@ The following table shows every bean created by `PaygateAutoConfiguration`, the 
 |------|------|-----------|-------|
 | `rootKeyStore` | `RootKeyStore` | `@ConditionalOnMissingBean` | `InMemoryRootKeyStore` when `paygate.root-key-store=memory`; `FileBasedRootKeyStore` otherwise |
 | `credentialStore` | `CredentialStore` | `@ConditionalOnMissingBean` + Caffeine class check | `CaffeineCredentialStore` if Caffeine is on the classpath; `InMemoryCredentialStore` otherwise |
-| `caveatVerifiers` | `List<CaveatVerifier>` | `@ConditionalOnMissingBean(name="caveatVerifiers")` | `[ServicesCaveatVerifier, ValidUntilCaveatVerifier]` |
+| `caveatVerifiers` | `List<CaveatVerifier>` | `@ConditionalOnMissingBean(name="caveatVerifiers")` | `[ServicesCaveatVerifier, ValidUntilCaveatVerifier, CapabilitiesCaveatVerifier, PathCaveatVerifier, MethodCaveatVerifier, ClientIpCaveatVerifier]` |
 | `l402Validator` | `L402Validator` | `@ConditionalOnMissingBean` | Wires root key store, credential store, caveat verifiers, and service name |
-| `l402EndpointRegistry` | `PaygateEndpointRegistry` | `@ConditionalOnMissingBean` | Scans `@PaygateProtected` annotations from Spring MVC handler mappings |
+| `l402Protocol` | `PaymentProtocol` | `L402Protocol` on classpath + `paygate.protocols.l402.enabled=true` + `@ConditionalOnMissingBean(name="l402Protocol")` | L402 protocol implementation wrapping `L402Validator` |
+| `mppProtocol` | `PaymentProtocol` | `MppProtocol` on classpath + `MppEnabledCondition` + `@ConditionalOnMissingBean(name="mppProtocol")` | MPP protocol implementation with HMAC challenge binding secret |
+| `protocolStartupValidator` | `ProtocolStartupValidator` | Always (when auto-config is active) | Validates protocol configuration and secret requirements at startup |
+| `clientIpResolver` | `ClientIpResolver` | `@ConditionalOnMissingBean` | Resolves client IP from request, with optional X-Forwarded-For and trusted proxy support |
+| `l402EndpointRegistry` | `PaygateEndpointRegistry` | `@ConditionalOnMissingBean` | Scans `@PaygateProtected` and `@PaymentRequired` annotations from Spring MVC handler mappings |
 | `l402RateLimiter` | `PaygateRateLimiter` | `@ConditionalOnMissingBean` | `TokenBucketRateLimiter` with configured burst size and refill rate |
 | `l402EarningsTracker` | `PaygateEarningsTracker` | `@ConditionalOnMissingBean` | In-memory tracker; resets on restart |
 | `l402ChallengeService` | `PaygateChallengeService` | `@ConditionalOnMissingBean` | Encapsulates challenge generation and invoice creation logic |
 | `l402SecurityModeResolver` | `PaygateSecurityModeResolver` | `@ConditionalOnMissingBean` | Determines which security integration mode to use (servlet filter vs Spring Security) |
-| `l402SecurityFilter` | `PaygateSecurityFilter` | `@ConditionalOnMissingBean` | The core servlet filter. Receives metrics, earnings tracker, and rate limiter via setter injection (all optional) |
+| `l402SecurityFilter` | `PaygateSecurityFilter` | `@ConditionalOnMissingBean` | The core servlet filter. Receives `List<PaymentProtocol>` and iterates over all registered protocols to match credentials. Metrics, earnings tracker, and rate limiter are optional. |
 | `l402SecurityFilterRegistration` | `FilterRegistrationBean<PaygateSecurityFilter>` | Always (when auto-config is active) | Registered at `Ordered.HIGHEST_PRECEDENCE + 10`, matching `/*` |
 | `lightningBackend` (LNbits) | `LightningBackend` | `paygate.backend=lnbits` + `LnbitsBackend` on classpath + `@ConditionalOnMissingBean` | Creates `LnbitsBackend` with 10-second connect timeout `HttpClient` |
 | `lightningBackend` (LND) | `LightningBackend` | `paygate.backend=lnd` + `LndBackend` on classpath + `@ConditionalOnMissingBean` | Creates gRPC `ManagedChannel` and `LndBackend` |
@@ -214,9 +282,45 @@ Validated L402 credentials are cached to avoid re-verifying macaroon signatures 
 
 ---
 
+## @PaymentRequired Annotation
+
+`@PaymentRequired` is a protocol-neutral alternative to `@PaygateProtected` for marking controller methods as requiring payment. Both annotations are supported; the difference is naming convention (protocol-neutral vs. L402-specific).
+
+```java
+@PaymentRequired(priceSats = 5, description = "Premium quote of the day")
+@GetMapping("/api/v1/quote")
+public QuoteResponse quote() { ... }
+```
+
+**Precedence rule:** If both `@PaymentRequired` and `@PaygateProtected` are present on the same method, `@PaymentRequired` takes precedence and a warning is logged.
+
+**Attributes:** `priceSats`, `timeoutSeconds` (default `-1` for global default), `description`, `pricingStrategy`, `capability`.
+
+`PaygateEndpointRegistry` scans for both annotations during `scanAnnotatedEndpoints()`.
+
+---
+
+## PaygateResponseWriter
+
+Static utility class for writing HTTP error responses in a consistent JSON format. All methods are static; the class is not instantiable. Used by both `PaygateSecurityFilter` and the Spring Security integration.
+
+| Method | HTTP Status | When |
+|--------|-------------|------|
+| `writePaymentRequired(response, context, challenges)` | 402 | Multi-protocol 402 challenge. Each protocol adds a separate `WWW-Authenticate` header via `addHeader`. Response body includes `protocols` map with per-protocol data. |
+| `writePaymentRequired(response, result)` | 402 | Single-protocol (legacy L402) 402 challenge. |
+| `writeMalformedHeader(response, message, tokenId)` | 400 | Malformed `Authorization` header. |
+| `writeValidationError(response, errorCode, message, tokenId)` | varies | L402 credential validation failure. Status from `ErrorCode`. |
+| `writeMppError(response, exception, challenges)` | varies | MPP validation failure using RFC 9457 Problem Details format. Includes fresh challenges for 402 responses. |
+| `writeRateLimited(response)` | 429 | Rate limit exceeded. Includes `Retry-After: 1` header. |
+| `writeLightningUnavailable(response)` | 503 | Lightning backend is down. |
+| `writeReceipt(response, receipt)` | -- | Sets `Payment-Receipt` header with base64url-nopad encoded JSON receipt. |
+| `writeMethodUnsupported(response, message)` | 400 | Unsupported payment method (RFC 9457 Problem Details). |
+
+---
+
 ## Security Filter
 
-`PaygateSecurityFilter` is a standard Jakarta Servlet `Filter` that enforces L402 payment authentication. It is registered at `Ordered.HIGHEST_PRECEDENCE + 10` and matches all URL patterns (`/*`).
+`PaygateSecurityFilter` is a standard Jakarta Servlet `Filter` that enforces payment authentication on protected endpoints. It is registered at `Ordered.HIGHEST_PRECEDENCE + 10` and matches all URL patterns (`/*`). The filter iterates over all registered `PaymentProtocol` beans (`List<PaymentProtocol>`) to find one that can handle the incoming `Authorization` header.
 
 ### Request Flow
 
@@ -361,10 +465,18 @@ When Micrometer is on the classpath and a `MeterRegistry` bean exists, `PaygateM
 
 | Metric | Tags | Description |
 |--------|------|-------------|
-| `paygate.requests` | `endpoint`, `result` (`challenged`, `passed`, `rejected`) | Total requests to protected endpoints |
-| `paygate.invoices.created` | `endpoint` | Invoices generated |
-| `paygate.invoices.settled` | `endpoint` | Invoices paid and verified |
-| `paygate.revenue.sats` | `endpoint` | Total satoshis earned |
+| `paygate.requests` | `endpoint`, `result` (`challenged`, `passed`, `rejected`), `protocol` | Total requests to protected endpoints. The `protocol` tag identifies which protocol handled the request (e.g., `L402`, `Payment`, `all`). |
+| `paygate.invoices.created` | `endpoint`, `protocol` | Invoices generated |
+| `paygate.invoices.settled` | `endpoint`, `protocol` | Invoices paid and verified |
+| `paygate.revenue.sats` | `endpoint`, `protocol` | Total satoshis earned |
+| `paygate.caveats.rejected` | `caveat_type` (`path`, `method`, `client_ip`, `escalation`, `unknown`), `protocol` | Caveat verification rejections by type |
+| `paygate.cache.evictions` | `reason` | Credential cache evictions by reason |
+
+### Timers
+
+| Metric | Tags | Description |
+|--------|------|-------------|
+| `paygate.caveats.verify.duration` | `protocol` | Duration of caveat verification per request |
 
 The `PaygateMetrics` bean is injected into the `PaygateSecurityFilter` via setter injection. If Micrometer is not on the classpath, no metrics are recorded and the filter operates without any metrics overhead.
 
@@ -567,30 +679,40 @@ The `spring-boot-configuration-processor` annotation processor is configured in 
 
 ```
 paygate-spring-autoconfigure/
-  src/main/java/com/greenharborlabs/l402/spring/
+  src/main/java/com/greenharborlabs/paygate/spring/
     PaygateAutoConfiguration.java            Core auto-configuration (all bean definitions)
+      L402ProtocolConfiguration              Nested: creates L402Protocol bean
+      MppProtocolConfiguration               Nested: creates MppProtocol bean
+      MppEnabledCondition                    Nested: three-state MPP enable condition
+      ProtocolStartupValidator               Nested: validates protocol configuration
     PaygateActuatorAutoConfiguration.java    Actuator endpoint auto-configuration
     PaygateMetricsAutoConfiguration.java     Micrometer metrics auto-configuration
-    TestModeAutoConfiguration.java        Test-mode auto-configuration
+    TestModeAutoConfiguration.java           Test-mode auto-configuration
     PaygateProperties.java                   @ConfigurationProperties binding class
     PaygateChallengeService.java             Challenge generation and invoice creation
+    PaygateResponseWriter.java               Static utility for writing HTTP error responses
     PaygateSecurityModeResolver.java         Resolves servlet filter vs Spring Security mode
-    PaygateSecurityFilter.java               Jakarta Servlet Filter enforcing L402
-    PaygateEndpointRegistry.java             Registry of @PaygateProtected endpoints
+    PaygateSecurityFilter.java               Jakarta Servlet Filter enforcing payment auth
+    PaygateEndpointRegistry.java             Registry of @PaygateProtected/@PaymentRequired endpoints
     PaygateEndpointConfig.java               Immutable endpoint configuration record
-    PaygateProtected.java                    Annotation for marking protected endpoints
-    L402Validator                         (from paygate-core) Wired as a bean
-    CaffeineCredentialStore.java          Caffeine-backed CredentialStore
-    CachingLightningBackendWrapper.java   Health-check caching decorator
+    PaygateProtected.java                    Annotation for marking protected endpoints (L402-style)
+    PaymentRequired.java                     Protocol-neutral annotation for protected endpoints
+    ClientIpResolver.java                    Client IP resolution with X-Forwarded-For and trusted proxy support
+    PaygatePathUtils.java                    Path normalization utilities
+    L402Validator                            (from paygate-core) Wired as a bean
+    CaffeineCredentialStore.java             Caffeine-backed CredentialStore
+    CachingLightningBackendWrapper.java      Health-check caching decorator
+    TimeoutEnforcingLightningBackendWrapper.java  Timeout wrapper for Lightning backend calls
     PaygateLightningHealthIndicator.java     Actuator HealthIndicator
     PaygateActuatorEndpoint.java             Custom /actuator/paygate endpoint
     PaygateMetrics.java                      Micrometer metric definitions
+    PaygateMeterFilter.java                  Micrometer meter filter for endpoint cardinality
     PaygateEarningsTracker.java              In-memory invoice/earnings tracker
     PaygateRateLimiter.java                  @FunctionalInterface for rate limiting
-    TokenBucketRateLimiter.java           IP-based token bucket implementation
+    TokenBucketRateLimiter.java              IP-based token bucket implementation
     PaygatePricingStrategy.java              @FunctionalInterface for dynamic pricing
-    TestModeLightningBackend.java         Dummy backend for test mode
-    MacaroonClientInterceptor.java        gRPC interceptor for LND macaroon auth
+    TestModeLightningBackend.java            Dummy backend for test mode
+    MacaroonClientInterceptor.java           gRPC interceptor for LND macaroon auth
   src/main/resources/META-INF/
     spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
     additional-spring-configuration-metadata.json
@@ -601,6 +723,9 @@ paygate-spring-autoconfigure/
 | Dependency | Scope | Purpose |
 |------------|-------|---------|
 | `paygate-core` | `api` | Core interfaces (`LightningBackend`, `RootKeyStore`, `CredentialStore`, `L402Validator`, etc.) |
+| `paygate-api` | `api` | Protocol abstraction API (`PaymentProtocol`, `ChallengeContext`, `PaymentCredential`, etc.) |
+| `paygate-protocol-l402` | `compileOnly` | Optional; L402 protocol implementation (classpath-detected) |
+| `paygate-protocol-mpp` | `compileOnly` | Optional; MPP protocol implementation (classpath-detected) |
 | `spring-boot-autoconfigure` | `implementation` | `@AutoConfiguration`, `@ConditionalOn*`, `@ConfigurationProperties` |
 | `spring-webmvc` | `implementation` | `RequestMappingHandlerMapping` for annotation scanning |
 | `jakarta.servlet-api` | `compileOnly` | Servlet `Filter` API |
@@ -614,7 +739,7 @@ paygate-spring-autoconfigure/
 | `jackson-databind` | `compileOnly` | Optional; used by LNbits backend for JSON |
 | `spring-boot-configuration-processor` | `annotationProcessor` | Generates configuration metadata at compile time |
 
-Lightning backend modules and Caffeine are `compileOnly` -- consumers bring whichever ones they need at runtime.
+Lightning backend modules, protocol modules, and Caffeine are `compileOnly` -- consumers bring whichever ones they need at runtime.
 
 ---
 

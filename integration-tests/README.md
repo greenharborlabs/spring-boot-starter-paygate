@@ -1,6 +1,6 @@
 # Integration Tests
 
-Docker Compose environments for testing the L402 Spring Boot Starter against real Lightning Network backends.
+Docker Compose environments for testing the Paygate Spring Boot Starter (L402 + MPP dual-protocol) against real Lightning Network backends.
 
 ## Prerequisites
 
