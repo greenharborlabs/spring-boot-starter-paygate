@@ -16,13 +16,15 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Registry of L402-protected endpoints. Supports both manual registration via
  * {@link #register(PaygateEndpointConfig)} and automatic scanning of
- * {@link PaygateProtected} annotations from Spring MVC handler mappings.
+ * {@link PaygateProtected} and {@link PaymentRequired} annotations from
+ * Spring MVC handler mappings.
  *
  * <p>Path matching supports both exact paths and Spring path patterns
  * (e.g. {@code /api/items/{id}}).
  */
 public class PaygateEndpointRegistry {
 
+    private static final System.Logger log = System.getLogger(PaygateEndpointRegistry.class.getName());
     private static final PathPatternParser PATTERN_PARSER = new PathPatternParser();
     private static final long DEFAULT_TIMEOUT_SECONDS_FALLBACK = 3600;
 
@@ -103,7 +105,11 @@ public class PaygateEndpointRegistry {
     }
 
     /**
-     * Scans all handler methods annotated with {@link PaygateProtected} and registers them.
+     * Scans all handler methods annotated with {@link PaygateProtected} and/or
+     * {@link PaymentRequired} and registers them.
+     *
+     * <p>If a method carries both annotations, {@link PaymentRequired} takes precedence
+     * and a warning is logged.
      *
      * @param handlerMapping the Spring MVC request mapping handler mapping
      */
@@ -111,9 +117,19 @@ public class PaygateEndpointRegistry {
         Map<RequestMappingInfo, HandlerMethod> methods = handlerMapping.getHandlerMethods();
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : methods.entrySet()) {
             HandlerMethod handlerMethod = entry.getValue();
-            PaygateProtected annotation = handlerMethod.getMethodAnnotation(PaygateProtected.class);
-            if (annotation == null) {
+            PaymentRequired paymentRequired = handlerMethod.getMethodAnnotation(PaymentRequired.class);
+            PaygateProtected paygateProtected = handlerMethod.getMethodAnnotation(PaygateProtected.class);
+
+            if (paymentRequired == null && paygateProtected == null) {
                 continue;
+            }
+
+            if (paymentRequired != null && paygateProtected != null) {
+                log.log(System.Logger.Level.WARNING,
+                        "Method {0}#{1} has both @PaymentRequired and @PaygateProtected; "
+                                + "using @PaymentRequired values",
+                        handlerMethod.getBeanType().getSimpleName(),
+                        handlerMethod.getMethod().getName());
             }
 
             RequestMappingInfo mappingInfo = entry.getKey();
@@ -127,11 +143,18 @@ public class PaygateEndpointRegistry {
 
             for (String pattern : patterns) {
                 if (httpMethods.isEmpty()) {
-                    // No specific method restriction means all methods
-                    register(toConfig("*", pattern, annotation));
+                    if (paymentRequired != null) {
+                        register(toConfig("*", pattern, paymentRequired));
+                    } else {
+                        register(toConfig("*", pattern, paygateProtected));
+                    }
                 } else {
                     for (org.springframework.web.bind.annotation.RequestMethod httpMethod : httpMethods) {
-                        register(toConfig(httpMethod.name(), pattern, annotation));
+                        if (paymentRequired != null) {
+                            register(toConfig(httpMethod.name(), pattern, paymentRequired));
+                        } else {
+                            register(toConfig(httpMethod.name(), pattern, paygateProtected));
+                        }
                     }
                 }
             }
@@ -153,6 +176,21 @@ public class PaygateEndpointRegistry {
     }
 
     private PaygateEndpointConfig toConfig(String method, String path, PaygateProtected annotation) {
+        long timeout = annotation.timeoutSeconds() == -1
+                ? defaultTimeoutSeconds
+                : annotation.timeoutSeconds();
+        return new PaygateEndpointConfig(
+                method,
+                path,
+                annotation.priceSats(),
+                timeout,
+                annotation.description(),
+                annotation.pricingStrategy(),
+                annotation.capability()
+        );
+    }
+
+    private PaygateEndpointConfig toConfig(String method, String path, PaymentRequired annotation) {
         long timeout = annotation.timeoutSeconds() == -1
                 ? defaultTimeoutSeconds
                 : annotation.timeoutSeconds();
