@@ -3,7 +3,7 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
-    id("org.cyclonedx.bom") version "2.1.0" apply false
+    id("org.cyclonedx.bom") version "3.2.2" apply false
 }
 
 val springBootVersion = "4.0.3"
