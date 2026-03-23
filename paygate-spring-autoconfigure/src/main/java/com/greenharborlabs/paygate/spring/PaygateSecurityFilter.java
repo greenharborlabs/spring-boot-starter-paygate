@@ -193,9 +193,9 @@ public class PaygateSecurityFilter implements Filter {
                         if (e.getErrorCode() == PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL
                                 && "L402".equals(protocol.scheme())) {
                             // L402-specific: clearly malformed header — return 400 Bad Request
-                            // tokenDetail is already sanitized above; log only the error code, not the message.
-                            log.log(System.Logger.Level.WARNING, "Malformed L402 header for token {0}",
-                                    tokenDetail);
+                            // Avoid logging the raw token to prevent leaking potentially sensitive information.
+                            log.log(System.Logger.Level.WARNING, "Malformed L402 header for protocol {0}",
+                                    protocol.scheme());
                             PaygateResponseWriter.writeMalformedHeader(httpResponse, e.getMessage(), e.getTokenId());
                             recordRejected(config.pathPattern(), protocol.scheme());
                             return;
