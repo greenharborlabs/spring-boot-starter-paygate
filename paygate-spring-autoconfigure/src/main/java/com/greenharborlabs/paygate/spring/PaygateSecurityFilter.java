@@ -228,7 +228,6 @@ public class PaygateSecurityFilter implements Filter {
                             recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
                         }
                         // Fail closed: any unexpected exception from validation produces 503, never 500
-                        String safePath = sanitizeForLog(path);
                         String safeMessage = sanitizeForLog(e.getMessage());
                         log.log(System.Logger.Level.WARNING, "Unexpected error during {0} validation for {1} {2}: {3}",
                                 protocol.scheme(), method, safePath, safeMessage);
@@ -247,21 +246,21 @@ public class PaygateSecurityFilter implements Filter {
         try {
             ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
             List<ChallengeResponse> challenges = buildChallenges(challengeContext);
-                    method, sanitizeForLog(path), e.getClass().getSimpleName());
+            PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
             recordChallenge(config.pathPattern(), "all");
-                    method, safePath, e.getClass().getSimpleName());
+        } catch (PaygateRateLimitedException _) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
         } catch (PaygateLightningUnavailableException e) {
             // Log exception type only — the message may contain internal backend hostnames/addresses.
             log.log(System.Logger.Level.WARNING, "Lightning unavailable for {0} {1}: {2}",
-                    method, sanitizeForLog(path), e.getClass().getSimpleName());
-            if (!httpResponse.isCommitted()) {
                     method, safePath, e.getClass().getSimpleName());
+            if (!httpResponse.isCommitted()) {
+                PaygateResponseWriter.writeLightningUnavailable(httpResponse);
             }
         } catch (Exception e) {
             // Log exception type only — the message may contain internal backend details.
             log.log(System.Logger.Level.WARNING, "Failed to create invoice for {0} {1}: {2}",
-                    method, path, e.getClass().getSimpleName());
+                    method, safePath, e.getClass().getSimpleName());
             if (!httpResponse.isCommitted()) {
                 PaygateResponseWriter.writeLightningUnavailable(httpResponse);
             }
