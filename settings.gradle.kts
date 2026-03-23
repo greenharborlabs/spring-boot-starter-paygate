@@ -11,6 +11,7 @@ include(
     "paygate-spring-security",
     "paygate-spring-boot-starter",
     "paygate-example-app",
+    "paygate-example-app-spring-security",
 )
 
 // Integration test module is excluded from the default build.

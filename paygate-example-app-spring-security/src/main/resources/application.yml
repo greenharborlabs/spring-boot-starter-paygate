@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: paygate-example-app-spring-security
+  profiles:
+    active: dev
+
+server:
+  port: 8081
+
+paygate:
+  enabled: true
+  service-name: example-api
+  security-mode: spring-security
+  protocols:
+    mpp:
+      challenge-binding-secret: ${PAYGATE_MPP_SECRET:}

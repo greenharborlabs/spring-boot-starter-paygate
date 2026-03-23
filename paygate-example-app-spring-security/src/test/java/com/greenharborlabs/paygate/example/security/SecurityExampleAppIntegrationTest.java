@@ -1,4 +1,4 @@
-package com.greenharborlabs.paygate.example;
+package com.greenharborlabs.paygate.example.security;
 
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
@@ -11,12 +11,15 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Bean;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
 
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -25,37 +28,42 @@ import java.util.HexFormat;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
-import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Integration tests for the L402 example application.
+ * Integration tests for the Spring Security example application.
  *
- * <p>Starts the full application context and exercises the complete L402 flow:
- * unauthenticated challenge, credential presentation, and access grant.
+ * <p>Starts the full application context with Spring Security integration and exercises
+ * the dual-protocol (L402 + MPP) flow: unauthenticated challenge, credential presentation,
+ * access grant, protocol-info endpoint, and L402-only authorization.
  * Uses {@code paygate.root-key-store=memory} so the test can mint valid macaroons
- * against the same {@link InMemoryRootKeyStore} used by the filter.
+ * against the same in-memory store used by the security filter.
  */
-@SpringBootTest(classes = ExampleApplication.class)
+@SpringBootTest(classes = {SecurityExampleApplication.class, SecurityExampleAppIntegrationTest.TestConfig.class})
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @TestPropertySource(properties = {
         "paygate.enabled=true",
         "paygate.test-mode=true",
         "paygate.root-key-store=memory",
+        "paygate.security-mode=spring-security",
         "paygate.protocols.mpp.challenge-binding-secret=test-only-mpp-secret-minimum-32-bytes-long"
 })
-@DisplayName("Example application integration")
-class ExampleAppIntegrationTest {
+@DisplayName("Spring Security example application integration")
+class SecurityExampleAppIntegrationTest {
+
+    @TestConfiguration
+    static class TestConfig {
+        @Bean
+        AuthenticationManager authenticationManager(AuthenticationConfiguration authConfig) throws Exception {
+            return authConfig.getAuthenticationManager();
+        }
+    }
 
     private static final HexFormat HEX = HexFormat.of();
 
@@ -84,7 +92,7 @@ class ExampleAppIntegrationTest {
     }
 
     // -------------------------------------------------------------------
-    // 2. Protected data endpoint (402 challenge)
+    // 2. Protected data endpoint (dual-protocol 402 challenge)
     // -------------------------------------------------------------------
 
     @Nested
@@ -92,14 +100,29 @@ class ExampleAppIntegrationTest {
     class DataEndpointNoAuth {
 
         @Test
-        @DisplayName("returns 402 with WWW-Authenticate header containing L402 challenge")
-        void returns402WithChallenge() throws Exception {
-            mockMvc.perform(get("/api/v1/data"))
+        @DisplayName("returns 402 with L402 challenge in WWW-Authenticate header")
+        void returns402WithL402Challenge() throws Exception {
+            var result = mockMvc.perform(get("/api/v1/data"))
                     .andExpect(status().isPaymentRequired())
-                    .andExpect(header().exists("WWW-Authenticate"))
-                    .andExpect(header().string("WWW-Authenticate", startsWith("L402")))
-                    .andExpect(header().string("WWW-Authenticate", containsString("macaroon=")))
-                    .andExpect(header().string("WWW-Authenticate", containsString("invoice=")));
+                    .andReturn();
+
+            List<String> wwwAuthHeaders = result.getResponse().getHeaders("WWW-Authenticate");
+            assertThat(wwwAuthHeaders)
+                    .anyMatch(h -> h.startsWith("L402")
+                            && h.contains("macaroon=")
+                            && h.contains("invoice="));
+        }
+
+        @Test
+        @DisplayName("returns 402 with MPP challenge in WWW-Authenticate header")
+        void returns402WithMppChallenge() throws Exception {
+            var result = mockMvc.perform(get("/api/v1/data"))
+                    .andExpect(status().isPaymentRequired())
+                    .andReturn();
+
+            List<String> wwwAuthHeaders = result.getResponse().getHeaders("WWW-Authenticate");
+            assertThat(wwwAuthHeaders)
+                    .anyMatch(h -> h.startsWith("Payment"));
         }
 
         @Test
@@ -113,19 +136,7 @@ class ExampleAppIntegrationTest {
         }
 
         @Test
-        @DisplayName("returns 402 with MPP WWW-Authenticate Payment challenge")
-        void returns402WithMppChallenge() throws Exception {
-            MvcResult result = mockMvc.perform(get("/api/v1/data"))
-                    .andExpect(status().isPaymentRequired())
-                    .andReturn();
-
-            List<String> wwwAuthHeaders = result.getResponse().getHeaders("WWW-Authenticate");
-            assertThat(wwwAuthHeaders)
-                    .anyMatch(h -> h.startsWith("Payment"));
-        }
-
-        @Test
-        @DisplayName("returns 402 with protocols object in JSON body")
+        @DisplayName("returns 402 with protocols object containing at least one protocol")
         void returns402WithProtocolsArray() throws Exception {
             mockMvc.perform(get("/api/v1/data"))
                     .andExpect(status().isPaymentRequired())
@@ -145,71 +156,80 @@ class ExampleAppIntegrationTest {
     class FullL402Flow {
 
         @Test
-        @DisplayName("valid L402 credential grants access with 200 and token headers")
+        @DisplayName("valid L402 credential grants access with 200")
         void validCredentialReturns200() throws Exception {
-            // Generate a known preimage and compute its payment hash
-            byte[] preimage = new byte[32];
-            new SecureRandom().nextBytes(preimage);
-            byte[] paymentHash = sha256(preimage);
+            String authHeader = mintL402AuthHeader();
 
-            // Use the application's RootKeyStore to generate a root key
-            // so the filter's validator can look it up by tokenId
-            RootKeyStore.GenerationResult genResult = rootKeyStore.generateRootKey();
-            byte[] rootKey = genResult.rootKey().value();
-            byte[] tokenId = genResult.tokenId();
-
-            // We mint our own macaroon instead of extracting the server-generated one from
-            // the 402 challenge because in test-mode the invoice contains a random payment
-            // hash for which we cannot know the preimage (that would require inverting SHA-256).
-            // By constructing both the preimage and the macaroon ourselves we can present a
-            // valid L402 credential while still exercising the full verification path.
-            //
-            MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
-            Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, List.of());
-            byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-            String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-
-            // Build the L402 Authorization header
-            String preimageHex = HEX.formatHex(preimage);
-            String authHeader = "L402 " + macaroonBase64 + ":" + preimageHex;
-
-            // Request with valid credential should succeed
             mockMvc.perform(get("/api/v1/data")
                             .header("Authorization", authHeader))
                     .andExpect(status().isOk())
-                    .andExpect(header().doesNotExist("X-L402-Token-Id"))
-                    .andExpect(header().exists("X-L402-Credential-Expires"))
                     .andExpect(jsonPath("$.data", is("premium content")));
         }
     }
 
     // -------------------------------------------------------------------
-    // 4. Analyze endpoint (dynamic pricing)
+    // 4. Protocol info endpoint
     // -------------------------------------------------------------------
 
     @Nested
-    @DisplayName("analyze endpoint without authentication")
-    class AnalyzeEndpointNoAuth {
+    @DisplayName("protocol-info endpoint")
+    class ProtocolInfoEndpoint {
 
         @Test
-        @DisplayName("returns 402 with dynamic pricing reflecting base price")
-        void returns402WithDynamicPricing() throws Exception {
-            String shortBody = """
-                    {"content": "short text"}""";
+        @DisplayName("L402 credential returns protocol info with protocol and tokenId")
+        void l402CredentialReturnsProtocolInfo() throws Exception {
+            String authHeader = mintL402AuthHeader();
 
-            mockMvc.perform(post("/api/v1/analyze")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(shortBody))
-                    .andExpect(status().isPaymentRequired())
+            mockMvc.perform(get("/api/v1/protocol-info")
+                            .header("Authorization", authHeader))
+                    .andExpect(status().isOk())
                     .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
-                    .andExpect(jsonPath("$.code", is(402)))
-                    .andExpect(jsonPath("$.price_sats", greaterThanOrEqualTo(50)));
+                    .andExpect(jsonPath("$.protocol", is("L402")))
+                    .andExpect(jsonPath("$.tokenId", notNullValue()));
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // 5. L402-only endpoint
+    // -------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("L402-only endpoint")
+    class L402OnlyEndpoint {
+
+        @Test
+        @DisplayName("L402 credential grants access to L402-only endpoint")
+        void l402CredentialGrantsAccess() throws Exception {
+            String authHeader = mintL402AuthHeader();
+
+            mockMvc.perform(get("/api/v1/l402-only")
+                            .header("Authorization", authHeader))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data", is("L402-exclusive content")));
         }
     }
 
     // -------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------
+
+    private String mintL402AuthHeader() {
+        byte[] preimage = new byte[32];
+        new SecureRandom().nextBytes(preimage);
+        byte[] paymentHash = sha256(preimage);
+
+        RootKeyStore.GenerationResult genResult = rootKeyStore.generateRootKey();
+        byte[] rootKey = genResult.rootKey().value();
+        byte[] tokenId = genResult.tokenId();
+
+        MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+        Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, List.of());
+        byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
+        String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
+
+        String preimageHex = HEX.formatHex(preimage);
+        return "L402 " + macaroonBase64 + ":" + preimageHex;
+    }
 
     private static byte[] sha256(byte[] input) {
         try {
