@@ -2,7 +2,7 @@
 // Test deps (JUnit 5 + AssertJ) are inherited from the root build.
 
 plugins {
-    id("me.champeau.jmh") version "0.7.2"
+    id("me.champeau.jmh") version "0.7.3"
 }
 
 val jacksonVersion: String by extra
