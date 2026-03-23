@@ -67,7 +67,7 @@ class TamperDetectionIT {
             assertThat(challengeResponse.statusCode()).isEqualTo(402);
 
             // Step 2: Extract macaroon and preimage
-            String wwwAuth = challengeResponse.headers().firstValue("WWW-Authenticate").orElse(null);
+            String wwwAuth = findL402Header(challengeResponse);
             assertThat(wwwAuth).isNotNull();
             Matcher macaroonMatcher = MACAROON_PATTERN.matcher(wwwAuth);
             assertThat(macaroonMatcher.find()).isTrue();
@@ -112,7 +112,7 @@ class TamperDetectionIT {
             assertThat(challengeResponse.statusCode()).isEqualTo(402);
 
             // Step 2: Extract macaroon (valid) but use a bogus preimage
-            String wwwAuth = challengeResponse.headers().firstValue("WWW-Authenticate").orElse(null);
+            String wwwAuth = findL402Header(challengeResponse);
             assertThat(wwwAuth).isNotNull();
             Matcher macaroonMatcher = MACAROON_PATTERN.matcher(wwwAuth);
             assertThat(macaroonMatcher.find()).isTrue();
@@ -134,6 +134,13 @@ class TamperDetectionIT {
                     .as("Wrong preimage should be rejected with 4xx status")
                     .isBetween(400, 499);
         }
+    }
+
+    private static String findL402Header(HttpResponse<?> response) {
+        return response.headers().allValues("WWW-Authenticate").stream()
+                .filter(h -> h.startsWith("L402"))
+                .findFirst()
+                .orElse(null);
     }
 
     @Test

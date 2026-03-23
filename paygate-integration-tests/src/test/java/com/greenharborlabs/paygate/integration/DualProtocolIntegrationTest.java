@@ -80,8 +80,8 @@ class DualProtocolIntegrationTest {
 
             List<String> wwwAuthHeaders = response.headers().allValues("WWW-Authenticate");
             assertThat(wwwAuthHeaders).hasSize(2);
-            assertThat(wwwAuthHeaders).anyMatch(h -> h.startsWith("L402"));
-            assertThat(wwwAuthHeaders).anyMatch(h -> h.startsWith("Payment"));
+            assertThat(wwwAuthHeaders.get(0)).startsWith("L402");
+            assertThat(wwwAuthHeaders.get(1)).startsWith("Payment");
         }
     }
 

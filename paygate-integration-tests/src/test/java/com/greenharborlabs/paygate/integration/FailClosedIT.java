@@ -208,6 +208,13 @@ class FailClosedIT {
         }
     }
 
+    private static String findL402Header(HttpResponse<?> response) {
+        return response.headers().allValues("WWW-Authenticate").stream()
+                .filter(h -> h.startsWith("L402"))
+                .findFirst()
+                .orElse(null);
+    }
+
     @Nested
     @DisplayName("baseline: when Lightning backend is healthy")
     class BackendHealthy {
@@ -228,7 +235,7 @@ class FailClosedIT {
                 var response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
                 assertThat(response.statusCode()).isEqualTo(402);
-                String wwwAuth = response.headers().firstValue("WWW-Authenticate").orElse(null);
+                String wwwAuth = findL402Header(response);
                 assertThat(wwwAuth).isNotNull().startsWith("L402");
             }
         }

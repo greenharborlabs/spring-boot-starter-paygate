@@ -36,6 +36,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
@@ -215,6 +216,7 @@ public class PaygateAutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean(name = "l402Protocol")
+        @Order(1)
         PaymentProtocol l402Protocol(L402Validator paygateValidator,
                                      PaygateProperties properties) {
             String serviceName = properties.getServiceName();
@@ -232,6 +234,7 @@ public class PaygateAutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean(name = "mppProtocol")
+        @Order(2)
         PaymentProtocol mppProtocol(PaygateProperties properties,
                                      ProtocolStartupValidator _validator) {
             String secret = properties.getProtocols().getMpp().getChallengeBindingSecret();

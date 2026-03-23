@@ -65,7 +65,7 @@ class LnbitsHappyPathIT {
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             assertThat(response.statusCode()).isEqualTo(402);
-            String wwwAuth = response.headers().firstValue("WWW-Authenticate").orElse(null);
+            String wwwAuth = findL402Header(response);
             assertThat(wwwAuth)
                     .isNotNull()
                     .startsWith("L402")
@@ -101,7 +101,7 @@ class LnbitsHappyPathIT {
             assertThat(challengeResponse.statusCode()).isEqualTo(402);
 
             // Step 2: Extract the macaroon from the WWW-Authenticate header
-            String wwwAuth = challengeResponse.headers().firstValue("WWW-Authenticate").orElse(null);
+            String wwwAuth = findL402Header(challengeResponse);
             assertThat(wwwAuth).isNotNull();
             Matcher macaroonMatcher = MACAROON_PATTERN.matcher(wwwAuth);
             assertThat(macaroonMatcher.find()).as("WWW-Authenticate header should contain macaroon").isTrue();
@@ -130,6 +130,13 @@ class LnbitsHappyPathIT {
             assertThat(authenticatedResponse.headers().firstValue("X-L402-Credential-Expires"))
                     .isPresent();
         }
+    }
+
+    private static String findL402Header(HttpResponse<?> response) {
+        return response.headers().allValues("WWW-Authenticate").stream()
+                .filter(h -> h.startsWith("L402"))
+                .findFirst()
+                .orElse(null);
     }
 
     @Test
