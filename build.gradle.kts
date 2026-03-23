@@ -1,14 +1,14 @@
 plugins {
-    id("org.springframework.boot") version "4.0.3" apply false
+    id("org.springframework.boot") version "4.0.4" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.2.2" apply false
 }
 
-val springBootVersion = "4.0.3"
+val springBootVersion = "4.0.4"
 val caffeineVersion = "3.1.8"
-val grpcVersion = "1.68.1"
+val grpcVersion = "1.80.0"
 val protobufVersion = "4.29.3"
 val jacksonVersion = "2.18.2"
 val assertjVersion = "3.27.3"
@@ -47,6 +47,10 @@ subprojects {
         imports {
             mavenBom("org.springframework.boot:spring-boot-dependencies:$springBootVersion")
         }
+        dependencies {
+            dependency("net.bytebuddy:byte-buddy:1.18.7")
+            dependency("net.bytebuddy:byte-buddy-agent:1.18.7")
+        }
     }
 
     configure<JavaPluginExtension> {
@@ -71,6 +75,7 @@ subprojects {
 
     tasks.withType<Test> {
         useJUnitPlatform()
+        jvmArgs("--enable-native-access=ALL-UNNAMED")
         finalizedBy(tasks.named("jacocoTestReport"))
     }
 

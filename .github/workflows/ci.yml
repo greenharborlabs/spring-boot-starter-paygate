@@ -13,6 +13,9 @@ permissions:
   checks: write
   pull-requests: write
 
+env:
+  GRADLE_OPTS: "--enable-native-access=ALL-UNNAMED"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -70,7 +73,7 @@ jobs:
 
       - name: JaCoCo coverage summary
         if: github.event_name == 'pull_request'
-        uses: madrapps/jacoco-report@v1.7.1
+        uses: madrapps/jacoco-report@v1.7.2
         with:
           paths: '**/build/reports/jacoco/test/jacocoTestReport.xml'
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -159,7 +162,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.23'
           cache-dependency-path: paygate-integration-tests/go-interop/go.sum
 
       - name: Prepare Go dependencies

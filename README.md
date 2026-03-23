@@ -17,6 +17,7 @@ A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-li
 - [Dual-Protocol Support](#dual-protocol-support)
 - [Features](#features)
 - [Quickstart](#quickstart)
+- [JVM Requirements](#jvm-requirements)
 - [Configuration Reference](#configuration-reference)
 - [Lightning Backend Setup](#lightning-backend-setup)
 - [Dynamic Pricing](#dynamic-pricing)
@@ -286,6 +287,33 @@ public class PremiumController {
 That is it. Unauthenticated requests to `/api/v1/data` now receive a 402 response with a Lightning invoice. After payment, the client includes the credential in the `Authorization` header and receives the content.
 
 Endpoints without `@PaymentRequired` are unaffected and pass through normally.
+
+---
+
+## JVM Requirements
+
+### Native Access Flag
+
+Applications using Netty (including gRPC backends) should pass the `--enable-native-access=ALL-UNNAMED` JVM flag. On Java 24-25, this flag suppresses native-access warnings emitted by the Foreign Function and Memory API; on Java 26+, it will be **required** to avoid runtime failures.
+
+**Dockerfile:**
+```dockerfile
+ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]
+```
+
+**Gradle (`bootRun`):**
+```kotlin
+tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
+```
+
+**systemd:**
+```ini
+ExecStart=/usr/bin/java --enable-native-access=ALL-UNNAMED -jar /opt/app/app.jar
+```
+
+This flag is already configured in the starter's test configuration.
 
 ---
 
