@@ -92,15 +92,12 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
         Map<String, String> requestMetadata = extractRequestMetadata(request, normalizedPath);
 
-        PaygateAuthenticationToken unauthenticatedToken;
-        var componentsOpt = L402HeaderComponents.extract(authHeader);
-        if (componentsOpt.isPresent()) {
-            unauthenticatedToken = new PaygateAuthenticationToken(
-                    componentsOpt.get(), capability, requestMetadata);
-        } else if (matchesAnyProtocol(authHeader)) {
-            unauthenticatedToken = PaygateAuthenticationToken.unauthenticated(
-                    authHeader, capability, requestMetadata);
-        } else {
+        PaygateAuthenticationToken unauthenticatedToken =
+                createAuthToken(authHeader, capability, requestMetadata);
+
+        // codeql[java/user-controlled-bypass] - Intentional: this filter only authenticates payment credentials; unrecognized auth schemes pass through for other Spring Security filters
+        if (unauthenticatedToken == null) {
+            SecurityContextHolder.clearContext();
             filterChain.doFilter(request, response);
             return;
         }
@@ -122,6 +119,21 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private PaygateAuthenticationToken createAuthToken(String authHeader,
+                                                       String capability,
+                                                       Map<String, String> requestMetadata) {
+        var componentsOpt = L402HeaderComponents.extract(authHeader);
+        if (componentsOpt.isPresent()) {
+            return new PaygateAuthenticationToken(
+                    componentsOpt.get(), capability, requestMetadata);
+        }
+        if (matchesAnyProtocol(authHeader)) {
+            return PaygateAuthenticationToken.unauthenticated(
+                    authHeader, capability, requestMetadata);
+        }
+        return null;
     }
 
     private boolean matchesAnyProtocol(String authHeader) {
