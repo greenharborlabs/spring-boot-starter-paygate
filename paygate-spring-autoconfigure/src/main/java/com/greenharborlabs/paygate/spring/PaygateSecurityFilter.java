@@ -181,6 +181,7 @@ public class PaygateSecurityFilter implements Filter {
                         // Sanitize the token ID before logging — it is derived from user-supplied input
                         // and could contain newlines or other control characters used in log injection attacks.
                         String tokenDetail = sanitizeForLog(e.getTokenId() != null ? e.getTokenId() : "");
+                        int tokenCorrelationId = Objects.hash(protocol.scheme(), tokenDetail);
                         log.log(System.Logger.Level.WARNING, "{0} validation failed, errorCode={1}",
                                 protocol.scheme(), e.getErrorCode());
 
@@ -203,9 +204,11 @@ public class PaygateSecurityFilter implements Filter {
 
                         // For non-L402 protocols or non-malformed errors: use RFC 9457 error response
                         // Issue fresh challenges so the client can retry with a new payment.
-                        // tokenDetail is sanitized; log only the error code enum, never the exception message.
-                        log.log(System.Logger.Level.WARNING, "{0} validation failed for token {1}, errorCode={2}",
-                                protocol.scheme(), tokenDetail, e.getErrorCode());
+                        // tokenDetail is sanitized; log only a non-sensitive correlation ID and the error code enum,
+                        // never the exception message or the raw token value.
+                        log.log(System.Logger.Level.WARNING,
+                                "{0} validation failed for tokenCorrelationId {1}, errorCode={2}",
+                                protocol.scheme(), tokenCorrelationId, e.getErrorCode());
                         try {
                             ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
                             List<ChallengeResponse> challenges = buildChallenges(challengeContext);
