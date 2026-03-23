@@ -1,8 +1,8 @@
 # paygate-example-app
 
-A reference Spring Boot application demonstrating how to use `spring-boot-starter-paygate` to protect API endpoints with Lightning payments using the [L402 protocol](https://docs.lightning.engineering/the-lightning-network/l402).
+A reference Spring Boot application demonstrating how to use `spring-boot-starter-paygate` to protect API endpoints with Lightning payments using dual-protocol support (L402 + MPP).
 
-This application runs in **test mode** by default, so no real Lightning node is required. You can exercise the complete L402 flow -- challenge, payment, and credential presentation -- entirely on your local machine.
+This application runs in **test mode** by default, so no real Lightning node is required. You can exercise the complete payment flow -- challenge, payment, and credential presentation -- entirely on your local machine.
 
 ---
 
@@ -137,21 +137,26 @@ See [Docker Setup Details](#docker-setup-details) for more information on the Do
 
 ## Endpoints
 
-| Method | Path              | Protected | Price    | Description                              |
-|--------|-------------------|-----------|----------|------------------------------------------|
-| GET    | `/api/v1/health`  | No        | --       | Health check. Always accessible.         |
-| GET    | `/api/v1/data`    | Yes       | 10 sats  | Returns premium content. Fixed price.    |
-| POST   | `/api/v1/analyze` | Yes       | 50+ sats | Content analysis. Dynamic pricing.       |
+| Method | Path              | Protected | Price    | Annotation | Description                              |
+|--------|-------------------|-----------|----------|------------|------------------------------------------|
+| GET    | `/api/v1/health`  | No        | --       | --         | Health check. Always accessible.         |
+| GET    | `/api/v1/quote`   | Yes       | 5 sats   | `@PaymentRequired` | Premium quote of the day.                |
+| GET    | `/api/v1/data`    | Yes       | 10 sats  | `@PaymentRequired` | Returns premium content. Fixed price.    |
+| POST   | `/api/v1/analyze` | Yes       | 50+ sats | `@PaymentRequired` | Content analysis. Dynamic pricing.       |
 
-Endpoints are protected by annotating the controller method with `@PaygateProtected`:
+Endpoints are protected by annotating the controller method with `@PaymentRequired`:
 
 ```java
-@PaygateProtected(priceSats = 10, timeoutSeconds = 3600)
+@PaymentRequired(priceSats = 10, timeoutSeconds = 3600)
 @GetMapping("/data")
 public DataResponse data() { ... }
+
+@PaymentRequired(priceSats = 5, description = "Premium quote of the day")
+@GetMapping("/quote")
+public QuoteResponse quote() { ... }
 ```
 
-The `PaygateSecurityFilter` automatically discovers all `@PaygateProtected` methods at startup and enforces payment for matching requests.
+The `PaygateSecurityFilter` automatically discovers all `@PaymentRequired` methods at startup and enforces payment for matching requests.
 
 ### Dynamic Pricing
 
@@ -163,7 +168,7 @@ The `/api/v1/analyze` endpoint uses `AnalysisPricingStrategy`, a custom implemen
 The pricing strategy is wired to the endpoint via the `pricingStrategy` attribute:
 
 ```java
-@PaygateProtected(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
+@PaymentRequired(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
 @PostMapping("/analyze")
 public AnalyzeResponse analyze(@RequestBody AnalyzeRequest request) { ... }
 ```
@@ -210,7 +215,7 @@ Notice the `test_preimage` field -- this only appears in test mode. In a real de
 
 What happened behind the scenes:
 
-1. The filter matched `GET /api/v1/data` against the endpoint registry and found the `@PaygateProtected(priceSats = 10)` configuration.
+1. The filter matched `GET /api/v1/data` against the endpoint registry and found the `@PaymentRequired(priceSats = 10)` configuration.
 2. It checked the Lightning backend health (test backend always returns healthy).
 3. No `Authorization` header was present, so it generated a new root key and token ID.
 4. It called `TestModeLightningBackend.createInvoice(10, "")`, which generated a random 32-byte preimage, computed `paymentHash = SHA-256(preimage)`, and returned both.
@@ -311,20 +316,23 @@ This application is a minimal but complete reference implementation covering the
 
 | Feature | Where |
 |---------|-------|
-| Fixed-price endpoint protection | `ExampleController.data()` with `@PaygateProtected(priceSats = 10)` |
+| Fixed-price endpoint protection | `ExampleController.data()` with `@PaymentRequired(priceSats = 10)` |
+| Payment-gated quote endpoint | `ExampleController.quote()` with `@PaymentRequired(priceSats = 5)` |
 | Dynamic pricing | `ExampleController.analyze()` with `pricingStrategy = "analysisPricer"` |
 | Custom pricing strategy | `AnalysisPricingStrategy` implementing `PaygatePricingStrategy` |
 | Unprotected endpoints alongside protected ones | `ExampleController.health()` with no annotation |
-| Test mode configuration | `application.yml` with `paygate.test-mode=true` |
+| Dual-protocol support (L402 + MPP) | `application.yml` / `application-dev.yml` with MPP challenge binding secret |
+| Test mode configuration | `application-dev.yml` with `paygate.test-mode=true` |
 | Spring Boot auto-configuration | No manual bean wiring -- the starter auto-configures everything |
 | Integration testing | `ExampleAppIntegrationTest` exercising the full verification path |
 | Docker deployment | Multi-stage Dockerfile and docker-compose.yml |
 
 ### Key patterns to adopt in your own application
 
-1. **Annotate controller methods** with `@PaygateProtected` to mark them as payment-gated. The filter discovers them automatically.
+1. **Annotate controller methods** with `@PaymentRequired` to mark them as payment-gated. The filter discovers them automatically.
 2. **Implement `PaygatePricingStrategy`** and register it as a Spring `@Component` to create dynamic pricing. Reference it by bean name in the annotation.
 3. **Use test mode during development**. Set `paygate.test-mode=true` and exercise the full flow without a Lightning node. Switch to a real backend (LNbits or LND) for staging and production.
+4. **Enable dual-protocol support** by setting `paygate.protocols.mpp.challenge-binding-secret` to a secret of at least 32 bytes. Both L402 and MPP will be active simultaneously.
 
 ---
 
@@ -345,17 +353,40 @@ server:
 paygate:
   enabled: true
   service-name: example-api
+  protocols:
+    mpp:
+      challenge-binding-secret: ${PAYGATE_MPP_SECRET:}
 ```
 
-> **Note:** Test mode is enabled via the `dev` profile in `application-dev.yml` (which sets `paygate.test-mode: true`), not in the base `application.yml`. The `dev` profile is activated by default via `spring.profiles.active: dev` above.
+And the `dev` profile overrides (`src/main/resources/application-dev.yml`):
+
+```yaml
+paygate:
+  test-mode: true
+  protocols:
+    mpp:
+      challenge-binding-secret: dev-only-mpp-test-secret-do-not-use-in-production
+```
+
+> **Note:** Test mode is enabled via the `dev` profile in `application-dev.yml`, not in the base `application.yml`. The `dev` profile is activated by default via `spring.profiles.active: dev` above.
+
+### Dual-Protocol Behavior
+
+When the `dev` profile is active, both L402 and MPP protocols are enabled because:
+
+1. L402 is enabled by default (`paygate.protocols.l402.enabled=true`)
+2. MPP is in `auto` mode (default) and the `challenge-binding-secret` is provided in `application-dev.yml`
+
+When a client requests a protected endpoint without credentials, the server returns a 402 response with **multiple `WWW-Authenticate` headers** -- one for each active protocol. The client can choose which protocol to use for payment and credential presentation. In production, set `PAYGATE_MPP_SECRET` as an environment variable with a secret of at least 32 bytes.
 
 ### Property Reference
 
 | Property            | Value         | Effect                                                       |
 |---------------------|---------------|--------------------------------------------------------------|
-| `paygate.enabled`      | `true`        | Activates the L402 filter and auto-configuration.            |
+| `paygate.enabled`      | `true`        | Activates the payment filter and auto-configuration.         |
 | `paygate.test-mode`    | `true`        | Uses `TestModeLightningBackend` instead of a real node.      |
 | `paygate.service-name` | `example-api` | Appears in macaroon caveats (e.g., `services=example-api:0`).|
+| `paygate.protocols.mpp.challenge-binding-secret` | `${PAYGATE_MPP_SECRET:}` | HMAC secret for MPP challenge binding. When present and non-blank, enables MPP protocol. |
 
 ### Additional Properties (defaults)
 
@@ -363,7 +394,7 @@ These properties are not set explicitly in the example but take effect via their
 
 | Property | Default | Effect |
 |----------|---------|--------|
-| `paygate.default-price-sats` | `10` | Fallback price if `@PaygateProtected` does not specify one. |
+| `paygate.default-price-sats` | `10` | Fallback price if `@PaymentRequired` does not specify one. |
 | `paygate.default-timeout-seconds` | `3600` | Fallback credential lifetime (1 hour). |
 | `paygate.root-key-store` | `file` | Root key persistence. Use `memory` for ephemeral keys (Docker, tests). |
 | `paygate.root-key-store-path` | `~/.paygate/keys` | File system path for persisted root keys. |
@@ -379,14 +410,16 @@ To connect to a real Lightning backend, disable test mode and configure one of t
 
 ```
 paygate-example-app/
-  src/main/java/com/greenharborlabs/l402/example/
+  src/main/java/com/greenharborlabs/paygate/example/
     ExampleApplication.java         Main class (@SpringBootApplication)
-    ExampleController.java          REST endpoints with @PaygateProtected
+    ExampleController.java          REST endpoints with @PaymentRequired
     AnalysisPricingStrategy.java    Dynamic pricing implementation (PaygatePricingStrategy)
+    SecurityConfig.java             Security configuration
   src/main/resources/
-    application.yml                 Configuration
+    application.yml                 Base configuration (protocols, service name)
+    application-dev.yml             Dev profile (test mode, MPP secret)
   src/test/java/
-    ExampleAppIntegrationTest.java  Full L402 flow integration tests
+    ExampleAppIntegrationTest.java  Full payment flow integration tests
   Dockerfile                        Multi-stage Docker build
   .dockerignore                     Docker build exclusions
   build.gradle.kts                  Module build file

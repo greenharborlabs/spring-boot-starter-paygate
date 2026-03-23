@@ -14,15 +14,16 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Registry of L402-protected endpoints. Supports both manual registration via
+ * Registry of payment-protected endpoints. Supports both manual registration via
  * {@link #register(PaygateEndpointConfig)} and automatic scanning of
- * {@link PaygateProtected} annotations from Spring MVC handler mappings.
+ * {@link PaymentRequired} annotations from Spring MVC handler mappings.
  *
  * <p>Path matching supports both exact paths and Spring path patterns
  * (e.g. {@code /api/items/{id}}).
  */
 public class PaygateEndpointRegistry {
 
+    private static final System.Logger log = System.getLogger(PaygateEndpointRegistry.class.getName());
     private static final PathPatternParser PATTERN_PARSER = new PathPatternParser();
     private static final long DEFAULT_TIMEOUT_SECONDS_FALLBACK = 3600;
 
@@ -103,7 +104,7 @@ public class PaygateEndpointRegistry {
     }
 
     /**
-     * Scans all handler methods annotated with {@link PaygateProtected} and registers them.
+     * Scans all handler methods annotated with {@link PaymentRequired} and registers them.
      *
      * @param handlerMapping the Spring MVC request mapping handler mapping
      */
@@ -111,8 +112,9 @@ public class PaygateEndpointRegistry {
         Map<RequestMappingInfo, HandlerMethod> methods = handlerMapping.getHandlerMethods();
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : methods.entrySet()) {
             HandlerMethod handlerMethod = entry.getValue();
-            PaygateProtected annotation = handlerMethod.getMethodAnnotation(PaygateProtected.class);
-            if (annotation == null) {
+            PaymentRequired paymentRequired = handlerMethod.getMethodAnnotation(PaymentRequired.class);
+
+            if (paymentRequired == null) {
                 continue;
             }
 
@@ -127,11 +129,10 @@ public class PaygateEndpointRegistry {
 
             for (String pattern : patterns) {
                 if (httpMethods.isEmpty()) {
-                    // No specific method restriction means all methods
-                    register(toConfig("*", pattern, annotation));
+                    register(toConfig("*", pattern, paymentRequired));
                 } else {
                     for (org.springframework.web.bind.annotation.RequestMethod httpMethod : httpMethods) {
-                        register(toConfig(httpMethod.name(), pattern, annotation));
+                        register(toConfig(httpMethod.name(), pattern, paymentRequired));
                     }
                 }
             }
@@ -152,7 +153,7 @@ public class PaygateEndpointRegistry {
         return configs.size();
     }
 
-    private PaygateEndpointConfig toConfig(String method, String path, PaygateProtected annotation) {
+    private PaygateEndpointConfig toConfig(String method, String path, PaymentRequired annotation) {
         long timeout = annotation.timeoutSeconds() == -1
                 ? defaultTimeoutSeconds
                 : annotation.timeoutSeconds();

@@ -1,13 +1,9 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
-import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
-import com.greenharborlabs.paygate.core.macaroon.Macaroon;
-import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
-import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
-import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,28 +11,26 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.ApplicationContext;
 import org.jspecify.annotations.Nullable;
 
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HexFormat;
-import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Service that encapsulates L402 challenge creation logic: health check,
- * rate limiting, root key generation, invoice creation, macaroon minting,
- * and response header formatting.
+ * Service that encapsulates payment challenge creation logic: health check,
+ * rate limiting, root key generation, invoice creation, and raw context assembly.
+ *
+ * <p>Returns a protocol-agnostic {@link ChallengeContext} that protocol-specific
+ * formatters (L402, MPP) consume to produce their respective challenge headers.
+ * Macaroon minting has moved to the protocol layer.
  *
  * <p>Extracted from {@link PaygateSecurityFilter} so that both the servlet filter
- * and Spring Security entry points can issue identical 402 challenges.
+ * and Spring Security entry points can issue identical challenges.
  */
 public class PaygateChallengeService {
 
     private static final System.Logger log = System.getLogger(PaygateChallengeService.class.getName());
-
-    /** Macaroon binary format version — V2 as defined by the L402 identifier layout. */
-    private static final int MACAROON_IDENTIFIER_VERSION = 0;
 
     private final RootKeyStore rootKeyStore;
     private final LightningBackend lightningBackend;
@@ -66,7 +60,7 @@ public class PaygateChallengeService {
     }
 
     /**
-     * Creates an L402 challenge for the given request and endpoint configuration.
+     * Creates a protocol-agnostic challenge context for the given request and endpoint configuration.
      *
      * <p>Performs the following steps:
      * <ol>
@@ -75,17 +69,16 @@ public class PaygateChallengeService {
      *   <li>Generate root key and token ID</li>
      *   <li>Resolve effective price (dynamic strategy or static)</li>
      *   <li>Create Lightning invoice</li>
-     *   <li>Mint macaroon with service and expiry caveats</li>
-     *   <li>Build and return the challenge result</li>
+     *   <li>Build and return the {@link ChallengeContext}</li>
      * </ol>
      *
      * @param request the current HTTP request
      * @param config  the endpoint configuration
-     * @return the challenge result containing all data for the 402 response
+     * @return the challenge context containing all data for protocol-specific formatting
      * @throws PaygateLightningUnavailableException if the Lightning backend is unhealthy or fails
      * @throws PaygateRateLimitedException          if the client is rate-limited
      */
-    public PaygateChallengeResult createChallenge(HttpServletRequest request, PaygateEndpointConfig config)
+    public ChallengeContext createChallenge(HttpServletRequest request, PaygateEndpointConfig config)
             throws PaygateLightningUnavailableException, PaygateRateLimitedException {
 
         // 1. Check Lightning backend health
@@ -99,9 +92,9 @@ public class PaygateChallengeService {
             throw new PaygateRateLimitedException("Rate limit exceeded for client");
         }
 
-        // 3. Generate root key, create invoice, mint macaroon
+        // 3. Generate root key, create invoice, build context
         try {
-            return mintChallenge(request, config);
+            return buildChallengeContext(request, config);
         } catch (PaygateLightningUnavailableException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -110,14 +103,13 @@ public class PaygateChallengeService {
         }
     }
 
-    // NOTE: This method performs three sequential blocking operations:
-    // (1) rootKeyStore.generateRootKey() — file I/O with write lock
-    // (2) lightningBackend.createInvoice() — synchronous network call
-    // (3) MacaroonMinter.mint() — CPU-bound HMAC computation
+    // NOTE: This method performs two sequential blocking operations:
+    // (1) rootKeyStore.generateRootKey() -- file I/O with write lock
+    // (2) lightningBackend.createInvoice() -- synchronous network call
     // The CachingLightningBackendWrapper mitigates (2) for health checks.
     // Future optimization: consider virtual threads or structured concurrency
     // to parallelize (1) and (2) when they are independent.
-    private PaygateChallengeResult mintChallenge(HttpServletRequest request, PaygateEndpointConfig config)
+    private ChallengeContext buildChallengeContext(HttpServletRequest request, PaygateEndpointConfig config)
             throws PaygateLightningUnavailableException {
 
         // Generate root key and tokenId atomically; try-with-resources ensures
@@ -146,44 +138,31 @@ public class PaygateChallengeService {
                     log.log(System.Logger.Level.WARNING, "Failed to record invoice creation in earnings tracker: {0}", e.getMessage());
                 }
 
-                // Build MacaroonIdentifier and mint macaroon with service, capability, and expiry caveats
-                MacaroonIdentifier identifier = new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, invoice.paymentHash(), tokenId);
-                Instant validUntil = Instant.now().plusSeconds(config.timeoutSeconds());
-                List<Caveat> caveats = new ArrayList<>();
-                caveats.add(new Caveat("services", serviceName + ":0"));
-                String capability = config.capability();
-                if (capability != null && !capability.isBlank()) {
-                    caveats.add(new Caveat(serviceName + "_capabilities", capability));
-                }
-                caveats.add(new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
-                Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
-
-                // Serialize and encode
-                byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-                String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-
-                // Build WWW-Authenticate header — sanitize bolt11 to prevent header injection
-                String safeBolt11Header = sanitizeBolt11ForHeader(invoice.bolt11());
-                String wwwAuth = "L402 version=\"0\", token=\"" + macaroonBase64
-                        + "\", macaroon=\"" + macaroonBase64
-                        + "\", invoice=\"" + safeBolt11Header + "\"";
-
-                // In test mode the backend includes the preimage on the PENDING invoice so
-                // users can complete the full L402 flow with curl. Real backends never set
-                // preimage on PENDING invoices, so this field only appears in test mode.
-                String testPreimage = null;
+                // Build opaque map for test preimage if present
+                Map<String, String> opaque = null;
                 byte[] invoicePreimage = invoice.preimage();
                 if (invoicePreimage != null) {
-                    testPreimage = HexFormat.of().formatHex(invoicePreimage);
+                    opaque = new LinkedHashMap<>();
+                    opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
                 }
 
-                return new PaygateChallengeResult(
-                        macaroonBase64,
+                String tokenIdHex = HexFormat.of().formatHex(tokenId);
+
+                // Clone rootKey so ChallengeContext has its own copy before we zeroize
+                byte[] rootKeyClone = rootKey.clone();
+
+                return new ChallengeContext(
+                        invoice.paymentHash(),
+                        tokenIdHex,
                         invoice.bolt11(),
-                        wwwAuth,
                         effectivePrice,
                         config.description(),
-                        testPreimage
+                        serviceName,
+                        config.timeoutSeconds(),
+                        config.capability(),
+                        rootKeyClone,
+                        opaque,
+                        null
                 );
             } finally {
                 KeyMaterial.zeroize(rootKey);
@@ -227,7 +206,7 @@ public class PaygateChallengeService {
      * Validates that a bolt11 invoice string contains no characters that could enable
      * HTTP header injection or break the {@code WWW-Authenticate} header format per
      * RFC 7230. Rejects all C0 control characters (0x00-0x1F), DEL (0x7F), and
-     * double-quote ({@code "}) with {@link IllegalArgumentException} — a modified
+     * double-quote ({@code "}) with {@link IllegalArgumentException} -- a modified
      * bolt11 invoice is unpayable, so silent stripping would mask upstream bugs.
      *
      * <p>Aligned with {@code L402Challenge.sanitizeBolt11ForHeader()} in paygate-core.
@@ -260,7 +239,7 @@ public class PaygateChallengeService {
         if (this.properties != null && this.properties.isTrustForwardedHeaders()) {
             String xff = request.getHeader("X-Forwarded-For");
             if (xff != null && !xff.isBlank()) {
-                // X-Forwarded-For: client, proxy1, proxy2 — take leftmost
+                // X-Forwarded-For: client, proxy1, proxy2 -- take leftmost
                 int comma = xff.indexOf(',');
                 String ip = (comma > 0 ? xff.substring(0, comma) : xff).strip();
                 if (!ip.isEmpty()) {

@@ -16,6 +16,10 @@ import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentCredential;
+import com.greenharborlabs.paygate.protocol.l402.L402Metadata;
+import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -163,10 +167,11 @@ class PaygateSecurityFilterTest {
                 PaygateProperties paygateProperties
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
+            var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, null);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, "test-service",
+                    endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, paygateEarningsTracker, null);
         }
 
@@ -179,13 +184,13 @@ class PaygateSecurityFilterTest {
     @RestController
     static class TestController {
 
-        @PaygateProtected(priceSats = 10, description = "Test protected endpoint")
+        @PaymentRequired(priceSats = 10, description = "Test protected endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "protected-content";
         }
 
-        @PaygateProtected(priceSats = 10, description = "Capability protected endpoint", capability = "search")
+        @PaymentRequired(priceSats = 10, description = "Capability protected endpoint", capability = "search")
         @GetMapping(CAPABILITY_PROTECTED_PATH)
         String capabilityProtectedEndpoint() {
             return "capability-protected-content";
@@ -423,10 +428,9 @@ class PaygateSecurityFilterTest {
 
             MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
             Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
-            L402Credential credential = new L402Credential(
-                    macaroon,
-                    new com.greenharborlabs.paygate.core.lightning.PaymentPreimage(preimage),
-                    HEX.formatHex(tokenId));
+            PaymentCredential credential = new PaymentCredential(
+                    paymentHash, preimage, HEX.formatHex(tokenId), "L402", null,
+                    new L402Metadata(macaroon, List.of(), "L402 dummy"));
 
             PaygateEndpointConfig config = new PaygateEndpointConfig(
                     "GET", PROTECTED_PATH, PRICE_SATS, TIMEOUT_SECONDS, "", "", "");
@@ -456,10 +460,9 @@ class PaygateSecurityFilterTest {
 
             MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
             Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
-            L402Credential credential = new L402Credential(
-                    macaroon,
-                    new com.greenharborlabs.paygate.core.lightning.PaymentPreimage(preimage),
-                    HEX.formatHex(tokenId));
+            PaymentCredential credential = new PaymentCredential(
+                    paymentHash, preimage, HEX.formatHex(tokenId), "L402", null,
+                    new L402Metadata(macaroon, List.of(), "L402 dummy"));
 
             PaygateEndpointConfig config = new PaygateEndpointConfig(
                     "GET", PROTECTED_PATH, PRICE_SATS, TIMEOUT_SECONDS, "", "", "");
@@ -649,8 +652,8 @@ class PaygateSecurityFilterTest {
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", authHeader))
-                    .andExpect(status().isUnauthorized())
-                    .andExpect(jsonPath("$.error", is("EXPIRED_CREDENTIAL")));
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(jsonPath("$.title", is("EXPIRED_CREDENTIAL")));
         }
 
         @Test
@@ -671,8 +674,8 @@ class PaygateSecurityFilterTest {
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", authHeader))
-                    .andExpect(status().isUnauthorized())
-                    .andExpect(jsonPath("$.error", is("INVALID_SERVICE")));
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
         }
     }
 
@@ -838,8 +841,8 @@ class PaygateSecurityFilterTest {
 
             mockMvc.perform(get(CAPABILITY_PROTECTED_PATH)
                             .header("Authorization", authHeader))
-                    .andExpect(status().isUnauthorized())
-                    .andExpect(jsonPath("$.error", is("INVALID_SERVICE")));
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
         }
 
         @Test
@@ -849,8 +852,8 @@ class PaygateSecurityFilterTest {
 
             mockMvc.perform(get(CAPABILITY_PROTECTED_PATH)
                             .header("Authorization", authHeader))
-                    .andExpect(status().isUnauthorized())
-                    .andExpect(jsonPath("$.error", is("INVALID_SERVICE")));
+                    .andExpect(status().isPaymentRequired())
+                    .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
         }
 
         @Test

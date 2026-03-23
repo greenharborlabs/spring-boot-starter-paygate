@@ -172,13 +172,17 @@ The module contains three classes, all in the `com.greenharborlabs.paygate.light
 
 ```
 paygate-lightning-lnd/
-  src/main/java/com/greenharborlabs/l402/lightning/lnd/
+  src/main/java/com/greenharborlabs/paygate/lightning/lnd/
     LndBackend.java       LightningBackend implementation using gRPC
+    LndChannelFactory.java  Factory for building gRPC ManagedChannel instances
     LndConfig.java        Immutable configuration record
+    LndException.java     Runtime exception for gRPC failures
+    LndTimeoutException.java  Timeout-specific subclass of LndException
+    MacaroonClientInterceptor.java  gRPC interceptor for LND macaroon auth
     package-info.java     Package documentation
   src/main/proto/
     lightning.proto        Minimal LND proto definitions (3 RPCs)
-  src/test/java/com/greenharborlabs/l402/lightning/lnd/
+  src/test/java/com/greenharborlabs/paygate/lightning/lnd/
     LndBackendTest.java   Unit tests using gRPC in-process transport
 ```
 
@@ -307,7 +311,7 @@ public ManagedChannel lndManagedChannel() {
 
 Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LndBackend` directly -- the `PaygateSecurityFilter` calls it automatically when:
 
-1. A request hits an `@PaygateProtected` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
+1. A request hits an `@PaymentRequired` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
 2. A request presents L402 credentials, triggering `lookupInvoice()` to verify the payment was made
 3. The health indicator or filter checks backend availability via `isHealthy()`
 
@@ -318,7 +322,7 @@ Once configured, the module works transparently with the rest of the L402 stack.
 @RequestMapping("/api/v1")
 public class MyController {
 
-    @PaygateProtected(priceSats = 10)
+    @PaymentRequired(priceSats = 10)
     @GetMapping("/premium")
     public Map<String, String> premium() {
         return Map.of("data", "premium content");

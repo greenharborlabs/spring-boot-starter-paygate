@@ -16,6 +16,7 @@ import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -192,10 +193,11 @@ class PaygateSecurityFilterRealStoreTest {
                 List<CaveatVerifier> caveatVerifiers
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
+            var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, null, null, null, null);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, "test-service",
+                    endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, null, null);
         }
 
@@ -208,7 +210,7 @@ class PaygateSecurityFilterRealStoreTest {
     @RestController
     static class RealStoreTestController {
 
-        @PaygateProtected(priceSats = 10, description = "Real store test endpoint")
+        @PaymentRequired(priceSats = 10, description = "Real store test endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "real-store-content";

@@ -130,12 +130,12 @@ The module contains three classes, all in the `com.greenharborlabs.paygate.light
 
 ```
 paygate-lightning-lnbits/
-  src/main/java/com/greenharborlabs/l402/lightning/lnbits/
+  src/main/java/com/greenharborlabs/paygate/lightning/lnbits/
     LnbitsBackend.java       LightningBackend implementation
     LnbitsConfig.java        Immutable configuration record
     LnbitsException.java     Runtime exception for API failures
     LnbitsTimeoutException.java  Timeout-specific subclass of LnbitsException
-  src/test/java/com/greenharborlabs/l402/lightning/lnbits/
+  src/test/java/com/greenharborlabs/paygate/lightning/lnbits/
     LnbitsBackendTest.java   Integration tests using MockWebServer
     LnbitsConfigTest.java    Config validation and redaction tests
 ```
@@ -239,7 +239,7 @@ public class CustomLnbitsConfiguration {
 
 Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LnbitsBackend` directly -- the `PaygateSecurityFilter` calls it automatically when:
 
-1. A request hits an `@PaygateProtected` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
+1. A request hits an `@PaymentRequired` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
 2. A request presents L402 credentials, triggering `lookupInvoice()` to verify the payment was made
 3. The health indicator or filter checks backend availability via `isHealthy()`
 
@@ -250,7 +250,7 @@ Once configured, the module works transparently with the rest of the L402 stack.
 @RequestMapping("/api/v1")
 public class MyController {
 
-    @PaygateProtected(priceSats = 10)
+    @PaymentRequired(priceSats = 10)
     @GetMapping("/premium")
     public Map<String, String> premium() {
         return Map.of("data", "premium content");

@@ -14,7 +14,7 @@
     {
       "name": "paygate.default-price-sats",
       "type": "java.lang.Long",
-      "description": "Default price in satoshis charged for L402-protected endpoints. Individual endpoints can override this via @PaygateProtected annotation or a custom PaygatePricingStrategy.",
+      "description": "Default price in satoshis charged for payment-protected endpoints. Individual endpoints can override this via @PaymentRequired annotation or a custom PaygatePricingStrategy.",
       "defaultValue": 10
     },
     {
@@ -165,6 +165,23 @@
       "type": "java.lang.String",
       "description": "Tag value used for the endpoint dimension when the cardinality cap is exceeded. All overflow endpoints are bucketed under this single value.",
       "defaultValue": "_other"
+    },
+    {
+      "name": "paygate.protocols.l402.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether the L402 protocol is enabled. When true, the gateway issues L402 macaroon+invoice challenges and accepts L402 credentials.",
+      "defaultValue": true
+    },
+    {
+      "name": "paygate.protocols.mpp.enabled",
+      "type": "java.lang.String",
+      "description": "Whether the MPP (Message Payment Protocol) is enabled. 'auto' enables MPP when challenge-binding-secret is configured, 'true' forces MPP on (fails fast if secret is missing), 'false' disables MPP entirely.",
+      "defaultValue": "auto"
+    },
+    {
+      "name": "paygate.protocols.mpp.challenge-binding-secret",
+      "type": "java.lang.String",
+      "description": "HMAC secret used to bind MPP payment challenges to specific requests. Must be at least 32 bytes. Required when MPP is enabled. Keep this value secret."
     }
   ],
   "hints": [
@@ -195,6 +212,23 @@
         {
           "value": "lnd",
           "description": "Use LND gRPC as the Lightning backend."
+        }
+      ]
+    },
+    {
+      "name": "paygate.protocols.mpp.enabled",
+      "values": [
+        {
+          "value": "auto",
+          "description": "Enable MPP automatically when challenge-binding-secret is configured."
+        },
+        {
+          "value": "true",
+          "description": "Force MPP on. Startup fails if challenge-binding-secret is not set."
+        },
+        {
+          "value": "false",
+          "description": "Disable MPP entirely, even if challenge-binding-secret is present."
         }
       ]
     },

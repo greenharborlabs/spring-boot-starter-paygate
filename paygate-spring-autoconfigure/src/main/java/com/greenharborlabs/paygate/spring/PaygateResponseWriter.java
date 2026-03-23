@@ -1,10 +1,18 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentReceipt;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import com.greenharborlabs.paygate.core.util.JsonEscaper;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Shared utility for writing L402 HTTP error responses in a consistent JSON format.
@@ -111,5 +119,164 @@ public final class PaygateResponseWriter {
         response.setContentType("application/json");
         response.getWriter().write("""
                 {"code": 401, "error": "AUTHENTICATION_FAILED", "message": "L402 authentication failed"}""");
+    }
+
+    /**
+     * Writes a 402 Payment Required response with multi-protocol challenge headers.
+     * Each protocol contributes a separate {@code WWW-Authenticate} header via
+     * {@code addHeader} (not {@code setHeader}) to support multiple challenges.
+     *
+     * @param response   the servlet response
+     * @param context    the challenge context with invoice details
+     * @param challenges one challenge per registered protocol
+     */
+    public static void writePaymentRequired(HttpServletResponse response,
+                                            ChallengeContext context,
+                                            List<ChallengeResponse> challenges) throws IOException {
+        response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        response.setHeader("Cache-Control", "no-store");
+        for (ChallengeResponse challenge : challenges) {
+            response.addHeader("WWW-Authenticate", challenge.wwwAuthenticateHeader());
+        }
+        response.setContentType("application/json");
+
+        var sb = new StringBuilder();
+        sb.append("{\"code\": 402, \"message\": \"Payment required\"");
+        sb.append(", \"price_sats\": ").append(context.priceSats());
+        sb.append(", \"description\": \"").append(JsonEscaper.escape(context.description())).append('"');
+        sb.append(", \"invoice\": \"").append(JsonEscaper.escape(context.bolt11Invoice())).append('"');
+
+        // Build protocols map: one entry per challenge that provides bodyData
+        sb.append(", \"protocols\": {");
+        boolean firstProtocol = true;
+        for (ChallengeResponse challenge : challenges) {
+            if (challenge.bodyData() != null) {
+                if (!firstProtocol) {
+                    sb.append(", ");
+                }
+                sb.append('"').append(JsonEscaper.escape(challenge.protocolScheme())).append("\": ");
+                appendJsonValue(sb, challenge.bodyData());
+                firstProtocol = false;
+            }
+        }
+        sb.append('}');
+
+        // Include test preimage if present in opaque context
+        if (context.opaque() != null && context.opaque().containsKey("test_preimage")) {
+            sb.append(", \"test_preimage\": \"")
+                    .append(JsonEscaper.escape(context.opaque().get("test_preimage")))
+                    .append('"');
+        }
+
+        sb.append('}');
+        response.getWriter().write(sb.toString());
+    }
+
+    /**
+     * Writes a {@code Payment-Receipt} header as base64url-nopad encoded JSON.
+     *
+     * @param response the servlet response
+     * @param receipt  the payment receipt data
+     */
+    public static void writeReceipt(HttpServletResponse response,
+                                    PaymentReceipt receipt) throws IOException {
+        response.setHeader("Cache-Control", "private");
+
+        var receiptJson = new StringBuilder();
+        receiptJson.append("{\"status\": \"").append(JsonEscaper.escape(receipt.status())).append('"');
+        receiptJson.append(", \"challenge_id\": \"").append(JsonEscaper.escape(receipt.challengeId())).append('"');
+        receiptJson.append(", \"method\": \"").append(JsonEscaper.escape(receipt.method())).append('"');
+        if (receipt.reference() != null) {
+            receiptJson.append(", \"reference\": \"").append(JsonEscaper.escape(receipt.reference())).append('"');
+        }
+        receiptJson.append(", \"amount_sats\": ").append(receipt.amountSats());
+        receiptJson.append(", \"timestamp\": \"").append(JsonEscaper.escape(receipt.timestamp())).append('"');
+        receiptJson.append(", \"protocol_scheme\": \"").append(JsonEscaper.escape(receipt.protocolScheme())).append('"');
+        receiptJson.append('}');
+
+        String encoded = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(receiptJson.toString().getBytes(StandardCharsets.UTF_8));
+        response.setHeader("Payment-Receipt", encoded);
+    }
+
+    /**
+     * Writes a 400 Bad Request response for an unsupported payment method,
+     * using RFC 9457 Problem Details format.
+     *
+     * @param response the servlet response
+     * @param message  detail message describing why the method is unsupported
+     */
+    public static void writeMethodUnsupported(HttpServletResponse response,
+                                              String message) throws IOException {
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        response.setHeader("Cache-Control", "no-store");
+        response.setContentType("application/problem+json");
+        response.getWriter().write("""
+                {"type": "https://paymentauth.org/problems/method-unsupported", "title": "Method Unsupported", "status": 400, "detail": "%s"}"""
+                .formatted(JsonEscaper.escape(message)));
+    }
+
+    /**
+     * Writes an error response for a payment validation failure, using RFC 9457
+     * Problem Details format. For 402 errors, fresh challenge headers are included
+     * so the client can retry with a new payment.
+     *
+     * @param response   the servlet response
+     * @param exception  the validation exception with error code and HTTP status
+     * @param challenges fresh challenges to include for 402 responses, may be empty
+     */
+    public static void writeMppError(HttpServletResponse response,
+                                     PaymentValidationException exception,
+                                     List<ChallengeResponse> challenges) throws IOException {
+        int status = exception.getHttpStatus();
+        response.setStatus(status);
+        response.setHeader("Cache-Control", "no-store");
+
+        if (status == HttpServletResponse.SC_PAYMENT_REQUIRED && challenges != null) {
+            for (ChallengeResponse challenge : challenges) {
+                response.addHeader("WWW-Authenticate", challenge.wwwAuthenticateHeader());
+            }
+        }
+
+        response.setContentType("application/problem+json");
+
+        var sb = new StringBuilder();
+        sb.append("{\"type\": \"").append(JsonEscaper.escape(exception.getProblemTypeUri())).append('"');
+        sb.append(", \"title\": \"").append(JsonEscaper.escape(exception.getErrorCode().name())).append('"');
+        sb.append(", \"status\": ").append(status);
+        sb.append(", \"detail\": \"").append(JsonEscaper.escape(exception.getMessage())).append('"');
+        if (exception.getTokenId() != null) {
+            sb.append(", \"token_id\": \"").append(JsonEscaper.escape(exception.getTokenId())).append('"');
+        }
+        sb.append('}');
+        response.getWriter().write(sb.toString());
+    }
+
+    /**
+     * Serializes a value to JSON, appending to the given {@link StringBuilder}.
+     * Handles {@link Map}, {@link Number}, {@link Boolean}, and falls back to
+     * escaped string representation for all other types.
+     */
+    @SuppressWarnings("unchecked")
+    private static void appendJsonValue(StringBuilder sb, Object value) {
+        switch (value) {
+            case null -> sb.append("null");
+            case Map<?, ?> map -> {
+                sb.append('{');
+                boolean first = true;
+                for (var entry : ((Map<String, Object>) map).entrySet()) {
+                    if (!first) {
+                        sb.append(", ");
+                    }
+                    sb.append('"').append(JsonEscaper.escape(entry.getKey())).append("\": ");
+                    appendJsonValue(sb, entry.getValue());
+                    first = false;
+                }
+                sb.append('}');
+            }
+            case Number n -> sb.append(n);
+            case Boolean b -> sb.append(b);
+            default -> sb.append('"').append(JsonEscaper.escape(value.toString())).append('"');
+        }
     }
 }

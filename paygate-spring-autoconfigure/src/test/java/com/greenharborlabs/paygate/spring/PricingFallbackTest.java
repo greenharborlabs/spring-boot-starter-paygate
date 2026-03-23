@@ -8,6 +8,7 @@ import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,7 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * TDD test for pricing strategy fallback behavior (T087).
  *
- * <p>Verifies that when {@code @PaygateProtected(priceSats = 50, pricingStrategy = "nonExistentPricer")}
+ * <p>Verifies that when {@code @PaymentRequired(priceSats = 50, pricingStrategy = "nonExistentPricer")}
  * references a bean name that does not exist in the application context, the system falls back
  * to the static {@code priceSats} value of 50 rather than failing.
  *
@@ -116,10 +117,11 @@ class PricingFallbackTest {
                 ApplicationContext applicationContext
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
+            var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, null, applicationContext, null, null);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, "test-service",
+                    endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, null, null);
         }
 
@@ -134,7 +136,7 @@ class PricingFallbackTest {
     @RestController
     static class PricingFallbackController {
 
-        @PaygateProtected(priceSats = 50, pricingStrategy = "nonExistentPricer")
+        @PaymentRequired(priceSats = 50, pricingStrategy = "nonExistentPricer")
         @GetMapping(FALLBACK_PATH)
         String fallbackPriceEndpoint() {
             return "fallback-content";

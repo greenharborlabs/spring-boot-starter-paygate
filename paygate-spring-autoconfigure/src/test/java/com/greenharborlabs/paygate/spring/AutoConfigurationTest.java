@@ -14,7 +14,11 @@ import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 
+import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.protocol.mpp.MppProtocol;
+
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
@@ -122,7 +126,7 @@ class AutoConfigurationTest {
                 .withBean("testController", SentinelTimeoutController.class, SentinelTimeoutController::new)
                 .run(context -> {
                     PaygateEndpointRegistry registry = context.getBean(PaygateEndpointRegistry.class);
-                    // The controller endpoint uses @PaygateProtected(priceSats=5) with default timeoutSeconds=-1
+                    // The controller endpoint uses @PaymentRequired(priceSats=5) with default timeoutSeconds=-1
                     PaygateEndpointConfig config = registry.findConfig("GET", "/api/sentinel-test");
                     assertThat(config).isNotNull();
                     assertThat(config.timeoutSeconds()).isEqualTo(9999);
@@ -267,6 +271,209 @@ class AutoConfigurationTest {
         });
     }
 
+    // --- Protocol conditional registration tests ---
+
+    /** A secret that is exactly 32 ASCII characters = 32 UTF-8 bytes. */
+    private static final String VALID_SECRET = "abcdefghijklmnopqrstuvwxyz012345";
+
+    /** A secret that is only 10 ASCII characters = 10 UTF-8 bytes. */
+    private static final String SHORT_SECRET = "short_sec!";
+
+    @Nested
+    @DisplayName("L402 protocol conditional registration")
+    class L402ProtocolRegistration {
+
+        @Test
+        @DisplayName("L402Protocol bean created by default (l402.enabled defaults to true)")
+        void l402ProtocolCreatedByDefault() {
+            contextRunner.run(context ->
+                    assertThat(context).hasBean("l402Protocol"));
+        }
+
+        @Test
+        @DisplayName("L402Protocol bean created when paygate.protocols.l402.enabled=true")
+        void l402ProtocolCreatedWhenExplicitlyEnabled() {
+            contextRunner
+                    .withPropertyValues("paygate.protocols.l402.enabled=true")
+                    .run(context ->
+                            assertThat(context).hasBean("l402Protocol"));
+        }
+
+        @Test
+        @DisplayName("L402Protocol bean NOT created when paygate.protocols.l402.enabled=false")
+        void l402ProtocolNotCreatedWhenDisabled() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.l402.enabled=false",
+                            "paygate.protocols.mpp.enabled=true",
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET)
+                    .run(context ->
+                            assertThat(context).doesNotHaveBean("l402Protocol"));
+        }
+    }
+
+    @Nested
+    @DisplayName("MPP protocol conditional registration")
+    class MppProtocolRegistration {
+
+        @Test
+        @DisplayName("MppProtocol bean created when mpp.enabled=auto and secret is present")
+        void mppProtocolCreatedWhenAutoAndSecretPresent() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET)
+                    .run(context -> {
+                        assertThat(context).hasBean("mppProtocol");
+                        PaymentProtocol mpp = context.getBean("mppProtocol", PaymentProtocol.class);
+                        assertThat(mpp).isInstanceOf(MppProtocol.class);
+                    });
+        }
+
+        @Test
+        @DisplayName("MppProtocol bean created when mpp.enabled=true and secret is present")
+        void mppProtocolCreatedWhenExplicitlyEnabled() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.mpp.enabled=true",
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET)
+                    .run(context ->
+                            assertThat(context).hasBean("mppProtocol"));
+        }
+
+        @Test
+        @DisplayName("MppProtocol bean NOT created when mpp.enabled=false")
+        void mppProtocolNotCreatedWhenDisabled() {
+            contextRunner
+                    .withPropertyValues("paygate.protocols.mpp.enabled=false")
+                    .run(context ->
+                            assertThat(context).doesNotHaveBean("mppProtocol"));
+        }
+
+        @Test
+        @DisplayName("MppProtocol bean created when mpp.enabled=AUTO (mixed case) and secret present")
+        void mppProtocolCreatedWhenAutoUpperCase() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.mpp.enabled=AUTO",
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET)
+                    .run(context ->
+                            assertThat(context).hasBean("mppProtocol"));
+        }
+
+        @Test
+        @DisplayName("MppProtocol bean NOT created when mpp.enabled=auto and no secret")
+        void mppProtocolNotCreatedWhenAutoAndNoSecret() {
+            contextRunner.run(context ->
+                    assertThat(context).doesNotHaveBean("mppProtocol"));
+        }
+    }
+
+    @Nested
+    @DisplayName("Protocol startup validation")
+    class ProtocolStartupValidation {
+
+        @Test
+        @DisplayName("startup fails when mpp.enabled=true but no secret provided")
+        void failsWhenMppEnabledTrueNoSecret() {
+            contextRunner
+                    .withPropertyValues("paygate.protocols.mpp.enabled=true")
+                    .run(context -> {
+                        assertThat(context).hasFailed();
+                        assertThat(context.getStartupFailure())
+                                .rootCause()
+                                .isInstanceOf(IllegalStateException.class)
+                                .hasMessageContaining("challenge-binding-secret")
+                                .hasMessageContaining("is not set");
+                    });
+        }
+
+        @Test
+        @DisplayName("startup fails when secret is present but < 32 UTF-8 bytes")
+        void failsWhenSecretTooShort() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.mpp.enabled=true",
+                            "paygate.protocols.mpp.challenge-binding-secret=" + SHORT_SECRET)
+                    .run(context -> {
+                        assertThat(context).hasFailed();
+                        assertThat(context.getStartupFailure())
+                                .rootCause()
+                                .isInstanceOf(IllegalStateException.class)
+                                .hasMessageContaining("at least 32 UTF-8 bytes");
+                    });
+        }
+
+        @Test
+        @DisplayName("startup fails when no protocols are enabled (L402 disabled, MPP disabled)")
+        void failsWhenNoProtocolsEnabled() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.l402.enabled=false",
+                            "paygate.protocols.mpp.enabled=false")
+                    .run(context -> {
+                        assertThat(context).hasFailed();
+                        assertThat(context.getStartupFailure())
+                                .rootCause()
+                                .isInstanceOf(IllegalStateException.class)
+                                .hasMessageContaining("No payment protocols are enabled");
+                    });
+        }
+
+        @Test
+        @DisplayName("startup fails when no protocols are enabled (L402 disabled, MPP auto with no secret)")
+        void failsWhenNoProtocolsEnabledAutoMpp() {
+            contextRunner
+                    .withPropertyValues("paygate.protocols.l402.enabled=false")
+                    .run(context -> {
+                        assertThat(context).hasFailed();
+                        assertThat(context.getStartupFailure())
+                                .rootCause()
+                                .isInstanceOf(IllegalStateException.class)
+                                .hasMessageContaining("No payment protocols are enabled");
+                    });
+        }
+
+        @Test
+        @DisplayName("startup succeeds with both protocols enabled")
+        void succeedsWithBothProtocols() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.l402.enabled=true",
+                            "paygate.protocols.mpp.enabled=true",
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET)
+                    .run(context -> {
+                        assertThat(context).hasNotFailed();
+                        assertThat(context).hasBean("l402Protocol");
+                        assertThat(context).hasBean("mppProtocol");
+                        var validator = context.getBean(
+                                PaygateAutoConfiguration.ProtocolStartupValidator.class);
+                        assertThat(validator.activeProtocolCount()).isEqualTo(2);
+                    });
+        }
+
+        @Test
+        @DisplayName("ProtocolStartupValidator bean is created on successful startup")
+        void protocolStartupValidatorCreated() {
+            contextRunner.run(context ->
+                    assertThat(context).hasSingleBean(
+                            PaygateAutoConfiguration.ProtocolStartupValidator.class));
+        }
+
+        @Test
+        @DisplayName("existing caveat beans remain unchanged when protocols are configured")
+        void existingCaveatBeansPreserved() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET)
+                    .run(context -> {
+                        assertThat(context).hasBean("caveatVerifiers");
+                        assertThat(context).hasSingleBean(ClientIpResolver.class);
+                        assertThat(context).hasSingleBean(L402Validator.class);
+                        assertThat(context).hasSingleBean(PaygateSecurityFilter.class);
+                    });
+        }
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class CustomCaveatVerifiersConfig {
 
@@ -308,7 +515,7 @@ class AutoConfigurationTest {
     @org.springframework.web.bind.annotation.RestController
     static class SentinelTimeoutController {
 
-        @PaygateProtected(priceSats = 5)
+        @PaymentRequired(priceSats = 5)
         @org.springframework.web.bind.annotation.GetMapping("/api/sentinel-test")
         String sentinelEndpoint() {
             return "sentinel";

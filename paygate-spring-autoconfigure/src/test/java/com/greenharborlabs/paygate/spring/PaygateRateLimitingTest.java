@@ -15,6 +15,7 @@ import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -307,10 +308,11 @@ class PaygateRateLimitingTest {
                 PaygateRateLimiter paygateRateLimiter
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
+            var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, SERVICE_NAME,
+                    endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
         }
 
@@ -374,10 +376,11 @@ class PaygateRateLimitingTest {
         ) {
             // No rate limiter set — disabled
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
+            var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, SERVICE_NAME,
+                    endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, null);
         }
 
@@ -448,10 +451,11 @@ class PaygateRateLimitingTest {
                 PaygateProperties paygateProperties
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
+            var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, SERVICE_NAME,
+                    endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
         }
 
@@ -523,10 +527,11 @@ class PaygateRateLimitingTest {
                 PaygateProperties paygateProperties
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
+            var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, SERVICE_NAME,
+                    endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
         }
 
@@ -539,7 +544,7 @@ class PaygateRateLimitingTest {
     @RestController
     static class TestController {
 
-        @PaygateProtected(priceSats = 10, description = "Rate limited endpoint")
+        @PaymentRequired(priceSats = 10, description = "Rate limited endpoint")
         @GetMapping(PROTECTED_PATH)
         String protectedEndpoint() {
             return "protected-content";

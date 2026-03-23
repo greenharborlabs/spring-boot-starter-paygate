@@ -7,16 +7,16 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a controller method as requiring L402 payment authentication.
+ * Marks a controller method as requiring payment before access is granted.
  *
  * <p>When applied, requests to the annotated endpoint must include a valid
- * L402 credential in the {@code Authorization} header or a 402 Payment Required
+ * payment credential in the {@code Authorization} header or a 402 Payment Required
  * response will be returned with an invoice for the specified price.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
-public @interface PaygateProtected {
+public @interface PaymentRequired {
 
     /**
      * Price in satoshis required to access this endpoint.

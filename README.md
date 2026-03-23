@@ -1,6 +1,6 @@
 # spring-boot-starter-paygate
 
-A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-lightning-network/l402) (Lightning HTTP 402) payment-gated authentication to your Spring Boot APIs. Paygate is a payment gateway for the agent economy -- protect any endpoint with a single annotation and get paid in Bitcoin over the Lightning Network.
+A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-lightning-network/l402) and MPP (Modern Payment Protocol) dual-protocol payment-gated authentication to your Spring Boot APIs. Paygate is a payment gateway for the agent economy -- protect any endpoint with a single annotation and get paid in Bitcoin over the Lightning Network.
 
 [![CI](https://github.com/greenharborlabs/spring-boot-starter-l402/actions/workflows/ci.yml/badge.svg)](https://github.com/greenharborlabs/spring-boot-starter-l402/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/com.greenharborlabs/paygate-spring-boot-starter)](https://central.sonatype.com/artifact/com.greenharborlabs/paygate-spring-boot-starter)
@@ -13,11 +13,14 @@ A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-li
 ## Table of Contents
 
 - [What is L402?](#what-is-l402)
+- [What is MPP?](#what-is-mpp)
+- [Dual-Protocol Support](#dual-protocol-support)
 - [Features](#features)
 - [Quickstart](#quickstart)
 - [Configuration Reference](#configuration-reference)
 - [Lightning Backend Setup](#lightning-backend-setup)
 - [Dynamic Pricing](#dynamic-pricing)
+- [Delegation Caveats](#delegation-caveats)
 - [Spring Security Integration](#spring-security-integration)
 - [Observability](#observability)
 - [Test Mode](#test-mode)
@@ -65,14 +68,135 @@ Client                              Server
 
 ---
 
+## What is MPP?
+
+MPP (Modern Payment Protocol) is an alternative HTTP 402 authentication protocol that uses the `Payment` authentication scheme. Unlike L402, MPP is fully stateless on the server side -- it uses HMAC-SHA256 challenge binding instead of a credential cache, making it simpler to deploy in horizontally scaled environments.
+
+When a client requests a protected resource:
+
+1. The server responds with **HTTP 402 Payment Required** and a `WWW-Authenticate: Payment` challenge containing a Lightning invoice, an HMAC-bound challenge ID, and expiry metadata
+2. The client pays the Lightning invoice, obtaining the payment preimage
+3. The client echoes the challenge fields and includes the preimage in a base64url-encoded JSON credential in the `Authorization: Payment` header
+4. The server recomputes the HMAC to verify the challenge was not tampered with, checks the preimage against the payment hash, and grants access
+5. The server returns a `Payment-Receipt` response header as proof of payment
+
+Key differences from L402:
+
+- Uses the `Payment` authentication scheme (not `L402`)
+- Credentials are base64url-encoded JSON without padding (not standard base64 macaroons)
+- Challenge binding via HMAC-SHA256 -- no server-side session, cache, or macaroon storage needed
+- Error responses use RFC 9457 problem type URIs
+- Deterministic serialization via RFC 8785 JCS (JSON Canonicalization Scheme)
+
+```
+Client                                  Server
+  |                                       |
+  |  GET /api/v1/data                     |
+  |  (no Authorization header)            |
+  |-------------------------------------->|
+  |                                       |
+  |  402 Payment Required                 |
+  |  WWW-Authenticate: Payment            |
+  |    id="<hmac>", realm="my-api",       |
+  |    method="lightning",                |
+  |    intent="charge",                   |
+  |    request="<base64url invoice>",     |
+  |    expires="<ISO-8601>"               |
+  |<--------------------------------------|
+  |                                       |
+  |  [pays Lightning invoice]             |
+  |                                       |
+  |  GET /api/v1/data                     |
+  |  Authorization: Payment <base64url    |
+  |    JSON with echoed challenge +       |
+  |    preimage>                          |
+  |-------------------------------------->|
+  |                                       |
+  |  Server recomputes HMAC, verifies     |
+  |  preimage, checks expiry              |
+  |                                       |
+  |  200 OK                               |
+  |  Payment-Receipt: <base64url receipt> |
+  |<--------------------------------------|
+```
+
+---
+
+## Dual-Protocol Support
+
+Paygate serves both L402 and MPP challenges simultaneously. When a client hits a protected endpoint without credentials, the server returns multiple `WWW-Authenticate` headers -- one for each enabled protocol. The client chooses which protocol to use.
+
+```
+Client                                  Server (PaygateSecurityFilter)
+  |                                       |
+  |  GET /api/v1/data                     |
+  |  (no Authorization header)            |
+  |-------------------------------------->|
+  |                                       |
+  |                            +--------------------------+
+  |                            | For each PaymentProtocol:|
+  |                            |   protocol.formatChallenge|
+  |                            +--------------------------+
+  |                                       |
+  |  402 Payment Required                 |
+  |  WWW-Authenticate: L402 macaroon="..",|
+  |    invoice=".."                       |
+  |  WWW-Authenticate: Payment id="..",   |
+  |    realm="..", method="lightning",    |
+  |    intent="charge", request="..",    |
+  |    expires=".."                       |
+  |<--------------------------------------|
+  |                                       |
+  |  Client chooses protocol:             |
+  |                                       |
+  |  Option A: L402                       |
+  |  Authorization: L402 <mac>:<preimage> |
+  |-------------------------------------->|
+  |                                       |
+  |  Option B: MPP                        |
+  |  Authorization: Payment <base64url>   |
+  |-------------------------------------->|
+  |                                       |
+  |  200 OK                               |
+  |<--------------------------------------|
+```
+
+Both protocols share the same Lightning invoice -- the client pays once regardless of which protocol it uses for authentication.
+
+### Protocol Configuration
+
+Control which protocols are active via `paygate.protocols.*` properties:
+
+```yaml
+paygate:
+  protocols:
+    l402:
+      enabled: true                          # default: true
+    mpp:
+      enabled: auto                          # auto / true / false
+      challenge-binding-secret: ${MPP_SECRET}  # min 32 bytes, required when enabled
+```
+
+- **`auto`** (default): MPP is enabled when `challenge-binding-secret` is present, disabled otherwise.
+- **`true`**: MPP is required -- startup fails if `challenge-binding-secret` is missing.
+- **`false`**: MPP is disabled regardless of whether a secret is configured.
+
+The `PaymentProtocol` SPI (`paygate-api`) is the extension point. Each protocol implements `PaymentProtocol` with methods for `scheme()`, `canHandle()`, `parseCredential()`, `formatChallenge()`, `validate()`, and optionally `createReceipt()`.
+
+---
+
 ## Features
 
-- **Annotation-driven** -- protect any Spring MVC endpoint with `@PaygateProtected(priceSats = 10)`
+- **Dual-protocol support** -- L402 + MPP via the `PaymentProtocol` SPI; both served simultaneously with multiple `WWW-Authenticate` headers
+- **Annotation-driven** -- protect any Spring MVC endpoint with `@PaymentRequired(priceSats = 10)`
+- **MPP challenge binding** -- HMAC-SHA256 stateless challenge verification (no credential cache needed for MPP)
+- **`Payment-Receipt` response header** -- MPP returns a receipt after successful validation as proof of payment
+- **Delegation caveat verifiers** -- `path`, `method`, `client_ip` caveats with glob matching (`*` and `**`) and IPv6 normalization
 - **Spring Security integration** -- optional `paygate-spring-security` module provides `AuthenticationProvider`, `AuthenticationFilter`, and `L402AuthenticationToken` for use in Spring Security filter chains
 - **Pluggable Lightning backends** -- LND (gRPC) and LNbits (REST) included; implement `LightningBackend` for others
 - **Dynamic pricing** -- implement `PaygatePricingStrategy` to price based on request content, user tier, or time of day
 - **Macaroon V2** -- binary-compatible with the Go [go-macaroon](https://github.com/go-macaroon/macaroon) library
-- **Caveats** -- built-in `services` and `valid_until` verifiers; add custom `CaveatVerifier` implementations
+- **Caveats** -- built-in `services`, `valid_until`, `path`, `method`, and `client_ip` verifiers; add custom `CaveatVerifier` implementations
 - **Credential caching** -- Caffeine-backed cache with configurable size (falls back to in-memory)
 - **Health check caching** -- `CachingLightningBackendWrapper` caches `isHealthy()` results with configurable TTL to avoid hammering the Lightning node
 - **Rate limiting** -- built-in `TokenBucketRateLimiter` prevents invoice flooding attacks on challenge issuance
@@ -132,6 +256,9 @@ paygate:
   lnbits:
     url: https://your-lnbits-instance.com
     api-key: ${LNBITS_API_KEY}       # use environment variables for secrets
+  protocols:
+    mpp:
+      challenge-binding-secret: ${MPP_SECRET}  # optional: enables MPP alongside L402
 ```
 
 ### 3. Annotate your endpoints
@@ -141,13 +268,13 @@ paygate:
 @RequestMapping("/api/v1")
 public class PremiumController {
 
-    @PaygateProtected(priceSats = 10)
+    @PaymentRequired(priceSats = 10)
     @GetMapping("/data")
     public DataResponse getData() {
         return new DataResponse("premium content");
     }
 
-    @PaygateProtected(priceSats = 50, description = "AI analysis")
+    @PaymentRequired(priceSats = 50, description = "AI analysis")
     @PostMapping("/analyze")
     public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
         // expensive computation here
@@ -158,7 +285,7 @@ public class PremiumController {
 
 That is it. Unauthenticated requests to `/api/v1/data` now receive a 402 response with a Lightning invoice. After payment, the client includes the credential in the `Authorization` header and receives the content.
 
-Endpoints without `@PaygateProtected` are unaffected and pass through normally.
+Endpoints without `@PaymentRequired` are unaffected and pass through normally.
 
 ---
 
@@ -171,7 +298,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.enabled` | `boolean` | `false` | Master switch. Paygate filter is only active when `true`. |
 | `paygate.backend` | `string` | -- | Lightning backend to use: `lnbits` or `lnd`. |
 | `paygate.service-name` | `string` | -- | Service name embedded in macaroon caveats. Falls back to `"default"` at runtime if unset. |
-| `paygate.default-price-sats` | `long` | `10` | Fallback price when not specified in `@PaygateProtected`. |
+| `paygate.default-price-sats` | `long` | `10` | Fallback price when not specified in `@PaymentRequired`. |
 | `paygate.default-timeout-seconds` | `long` | `3600` | Credential TTL in seconds. |
 | `paygate.root-key-store` | `string` | `file` | Root key storage: `file` or `memory`. |
 | `paygate.root-key-store-path` | `string` | `~/.paygate/keys` | Directory for file-based root key storage. |
@@ -179,6 +306,21 @@ All properties are under the `paygate.*` prefix.
 | `paygate.security-mode` | `string` | `auto` | Security integration mode: `auto`, `servlet`, or `spring-security`. See [Spring Security Integration](#spring-security-integration). |
 | `paygate.test-mode` | `boolean` | `false` | Enable test mode (dummy invoices, auto-settle). |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Trust `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. |
+
+### Protocol Configuration (`paygate.protocols.*`)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paygate.protocols.l402.enabled` | `boolean` | `true` | Enable/disable L402 protocol. |
+| `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present, `true` requires secret, `false` disables. |
+| `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 bytes. |
+
+### Delegation Caveat Configuration
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paygate.caveat.max-values-per-caveat` | `int` | `50` | Maximum comma-separated values per caveat. |
+| `paygate.trusted-proxy-addresses` | `List<String>` | `[]` | Trusted reverse proxy IPs for `X-Forwarded-For` resolution. |
 
 ### Rate Limiting
 
@@ -335,7 +477,7 @@ public class AnalysisPricingStrategy implements PaygatePricingStrategy {
 Reference the strategy by bean name in the annotation:
 
 ```java
-@PaygateProtected(priceSats = 50, pricingStrategy = "analysisPricer")
+@PaymentRequired(priceSats = 50, pricingStrategy = "analysisPricer")
 @PostMapping("/analyze")
 public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
     // ...
@@ -343,6 +485,66 @@ public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
 ```
 
 If the named pricing strategy bean is not found at runtime, the filter falls back to the static `priceSats` value.
+
+---
+
+## Delegation Caveats
+
+Delegation caveats allow macaroon holders to attenuate (restrict) their credentials before sharing them with third parties. Paygate includes three built-in delegation caveat verifiers:
+
+### `path` Caveat
+
+Restricts the credential to specific URL paths using glob pattern matching.
+
+- `*` matches any single path segment (e.g., `/api/*/data` matches `/api/v1/data` but not `/api/v1/v2/data`)
+- `**` matches zero or more path segments (e.g., `/api/v1/**` matches `/api/v1/data` and `/api/v1/nested/deep/data`)
+- Multiple patterns can be comma-separated: `path=/api/v1/**,/api/v2/**`
+- Encoded slashes (`%2F`) in request paths are rejected for security
+- Paths are normalized (trailing slashes removed, double slashes collapsed)
+
+### `method` Caveat
+
+Restricts the credential to specific HTTP methods.
+
+- Case-insensitive matching: `method=GET,POST` matches `get`, `Get`, `GET`
+- Multiple methods can be comma-separated
+
+### `client_ip` Caveat
+
+Restricts the credential to specific client IP addresses.
+
+- IPv6 normalization via `InetAddress.ofLiteral()` -- ensures `::1` and `0:0:0:0:0:0:0:1` are treated as the same address
+- Multiple IPs can be comma-separated: `client_ip=10.0.0.1,10.0.0.2`
+- When `paygate.trust-forwarded-headers=true`, the client IP is resolved from the `X-Forwarded-For` header using the configured `paygate.trusted-proxy-addresses` list
+
+### Delegation Caveat Enforcement
+
+```
+Macaroon caveats:
+  path=/api/v1/**
+  method=GET,POST
+  client_ip=10.0.0.1,10.0.0.2
+
+Incoming request:
+  GET /api/v1/data from 10.0.0.1
+
+Verification:
+  +-- PathCaveatVerifier
+  |     PathGlobMatcher.match("/api/v1/**", "/api/v1/data") --> PASS
+  +-- MethodCaveatVerifier
+  |     "GET" in [GET,POST] --> PASS
+  +-- ClientIpCaveatVerifier
+        InetAddress match "10.0.0.1" --> PASS
+
+All caveats passed --> credential accepted
+```
+
+### Configuration
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paygate.caveat.max-values-per-caveat` | `int` | `50` | Maximum comma-separated values allowed in a single caveat. Prevents abuse via overly broad caveats. |
+| `paygate.trusted-proxy-addresses` | `List<String>` | `[]` | Trusted reverse proxy IP addresses for `X-Forwarded-For` header resolution. Required when `paygate.trust-forwarded-headers=true` and using `client_ip` caveats. |
 
 ---
 
@@ -370,7 +572,7 @@ The `paygate.security-mode` property controls how L402 protection is applied. Th
 | Value | Behavior |
 |-------|----------|
 | `auto` (default) | Detects Spring Security on the classpath. If present, uses `spring-security` mode; otherwise, uses `servlet` mode. |
-| `servlet` | Forces the standalone `PaygateSecurityFilter` (from `paygate-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@PaygateProtected` handling. |
+| `servlet` | Forces the standalone `PaygateSecurityFilter` (from `paygate-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@PaymentRequired` handling. |
 | `spring-security` | Forces the Spring Security path. The standalone servlet filter is disabled. Fails at startup if Spring Security is not on the classpath. |
 
 The two modes are mutually exclusive -- only one is active at a time. Configure the mode explicitly when both modules are on the classpath and you want deterministic behavior:
@@ -525,7 +727,7 @@ The example app activates test mode via the `dev` profile (`application-dev.yml`
 ```
 +-------------------------------+
 |  paygate-spring-boot-starter  |   Dependency aggregator (no code)
-|  (user adds this dependency)  |   Pulls in autoconfigure + core
+|  (user adds this dependency)  |   Pulls in autoconfigure + core + protocols
 +-------------------------------+
          |              |
          v              v
@@ -536,14 +738,15 @@ The example app activates test mode via the `dev` profile (`application-dev.yml`
 |  HMAC-SHA256   |  |  PaygateAutoConfiguration  |  |  L402Authentication-    |
 |  Credential    |  |  PaygateSecurityFilter     |  |    Provider             |
 |    Store       |  |  PaygateProperties         |  |  L402Authentication-    |
-|  Lightning     |  |  @PaygateProtected         |  |    Filter               |
-|    Backend     |  |  PaygatePricingStrategy    |  |  L402Authentication-    |
-|    (interface) |  |  PaygateMetrics            |  |    Token                |
-|                |  |  PaygateActuatorEndpoint   |  |                         |
-|  ZERO external |  |  CachingLightning-         |  |  Integrates with       |
-|  dependencies  |  |    BackendWrapper          |  |  Spring Security       |
-+----------------+  |  TokenBucketRateLimiter    |  |  filter chains         |
-                    |  TestModeAutoConfiguration |  +-------------------------+
+|  Lightning     |  |  @PaymentRequired          |  |    Filter               |
+|    Backend     |  |                            |  |  L402Authentication-    |
+|    (interface) |  |  PaygatePricingStrategy    |  |    Token                |
+|  Delegation    |  |  PaygateMetrics            |  |                         |
+|    Caveats     |  |  PaygateActuatorEndpoint   |  |  Integrates with       |
+|                |  |  CachingLightning-         |  |  Spring Security       |
+|  ZERO external |  |    BackendWrapper          |  |  filter chains         |
+|  dependencies  |  |  TokenBucketRateLimiter    |  +-------------------------+
++----------------+  |  TestModeAutoConfiguration |
                     +---------------------------+
                          |              |
                          v              v
@@ -555,27 +758,70 @@ The example app activates test mode via the `dev` profile (`application-dev.yml`
                   | Jackson     |  | Netty          |
                   +-------------+  +---------------+
 
-+-------------------------------+
-|  paygate-example-app          |   Reference implementation
-|  (not published as artifact)  |   Shows annotation + dynamic pricing
-+-------------------------------+
++-----------------+  +---------------------+  +---------------------+
+| paygate-api     |  | paygate-protocol-   |  | paygate-protocol-   |
+|                 |  |   l402              |  |   mpp               |
+| PaymentProtocol |  |                     |  |                     |
+|   (SPI)         |  | L402Protocol        |  | MppProtocol         |
+| ChallengeContext|  | Adapts paygate-core |  | HMAC-SHA256 binding |
+| PaymentCredential| | to PaymentProtocol  |  | JCS serialization   |
+| PaymentReceipt  |  |                     |  | base64url-nopad     |
+|                 |  | Depends on:         |  |                     |
+| ZERO external   |  |   paygate-api       |  | Depends on:         |
+| dependencies    |  |   paygate-core      |  |   paygate-api ONLY  |
++-----------------+  +---------------------+  | (NO paygate-core)   |
+                                               +---------------------+
+
++-------------------------------+  +-------------------------------+
+|  paygate-example-app          |  |  paygate-integration-tests    |
+|  (not published as artifact)  |  |  (not published as artifact)  |
+|  Shows annotation + dynamic   |  |  Cross-module integration     |
+|  pricing + dual-protocol      |  |  tests                        |
++-------------------------------+  +-------------------------------+
+```
+
+### Module Dependency Graph
+
+```
+paygate-spring-boot-starter
+  +-- paygate-spring-autoconfigure
+  |     +-- paygate-core
+  |     +-- paygate-api
+  |     +-- paygate-protocol-l402 (optional)
+  |     |     +-- paygate-api
+  |     |     +-- paygate-core
+  |     +-- paygate-protocol-mpp (optional)
+  |     |     +-- paygate-api         (NO paygate-core)
+  |     +-- paygate-spring-security (optional)
+  +-- paygate-core
+  +-- paygate-protocol-l402
+  |     +-- paygate-api
+  |     +-- paygate-core
+  +-- paygate-protocol-mpp
+        +-- paygate-api               (NO paygate-core)
 ```
 
 ### Module Responsibilities
 
 | Module | Description | External Dependencies |
 |--------|-------------|----------------------|
-| `paygate-core` | Macaroon V2 serialization, HMAC-SHA256 crypto, credential store interface, Lightning backend interface, L402 protocol validation | **None** (JDK only) |
+| `paygate-api` | Protocol abstraction SPI (`PaymentProtocol`, `ChallengeContext`, `PaymentCredential`, `PaymentReceipt`). Zero external dependencies. | **None** (JDK only) |
+| `paygate-core` | Macaroon V2 serialization, HMAC-SHA256 crypto, credential store interface, Lightning backend interface, L402 protocol validation, delegation caveat verifiers (`path`, `method`, `client_ip`) | **None** (JDK only) |
+| `paygate-protocol-l402` | L402 protocol adapter implementing `PaymentProtocol` by delegating to paygate-core. Handles `L402` and `LSAT` authorization schemes. | paygate-api, paygate-core |
+| `paygate-protocol-mpp` | MPP protocol implementation. HMAC-SHA256 challenge binding, JCS serialization, base64url-nopad encoding. Depends on paygate-api ONLY (no paygate-core). | paygate-api |
 | `paygate-lightning-lnbits` | `LightningBackend` implementation using the LNbits REST API | Jackson |
 | `paygate-lightning-lnd` | `LightningBackend` implementation using the LND gRPC API | gRPC, Protobuf, Netty |
-| `paygate-spring-autoconfigure` | Spring Boot auto-configuration, servlet filter, annotation scanning, metrics, actuator, health caching, rate limiting | Spring Boot, Spring MVC, Caffeine (optional), Micrometer (optional), Actuator (optional) |
+| `paygate-spring-autoconfigure` | Spring Boot auto-configuration, servlet filter, annotation scanning, metrics, actuator, health caching, rate limiting, dual-protocol bean wiring | Spring Boot, Spring MVC, Caffeine (optional), Micrometer (optional), Actuator (optional) |
 | `paygate-spring-security` | Spring Security integration: `L402AuthenticationProvider`, `L402AuthenticationFilter`, and `L402AuthenticationToken` for use in security filter chains | Spring Security |
 | `paygate-spring-boot-starter` | Dependency aggregator. No source code. | -- |
-| `paygate-example-app` | Runnable reference application with dynamic pricing | Spring Boot Web |
+| `paygate-example-app` | Runnable reference application with dynamic pricing and dual-protocol support | Spring Boot Web |
+| `paygate-integration-tests` | Cross-module integration tests verifying dual-protocol behavior, fail-closed semantics, Go interoperability, and tamper detection | Spring Boot Test |
 
 ### Key Design Decisions
 
 - **paygate-core has zero external dependencies.** All cryptography uses `javax.crypto` and `java.security` from the JDK. This makes the core portable and auditable.
+- **paygate-api has zero external dependencies.** The protocol abstraction layer depends only on the JDK, ensuring protocol implementations can be added without pulling in framework dependencies.
+- **paygate-protocol-mpp depends only on paygate-api (not paygate-core).** This keeps MPP entirely independent from the macaroon-based L402 implementation.
 - **Macaroon V2 binary format is byte-level compatible with Go `go-macaroon`.** Cross-language interoperability is a first-class requirement.
 - **Identifier layout is fixed at 66 bytes:** `[version:2 bytes BE][payment_hash:32][token_id:32]`. This ensures deterministic parsing.
 - **All beans are guarded with `@ConditionalOnMissingBean`.** Users can override any component by declaring their own bean.
@@ -590,7 +836,8 @@ This library handles payment credentials and cryptographic tokens. The following
 ### Cryptographic Integrity
 
 - **HMAC-SHA256** for macaroon minting and verification, using JDK `javax.crypto.Mac`
-- **Constant-time comparison** for all secret material (root keys, signatures, preimages) using XOR accumulation -- never `Arrays.equals`
+- **HMAC-SHA256** for MPP challenge binding, ensuring stateless challenge verification
+- **Constant-time comparison** for all secret material (root keys, signatures, preimages, HMAC bindings) using XOR accumulation -- never `Arrays.equals`
 - **Key derivation** follows the macaroon specification: `HMAC-SHA256(key="macaroons-key-generator", data=rootKey)`
 - **SecureRandom** for all random byte generation (token IDs, root keys)
 
@@ -598,18 +845,19 @@ This library handles payment credentials and cryptographic tokens. The following
 
 - **Root key storage** defaults to file-based storage at `~/.paygate/keys`. In production, ensure this directory has restricted permissions (`chmod 700`)
 - **Never log full macaroon values** -- only token IDs appear in logs
-- **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`), not plaintext in configuration files
+- **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`) and MPP challenge binding secrets, not plaintext in configuration files
 - **Test mode is blocked in production** -- the `TestModeAutoConfiguration` throws at startup if `prod` or `production` profiles are active
 - **Fail-closed** -- any unexpected exception during validation produces HTTP 503, never leaking protected content
 
 ### Recommendations for Production
 
 1. Use file-based root key storage with proper filesystem permissions
-2. Store Lightning credentials in environment variables or a secrets manager
+2. Store Lightning credentials and MPP secrets in environment variables or a secrets manager
 3. Enable TLS for LND connections (do not use plaintext in production)
 4. Monitor the `paygate.lightning.healthy` gauge and alert when it drops to 0
 5. Set `paygate.credential-cache-max-size` based on your expected concurrent credential volume
 6. Review and rotate root keys periodically
+7. Use a strong, randomly generated `challenge-binding-secret` for MPP (minimum 32 bytes)
 
 ---
 
@@ -660,7 +908,7 @@ Test coverage reports (JaCoCo) are generated at `build/reports/jacoco/` in each 
 
 ### Price Unit: Satoshis vs Milli-satoshis
 
-The L402 `protocol-specification.md` recommends expressing prices in milli-satoshis (1/1000th of a satoshi). This library uses **satoshis** as the price unit (`paygate.default-price-sats`, `@PaygateProtected(priceSats = ...)`).
+The L402 `protocol-specification.md` recommends expressing prices in milli-satoshis (1/1000th of a satoshi). This library uses **satoshis** as the price unit (`paygate.default-price-sats`, `@PaymentRequired(priceSats = ...)`).
 
 **Rationale:** Satoshis are the practical unit for most L402 use cases. BOLT 11 invoices handle the conversion to milli-satoshis internally. Using whole satoshis avoids fractional pricing complexity for the vast majority of API monetization scenarios where sub-satoshi granularity is unnecessary.
 
@@ -673,7 +921,7 @@ Contributions are welcome. Please follow these guidelines:
 1. **Open an issue first** for significant changes to discuss the approach
 2. **Fork and branch** from `main`
 3. **Follow existing code conventions** -- Java 25 idioms (records, sealed classes, pattern matching), Javadoc on public types
-4. **Maintain the zero-dependency constraint** on `paygate-core` -- no external libraries
+4. **Maintain the zero-dependency constraint** on `paygate-core` and `paygate-api` -- no external libraries
 5. **Add tests** -- the project enforces code coverage via JaCoCo (80% for paygate-core, 60% for most modules, 40% for example app)
 6. **All secret comparisons must be constant-time** (XOR accumulation)
 7. **Never log full macaroon values** -- only token IDs

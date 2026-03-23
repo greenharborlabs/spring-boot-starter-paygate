@@ -1,6 +1,8 @@
 package com.greenharborlabs.paygate.spring.security;
 
-import com.greenharborlabs.paygate.spring.PaygateChallengeResult;
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -16,10 +18,14 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.BadCredentialsException;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,6 +37,9 @@ class PaygateAuthenticationEntryPointTest {
     @Mock
     private PaygateEndpointRegistry endpointRegistry;
 
+    @Mock
+    private PaymentProtocol protocol;
+
     private PaygateAuthenticationEntryPoint entryPoint;
     private MockHttpServletRequest request;
     private MockHttpServletResponse response;
@@ -38,18 +47,30 @@ class PaygateAuthenticationEntryPointTest {
     private static final PaygateEndpointConfig TEST_CONFIG = new PaygateEndpointConfig(
             "GET", "/api/protected", 100, 3600, "Test endpoint", "", "");
 
-    private static final PaygateChallengeResult TEST_RESULT = new PaygateChallengeResult(
-            "bWFjYXJvb24=",
+    private static final ChallengeContext TEST_CONTEXT = new ChallengeContext(
+            new byte[32],
+            "aa".repeat(32),
             "lnbc1000n1test",
-            "L402 version=\"0\", token=\"bWFjYXJvb24=\", macaroon=\"bWFjYXJvb24=\", invoice=\"lnbc1000n1test\"",
             100,
             "Test endpoint",
+            "test-service",
+            3600,
+            "",
+            new byte[32],
+            null,
+            null
+    );
+
+    private static final ChallengeResponse DEFAULT_CHALLENGE = new ChallengeResponse(
+            "L402 token=\"test-token\", invoice=\"lnbc1000n1test\"",
+            "L402",
             null
     );
 
     @BeforeEach
     void setUp() {
-        entryPoint = new PaygateAuthenticationEntryPoint(challengeService, endpointRegistry);
+        org.mockito.Mockito.lenient().when(protocol.formatChallenge(any())).thenReturn(DEFAULT_CHALLENGE);
+        entryPoint = new PaygateAuthenticationEntryPoint(challengeService, endpointRegistry, List.of(protocol));
         request = new MockHttpServletRequest("GET", "/api/protected");
         request.setRequestURI("/api/protected");
         response = new MockHttpServletResponse();
@@ -57,41 +78,57 @@ class PaygateAuthenticationEntryPointTest {
 
     @Test
     void constructorRejectsNullChallengeService() {
-        assertThatThrownBy(() -> new PaygateAuthenticationEntryPoint(null, endpointRegistry))
+        assertThatThrownBy(() -> new PaygateAuthenticationEntryPoint(null, endpointRegistry, List.of()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("challengeService");
     }
 
     @Test
     void constructorRejectsNullEndpointRegistry() {
-        assertThatThrownBy(() -> new PaygateAuthenticationEntryPoint(challengeService, null))
+        assertThatThrownBy(() -> new PaygateAuthenticationEntryPoint(challengeService, null, List.of()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("endpointRegistry");
     }
 
     @Test
+    void constructorRejectsNullProtocols() {
+        assertThatThrownBy(() -> new PaygateAuthenticationEntryPoint(challengeService, endpointRegistry, null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("protocols");
+    }
+
+    @Test
     void writes402WhenConfigFoundAndChallengeCreated() throws Exception {
         when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_RESULT);
+        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
 
         entryPoint.commence(request, response, new BadCredentialsException("test"));
 
         assertThat(response.getStatus()).isEqualTo(402);
-        assertThat(response.getHeader("WWW-Authenticate")).isEqualTo(TEST_RESULT.wwwAuthenticateHeader());
         assertThat(response.getContentType()).isEqualTo("application/json");
-        assertThat(response.getContentAsString()).isEqualTo(
-                "{\"code\": 402, \"message\": \"Payment required\", \"price_sats\": 100, \"description\": \"Test endpoint\", \"invoice\": \"lnbc1000n1test\"}");
+        assertThat(response.getContentAsString()).contains("\"code\": 402");
+        assertThat(response.getContentAsString()).contains("\"price_sats\": 100");
+        assertThat(response.getContentAsString()).contains("\"invoice\": \"lnbc1000n1test\"");
     }
 
     @Test
-    void writes402WithTestPreimageInTestMode() throws Exception {
-        var resultWithPreimage = new PaygateChallengeResult(
-                "bWFjYXJvb24=", "lnbc1000n1test",
-                "L402 version=\"0\", token=\"bWFjYXJvb24=\", macaroon=\"bWFjYXJvb24=\", invoice=\"lnbc1000n1test\"",
-                100, "Test endpoint", "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234");
+    void writes402WithTestPreimageInOpaqueMap() throws Exception {
+        var contextWithPreimage = new ChallengeContext(
+                new byte[32],
+                "aa".repeat(32),
+                "lnbc1000n1test",
+                100,
+                "Test endpoint",
+                "test-service",
+                3600,
+                "",
+                new byte[32],
+                Map.of("test_preimage", "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"),
+                null
+        );
 
         when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(resultWithPreimage);
+        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(contextWithPreimage);
 
         entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -159,7 +196,7 @@ class PaygateAuthenticationEntryPointTest {
     void normalizesPathBeforeLookup() throws Exception {
         request.setRequestURI("/api/../api/protected");
         when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_RESULT);
+        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
 
         entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -170,7 +207,7 @@ class PaygateAuthenticationEntryPointTest {
     void normalizesPercentEncodedPathBeforeLookup() throws Exception {
         request.setRequestURI("/api/%2e%2e/api/protected");
         when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_RESULT);
+        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
 
         entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -215,7 +252,7 @@ class PaygateAuthenticationEntryPointTest {
 
     @Test
     void normalizePathPreservesEncodedSlash() {
-        // FR-003b: %2F must not be decoded to '/' — it must survive normalization
+        // FR-003b: %2F must not be decoded to '/' -- it must survive normalization
         assertThat(PaygateAuthenticationEntryPoint.normalizePath("/api/v1%2Fbypass")).isEqualTo("/api/v1%2Fbypass");
     }
 
@@ -237,22 +274,80 @@ class PaygateAuthenticationEntryPointTest {
     }
 
     @Test
-    void jsonBodyMatchesFilterFormatExactly() throws Exception {
-        var result = new PaygateChallengeResult(
-                "bWFjYXJvb24=", "lnbc500u1test",
-                "L402 version=\"0\", token=\"bWFjYXJvb24=\", macaroon=\"bWFjYXJvb24=\", invoice=\"lnbc500u1test\"",
-                50, "A \"quoted\" description", null);
+    void jsonBodyContainsExpectedFields() throws Exception {
+        var context = new ChallengeContext(
+                new byte[32],
+                "aa".repeat(32),
+                "lnbc500u1test",
+                50,
+                "A \"quoted\" description",
+                "test-service",
+                3600,
+                "",
+                new byte[32],
+                null,
+                null
+        );
 
         when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(result);
+        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(context);
 
         entryPoint.commence(request, response, new BadCredentialsException("test"));
 
-        // The description should be JSON-escaped (quotes escaped)
         String body = response.getContentAsString();
         assertThat(body).startsWith("{\"code\": 402,");
         assertThat(body).contains("\"price_sats\": 50");
         assertThat(body).contains("\"description\": \"A \\\"quoted\\\" description\"");
         assertThat(body).doesNotContain("test_preimage");
+    }
+
+    @Test
+    void multipleProtocolsProduceMultipleWwwAuthenticateHeaders() throws Exception {
+        var l402Challenge = new ChallengeResponse(
+                "L402 token=\"tok\", invoice=\"lnbc1\"",
+                "L402",
+                Map.of("macaroon", "abc123")
+        );
+        var mppChallenge = new ChallengeResponse(
+                "Payment hash=\"deadbeef\", invoice=\"lnbc1\"",
+                "Payment",
+                Map.of("payment_hash", "deadbeef")
+        );
+
+        PaymentProtocol l402Protocol = mock(PaymentProtocol.class);
+        PaymentProtocol mppProtocol = mock(PaymentProtocol.class);
+        when(l402Protocol.formatChallenge(any())).thenReturn(l402Challenge);
+        when(mppProtocol.formatChallenge(any())).thenReturn(mppChallenge);
+
+        var multiEntryPoint = new PaygateAuthenticationEntryPoint(
+                challengeService, endpointRegistry, List.of(l402Protocol, mppProtocol));
+
+        when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
+        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
+
+        multiEntryPoint.commence(request, response, new BadCredentialsException("test"));
+
+        assertThat(response.getStatus()).isEqualTo(402);
+        List<String> wwwAuthHeaders = response.getHeaders("WWW-Authenticate").stream().toList();
+        assertThat(wwwAuthHeaders).hasSize(2);
+        assertThat(wwwAuthHeaders).containsExactly(
+                "L402 token=\"tok\", invoice=\"lnbc1\"",
+                "Payment hash=\"deadbeef\", invoice=\"lnbc1\""
+        );
+        assertThat(response.getContentAsString()).contains("\"protocols\":");
+    }
+
+    @Test
+    void emptyProtocolListProducesNoWwwAuthenticateHeader() throws Exception {
+        var emptyEntryPoint = new PaygateAuthenticationEntryPoint(
+                challengeService, endpointRegistry, List.of());
+
+        when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
+        when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
+
+        emptyEntryPoint.commence(request, response, new BadCredentialsException("test"));
+
+        assertThat(response.getStatus()).isEqualTo(402);
+        assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
     }
 }

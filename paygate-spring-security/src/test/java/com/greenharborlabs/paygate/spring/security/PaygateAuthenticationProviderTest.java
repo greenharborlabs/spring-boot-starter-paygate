@@ -93,7 +93,7 @@ class PaygateAuthenticationProviderTest {
         assertThat(authToken.getL402Credential()).isEqualTo(credential);
         assertThat(authToken.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
-                .containsExactly("ROLE_L402");
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
         assertThat(authToken.getAttribute("service")).isEqualTo("api");
     }
 
@@ -121,7 +121,7 @@ class PaygateAuthenticationProviderTest {
 
         assertThatThrownBy(() -> provider.authenticate(authenticatedToken))
                 .isInstanceOf(BadCredentialsException.class)
-                .hasMessageContaining("missing credentials");
+                .hasMessageContaining("Payment token missing credentials");
     }
 
     @Test

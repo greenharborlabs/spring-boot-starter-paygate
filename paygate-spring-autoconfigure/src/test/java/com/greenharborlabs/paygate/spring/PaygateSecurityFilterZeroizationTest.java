@@ -8,6 +8,7 @@ import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.SensitiveBytes;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import org.springframework.context.ApplicationContext;
 
@@ -111,10 +112,11 @@ class PaygateSecurityFilterZeroizationTest {
         var registry = new PaygateEndpointRegistry();
         var rootKeyStore = new ZeroizationTrackingRootKeyStore();
         var validator = new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+        var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
 
         assertThatNullPointerException()
                 .isThrownBy(() -> new PaygateSecurityFilter(
-                        registry, validator, null, SERVICE_NAME, null, null, null, null))
+                        registry, List.of(l402Protocol), null, SERVICE_NAME, null, null, null, null))
                 .withMessageContaining("challengeService");
     }
 
@@ -129,12 +131,13 @@ class PaygateSecurityFilterZeroizationTest {
                 "Test protected endpoint", "", ""));
 
         var validator = new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+        var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
         var properties = new PaygateProperties();
         properties.setServiceName("test-service");
         var challengeService = new PaygateChallengeService(
                 rootKeyStore, lightningBackend, properties, mock(ApplicationContext.class), null, null);
         return new PaygateSecurityFilter(
-                registry, validator, challengeService, SERVICE_NAME,
+                registry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                 null, null, null, null);
     }
 

@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING: Rebranded from `spring-boot-starter-l402` to `spring-boot-starter-paygate`.** All module names changed from `l402-*` to `paygate-*` (e.g., `l402-core` is now `paygate-core`). Maven artifact IDs updated accordingly. Infrastructure class names renamed (e.g., `L402AutoConfiguration` -> `PaygateAutoConfiguration`, `L402SecurityFilter` -> `PaygateSecurityFilter`, `L402Properties` -> `PaygateProperties`, `@L402Protected` -> `@PaygateProtected`). Configuration property prefix changed from `l402.*` to `paygate.*`. L402 protocol classes (`L402Validator`, `L402Credential`, `L402Challenge`, etc.) retain their names as they represent the L402 protocol itself.
+- **BREAKING: Rebranded from `spring-boot-starter-l402` to `spring-boot-starter-paygate`.** All module names changed from `l402-*` to `paygate-*` (e.g., `l402-core` is now `paygate-core`). Maven artifact IDs updated accordingly. Infrastructure class names renamed (e.g., `L402AutoConfiguration` -> `PaygateAutoConfiguration`, `L402SecurityFilter` -> `PaygateSecurityFilter`, `L402Properties` -> `PaygateProperties`, `@L402Protected` -> `@PaymentRequired`). Configuration property prefix changed from `l402.*` to `paygate.*`. L402 protocol classes (`L402Validator`, `L402Credential`, `L402Challenge`, etc.) retain their names as they represent the L402 protocol itself.
+- **BREAKING: Removed `@PaygateProtected` annotation.** `@PaymentRequired` is now the single annotation for marking endpoints as payment-gated. All usages of `@PaygateProtected` must be replaced with `@PaymentRequired`. The attribute API (`priceSats`, `timeoutSeconds`, `description`, `pricingStrategy`, `capability`) is identical.
 
 ## [0.1.0] - Unreleased
 

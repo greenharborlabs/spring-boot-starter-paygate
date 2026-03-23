@@ -2,7 +2,7 @@
 
 The foundational module of the `spring-boot-starter-paygate` project. This is a **pure Java library with zero external dependencies** -- it relies only on JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.io`). It implements the Macaroon V2 binary format, L402 protocol primitives, cryptographic operations, and the abstractions that all other modules build upon.
 
-Every module in the project -- `paygate-lightning-lnd`, `paygate-lightning-lnbits`, `paygate-spring-autoconfigure`, `paygate-spring-security` -- depends on `paygate-core`.
+Most modules in the project -- `paygate-lightning-lnd`, `paygate-lightning-lnbits`, `paygate-protocol-l402`, `paygate-spring-autoconfigure`, `paygate-spring-security` -- depend on `paygate-core`. The exception is `paygate-protocol-mpp`, which depends only on `paygate-api` and has no dependency on `paygate-core`.
 
 ---
 
@@ -14,6 +14,7 @@ Every module in the project -- `paygate-lightning-lnd`, `paygate-lightning-lnbit
 - [Macaroon V2 Binary Format](#macaroon-v2-binary-format)
 - [Identifier Layout and Key Derivation](#identifier-layout-and-key-derivation)
 - [Caveat System](#caveat-system)
+- [Delegation Caveat Verifiers](#delegation-caveat-verifiers)
 - [Lightning Backend Interface](#lightning-backend-interface)
 - [Root Key Store](#root-key-store)
 - [Credential Store](#credential-store)
@@ -73,46 +74,51 @@ implementation("com.greenharborlabs:paygate-core:0.1.0")
 
 ## Architecture
 
-The module is organized into four packages:
+The module is organized into five packages:
 
 ```
 paygate-core/
-  src/main/java/com/greenharborlabs/l402/core/
+  src/main/java/com/greenharborlabs/paygate/core/
     macaroon/
-      Caveat.java                   First-party caveat (key=value record)
-      CaveatVerifier.java           Interface for verifying individual caveats
-      ServicesCaveatVerifier.java   Verifier for "services" caveats
-      ValidUntilCaveatVerifier.java Verifier for time-expiry caveats
+      Caveat.java                     First-party caveat (key=value record)
+      CaveatVerifier.java             Interface for verifying individual caveats
+      ServicesCaveatVerifier.java     Verifier for "services" caveats
+      ValidUntilCaveatVerifier.java   Verifier for time-expiry caveats
       CapabilitiesCaveatVerifier.java Verifier for capabilities caveats
-      L402VerificationContext.java  Context object passed to caveat verifiers
-      Macaroon.java                 Immutable macaroon representation
-      MacaroonIdentifier.java       66-byte binary identifier record
-      MacaroonCrypto.java           HMAC-SHA256, key derivation, constant-time comparison
-      MacaroonMinter.java           Creates new macaroons with HMAC signature chain
-      MacaroonVerifier.java         Verifies macaroon signatures and caveats
-      MacaroonSerializer.java       V2 binary serialization/deserialization
+      PathCaveatVerifier.java         Verifier for "path" caveats (glob pattern matching)
+      MethodCaveatVerifier.java       Verifier for "method" caveats (HTTP method matching)
+      ClientIpCaveatVerifier.java     Verifier for "client_ip" caveats (IPv6 normalization)
+      PathGlobMatcher.java            Path normalization and glob matching utility
+      VerificationContextKeys.java    Standard keys for request metadata in verification context
+      L402VerificationContext.java    Context object passed to caveat verifiers
+      Macaroon.java                   Immutable macaroon representation
+      MacaroonIdentifier.java         66-byte binary identifier record
+      MacaroonCrypto.java             HMAC-SHA256, key derivation, constant-time comparison
+      MacaroonMinter.java             Creates new macaroons with HMAC signature chain
+      MacaroonVerifier.java           Verifies macaroon signatures and caveats
+      MacaroonSerializer.java         V2 binary serialization/deserialization
       MacaroonVerificationException.java  Thrown on signature or caveat failure
-      Varint.java                   Unsigned LEB128 varint encoding/decoding
-      RootKeyStore.java             Interface for root key lifecycle management
-      InMemoryRootKeyStore.java     ConcurrentHashMap-backed implementation
-      FileBasedRootKeyStore.java    File-per-key persistent implementation
+      Varint.java                     Unsigned LEB128 varint encoding/decoding
+      RootKeyStore.java               Interface for root key lifecycle management
+      InMemoryRootKeyStore.java       ConcurrentHashMap-backed implementation
+      FileBasedRootKeyStore.java      File-per-key persistent implementation
     lightning/
-      LightningBackend.java         Interface for Lightning Network operations
-      Invoice.java                  Immutable Lightning invoice record
-      InvoiceStatus.java            Enum: PENDING, SETTLED, CANCELLED, EXPIRED
-      PaymentPreimage.java          32-byte preimage with SHA-256 hash verification
+      LightningBackend.java           Interface for Lightning Network operations
+      Invoice.java                    Immutable Lightning invoice record
+      InvoiceStatus.java              Enum: PENDING, SETTLED, CANCELLED, EXPIRED
+      PaymentPreimage.java            32-byte preimage with SHA-256 hash verification
     credential/
-      CredentialStore.java          Interface for caching validated credentials
-      CachedCredential.java         Internal record pairing credential with expiry
-      InMemoryCredentialStore.java   ConcurrentHashMap-backed implementation with TTL
+      CredentialStore.java            Interface for caching validated credentials
+      CachedCredential.java           Internal record pairing credential with expiry
+      InMemoryCredentialStore.java    ConcurrentHashMap-backed implementation with TTL
     protocol/
-      L402Challenge.java            Payment challenge (402 response) with WWW-Authenticate header
-      L402Credential.java           Parsed Authorization header (macaroon + preimage)
-      L402Validator.java            Orchestrates full credential validation pipeline
-      L402Exception.java            Runtime exception with error code and token ID
-      ErrorCode.java                Enum mapping error types to HTTP status codes
+      L402Challenge.java              Payment challenge (402 response) with WWW-Authenticate header
+      L402Credential.java             Parsed Authorization header (macaroon + preimage)
+      L402Validator.java              Orchestrates full credential validation pipeline
+      L402Exception.java              Runtime exception with error code and token ID
+      ErrorCode.java                  Enum mapping error types to HTTP status codes
     util/
-      JsonEscaper.java              RFC 8259 JSON string escaper (zero dependencies)
+      JsonEscaper.java                RFC 8259 JSON string escaper (zero dependencies)
 ```
 
 ### Key Types
@@ -255,6 +261,9 @@ During macaroon verification, `MacaroonVerifier` matches each caveat to a regist
 | `ServicesCaveatVerifier` | `services` | Parses a comma-separated list of `name:tier` entries. Verifies that the service name from `L402VerificationContext` appears in the list. Throws `L402Exception(INVALID_SERVICE)` if not found. |
 | `ValidUntilCaveatVerifier` | `{serviceName}_valid_until` | Parses the caveat value as a Unix epoch timestamp. Throws `L402Exception(EXPIRED_CREDENTIAL)` if the timestamp is not strictly after the current time from `L402VerificationContext`. |
 | `CapabilitiesCaveatVerifier` | `capabilities` | Verifies that the macaroon grants the required capabilities for the request. |
+| `PathCaveatVerifier` | `path` | Comma-separated glob patterns matched against `VerificationContextKeys.REQUEST_PATH`. Rejects encoded slashes (`%2F`), normalizes paths via `PathGlobMatcher`. Supports `*` (one segment) and `**` (zero or more trailing segments). |
+| `MethodCaveatVerifier` | `method` | Comma-separated HTTP methods matched case-insensitively against `VerificationContextKeys.REQUEST_METHOD`. |
+| `ClientIpCaveatVerifier` | `client_ip` | Comma-separated IP addresses matched against `VerificationContextKeys.REQUEST_CLIENT_IP`. Normalizes IPv6 via `InetAddress.ofLiteral()` so equivalent representations (e.g. `::1` and `0:0:0:0:0:0:0:1`) match. Falls back to exact string comparison for non-IP values. |
 
 ### L402VerificationContext
 
@@ -273,23 +282,138 @@ A fluent builder is available via `L402VerificationContext.builder()`.
 Implement `CaveatVerifier` to add custom restrictions:
 
 ```java
-public class IpAddressCaveatVerifier implements CaveatVerifier {
+public class RegionCaveatVerifier implements CaveatVerifier {
 
     @Override
     public String getKey() {
-        return "client_ip";
+        return "region";
     }
 
     @Override
     public void verify(Caveat caveat, L402VerificationContext context) {
-        String allowedIp = caveat.value();
-        String actualIp = context.getRequestMetadata().get("client_ip");
-        if (!allowedIp.equals(actualIp)) {
+        String allowedRegion = caveat.value();
+        String actualRegion = context.getRequestMetadata().get("region");
+        if (!allowedRegion.equalsIgnoreCase(actualRegion)) {
             throw new L402Exception(ErrorCode.INVALID_MACAROON,
-                    "Client IP does not match caveat", null);
+                    "Region does not match caveat", null);
         }
     }
 }
+```
+
+---
+
+## Delegation Caveat Verifiers
+
+Delegation caveat verifiers constrain how a macaroon can be used based on request properties: the URL path, HTTP method, and client IP address. These verifiers are part of `paygate-core` and have zero external dependencies. They are registered automatically by `paygate-spring-autoconfigure` when `paygate.enabled=true`.
+
+All three delegation verifiers share common patterns:
+
+- **Fail-closed:** If the required request metadata is missing from `L402VerificationContext`, the verifier rejects the request.
+- **Comma-separated multi-values:** Caveat values support comma-separated lists (e.g., `path=/api/v1/**,/api/v2/**`). The request matches if it matches **any** value in the list.
+- **Max values guard:** Each verifier rejects caveats with more than `maxValuesPerCaveat` entries (configurable via `paygate.caveat.max-values-per-caveat`, default 50) to prevent denial-of-service via oversized caveats.
+- **Empty value rejection:** Empty entries after splitting and trimming are rejected.
+- **`isMoreRestrictive()` for delegation chains:** Each verifier implements `isMoreRestrictive(previous, current)` to validate that additional caveats with the same key only narrow access, never broaden it.
+
+### VerificationContextKeys
+
+Standard keys for request metadata entries in `L402VerificationContext`:
+
+| Constant | Value | Populated by |
+|----------|-------|--------------|
+| `REQUEST_PATH` | `request.path` | `PaygateSecurityFilter` (path from request URI) |
+| `REQUEST_METHOD` | `request.method` | `PaygateSecurityFilter` (HTTP method) |
+| `REQUEST_CLIENT_IP` | `request.client_ip` | `PaygateSecurityFilter` (via `ClientIpResolver`) |
+| `REQUESTED_CAPABILITY` | `request.capability` | `PaygateSecurityFilter` (from endpoint config) |
+
+### PathCaveatVerifier
+
+Verifies that the request path matches at least one glob pattern in the `path` caveat value. Uses `PathGlobMatcher` for normalization and matching.
+
+**Verification steps:**
+
+1. Extract `REQUEST_PATH` from context (fail-closed if absent)
+2. Split caveat value by comma, reject if count exceeds `maxValuesPerCaveat`
+3. Reject empty patterns after trim
+4. Validate each pattern via `PathGlobMatcher.validatePattern()`
+5. Reject encoded slashes (`%2F`, `%2f`) in the request path to prevent path traversal
+6. Normalize request path and all patterns via `PathGlobMatcher.normalizePath()`
+7. Match normalized request path against each normalized pattern; return on first match
+8. Reject if no pattern matched
+
+**`isMoreRestrictive()`:** Checks that every pattern in the current caveat is contained within at least one pattern in the previous caveat, using `PathGlobMatcher.isContainedInNormalized()`.
+
+### PathGlobMatcher
+
+Static utility for path normalization and glob matching. Zero external dependencies.
+
+**Normalization** (`normalizePath()`): Strips query strings, prepends `/`, percent-decodes (preserving reserved delimiters `%2F`, `%3F`, `%23`, `%3A`), collapses consecutive slashes, resolves dot-segments per RFC 3986 Section 5.2.4, and strips trailing slashes.
+
+**Glob semantics:**
+
+| Pattern Segment | Behavior |
+|-----------------|----------|
+| `*` (entire segment) | Matches exactly one path segment (any value) |
+| `**` (terminal only) | Matches zero or more remaining path segments |
+| `*` within a segment | Treated as a literal character (no intra-segment wildcards) |
+| literal | Exact string match against the corresponding path segment |
+
+`**` is only valid as the last segment in a pattern. Non-terminal `**` is rejected by `validatePattern()`.
+
+**Containment** (`isContainedIn()`): Returns true if every path matched by the proposed pattern is also matched by the existing pattern. Conservative -- returns false when uncertain. Used by `PathCaveatVerifier.isMoreRestrictive()` to validate delegation chains.
+
+### MethodCaveatVerifier
+
+Verifies that the request HTTP method matches at least one method in the `method` caveat value. Comparison is case-insensitive (e.g., `get` matches `GET`).
+
+**`isMoreRestrictive()`:** Checks that the set of methods in the current caveat is a subset of the set in the previous caveat (both uppercased for comparison).
+
+### ClientIpCaveatVerifier
+
+Verifies that the request client IP matches at least one address in the `client_ip` caveat value. IPv6 addresses are normalized via `InetAddress.ofLiteral()` before comparison so that equivalent representations match correctly. `ofLiteral()` never performs DNS lookups -- non-IP strings fall back to exact string comparison.
+
+**`isMoreRestrictive()`:** Checks that the set of normalized IPs in the current caveat is a subset of the set in the previous caveat.
+
+### CaveatVerifier.isMoreRestrictive()
+
+The `CaveatVerifier` interface includes a default method for delegation chain validation:
+
+```java
+default boolean isMoreRestrictive(Caveat previous, Caveat current) {
+    return true;  // opt-in: default allows all
+}
+```
+
+When `MacaroonVerifier` encounters multiple caveats with the same key, it calls `isMoreRestrictive(previous, current)` to ensure that later caveats only narrow the scope of earlier ones. If a later caveat would broaden access (e.g., adding a new path pattern that the original caveat did not allow), verification fails with a `MacaroonVerificationException` indicating privilege escalation. The three delegation verifiers (`PathCaveatVerifier`, `MethodCaveatVerifier`, `ClientIpCaveatVerifier`) all override this method.
+
+### Delegation Caveat Enforcement Flow
+
+```
+Macaroon caveats:
+  path=/api/v1/**
+  method=GET,POST
+  client_ip=10.0.0.1,10.0.0.2
+
+Incoming request:
+  GET /api/v1/data from 10.0.0.1
+
+Verification (in MacaroonVerifier):
+  +-- PathCaveatVerifier
+  |     path=/api/v1/**
+  |     request=/api/v1/data
+  |     PathGlobMatcher.match("/api/v1/**", "/api/v1/data") --> PASS
+  |
+  +-- MethodCaveatVerifier
+  |     method=GET,POST
+  |     request=GET
+  |     "GET".equalsIgnoreCase("GET") --> PASS
+  |
+  +-- ClientIpCaveatVerifier
+        client_ip=10.0.0.1,10.0.0.2
+        request=10.0.0.1
+        InetAddress.ofLiteral("10.0.0.1") match --> PASS
+
+All caveats passed --> credential accepted
 ```
 
 ---
@@ -694,14 +818,21 @@ Reads test vectors from `src/test/resources/test-vectors/go-macaroon-vectors.jso
 ## Module Dependency Graph
 
 ```
+paygate-api   (protocol abstraction API -- zero external dependencies, JDK only)
+    ^
+    |
+    +--- paygate-protocol-mpp         (MPP protocol -- depends on paygate-api only, NOT paygate-core)
+    |
 paygate-core  (this module -- zero external dependencies)
     ^
+    |
+    +--- paygate-protocol-l402        (L402 protocol -- paygate-api + paygate-core)
     |
     +--- paygate-lightning-lnd        (gRPC/Protobuf + paygate-core)
     |
     +--- paygate-lightning-lnbits     (Jackson + paygate-core)
     |
-    +--- paygate-spring-autoconfigure (Spring Boot + paygate-core + conditional on lnd/lnbits)
+    +--- paygate-spring-autoconfigure (Spring Boot + paygate-core + paygate-protocol-l402 + paygate-protocol-mpp)
     |        ^
     |        |
     |        +--- paygate-spring-security (Spring Security + paygate-spring-autoconfigure)
@@ -711,13 +842,16 @@ paygate-core  (this module -- zero external dependencies)
     +--- paygate-example-app          (reference implementation)
 ```
 
-All modules depend on `paygate-core` for:
+Most modules depend on `paygate-core` for:
 
 - The `LightningBackend` interface (implemented by `paygate-lightning-lnd` and `paygate-lightning-lnbits`)
 - The `RootKeyStore` and `CredentialStore` interfaces
 - Macaroon creation, serialization, and verification
 - The L402 protocol types (`L402Challenge`, `L402Credential`, `L402Validator`, `L402Exception`, `ErrorCode`)
 - The `Invoice`, `InvoiceStatus`, and `PaymentPreimage` types
+- The delegation caveat verifiers (`PathCaveatVerifier`, `MethodCaveatVerifier`, `ClientIpCaveatVerifier`)
+
+**Exception:** `paygate-protocol-mpp` depends only on `paygate-api` and has no dependency on `paygate-core`. It implements the `PaymentProtocol` interface from `paygate-api` using its own HMAC-SHA256 challenge binding with base64url encoding and RFC 8785 JCS.
 
 ---
 

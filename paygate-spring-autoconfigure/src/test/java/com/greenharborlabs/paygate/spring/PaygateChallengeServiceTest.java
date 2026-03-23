@@ -1,14 +1,11 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
-import com.greenharborlabs.paygate.core.macaroon.Macaroon;
-import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.SensitiveBytes;
-
-import jakarta.servlet.http.HttpServletRequest;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,7 +17,6 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
 import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -75,30 +71,42 @@ class PaygateChallengeServiceTest {
     class HappyPath {
 
         @Test
-        @DisplayName("createChallenge returns valid result with non-null fields")
-        void createChallengeReturnsValidResult() throws Exception {
+        @DisplayName("createChallenge returns valid ChallengeContext with correct fields")
+        void createChallengeReturnsValidContext() throws Exception {
             when(lightningBackend.isHealthy()).thenReturn(true);
             when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, config);
+            ChallengeContext ctx = service.createChallenge(request, config);
 
-            assertThat(result).isNotNull();
-            assertThat(result.macaroonBase64()).isNotNull().isNotEmpty();
-            // Verify it is valid base64
-            byte[] decoded = Base64.getDecoder().decode(result.macaroonBase64());
-            assertThat(decoded).isNotEmpty();
+            assertThat(ctx).isNotNull();
+            assertThat(ctx.paymentHash()).isNotNull().hasSize(32);
+            assertThat(ctx.tokenId()).isNotNull().isNotEmpty();
+            // tokenId should be a valid hex string (64 hex chars for 32 bytes)
+            assertThat(ctx.tokenId()).matches("[0-9a-f]{64}");
+            assertThat(ctx.bolt11Invoice()).isEqualTo(BOLT11);
+            assertThat(ctx.priceSats()).isEqualTo(PRICE_SATS);
+            assertThat(ctx.description()).isEqualTo(DESCRIPTION);
+            assertThat(ctx.serviceName()).isEqualTo(SERVICE_NAME);
+            assertThat(ctx.timeoutSeconds()).isEqualTo(TIMEOUT_SECONDS);
+            assertThat(ctx.rootKeyBytes()).isNotNull().hasSize(32);
+            assertThat(ctx.opaque()).isNull();
+            assertThat(ctx.digest()).isNull();
+        }
 
-            assertThat(result.bolt11()).isEqualTo(BOLT11);
-            assertThat(result.wwwAuthenticateHeader())
-                    .isNotNull()
-                    .contains("L402 version=\"0\"")
-                    .contains("token=")
-                    .contains("macaroon=")
-                    .contains("invoice=");
-            assertThat(result.priceSats()).isEqualTo(PRICE_SATS);
-            assertThat(result.description()).isEqualTo(DESCRIPTION);
-            assertThat(result.testPreimage()).isNull();
+        @Test
+        @DisplayName("createChallenge passes capability through to ChallengeContext")
+        void passesCapabilityThrough() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            PaygateEndpointConfig configWithCapability = new PaygateEndpointConfig(
+                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "search");
+
+            PaygateChallengeService service = createService(createTrackingRootKeyStore());
+            ChallengeContext ctx = service.createChallenge(request, configWithCapability);
+
+            assertThat(ctx.capability()).isEqualTo("search");
         }
     }
 
@@ -134,11 +142,10 @@ class PaygateChallengeServiceTest {
             when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            // No rateLimiter set
 
-            PaygateChallengeResult result = service.createChallenge(request, config);
-            assertThat(result).isNotNull();
-            assertThat(result.macaroonBase64()).isNotNull();
+            ChallengeContext ctx = service.createChallenge(request, config);
+            assertThat(ctx).isNotNull();
+            assertThat(ctx.bolt11Invoice()).isEqualTo(BOLT11);
         }
     }
 
@@ -209,14 +216,14 @@ class PaygateChallengeServiceTest {
                     "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "myStrategy", "");
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, configWithStrategy);
+            ChallengeContext ctx = service.createChallenge(request, configWithStrategy);
 
-            assertThat(result.priceSats()).isEqualTo(42L);
+            assertThat(ctx.priceSats()).isEqualTo(42L);
             verify(lightningBackend).createInvoice(eq(42L), anyString());
         }
 
         @Test
-        @DisplayName("caches pricing strategy bean — getBean called only once for repeated lookups")
+        @DisplayName("caches pricing strategy bean -- getBean called only once for repeated lookups")
         void cachesPricingStrategyBean() throws Exception {
             when(lightningBackend.isHealthy()).thenReturn(true);
             when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
@@ -229,13 +236,13 @@ class PaygateChallengeServiceTest {
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
 
-            // First call — populates cache
-            PaygateChallengeResult result1 = service.createChallenge(request, configWithStrategy);
-            assertThat(result1.priceSats()).isEqualTo(42L);
+            // First call -- populates cache
+            ChallengeContext ctx1 = service.createChallenge(request, configWithStrategy);
+            assertThat(ctx1.priceSats()).isEqualTo(42L);
 
-            // Second call — should use cache, not getBean again
-            PaygateChallengeResult result2 = service.createChallenge(request, configWithStrategy);
-            assertThat(result2.priceSats()).isEqualTo(42L);
+            // Second call -- should use cache, not getBean again
+            ChallengeContext ctx2 = service.createChallenge(request, configWithStrategy);
+            assertThat(ctx2.priceSats()).isEqualTo(42L);
 
             verify(applicationContext, times(1)).getBean("cachedStrategy", PaygatePricingStrategy.class);
         }
@@ -253,14 +260,14 @@ class PaygateChallengeServiceTest {
                     "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "missing", "");
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, configWithStrategy);
+            ChallengeContext ctx = service.createChallenge(request, configWithStrategy);
 
-            assertThat(result.priceSats()).isEqualTo(PRICE_SATS);
+            assertThat(ctx.priceSats()).isEqualTo(PRICE_SATS);
         }
     }
 
     // -----------------------------------------------------------------------
-    // Test preimage
+    // Test preimage (via opaque map)
     // -----------------------------------------------------------------------
 
     @Nested
@@ -268,8 +275,8 @@ class PaygateChallengeServiceTest {
     class TestPreimage {
 
         @Test
-        @DisplayName("result includes hex-encoded preimage when invoice has one")
-        void includesPreimageWhenPresent() throws Exception {
+        @DisplayName("opaque map includes hex-encoded test_preimage when invoice has one")
+        void includesPreimageInOpaqueWhenPresent() throws Exception {
             when(lightningBackend.isHealthy()).thenReturn(true);
 
             byte[] preimage = new byte[32];
@@ -277,22 +284,23 @@ class PaygateChallengeServiceTest {
             when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(preimage));
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, config);
+            ChallengeContext ctx = service.createChallenge(request, config);
 
-            assertThat(result.testPreimage()).isNotNull();
-            assertThat(result.testPreimage()).isEqualTo(HexFormat.of().formatHex(preimage));
+            assertThat(ctx.opaque()).isNotNull();
+            assertThat(ctx.opaque()).containsKey("test_preimage");
+            assertThat(ctx.opaque().get("test_preimage")).isEqualTo(HexFormat.of().formatHex(preimage));
         }
 
         @Test
-        @DisplayName("result testPreimage is null when invoice has no preimage")
-        void noPreimageWhenInvoiceLacksOne() throws Exception {
+        @DisplayName("opaque is null when invoice has no preimage")
+        void noOpaqueWhenInvoiceLacksPreimage() throws Exception {
             when(lightningBackend.isHealthy()).thenReturn(true);
             when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, config);
+            ChallengeContext ctx = service.createChallenge(request, config);
 
-            assertThat(result.testPreimage()).isNull();
+            assertThat(ctx.opaque()).isNull();
         }
     }
 
@@ -370,10 +378,9 @@ class PaygateChallengeServiceTest {
             when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
             PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            // No earningsTracker set — should not throw
 
-            PaygateChallengeResult result = service.createChallenge(request, config);
-            assertThat(result).isNotNull();
+            ChallengeContext ctx = service.createChallenge(request, config);
+            assertThat(ctx).isNotNull();
         }
     }
 
@@ -515,86 +522,6 @@ class PaygateChallengeServiceTest {
         void passesCleanInputUnchanged() {
             String clean = "lnbc500n1p0testinvoice";
             assertThat(PaygateChallengeService.sanitizeBolt11ForHeader(clean)).isEqualTo(clean);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Capabilities caveat minting
-    // -----------------------------------------------------------------------
-
-    @Nested
-    @DisplayName("capabilities caveat minting")
-    class CapabilitiesCaveatMinting {
-
-        @Test
-        @DisplayName("mints capabilities caveat when capability is non-empty")
-        void mintsCapabilitiesCaveatWhenNonEmpty() throws Exception {
-            when(lightningBackend.isHealthy()).thenReturn(true);
-            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
-
-            PaygateEndpointConfig configWithCapability = new PaygateEndpointConfig(
-                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "search");
-
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, configWithCapability);
-
-            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
-            assertThat(macaroon.caveats())
-                    .anyMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities") && c.value().equals("search"));
-        }
-
-        @Test
-        @DisplayName("does not mint capabilities caveat when capability is empty")
-        void noCapabilitiesCaveatWhenEmpty() throws Exception {
-            when(lightningBackend.isHealthy()).thenReturn(true);
-            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
-
-            // config from @BeforeEach has empty capability ""
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, config);
-
-            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
-            assertThat(macaroon.caveats())
-                    .noneMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities"));
-        }
-
-        @Test
-        @DisplayName("does not mint capabilities caveat when capability is null")
-        void noCapabilitiesCaveatWhenNull() throws Exception {
-            when(lightningBackend.isHealthy()).thenReturn(true);
-            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
-
-            PaygateEndpointConfig configWithNull = new PaygateEndpointConfig(
-                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", null);
-
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, configWithNull);
-
-            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
-            assertThat(macaroon.caveats())
-                    .noneMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities"));
-        }
-
-        @Test
-        @DisplayName("does not mint capabilities caveat when capability is blank")
-        void noCapabilitiesCaveatWhenBlank() throws Exception {
-            when(lightningBackend.isHealthy()).thenReturn(true);
-            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
-
-            PaygateEndpointConfig configWithBlank = new PaygateEndpointConfig(
-                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "   ");
-
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            PaygateChallengeResult result = service.createChallenge(request, configWithBlank);
-
-            Macaroon macaroon = deserializeMacaroon(result.macaroonBase64());
-            assertThat(macaroon.caveats())
-                    .noneMatch(c -> c.key().equals(SERVICE_NAME + "_capabilities"));
-        }
-
-        private Macaroon deserializeMacaroon(String base64) {
-            byte[] bytes = Base64.getDecoder().decode(base64);
-            return MacaroonSerializer.deserializeV2(bytes);
         }
     }
 

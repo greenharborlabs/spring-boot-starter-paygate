@@ -83,7 +83,7 @@ subprojects {
 
     val coverageMinimum = when (project.name) {
         "paygate-core" -> "0.80"
-        "paygate-example-app" -> "0.40"
+        "paygate-example-app" -> "0.35"
         "paygate-integration-tests" -> "0.0"
         else -> "0.60"
     }

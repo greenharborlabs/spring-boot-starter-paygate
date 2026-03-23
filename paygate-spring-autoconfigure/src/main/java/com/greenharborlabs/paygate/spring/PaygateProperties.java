@@ -57,6 +57,8 @@ public class PaygateProperties {
 
     private Metrics metrics = new Metrics();
 
+    private Protocols protocols = new Protocols();
+
     public Lightning getLightning() {
         return lightning;
     }
@@ -207,6 +209,14 @@ public class PaygateProperties {
 
     public void setCaveat(Caveat caveat) {
         this.caveat = caveat;
+    }
+
+    public Protocols getProtocols() {
+        return protocols;
+    }
+
+    public void setProtocols(Protocols protocols) {
+        this.protocols = protocols;
     }
 
     /**
@@ -488,6 +498,74 @@ public class PaygateProperties {
 
         public void setMaxValuesPerCaveat(int maxValuesPerCaveat) {
             this.maxValuesPerCaveat = maxValuesPerCaveat;
+        }
+    }
+
+    /**
+     * Protocol configuration bound from {@code paygate.protocols.*}.
+     */
+    public static class Protocols {
+
+        private L402 l402 = new L402();
+
+        private Mpp mpp = new Mpp();
+
+        public L402 getL402() {
+            return l402;
+        }
+
+        public void setL402(L402 l402) {
+            this.l402 = l402;
+        }
+
+        public Mpp getMpp() {
+            return mpp;
+        }
+
+        public void setMpp(Mpp mpp) {
+            this.mpp = mpp;
+        }
+
+        /**
+         * L402 protocol configuration bound from {@code paygate.protocols.l402.*}.
+         */
+        public static class L402 {
+
+            private boolean enabled = true;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+        }
+
+        /**
+         * MPP protocol configuration bound from {@code paygate.protocols.mpp.*}.
+         */
+        public static class Mpp {
+
+            private String enabled = "auto";
+
+            private String challengeBindingSecret;
+
+            public String getEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(String enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getChallengeBindingSecret() {
+                return challengeBindingSecret;
+            }
+
+            public void setChallengeBindingSecret(String challengeBindingSecret) {
+                this.challengeBindingSecret = challengeBindingSecret;
+            }
         }
     }
 }

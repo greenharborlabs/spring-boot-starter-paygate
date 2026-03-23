@@ -13,6 +13,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -162,10 +163,11 @@ class PaygateMetricsTest {
             var properties = new PaygateProperties();
             properties.setServiceName("test-service");
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
+            var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, properties, applicationContext, null, null);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, "test-service",
+                    endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, paygateMetrics, null, null);
         }
 
@@ -178,7 +180,7 @@ class PaygateMetricsTest {
     @RestController
     static class TestController {
 
-        @PaygateProtected(priceSats = 21, description = "Paid endpoint")
+        @PaymentRequired(priceSats = 21, description = "Paid endpoint")
         @GetMapping(PROTECTED_PATH)
         String paidEndpoint() {
             return "paid-content";
@@ -211,26 +213,26 @@ class PaygateMetricsTest {
     class ChallengeMetrics {
 
         @Test
-        @DisplayName("increments paygate.requests counter with result=challenged")
+        @DisplayName("increments paygate.requests counter with result=challenged and protocol=all")
         void incrementsRequestsChallengedCounter() throws Exception {
-            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged");
+            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged", "protocol", "all");
 
             mockMvc.perform(get(PROTECTED_PATH))
                     .andExpect(status().isPaymentRequired());
 
-            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged");
+            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged", "protocol", "all");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
         @Test
-        @DisplayName("increments paygate.invoices.created counter")
+        @DisplayName("increments paygate.invoices.created counter with protocol=all")
         void incrementsInvoicesCreatedCounter() throws Exception {
-            double before = counterValue("paygate.invoices.created", "endpoint", PROTECTED_PATH);
+            double before = counterValue("paygate.invoices.created", "endpoint", PROTECTED_PATH, "protocol", "all");
 
             mockMvc.perform(get(PROTECTED_PATH))
                     .andExpect(status().isPaymentRequired());
 
-            double after = counterValue("paygate.invoices.created", "endpoint", PROTECTED_PATH);
+            double after = counterValue("paygate.invoices.created", "endpoint", PROTECTED_PATH, "protocol", "all");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
@@ -280,41 +282,41 @@ class PaygateMetricsTest {
     class PassedMetrics {
 
         @Test
-        @DisplayName("increments paygate.requests counter with result=passed")
+        @DisplayName("increments paygate.requests counter with result=passed and protocol=L402")
         void incrementsRequestsPassedCounter() throws Exception {
-            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "passed");
+            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "passed", "protocol", "L402");
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildValidAuthHeader()))
                     .andExpect(status().isOk());
 
-            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "passed");
+            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "passed", "protocol", "L402");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
         @Test
-        @DisplayName("increments paygate.revenue.sats counter by the endpoint price")
+        @DisplayName("increments paygate.revenue.sats counter by the endpoint price with protocol=L402")
         void incrementsRevenueSatsCounter() throws Exception {
-            double before = counterValue("paygate.revenue.sats", "endpoint", PROTECTED_PATH);
+            double before = counterValue("paygate.revenue.sats", "endpoint", PROTECTED_PATH, "protocol", "L402");
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildValidAuthHeader()))
                     .andExpect(status().isOk());
 
-            double after = counterValue("paygate.revenue.sats", "endpoint", PROTECTED_PATH);
+            double after = counterValue("paygate.revenue.sats", "endpoint", PROTECTED_PATH, "protocol", "L402");
             assertThat(after).isEqualTo(before + PRICE_SATS);
         }
 
         @Test
-        @DisplayName("increments paygate.invoices.settled counter")
+        @DisplayName("increments paygate.invoices.settled counter with protocol=L402")
         void incrementsInvoicesSettledCounter() throws Exception {
-            double before = counterValue("paygate.invoices.settled", "endpoint", PROTECTED_PATH);
+            double before = counterValue("paygate.invoices.settled", "endpoint", PROTECTED_PATH, "protocol", "L402");
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildValidAuthHeader()))
                     .andExpect(status().isOk());
 
-            double after = counterValue("paygate.invoices.settled", "endpoint", PROTECTED_PATH);
+            double after = counterValue("paygate.invoices.settled", "endpoint", PROTECTED_PATH, "protocol", "L402");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
@@ -354,15 +356,15 @@ class PaygateMetricsTest {
     class RejectedMetrics {
 
         @Test
-        @DisplayName("increments paygate.requests counter with result=rejected")
+        @DisplayName("increments paygate.requests counter with result=rejected and protocol=L402")
         void incrementsRequestsRejectedCounter() throws Exception {
-            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "rejected");
+            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "rejected", "protocol", "L402");
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildInvalidAuthHeader()))
-                    .andExpect(status().isUnauthorized());
+                    .andExpect(status().isPaymentRequired());
 
-            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "rejected");
+            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "rejected", "protocol", "L402");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
@@ -373,7 +375,7 @@ class PaygateMetricsTest {
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildInvalidAuthHeader()))
-                    .andExpect(status().isUnauthorized());
+                    .andExpect(status().isPaymentRequired());
 
             double after = counterValue("paygate.revenue.sats", "endpoint", PROTECTED_PATH);
             assertThat(after).isEqualTo(before);
@@ -386,7 +388,7 @@ class PaygateMetricsTest {
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildInvalidAuthHeader()))
-                    .andExpect(status().isUnauthorized());
+                    .andExpect(status().isPaymentRequired());
 
             double after = counterValue("paygate.invoices.created", "endpoint", PROTECTED_PATH);
             assertThat(after).isEqualTo(before);
@@ -399,7 +401,7 @@ class PaygateMetricsTest {
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildInvalidAuthHeader()))
-                    .andExpect(status().isUnauthorized());
+                    .andExpect(status().isPaymentRequired());
 
             double after = counterValue("paygate.invoices.settled", "endpoint", PROTECTED_PATH);
             assertThat(after).isEqualTo(before);
@@ -576,126 +578,126 @@ class PaygateMetricsTest {
     class CaveatVerificationMetrics {
 
         @Test
-        @DisplayName("verify duration timer recorded on successful validation")
+        @DisplayName("verify duration timer recorded on successful validation with protocol=l402")
         void verifyDurationTimerRecordedOnSuccess() throws Exception {
-            long before = timerCount("paygate.caveats.verify.duration");
+            long before = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildValidAuthHeader()))
                     .andExpect(status().isOk());
 
-            long after = timerCount("paygate.caveats.verify.duration");
+            long after = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
             assertThat(after).isEqualTo(before + 1);
         }
 
         @Test
-        @DisplayName("verify duration timer recorded on rejected validation")
+        @DisplayName("verify duration timer recorded on rejected validation with protocol=l402")
         void verifyDurationTimerRecordedOnRejection() throws Exception {
-            long before = timerCount("paygate.caveats.verify.duration");
+            long before = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
 
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", buildInvalidAuthHeader()))
-                    .andExpect(status().isUnauthorized());
+                    .andExpect(status().isPaymentRequired());
 
-            long after = timerCount("paygate.caveats.verify.duration");
+            long after = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
             assertThat(after).isEqualTo(before + 1);
         }
 
         @Test
         @DisplayName("no verify duration timer recorded for non-L402 requests")
         void noTimerForNonL402Requests() throws Exception {
-            long before = timerCount("paygate.caveats.verify.duration");
+            long before = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
 
             mockMvc.perform(get(PUBLIC_PATH))
                     .andExpect(status().isOk());
 
-            long after = timerCount("paygate.caveats.verify.duration");
+            long after = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
             assertThat(after).isEqualTo(before);
         }
 
         @Test
         @DisplayName("no verify duration timer recorded for 402 challenge (no auth header)")
         void noTimerForChallengeRequests() throws Exception {
-            long before = timerCount("paygate.caveats.verify.duration");
+            long before = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
 
             mockMvc.perform(get(PROTECTED_PATH))
                     .andExpect(status().isPaymentRequired());
 
-            long after = timerCount("paygate.caveats.verify.duration");
+            long after = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
             assertThat(after).isEqualTo(before);
         }
 
         @Test
-        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=path")
+        @DisplayName("recordCaveatRejected increments counter with caveat_type=path and protocol=l402")
         void recordCaveatRejectedPathType() {
-            double before = counterValue("paygate.caveats.rejected", "caveat_type", "path");
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402");
 
             paygateMetrics.recordCaveatRejected("path");
 
-            double after = counterValue("paygate.caveats.rejected", "caveat_type", "path");
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
         @Test
-        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=method")
+        @DisplayName("recordCaveatRejected increments counter with caveat_type=method and protocol=l402")
         void recordCaveatRejectedMethodType() {
-            double before = counterValue("paygate.caveats.rejected", "caveat_type", "method");
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402");
 
             paygateMetrics.recordCaveatRejected("method");
 
-            double after = counterValue("paygate.caveats.rejected", "caveat_type", "method");
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
         @Test
-        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=client_ip")
+        @DisplayName("recordCaveatRejected increments counter with caveat_type=client_ip and protocol=l402")
         void recordCaveatRejectedClientIpType() {
-            double before = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip");
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402");
 
             paygateMetrics.recordCaveatRejected("client_ip");
 
-            double after = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip");
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
         @Test
-        @DisplayName("recordCaveatRejected increments counter with correct caveat_type=escalation")
+        @DisplayName("recordCaveatRejected increments counter with caveat_type=escalation and protocol=l402")
         void recordCaveatRejectedEscalationType() {
-            double before = counterValue("paygate.caveats.rejected", "caveat_type", "escalation");
+            double before = counterValue("paygate.caveats.rejected", "caveat_type", "escalation", "protocol", "l402");
 
             paygateMetrics.recordCaveatRejected("escalation");
 
-            double after = counterValue("paygate.caveats.rejected", "caveat_type", "escalation");
+            double after = counterValue("paygate.caveats.rejected", "caveat_type", "escalation", "protocol", "l402");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
         @Test
         @DisplayName("each caveat_type tag is independent — incrementing one does not affect others")
         void caveatTypeTagsAreIndependent() {
-            double pathBefore = counterValue("paygate.caveats.rejected", "caveat_type", "path");
-            double methodBefore = counterValue("paygate.caveats.rejected", "caveat_type", "method");
-            double clientIpBefore = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip");
+            double pathBefore = counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402");
+            double methodBefore = counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402");
+            double clientIpBefore = counterValue("paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402");
 
             paygateMetrics.recordCaveatRejected("path");
             paygateMetrics.recordCaveatRejected("path");
             paygateMetrics.recordCaveatRejected("method");
 
-            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "path"))
+            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402"))
                     .isEqualTo(pathBefore + 2.0);
-            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "method"))
+            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402"))
                     .isEqualTo(methodBefore + 1.0);
-            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "client_ip"))
+            assertThat(counterValue("paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402"))
                     .isEqualTo(clientIpBefore);
         }
 
         @Test
-        @DisplayName("recordCaveatVerifyDuration records timer correctly")
+        @DisplayName("recordCaveatVerifyDuration records timer with protocol=l402")
         void recordCaveatVerifyDuration() {
-            long before = timerCount("paygate.caveats.verify.duration");
+            long before = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
 
             paygateMetrics.recordCaveatVerifyDuration(1_000_000L);
 
-            long after = timerCount("paygate.caveats.verify.duration");
+            long after = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
             assertThat(after).isEqualTo(before + 1);
         }
     }
@@ -803,16 +805,16 @@ class PaygateMetricsTest {
     class ParameterizedPathCardinalityMetrics {
 
         @Test
-        @DisplayName("requests to /api/items/1 and /api/items/2 both tag with endpoint=/api/items/{id}")
+        @DisplayName("requests to /api/items/1 and /api/items/2 both tag with endpoint=/api/items/{id} and protocol=all")
         void bothConcretePathsUsePatternTag() throws Exception {
-            double before = counterValue("paygate.requests", "endpoint", PARAMETERIZED_PATH_PATTERN, "result", "challenged");
+            double before = counterValue("paygate.requests", "endpoint", PARAMETERIZED_PATH_PATTERN, "result", "challenged", "protocol", "all");
 
             mockMvc.perform(get("/api/items/1"))
                     .andExpect(status().isPaymentRequired());
             mockMvc.perform(get("/api/items/2"))
                     .andExpect(status().isPaymentRequired());
 
-            double after = counterValue("paygate.requests", "endpoint", PARAMETERIZED_PATH_PATTERN, "result", "challenged");
+            double after = counterValue("paygate.requests", "endpoint", PARAMETERIZED_PATH_PATTERN, "result", "challenged", "protocol", "all");
             assertThat(after).isEqualTo(before + 2.0);
         }
 
@@ -822,7 +824,7 @@ class PaygateMetricsTest {
             mockMvc.perform(get("/api/items/1"))
                     .andExpect(status().isPaymentRequired());
 
-            assertThat(counterValue("paygate.requests", "endpoint", "/api/items/1", "result", "challenged"))
+            assertThat(counterValue("paygate.requests", "endpoint", "/api/items/1", "result", "challenged", "protocol", "all"))
                     .isZero();
         }
 
@@ -832,31 +834,31 @@ class PaygateMetricsTest {
             mockMvc.perform(get("/api/items/2"))
                     .andExpect(status().isPaymentRequired());
 
-            assertThat(counterValue("paygate.requests", "endpoint", "/api/items/2", "result", "challenged"))
+            assertThat(counterValue("paygate.requests", "endpoint", "/api/items/2", "result", "challenged", "protocol", "all"))
                     .isZero();
         }
 
         @Test
-        @DisplayName("invoices.created counter uses pattern tag for parameterized paths")
+        @DisplayName("invoices.created counter uses pattern tag for parameterized paths with protocol=all")
         void invoicesCreatedUsesPatternTag() throws Exception {
-            double before = counterValue("paygate.invoices.created", "endpoint", PARAMETERIZED_PATH_PATTERN);
+            double before = counterValue("paygate.invoices.created", "endpoint", PARAMETERIZED_PATH_PATTERN, "protocol", "all");
 
             mockMvc.perform(get("/api/items/1"))
                     .andExpect(status().isPaymentRequired());
 
-            double after = counterValue("paygate.invoices.created", "endpoint", PARAMETERIZED_PATH_PATTERN);
+            double after = counterValue("paygate.invoices.created", "endpoint", PARAMETERIZED_PATH_PATTERN, "protocol", "all");
             assertThat(after).isEqualTo(before + 1.0);
         }
 
         @Test
-        @DisplayName("existing exact-path tests still use endpoint=/api/paid")
+        @DisplayName("existing exact-path tests still use endpoint=/api/paid with protocol=all")
         void exactPathStillWorks() throws Exception {
-            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged");
+            double before = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged", "protocol", "all");
 
             mockMvc.perform(get(PROTECTED_PATH))
                     .andExpect(status().isPaymentRequired());
 
-            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged");
+            double after = counterValue("paygate.requests", "endpoint", PROTECTED_PATH, "result", "challenged", "protocol", "all");
             assertThat(after).isEqualTo(before + 1.0);
         }
     }

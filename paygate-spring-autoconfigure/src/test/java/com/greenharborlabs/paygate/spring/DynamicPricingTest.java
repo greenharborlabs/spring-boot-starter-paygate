@@ -8,6 +8,7 @@ import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -41,9 +42,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * T086: Verifies that dynamic pricing via {@link PaygatePricingStrategy} overrides
- * the static {@code priceSats} value from the {@link PaygateProtected} annotation.
+ * the static {@code priceSats} value from the {@link PaymentRequired} annotation.
  *
- * <p>Scenario: {@code @PaygateProtected(priceSats = 50, pricingStrategy = "myPricer")}
+ * <p>Scenario: {@code @PaymentRequired(priceSats = 50, pricingStrategy = "myPricer")}
  * with a bean "myPricer" returning 150 must produce an invoice for 150 sats,
  * not the annotation's default of 50.
  */
@@ -158,10 +159,11 @@ class DynamicPricingTest {
                 ApplicationContext applicationContext
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
+            var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
                     rootKeyStore, lightningBackendBean, null, applicationContext, null, null);
             return new PaygateSecurityFilter(
-                    endpointRegistry, validator, challengeService, "test-service",
+                    endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, null, null);
         }
 
@@ -174,7 +176,7 @@ class DynamicPricingTest {
     @RestController
     static class DynamicPriceController {
 
-        @PaygateProtected(priceSats = 50, pricingStrategy = "myPricer")
+        @PaymentRequired(priceSats = 50, pricingStrategy = "myPricer")
         @GetMapping(DYNAMIC_PATH)
         String dynamicPriceEndpoint() {
             return "dynamic-content";

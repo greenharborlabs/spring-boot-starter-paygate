@@ -74,6 +74,7 @@ public class PaygateMetrics implements AutoCloseable {
                 .register(registry);
 
         this.caveatVerifyTimer = Timer.builder("paygate.caveats.verify.duration")
+                .tag("protocol", "l402")
                 .description("Duration of caveat verification per request")
                 .register(registry);
     }
@@ -94,21 +95,25 @@ public class PaygateMetrics implements AutoCloseable {
     /**
      * Records a 402 challenge being issued: increments {@code paygate.requests}
      * with {@code result=challenged} and {@code paygate.invoices.created}.
+     *
+     * @param protocol the protocol scheme (e.g. "L402", "Payment", "all")
      */
-    public void recordChallenge(String endpoint) {
-        requestCounter(endpoint, "challenged").increment();
-        invoicesCreatedCounter(endpoint).increment();
+    public void recordChallenge(String endpoint, String protocol) {
+        requestCounter(endpoint, "challenged", protocol).increment();
+        invoicesCreatedCounter(endpoint, protocol).increment();
     }
 
     /**
      * Records a successful credential validation: increments {@code paygate.requests}
      * with {@code result=passed}, {@code paygate.revenue.sats}, and
      * {@code paygate.invoices.settled}.
+     *
+     * @param protocol the protocol scheme (e.g. "L402", "Payment")
      */
-    public void recordPassed(String endpoint, long priceSats) {
-        requestCounter(endpoint, "passed").increment();
-        revenueSatsCounter(endpoint).increment(priceSats);
-        invoicesSettledCounter(endpoint).increment();
+    public void recordPassed(String endpoint, long priceSats, String protocol) {
+        requestCounter(endpoint, "passed", protocol).increment();
+        revenueSatsCounter(endpoint, protocol).increment(priceSats);
+        invoicesSettledCounter(endpoint, protocol).increment();
     }
 
     /**
@@ -129,9 +134,11 @@ public class PaygateMetrics implements AutoCloseable {
     /**
      * Records a rejected credential: increments {@code paygate.requests}
      * with {@code result=rejected}.
+     *
+     * @param protocol the protocol scheme (e.g. "L402", "Payment", "unknown")
      */
-    public void recordRejected(String endpoint) {
-        requestCounter(endpoint, "rejected").increment();
+    public void recordRejected(String endpoint, String protocol) {
+        requestCounter(endpoint, "rejected", protocol).increment();
     }
 
     /**
@@ -150,44 +157,52 @@ public class PaygateMetrics implements AutoCloseable {
         caveatRejectedCounters.computeIfAbsent(caveatType, ct ->
                 Counter.builder("paygate.caveats.rejected")
                         .tag("caveat_type", ct)
+                        .tag("protocol", "l402")
                         .description("Caveat verification rejections by type")
                         .register(registry)
         ).increment();
     }
 
-    private Counter requestCounter(String endpoint, String result) {
-        String key = endpoint + '\0' + result;
+    private Counter requestCounter(String endpoint, String result, String protocol) {
+        String key = endpoint + '\0' + result + '\0' + protocol;
         return requestCounters.computeIfAbsent(key, _ ->
                 Counter.builder("paygate.requests")
                         .tag("endpoint", endpoint)
                         .tag("result", result)
+                        .tag("protocol", protocol)
                         .description("Total protected endpoint requests")
                         .register(registry)
         );
     }
 
-    private Counter invoicesCreatedCounter(String endpoint) {
-        return invoicesCreatedCounters.computeIfAbsent(endpoint, ep ->
+    private Counter invoicesCreatedCounter(String endpoint, String protocol) {
+        String key = endpoint + '\0' + protocol;
+        return invoicesCreatedCounters.computeIfAbsent(key, _ ->
                 Counter.builder("paygate.invoices.created")
-                        .tag("endpoint", ep)
+                        .tag("endpoint", endpoint)
+                        .tag("protocol", protocol)
                         .description("Invoices generated")
                         .register(registry)
         );
     }
 
-    private Counter revenueSatsCounter(String endpoint) {
-        return revenueSatsCounters.computeIfAbsent(endpoint, ep ->
+    private Counter revenueSatsCounter(String endpoint, String protocol) {
+        String key = endpoint + '\0' + protocol;
+        return revenueSatsCounters.computeIfAbsent(key, _ ->
                 Counter.builder("paygate.revenue.sats")
-                        .tag("endpoint", ep)
+                        .tag("endpoint", endpoint)
+                        .tag("protocol", protocol)
                         .description("Total sats earned")
                         .register(registry)
         );
     }
 
-    private Counter invoicesSettledCounter(String endpoint) {
-        return invoicesSettledCounters.computeIfAbsent(endpoint, ep ->
+    private Counter invoicesSettledCounter(String endpoint, String protocol) {
+        String key = endpoint + '\0' + protocol;
+        return invoicesSettledCounters.computeIfAbsent(key, _ ->
                 Counter.builder("paygate.invoices.settled")
-                        .tag("endpoint", ep)
+                        .tag("endpoint", endpoint)
+                        .tag("protocol", protocol)
                         .description("Invoices paid")
                         .register(registry)
         );

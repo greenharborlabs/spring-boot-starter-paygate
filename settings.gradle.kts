@@ -1,9 +1,12 @@
 rootProject.name = "spring-boot-starter-paygate"
 
 include(
+    "paygate-api",
     "paygate-core",
     "paygate-lightning-lnd",
     "paygate-lightning-lnbits",
+    "paygate-protocol-l402",
+    "paygate-protocol-mpp",
     "paygate-spring-autoconfigure",
     "paygate-spring-security",
     "paygate-spring-boot-starter",

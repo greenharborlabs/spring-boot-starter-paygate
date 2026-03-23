@@ -10,3 +10,6 @@ server:
 paygate:
   enabled: true
   service-name: example-api
+  protocols:
+    mpp:
+      challenge-binding-secret: ${PAYGATE_MPP_SECRET:}
