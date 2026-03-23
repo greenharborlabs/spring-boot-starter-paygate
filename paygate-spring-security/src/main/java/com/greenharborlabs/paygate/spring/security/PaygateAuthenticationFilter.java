@@ -68,17 +68,24 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     }
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String authHeader = request.getHeader(AUTHORIZATION_HEADER);
+        if (authHeader == null || authHeader.isBlank()) {
+            return true;
+        }
+        if (L402HeaderComponents.extract(authHeader).isPresent()) {
+            return false;
+        }
+        return !matchesAnyProtocol(authHeader);
+    }
+
+    @Override
     protected void doFilterInternal(HttpServletRequest request,
                                      HttpServletResponse response,
                                      FilterChain filterChain)
             throws ServletException, IOException {
 
         String authHeader = request.getHeader(AUTHORIZATION_HEADER);
-        if (authHeader == null || authHeader.isBlank()) {
-            filterChain.doFilter(request, response);
-            return;
-        }
-
         String normalizedPath = PaygatePathUtils.normalizePath(request.getRequestURI());
 
         String capability;
@@ -93,14 +100,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         Map<String, String> requestMetadata = extractRequestMetadata(request, normalizedPath);
 
         PaygateAuthenticationToken unauthenticatedToken =
-                createAuthToken(authHeader, capability, requestMetadata);
-
-        // codeql[java/user-controlled-bypass] - Intentional: this filter only authenticates payment credentials; unrecognized auth schemes pass through for other Spring Security filters
-        if (unauthenticatedToken == null) {
-            SecurityContextHolder.clearContext();
-            filterChain.doFilter(request, response);
-            return;
-        }
+                Objects.requireNonNull(createAuthToken(authHeader, capability, requestMetadata),
+                        "Token creation must succeed after shouldNotFilter");
 
         try {
             Authentication authenticated = authenticationManager.authenticate(unauthenticatedToken);
