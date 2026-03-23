@@ -1,7 +1,7 @@
 import com.google.protobuf.gradle.id
 
 plugins {
-    id("com.google.protobuf") version "0.9.4"
+    id("com.google.protobuf") version "0.9.6"
 }
 
 val grpcVersion: String by extra
