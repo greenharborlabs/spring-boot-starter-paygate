@@ -18,12 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 public class SecurityExampleController {
 
-    record HealthResponse(String status) {}
-    record DataResponse(String data, String timestamp) {}
-    record QuoteResponse(String quote, String author, String timestamp) {}
-    record AnalyzeRequest(String content) {}
-    record AnalyzeResponse(String result, int wordCount, String timestamp) {}
-    record ProtocolInfoResponse(String tokenId, String protocol, Map<String, String> attributes, String timestamp) {}
+    public record HealthResponse(String status) {}
+    public record DataResponse(String data, String timestamp) {}
+    public record QuoteResponse(String quote, String author, String timestamp) {}
+    public record AnalyzeRequest(String content) {}
+    public record AnalyzeResponse(String result, int wordCount, String timestamp) {}
+    public record ProtocolInfoResponse(String tokenId, String protocol, Map<String, String> attributes, String timestamp) {}
 
     @GetMapping(value = "/health", produces = MediaType.APPLICATION_JSON_VALUE)
     public HealthResponse health() {

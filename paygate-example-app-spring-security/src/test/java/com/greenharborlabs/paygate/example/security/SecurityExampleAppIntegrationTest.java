@@ -11,12 +11,8 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.context.annotation.Bean;
 import org.springframework.http.MediaType;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -44,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Uses {@code paygate.root-key-store=memory} so the test can mint valid macaroons
  * against the same in-memory store used by the security filter.
  */
-@SpringBootTest(classes = {SecurityExampleApplication.class, SecurityExampleAppIntegrationTest.TestConfig.class})
+@SpringBootTest(classes = SecurityExampleApplication.class)
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @TestPropertySource(properties = {
@@ -56,14 +52,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 @DisplayName("Spring Security example application integration")
 class SecurityExampleAppIntegrationTest {
-
-    @TestConfiguration
-    static class TestConfig {
-        @Bean
-        AuthenticationManager authenticationManager(AuthenticationConfiguration authConfig) throws Exception {
-            return authConfig.getAuthenticationManager();
-        }
-    }
 
     private static final HexFormat HEX = HexFormat.of();
 

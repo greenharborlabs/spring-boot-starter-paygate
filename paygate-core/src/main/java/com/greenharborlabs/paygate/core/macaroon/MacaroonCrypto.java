@@ -69,7 +69,7 @@ public final class MacaroonCrypto {
                 try {
                     keySpec.destroy();
                 } catch (DestroyFailedException e) {
-                    log.log(System.Logger.Level.WARNING, "SecretKeySpec.destroy() failed: {0}", e.getMessage());
+                    log.log(System.Logger.Level.DEBUG, "SecretKeySpec.destroy() not supported by JDK: {0}", e.getMessage());
                 }
             }
         } catch (NoSuchAlgorithmException | InvalidKeyException e) {
