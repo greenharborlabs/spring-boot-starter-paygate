@@ -1,0 +1,5 @@
+paygate:
+  test-mode: true
+  protocols:
+    mpp:
+      challenge-binding-secret: dev-only-mpp-test-secret-do-not-use-in-production

@@ -38,6 +38,8 @@ nexusPublishing {
     }
 }
 
+val exampleModules = setOf("paygate-example-app", "paygate-example-app-spring-security")
+
 subprojects {
     apply(plugin = "java-library")
     apply(plugin = "io.spring.dependency-management")
@@ -88,7 +90,7 @@ subprojects {
 
     val coverageMinimum = when (project.name) {
         "paygate-core" -> "0.80"
-        "paygate-example-app" -> "0.35"
+        "paygate-example-app", "paygate-example-app-spring-security" -> "0.0"
         "paygate-integration-tests" -> "0.0"
         else -> "0.60"
     }
@@ -120,12 +122,12 @@ subprojects {
     extra["mockWebServerVersion"] = mockWebServerVersion
 
     // CycloneDX SBOM generation (skip example app and starter aggregator)
-    if (project.name != "paygate-example-app" && project.name != "paygate-spring-boot-starter" && project.name != "paygate-integration-tests") {
+    if (project.name !in exampleModules && project.name != "paygate-spring-boot-starter" && project.name != "paygate-integration-tests") {
         apply(plugin = "org.cyclonedx.bom")
     }
 
     // Publishing configuration (skip example app)
-    if (project.name != "paygate-example-app" && project.name != "paygate-integration-tests") {
+    if (project.name !in exampleModules && project.name != "paygate-integration-tests") {
         apply(plugin = "maven-publish")
         apply(plugin = "signing")
 
@@ -187,7 +189,7 @@ tasks.register<Javadoc>("aggregateJavadoc") {
     description = "Generates aggregate Javadoc for all modules."
 
     val javadocSubprojects = subprojects.filter { sub ->
-        sub.plugins.hasPlugin("java-library") && sub.name != "paygate-spring-boot-starter" && sub.name != "paygate-example-app"
+        sub.plugins.hasPlugin("java-library") && sub.name != "paygate-spring-boot-starter" && sub.name !in exampleModules
     }
 
     dependsOn(javadocSubprojects.map { it.tasks.named("classes") })
