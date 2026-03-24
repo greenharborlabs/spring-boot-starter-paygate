@@ -1,6 +1,6 @@
 # Release Checklist
 
-Step-by-step process for publishing a new release of `spring-boot-starter-l402`.
+Step-by-step process for publishing a new release of `spring-boot-starter-paygate`.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ Step-by-step process for publishing a new release of `spring-boot-starter-l402`.
 ### 2. Run integration tests
 
 ```bash
-./gradlew :l402-integration-tests:test -Pintegration
+./gradlew :paygate-integration-tests:test -Pintegration
 ```
 
 - [ ] Integration tests pass against Lightning backends
@@ -86,12 +86,12 @@ The `release.yml` GitHub Actions workflow will automatically:
 ### 8. Verify artifacts on Maven Central
 
 - [ ] All modules are present on [Maven Central](https://central.sonatype.com/):
-  - `com.greenharborlabs:l402-core`
-  - `com.greenharborlabs:l402-lightning-lnd`
-  - `com.greenharborlabs:l402-lightning-lnbits`
-  - `com.greenharborlabs:l402-spring-autoconfigure`
-  - `com.greenharborlabs:l402-spring-security`
-  - `com.greenharborlabs:l402-spring-boot-starter`
+  - `com.greenharborlabs:paygate-core`
+  - `com.greenharborlabs:paygate-lightning-lnd`
+  - `com.greenharborlabs:paygate-lightning-lnbits`
+  - `com.greenharborlabs:paygate-spring-autoconfigure`
+  - `com.greenharborlabs:paygate-spring-security`
+  - `com.greenharborlabs:paygate-spring-boot-starter`
 - [ ] POM metadata, signatures, and javadoc/sources JARs are attached
 
 Note: Maven Central indexing can take up to 30 minutes.

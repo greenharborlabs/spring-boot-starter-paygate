@@ -6,19 +6,19 @@
 ```bash
 ./gradlew build          # Build all modules (includes tests)
 ./gradlew test           # Run all tests across all modules
-./gradlew :l402-core:test  # Test core module only
+./gradlew :paygate-core:test  # Test core module only
 ```
 
 ### Running Single Tests
 ```bash
 # By class name
-./gradlew :l402-core:test --tests "com.greenharborlabs.l402.core.macaroon.MacaroonCryptoTest"
+./gradlew :paygate-core:test --tests "com.greenharborlabs.l402.core.macaroon.MacaroonCryptoTest"
 
 # By test method (within a class)
-./gradlew :l402-core:test --tests "*MacaroonCryptoTest.deriveKey*"
+./gradlew :paygate-core:test --tests "*MacaroonCryptoTest.deriveKey*"
 
 # Filter by package
-./gradlew :l402-spring-autoconfigure:test --tests "com.greenharborlabs.l402.spring.*"
+./gradlew :paygate-spring-autoconfigure:test --tests "com.greenharborlabs.l402.spring.*"
 
 # Run with reporting
 ./gradlew test --info          # Verbose output
@@ -86,20 +86,20 @@ cd integration-tests && docker-compose up --build   # Run Docker-based integrati
   ```
 - Test edge cases: empty inputs, null handling, binary data, concurrent access
 
-### l402-core Constraints
+### paygate-core Constraints
 - **ZERO external dependencies** — only JDK `javax.crypto`, `java.security`, `java.util`
 - Macaroon V2 format must be byte-level compatible with Go `go-macaroon`
 - Key derivation: `HMAC-SHA256(key="macaroons-key-generator", data=rootKey)`
 - Identifier layout: `[version:2 bytes BE][payment_hash:32][token_id:32]` = 66 bytes
 
 ### Spring Boot Patterns
-- Configuration properties under `l402.*` prefix with clear defaults
+- Configuration properties under `paygate.*` prefix with clear defaults
 - Use `@ConfigurationProperties` for type-safe configuration binding
 - Auto-configurations follow conditional bean registration patterns
 - Security mode auto-detection via `L402SecurityModeResolver` (servlet vs Spring Security)
 
 ### Code Quality Requirements
-- **Coverage minimums**: l402-core ≥80%, other modules ≥60%, example app ≥40%
+- **Coverage minimums**: paygate-core ≥80%, other modules ≥60%, example app ≥40%
 - No compilation warnings, clean code inspection passes
 - Javadoc for public APIs, inline comments only where necessary
 - Avoid unnecessary object creation; use `ThreadLocal` for reusable resources (e.g., `Mac` instances)

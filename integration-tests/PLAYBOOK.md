@@ -208,7 +208,7 @@ docker compose -f docker-compose-lnd.yml down -v
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| 402 but empty `WWW-Authenticate` | App misconfigured | Check `L402_ENABLED=true` in container env |
+| 402 but empty `WWW-Authenticate` | App misconfigured | Check `PAYGATE_ENABLED=true` in container env |
 | `payinvoice` hangs | LND has no funds | Re-run `scripts/setup-lnd.sh` to mine blocks |
 | `payinvoice` returns `FAILED` | Invoice expired or already paid | Get a fresh 402 challenge and retry |
 | 401 with valid credential | Preimage/macaroon mismatch | Ensure you extracted both from the same 402 response |
@@ -330,7 +330,7 @@ docker compose -f docker-compose-lnbits.yml down -v
 |---------|-------------|-----|
 | LNbits returns 401 on pay | Wrong API key | Re-run `scripts/setup-lnbits.sh` and restart the app |
 | Preimage is empty | FakeWallet schema difference | Check `curl ${LNBITS_URL}/api/v1/payments/${PAYMENT_HASH}` manually |
-| App returns 503 | Cannot reach LNbits | Verify `L402_LNBITS_URL` points to `http://lnbits:5000` inside Docker network |
+| App returns 503 | Cannot reach LNbits | Verify `PAYGATE_LNBITS_URL` points to `http://lnbits:5000` inside Docker network |
 
 ---
 
@@ -348,7 +348,7 @@ docker compose -f docker-compose-lnbits.yml up -d lnbits
 bash scripts/setup-lnbits.sh
 
 # Start the app with a 30-second credential timeout
-L402_DEFAULT_TIMEOUT_SECONDS=30 \
+PAYGATE_DEFAULT_TIMEOUT_SECONDS=30 \
   docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
 
 until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
@@ -359,7 +359,7 @@ echo "App is ready."
 
 ```bash
 # Override via Docker Compose environment (add to the paygate-example-app service)
-# L402_DEFAULT_TIMEOUT_SECONDS: "30"
+# PAYGATE_DEFAULT_TIMEOUT_SECONDS: "30"
 ```
 
 ### 3.2 Obtain and pay for a credential
