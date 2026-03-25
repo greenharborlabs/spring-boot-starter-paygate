@@ -9,6 +9,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Arrays;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -496,6 +497,29 @@ class MppProtocolTest {
         }
 
         @Test
+        void rejectsFabricatedPreimageProvesTautologyFixed() {
+            // This test proves the tautological validation bug is fixed.
+            // Under the OLD code, the parser computed paymentHash = sha256(preimage),
+            // so validate() compared sha256(preimage) == sha256(preimage) -- always true,
+            // meaning ANY preimage was accepted regardless of whether it matched the invoice.
+            // Under the NEW code, paymentHash comes from the request field (the real invoice hash),
+            // so sha256(fabricatedPreimage) != realPaymentHash --> rejected.
+            byte[] fabricatedPreimage = new byte[32];
+            Arrays.fill(fabricatedPreimage, (byte) 0xFF);
+
+            // Build credential with fabricated preimage but REAL payment hash from request field
+            PaymentCredential credential = buildCredentialWithMismatchedPreimage(
+                    fabricatedPreimage, PAYMENT_HASH, Instant.now().plusSeconds(3600));
+
+            assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+                    .isInstanceOf(PaymentValidationException.class)
+                    .satisfies(e -> {
+                        PaymentValidationException pve = (PaymentValidationException) e;
+                        assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_PREIMAGE);
+                    });
+        }
+
+        @Test
         void securityOrderPreimageBeforeHmac() {
             // Bad preimage AND tampered HMAC -- should fail on preimage first
             byte[] wrongPreimage = new byte[32];
@@ -585,9 +609,10 @@ class MppProtocolTest {
      * Builds a complete "Payment <base64url>" authorization header with the given method.
      */
     private String buildValidAuthHeader(String method) {
+        String requestB64 = buildRequestB64();
         String json = """
-                {"challenge":{"id":"test-id","realm":"%s","method":"%s","intent":"charge","request":"eyJhbW91bnQiOiIxMDAifQ","expires":"2099-12-31T23:59:59Z"},"payload":{"preimage":"%s"}}"""
-                .formatted(REALM, method, PREIMAGE_HEX);
+                {"challenge":{"id":"test-id","realm":"%s","method":"%s","intent":"charge","request":"%s","expires":"2099-12-31T23:59:59Z"},"payload":{"preimage":"%s"}}"""
+                .formatted(REALM, method, requestB64, PREIMAGE_HEX);
         String blob = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(json.getBytes(StandardCharsets.UTF_8));
         return "Payment " + blob;
