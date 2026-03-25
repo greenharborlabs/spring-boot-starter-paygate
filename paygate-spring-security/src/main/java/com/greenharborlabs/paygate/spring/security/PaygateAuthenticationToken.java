@@ -147,9 +147,9 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     // ========== L402-Only Authenticated Constructor (preserved) ==========
 
     /**
-     * Creates an authenticated token from a validated L402 credential.
+     * Private constructor for L402 authenticated tokens.
      */
-    public PaygateAuthenticationToken(L402Credential credential, String serviceName,
+    private PaygateAuthenticationToken(L402Credential credential, String serviceName,
                                     Collection<? extends GrantedAuthority> authorities,
                                     Map<String, String> attributes) {
         super(List.copyOf(authorities));
