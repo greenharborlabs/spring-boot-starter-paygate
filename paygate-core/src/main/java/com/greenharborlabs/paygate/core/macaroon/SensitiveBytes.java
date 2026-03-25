@@ -17,6 +17,13 @@ import javax.security.auth.Destroyable;
  */
 public final class SensitiveBytes implements AutoCloseable, Destroyable {
 
+    /**
+     * Tie-breaker lock for the rare case when two distinct instances have the same
+     * {@code System.identityHashCode}. Acquiring this lock first guarantees a total
+     * order even when the identity hash codes collide.
+     */
+    private static final ReentrantLock TIE_BREAKER_LOCK = new ReentrantLock();
+
     private final byte[] data;
     private volatile boolean destroyed;
     private final ReentrantLock lock = new ReentrantLock();
@@ -91,14 +98,36 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
      */
     @Override
     public boolean equals(Object o) {
-        lock.lock();
+        if (this == o) return true;
+        if (!(o instanceof SensitiveBytes other)) return false;
+
+        // Acquire both locks in System.identityHashCode order to prevent deadlock.
+        int thisHash = System.identityHashCode(this);
+        int otherHash = System.identityHashCode(other);
+
+        if (thisHash < otherHash) {
+            this.lock.lock();
+            other.lock.lock();
+        } else if (thisHash > otherHash) {
+            other.lock.lock();
+            this.lock.lock();
+        } else {
+            // Identity hash collision — use global tie-breaker to establish order
+            TIE_BREAKER_LOCK.lock();
+            try {
+                this.lock.lock();
+                other.lock.lock();
+            } finally {
+                TIE_BREAKER_LOCK.unlock();
+            }
+        }
+
         try {
-            if (this == o) return true;
-            if (!(o instanceof SensitiveBytes other)) return false;
             if (this.destroyed || other.destroyed) return false;
             return MacaroonCrypto.constantTimeEquals(this.data, other.data);
         } finally {
-            lock.unlock();
+            other.lock.unlock();
+            this.lock.unlock();
         }
     }
 
