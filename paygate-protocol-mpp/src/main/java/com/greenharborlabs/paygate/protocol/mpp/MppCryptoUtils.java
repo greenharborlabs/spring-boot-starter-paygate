@@ -15,30 +15,30 @@ final class MppCryptoUtils {
     /**
      * Constant-time byte array comparison using XOR accumulation.
      *
-     * <p>When arrays differ in length, sets {@code result = 1} immediately and
-     * performs a dummy XOR loop over {@code max(a.length, b.length)} iterations
-     * using modular indexing to avoid timing leaks on length mismatch.
+     * <p>Returns {@code false} immediately when array lengths differ. This is
+     * acceptable because callers in this module compare fixed-length
+     * cryptographic outputs (HMAC-SHA256 or SHA-256) whose length (32 bytes)
+     * is public knowledge, not a secret. This matches the behavior of Go's
+     * {@code crypto/subtle.ConstantTimeCompare} and Java's
+     * {@code MessageDigest.isEqual()}.
      *
-     * <p>When both arrays are empty, returns {@code true}.
+     * <p>When lengths match, performs a fixed-iteration XOR loop over all bytes
+     * so that the execution time depends only on the array length, never on
+     * where the first difference occurs.
+     *
+     * <p>When both arrays are empty (length 0), returns {@code true}.
      *
      * @param a first byte array (never null)
      * @param b second byte array (never null)
      * @return true if arrays are equal, false otherwise
      */
     static boolean constantTimeEquals(byte[] a, byte[] b) {
-        int result = a.length == b.length ? 0 : 1;
-        int maxLen = Math.max(a.length, b.length);
-
-        // Both empty: maxLen == 0, loop does not execute, result == 0 → true
-        // One empty, one not: result already 1, but we cannot index into an
-        // empty array, so we skip the loop. The method still returns false
-        // because result was set to 1 above. This is safe because the
-        // "one is empty" case leaks no useful timing information (the attacker
-        // already knows whether they sent an empty value).
-        if (a.length > 0 && b.length > 0) {
-            for (int i = 0; i < maxLen; i++) {
-                result |= a[i % a.length] ^ b[i % b.length];
-            }
+        if (a.length != b.length) {
+            return false;
+        }
+        int result = 0;
+        for (int i = 0; i < a.length; i++) {
+            result |= a[i] ^ b[i];
         }
         return result == 0;
     }
