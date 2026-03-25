@@ -1,8 +1,6 @@
 package com.greenharborlabs.paygate.protocol.mpp;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -113,9 +111,11 @@ public final class MppCredentialParser {
             }
         }
 
-        // Step 7: decode preimage and compute payment hash
+        // Step 7: decode preimage
         byte[] preimageBytes = HEX.parseHex(preimageHex);
-        byte[] paymentHash = sha256(preimageBytes);
+
+        // Step 7b: extract payment hash from echoed challenge's request field
+        byte[] paymentHash = extractPaymentHashFromRequest(echoedChallenge);
 
         // Step 8: extract optional source
         Object sourceRaw = root.get("source");
@@ -138,13 +138,58 @@ public final class MppCredentialParser {
         );
     }
 
-    private static byte[] sha256(byte[] data) {
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(data);
-        } catch (NoSuchAlgorithmException e) {
-            // SHA-256 is mandatory in every conformant JRE
-            throw new AssertionError("SHA-256 not available", e);
+    private static final int PAYMENT_HASH_LENGTH = 32;
+
+    /**
+     * Extracts the payment hash from the echoed challenge's {@code request} field.
+     * The request field is base64url-nopad encoded JCS JSON containing
+     * {@code methodDetails.paymentHash} as a hex string.
+     */
+    private static byte[] extractPaymentHashFromRequest(Map<String, String> echoedChallenge) {
+        String requestB64 = echoedChallenge.get("request");
+        if (requestB64 == null) {
+            throw malformed("Missing 'request' in echoed challenge for payment hash extraction");
         }
+
+        byte[] requestJsonBytes;
+        try {
+            requestJsonBytes = Base64.getUrlDecoder().decode(requestB64);
+        } catch (IllegalArgumentException e) {
+            throw malformed("Invalid base64url in echoed challenge request field", e);
+        }
+
+        String requestJson = new String(requestJsonBytes, StandardCharsets.UTF_8);
+
+        Map<String, Object> requestMap;
+        try {
+            var parser = new MinimalJsonParser(requestJson);
+            requestMap = parser.parseObject();
+        } catch (MinimalJsonParser.JsonParseException e) {
+            throw malformed("Missing methodDetails.paymentHash in charge request", e);
+        }
+
+        Object methodDetailsRaw = requestMap.get("methodDetails");
+        if (!(methodDetailsRaw instanceof Map<?, ?> methodDetailsMap)) {
+            throw malformed("Missing methodDetails.paymentHash in charge request");
+        }
+
+        Object paymentHashRaw = methodDetailsMap.get("paymentHash");
+        if (!(paymentHashRaw instanceof String paymentHashHex)) {
+            throw malformed("Missing methodDetails.paymentHash in charge request");
+        }
+
+        byte[] paymentHash;
+        try {
+            paymentHash = HEX.parseHex(paymentHashHex);
+        } catch (IllegalArgumentException e) {
+            throw malformed("Invalid hex in methodDetails.paymentHash", e);
+        }
+
+        if (paymentHash.length != PAYMENT_HASH_LENGTH) {
+            throw malformed("Payment hash must be 32 bytes");
+        }
+
+        return paymentHash;
     }
 
     private static PaymentValidationException malformed(String message) {

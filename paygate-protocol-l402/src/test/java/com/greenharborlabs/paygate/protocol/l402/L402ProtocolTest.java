@@ -15,6 +15,8 @@ import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
+import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
@@ -571,6 +573,104 @@ class L402ProtocolTest {
                         PaymentValidationException pve = (PaymentValidationException) ex;
                         assertThat(pve.getErrorCode()).isEqualTo(expectedCode);
                     });
+        }
+    }
+
+    @Nested
+    class SanitizeBolt11ForHeader {
+
+        @Test
+        void returnsEmptyStringForNull() {
+            assertThat(L402Protocol.sanitizeBolt11ForHeader(null)).isEqualTo("");
+        }
+
+        @Test
+        void returnsEmptyStringForEmpty() {
+            assertThat(L402Protocol.sanitizeBolt11ForHeader("")).isEqualTo("");
+        }
+
+        @Test
+        void passesThroughValidBolt11() {
+            assertThat(L402Protocol.sanitizeBolt11ForHeader("lnbc10n1p0valid"))
+                    .isEqualTo("lnbc10n1p0valid");
+        }
+
+        @Test
+        void rejectsDelCharacter() {
+            assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\u007F"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("illegal character");
+        }
+
+        @Test
+        void rejectsDoubleQuote() {
+            assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\"injection"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("illegal character");
+        }
+
+        @Test
+        void rejectsNullByte() {
+            assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("\u0000evil"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("illegal character");
+        }
+
+        @Test
+        void rejectsTabCharacter() {
+            assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\tinjection"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("illegal character");
+        }
+    }
+
+    @Nested
+    class FormatChallengeBlankCapability {
+
+        @Test
+        void omitsCapabilityCaveatWhenCapabilityIsBlank() {
+            byte[] rootKey = new byte[32];
+            byte[] paymentHash = new byte[32];
+            byte[] tokenId = new byte[32];
+            String tokenIdHex = HEX.formatHex(tokenId);
+
+            ChallengeContext context = new ChallengeContext(
+                    paymentHash, tokenIdHex, "lnbc1invoice", 1L,
+                    null, SERVICE_NAME, 3600L,
+                    "  ", rootKey, null, null);
+
+            ChallengeResponse response = protocol.formatChallenge(context);
+            String header = response.wwwAuthenticateHeader();
+            String macaroonPrefix = "macaroon=\"";
+            int macStart = header.indexOf(macaroonPrefix) + macaroonPrefix.length();
+            int macEnd = header.indexOf("\"", macStart);
+            byte[] macBytes = Base64.getDecoder().decode(header.substring(macStart, macEnd));
+            var macaroon = MacaroonSerializer.deserializeV2(macBytes);
+
+            assertThat(macaroon.caveats()).noneSatisfy(caveat ->
+                    assertThat(caveat.key()).contains("_capabilities"));
+        }
+    }
+
+    @Nested
+    class ValidateRequestedCapability {
+
+        @Test
+        void passesRequestedCapabilityToVerificationContext() {
+            String authHeader = buildValidAuthHeader("L402");
+            PaymentCredential credential = protocol.parseCredential(authHeader);
+            Map<String, String> requestContext = Map.of(
+                    VerificationContextKeys.REQUESTED_CAPABILITY, "write");
+
+            ArgumentCaptor<L402VerificationContext> contextCaptor =
+                    ArgumentCaptor.forClass(L402VerificationContext.class);
+
+            when(validator.validate(eq(authHeader), contextCaptor.capture())).thenReturn(null);
+
+            protocol.validate(credential, requestContext);
+
+            var capturedContext = contextCaptor.getValue();
+            assertThat(capturedContext.getRequestedCapability()).isEqualTo("write");
         }
     }
 

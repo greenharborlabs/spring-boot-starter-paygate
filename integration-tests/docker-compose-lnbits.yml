@@ -31,13 +31,13 @@ services:
       - "${APP_PORT:-8080}:8080"
     environment:
       SPRING_PROFILES_ACTIVE: "dev"
-      L402_ENABLED: "true"
-      L402_TEST_MODE: "false"
-      L402_SERVICE_NAME: "example-api"
-      L402_BACKEND: "lnbits"
-      L402_ROOT_KEY_STORE: "memory"
-      L402_LNBITS_URL: "http://lnbits:5000"
-      # L402_LNBITS_API_KEY is auto-created by docker-entrypoint.sh
+      PAYGATE_ENABLED: "true"
+      PAYGATE_TEST_MODE: "false"
+      PAYGATE_SERVICE_NAME: "example-api"
+      PAYGATE_BACKEND: "lnbits"
+      PAYGATE_ROOT_KEY_STORE: "memory"
+      PAYGATE_LNBITS_URL: "http://lnbits:5000"
+      # PAYGATE_LNBITS_API_KEY is auto-created by docker-entrypoint.sh
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 10s

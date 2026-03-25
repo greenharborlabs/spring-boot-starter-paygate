@@ -92,7 +92,7 @@ public final class MppChallengeBinding {
         }
 
         byte[] expectedBytes = computeHmac(realm, method, intent, requestB64, expires, digest, opaqueB64, secret);
-        return constantTimeEquals(presentedBytes, expectedBytes);
+        return MppCryptoUtils.constantTimeEquals(presentedBytes, expectedBytes);
     }
 
     /**
@@ -118,22 +118,6 @@ public final class MppChallengeBinding {
         } catch (InvalidKeyException e) {
             throw new IllegalArgumentException("Invalid HMAC secret key", e);
         }
-    }
-
-    /**
-     * Constant-time byte array comparison using XOR accumulation.
-     * Never use {@code Arrays.equals} or {@code MessageDigest.isEqual} — this implementation
-     * guarantees no early return on mismatch.
-     */
-    private static boolean constantTimeEquals(byte[] a, byte[] b) {
-        if (a.length != b.length) {
-            return false;
-        }
-        int result = 0;
-        for (int i = 0; i < a.length; i++) {
-            result |= a[i] ^ b[i];
-        }
-        return result == 0;
     }
 
     private static String nullToEmpty(String value) {

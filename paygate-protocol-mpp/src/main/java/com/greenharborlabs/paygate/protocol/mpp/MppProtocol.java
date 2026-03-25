@@ -1,8 +1,6 @@
 package com.greenharborlabs.paygate.protocol.mpp;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -198,8 +196,8 @@ public final class MppProtocol implements PaymentProtocol {
         // ---- Security-critical validation order ----
 
         // 1. Preimage hash check (before HMAC to prevent oracle attacks)
-        byte[] computedHash = sha256(credential.preimage());
-        if (!constantTimeEquals(computedHash, credential.paymentHash())) {
+        byte[] computedHash = MppCryptoUtils.sha256(credential.preimage());
+        if (!MppCryptoUtils.constantTimeEquals(computedHash, credential.paymentHash())) {
             throw new PaymentValidationException(
                     ErrorCode.INVALID_PREIMAGE,
                     "Preimage does not match payment hash",
@@ -255,28 +253,6 @@ public final class MppProtocol implements PaymentProtocol {
     public Optional<PaymentReceipt> createReceipt(
             PaymentCredential credential, ChallengeContext context) {
         return Optional.of(MppReceipt.from(credential, context));
-    }
-
-    /**
-     * Constant-time byte array comparison using XOR accumulation.
-     */
-    private static boolean constantTimeEquals(byte[] a, byte[] b) {
-        if (a.length != b.length) {
-            return false;
-        }
-        int result = 0;
-        for (int i = 0; i < a.length; i++) {
-            result |= a[i] ^ b[i];
-        }
-        return result == 0;
-    }
-
-    private static byte[] sha256(byte[] data) {
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(data);
-        } catch (NoSuchAlgorithmException e) {
-            throw new AssertionError("SHA-256 not available", e);
-        }
     }
 
     /**

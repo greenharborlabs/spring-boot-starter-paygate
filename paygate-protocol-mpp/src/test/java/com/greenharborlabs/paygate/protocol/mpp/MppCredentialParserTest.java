@@ -39,7 +39,30 @@ class MppCredentialParserTest {
         return validJson(VALID_PREIMAGE_HEX, VALID_CHALLENGE_ID, "\"did:example:alice\"");
     }
 
+    /**
+     * Builds a base64url-nopad request field containing the payment hash for the given preimage hex.
+     */
+    private static String buildRequestB64(String preimageHex) {
+        byte[] preimageBytes = HEX.parseHex(preimageHex);
+        byte[] paymentHash;
+        try {
+            paymentHash = MessageDigest.getInstance("SHA-256").digest(preimageBytes);
+        } catch (Exception e) {
+            throw new AssertionError("SHA-256 not available", e);
+        }
+        String paymentHashHex = HEX.formatHex(paymentHash);
+        // JCS: keys sorted lexicographically, no whitespace
+        String requestJson = "{\"amount\":\"100\",\"currency\":\"BTC\",\"methodDetails\":"
+                + "{\"invoice\":\"lnbc100n1p0test\",\"network\":\"mainnet\","
+                + "\"paymentHash\":\"%s\"}}".formatted(paymentHashHex);
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(requestJson.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static final String VALID_REQUEST_B64 = buildRequestB64(VALID_PREIMAGE_HEX);
+
     private static String validJson(String preimageHex, String challengeId, String sourceValue) {
+        String requestB64 = buildRequestB64(preimageHex);
         return """
                 {
                   "challenge": {
@@ -47,14 +70,14 @@ class MppCredentialParserTest {
                     "realm": "my-service",
                     "method": "lightning",
                     "intent": "charge",
-                    "request": "eyJhbW91bnQiOjEwfQ",
+                    "request": "%s",
                     "expires": "2026-12-31T23:59:59Z"
                   },
                   "source": %s,
                   "payload": {
                     "preimage": "%s"
                   }
-                }""".formatted(challengeId, sourceValue, preimageHex);
+                }""".formatted(challengeId, requestB64, sourceValue, preimageHex);
     }
 
     // --- Happy path ---
@@ -97,13 +120,13 @@ class MppCredentialParserTest {
                     "realm": "svc",
                     "method": "lightning",
                     "intent": "charge",
-                    "request": "eyJhbW91bnQiOjEwfQ",
+                    "request": "%s",
                     "expires": "2026-12-31T23:59:59Z"
                   },
                   "payload": {
                     "preimage": "%s"
                   }
-                }""".formatted(VALID_CHALLENGE_ID, VALID_PREIMAGE_HEX);
+                }""".formatted(VALID_CHALLENGE_ID, VALID_REQUEST_B64, VALID_PREIMAGE_HEX);
         String blob = toBlob(json);
 
         PaymentCredential cred = MppCredentialParser.parse(blob);
@@ -125,7 +148,7 @@ class MppCredentialParserTest {
         assertThat(challenge).containsEntry("realm", "my-service");
         assertThat(challenge).containsEntry("method", "lightning");
         assertThat(challenge).containsEntry("intent", "charge");
-        assertThat(challenge).containsEntry("request", "eyJhbW91bnQiOjEwfQ");
+        assertThat(challenge).containsEntry("request", VALID_REQUEST_B64);
         assertThat(challenge).containsEntry("expires", "2026-12-31T23:59:59Z");
         assertThat(challenge).hasSize(6);
     }
@@ -334,10 +357,10 @@ class MppCredentialParserTest {
         // source contains escaped characters
         String json = """
                 {
-                  "challenge": { "id": "test-id" },
+                  "challenge": { "id": "test-id", "request": "%s" },
                   "source": "did:example:alice\\/bob",
                   "payload": { "preimage": "%s" }
-                }""".formatted(VALID_PREIMAGE_HEX);
+                }""".formatted(VALID_REQUEST_B64, VALID_PREIMAGE_HEX);
         String blob = toBlob(json);
 
         PaymentCredential cred = MppCredentialParser.parse(blob);
@@ -347,9 +370,9 @@ class MppCredentialParserTest {
 
     @Test
     void handlesMinimalValidCredential() {
-        // Only required fields: challenge.id and payload.preimage
+        // Required fields: challenge.id, challenge.request, and payload.preimage
         String json = """
-                {"challenge":{"id":"x"},"payload":{"preimage":"%s"}}""".formatted(VALID_PREIMAGE_HEX);
+                {"challenge":{"id":"x","request":"%s"},"payload":{"preimage":"%s"}}""".formatted(VALID_REQUEST_B64, VALID_PREIMAGE_HEX);
         String blob = toBlob(json);
 
         PaymentCredential cred = MppCredentialParser.parse(blob);
@@ -382,5 +405,114 @@ class MppCredentialParserTest {
 
         PaymentCredential cred = MppCredentialParser.parse(blob);
         assertThat(cred.tokenId()).isEqualTo(VALID_CHALLENGE_ID);
+    }
+
+    // --- Request field extraction errors ---
+
+    @Test
+    void rejectsMissingRequestField() {
+        String json = """
+                {
+                  "challenge": { "id": "test-id", "realm": "svc" },
+                  "payload": { "preimage": "%s" }
+                }""".formatted(VALID_PREIMAGE_HEX);
+        String blob = toBlob(json);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(blob))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                    assertThat(pve.getMessage()).isEqualTo(
+                            "Missing 'request' in echoed challenge for payment hash extraction");
+                });
+    }
+
+    @Test
+    void rejectsMalformedRequestBase64url() {
+        String json = """
+                {
+                  "challenge": { "id": "test-id", "request": "!!!notbase64" },
+                  "payload": { "preimage": "%s" }
+                }""".formatted(VALID_PREIMAGE_HEX);
+        String blob = toBlob(json);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(blob))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                    assertThat(pve.getMessage()).isEqualTo(
+                            "Invalid base64url in echoed challenge request field");
+                });
+    }
+
+    @Test
+    void rejectsMissingMethodDetailsPaymentHash() {
+        // Request JSON without methodDetails
+        String requestJson = "{\"amount\":\"100\"}";
+        String requestB64 = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(requestJson.getBytes(StandardCharsets.UTF_8));
+        String json = """
+                {
+                  "challenge": { "id": "test-id", "request": "%s" },
+                  "payload": { "preimage": "%s" }
+                }""".formatted(requestB64, VALID_PREIMAGE_HEX);
+        String blob = toBlob(json);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(blob))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                    assertThat(pve.getMessage()).isEqualTo(
+                            "Missing methodDetails.paymentHash in charge request");
+                });
+    }
+
+    @Test
+    void rejectsInvalidHexInPaymentHash() {
+        // Request JSON with invalid hex in paymentHash
+        String requestJson = "{\"methodDetails\":{\"paymentHash\":\"zzzz\"}}";
+        String requestB64 = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(requestJson.getBytes(StandardCharsets.UTF_8));
+        String json = """
+                {
+                  "challenge": { "id": "test-id", "request": "%s" },
+                  "payload": { "preimage": "%s" }
+                }""".formatted(requestB64, VALID_PREIMAGE_HEX);
+        String blob = toBlob(json);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(blob))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                    assertThat(pve.getMessage()).isEqualTo(
+                            "Invalid hex in methodDetails.paymentHash");
+                });
+    }
+
+    @Test
+    void rejectsWrongLengthPaymentHash() {
+        // 16-byte payment hash (32 hex chars) instead of 32 bytes (64 hex chars)
+        String shortHash = "0102030405060708091011121314151617181920212223242526272829303132".substring(0, 32);
+        String requestJson = "{\"methodDetails\":{\"paymentHash\":\"%s\"}}".formatted(shortHash);
+        String requestB64 = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(requestJson.getBytes(StandardCharsets.UTF_8));
+        String json = """
+                {
+                  "challenge": { "id": "test-id", "request": "%s" },
+                  "payload": { "preimage": "%s" }
+                }""".formatted(requestB64, VALID_PREIMAGE_HEX);
+        String blob = toBlob(json);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(blob))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                    assertThat(pve.getMessage()).isEqualTo("Payment hash must be 32 bytes");
+                });
     }
 }

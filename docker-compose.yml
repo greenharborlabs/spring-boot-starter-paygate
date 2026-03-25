@@ -7,7 +7,7 @@ services:
       - "8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: "dev"
-      L402_ENABLED: "true"
-      L402_TEST_MODE: "true"
-      L402_SERVICE_NAME: "example-api"
-      L402_ROOT_KEY_STORE: "memory"
+      PAYGATE_ENABLED: "true"
+      PAYGATE_TEST_MODE: "true"
+      PAYGATE_SERVICE_NAME: "example-api"
+      PAYGATE_ROOT_KEY_STORE: "memory"

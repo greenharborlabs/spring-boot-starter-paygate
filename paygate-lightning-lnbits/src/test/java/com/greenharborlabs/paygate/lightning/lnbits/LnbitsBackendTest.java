@@ -580,4 +580,120 @@ class LnbitsBackendTest {
         );
         assertThat(config.requestTimeoutSeconds()).isEqualTo(30);
     }
+
+    // --- Edge case tests ---
+
+    @Test
+    void createInvoice_throws_whenResponseBodyIsNotJson() {
+        server.enqueue(new MockResponse()
+                .setResponseCode(201)
+                .setHeader("Content-Type", "application/json")
+                .setBody("not json at all"));
+
+        assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
+                .isInstanceOf(LnbitsException.class)
+                .hasMessageContaining("Failed to create invoice");
+    }
+
+    @Test
+    void lookupInvoice_settledWithoutPreimage_returnsNullPreimage() throws Exception {
+        String responseBody = """
+                {
+                    "paid": true,
+                    "details": {
+                        "bolt11": "%s",
+                        "amount": 100000,
+                        "time": 1700000000,
+                        "expiry": 3600
+                    }
+                }
+                """.formatted(BOLT11);
+
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(responseBody));
+
+        Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
+
+        assertThat(invoice.status()).isEqualTo(InvoiceStatus.SETTLED);
+        assertThat(invoice.preimage()).isNull();
+    }
+
+    @Test
+    void lookupInvoice_withoutMemoField_returnsNullMemo() throws Exception {
+        String responseBody = """
+                {
+                    "paid": false,
+                    "details": {
+                        "bolt11": "%s",
+                        "amount": 100000,
+                        "time": 1700000000,
+                        "expiry": 3600
+                    }
+                }
+                """.formatted(BOLT11);
+
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(responseBody));
+
+        Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
+
+        assertThat(invoice.memo()).isNull();
+    }
+
+    @Test
+    void lookupInvoice_nonNumericTime_fallsBackToNow() throws Exception {
+        String responseBody = """
+                {
+                    "paid": false,
+                    "details": {
+                        "bolt11": "%s",
+                        "amount": 100000,
+                        "time": "not-a-number",
+                        "expiry": 3600
+                    }
+                }
+                """.formatted(BOLT11);
+
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(responseBody));
+
+        Instant before = Instant.now();
+        Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
+        Instant after = Instant.now();
+
+        assertThat(invoice.createdAt()).isBetween(before, after);
+    }
+
+    @Test
+    void createInvoice_trailingSlashUrl_normalizesPath() throws Exception {
+        // Construct backend with explicit trailing-slash URL
+        String trailingSlashUrl = "http://localhost:" + server.getPort() + "/";
+        var trailingSlashConfig = new LnbitsConfig(trailingSlashUrl, API_KEY);
+        var trailingSlashBackend = new LnbitsBackend(trailingSlashConfig, objectMapper, HttpClient.newHttpClient());
+
+        server.enqueue(new MockResponse()
+                .setResponseCode(201)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""
+                        {"payment_hash": "%s", "payment_request": "%s"}
+                        """.formatted(PAYMENT_HASH_HEX, BOLT11)));
+
+        trailingSlashBackend.createInvoice(100L, "memo");
+
+        RecordedRequest request = server.takeRequest();
+        assertThat(request.getPath()).isEqualTo("/api/v1/payments");
+    }
+
+    @Test
+    void isHealthy_returnsFalse_whenConnectionDisconnects() {
+        server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START));
+
+        assertThat(backend.isHealthy()).isFalse();
+    }
 }

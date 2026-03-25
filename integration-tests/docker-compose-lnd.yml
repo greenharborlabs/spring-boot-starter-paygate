@@ -68,15 +68,15 @@ services:
       - "${APP_PORT:-8080}:8080"
     environment:
       SPRING_PROFILES_ACTIVE: "dev"
-      L402_ENABLED: "true"
-      L402_TEST_MODE: "false"
-      L402_SERVICE_NAME: "example-api"
-      L402_BACKEND: "lnd"
-      L402_ROOT_KEY_STORE: "memory"
-      L402_LND_HOST: "lnd"
-      L402_LND_PORT: "10009"
-      L402_LND_TLS_CERT_PATH: "/lnd/tls.cert"
-      L402_LND_MACAROON_PATH: "/lnd/data/chain/bitcoin/regtest/admin.macaroon"
+      PAYGATE_ENABLED: "true"
+      PAYGATE_TEST_MODE: "false"
+      PAYGATE_SERVICE_NAME: "example-api"
+      PAYGATE_BACKEND: "lnd"
+      PAYGATE_ROOT_KEY_STORE: "memory"
+      PAYGATE_LND_HOST: "lnd"
+      PAYGATE_LND_PORT: "10009"
+      PAYGATE_LND_TLS_CERT_PATH: "/lnd/tls.cert"
+      PAYGATE_LND_MACAROON_PATH: "/lnd/data/chain/bitcoin/regtest/admin.macaroon"
     volumes:
       - lnd-data:/lnd:ro
     healthcheck:
