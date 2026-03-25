@@ -18,6 +18,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -127,7 +128,7 @@ class PaygateChallengeServiceTest {
             when(rateLimiter.tryAcquire(anyString())).thenReturn(false);
 
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, null);
 
             assertThatThrownBy(() -> service.createChallenge(request, config))
                     .isInstanceOf(PaygateRateLimitedException.class);
@@ -364,7 +365,7 @@ class PaygateChallengeServiceTest {
 
             PaygateEarningsTracker earningsTracker = mock(PaygateEarningsTracker.class);
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, earningsTracker, null);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, earningsTracker, null, null);
 
             service.createChallenge(request, config);
 
@@ -385,63 +386,91 @@ class PaygateChallengeServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // resolveClientIp
+    // ClientIpResolver delegation
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("resolveClientIp")
-    class ResolveClientIp {
+    @DisplayName("ClientIpResolver delegation")
+    class ClientIpDelegation {
 
         @Test
-        @DisplayName("returns XFF header value when trustForwardedHeaders is true")
-        void returnsXffWhenTrusted() {
-            properties.setTrustForwardedHeaders(true);
-            request.addHeader("X-Forwarded-For", "10.0.0.1");
+        @DisplayName("trusted proxy: rightmost untrusted XFF entry is used for rate limiting")
+        void trustedProxyUsesRightmostUntrustedXffEntry() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            assertThat(service.resolveClientIp(request)).isEqualTo("10.0.0.1");
+            PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+            when(rateLimiter.tryAcquire(anyString())).thenReturn(true);
+
+            ClientIpResolver resolver = new ClientIpResolver(true, List.of("10.0.0.2"));
+            request.addHeader("X-Forwarded-For", "spoofed, 203.0.113.50, 10.0.0.2");
+            request.setRemoteAddr("10.0.0.2");
+
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver);
+
+            service.createChallenge(request, config);
+            verify(rateLimiter).tryAcquire("203.0.113.50");
         }
 
         @Test
-        @DisplayName("returns first IP from multi-proxy XFF when trustForwardedHeaders is true")
-        void returnsFirstIpFromMultiProxyXff() {
-            properties.setTrustForwardedHeaders(true);
-            request.addHeader("X-Forwarded-For", "10.0.0.1, 10.0.0.2");
+        @DisplayName("null ClientIpResolver falls back to request.getRemoteAddr()")
+        void nullResolverFallsBackToRemoteAddr() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            assertThat(service.resolveClientIp(request)).isEqualTo("10.0.0.1");
-        }
+            PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+            when(rateLimiter.tryAcquire(anyString())).thenReturn(true);
 
-        @Test
-        @DisplayName("ignores XFF and returns remoteAddr when trustForwardedHeaders is false")
-        void ignoresXffWhenNotTrusted() {
-            properties.setTrustForwardedHeaders(false);
-            request.addHeader("X-Forwarded-For", "10.0.0.1");
             request.setRemoteAddr("192.168.1.1");
 
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            assertThat(service.resolveClientIp(request)).isEqualTo("192.168.1.1");
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, null);
+
+            service.createChallenge(request, config);
+            verify(rateLimiter).tryAcquire("192.168.1.1");
         }
 
         @Test
-        @DisplayName("falls back to remoteAddr when XFF is empty and trust is true")
-        void fallsBackToRemoteAddrWhenXffEmpty() {
-            properties.setTrustForwardedHeaders(true);
-            request.addHeader("X-Forwarded-For", "   ");
-            request.setRemoteAddr("192.168.1.1");
+        @DisplayName("configured resolver with no XFF header falls back to remoteAddr")
+        void noXffHeaderFallsBackToRemoteAddr() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            assertThat(service.resolveClientIp(request)).isEqualTo("192.168.1.1");
+            PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+            when(rateLimiter.tryAcquire(anyString())).thenReturn(true);
+
+            ClientIpResolver resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
+            request.setRemoteAddr("192.168.1.1");
+            // No XFF header added
+
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver);
+
+            service.createChallenge(request, config);
+            verify(rateLimiter).tryAcquire("192.168.1.1");
         }
 
         @Test
-        @DisplayName("returns remoteAddr when no XFF header present")
-        void returnsRemoteAddrWhenNoXff() {
-            properties.setTrustForwardedHeaders(true);
-            request.setRemoteAddr("192.168.1.1");
+        @DisplayName("delegates to ClientIpResolver.resolve() when resolver is present")
+        void delegatesToResolverWhenPresent() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
 
-            PaygateChallengeService service = createService(createTrackingRootKeyStore());
-            assertThat(service.resolveClientIp(request)).isEqualTo("192.168.1.1");
+            PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+            when(rateLimiter.tryAcquire(anyString())).thenReturn(true);
+
+            ClientIpResolver resolver = mock(ClientIpResolver.class);
+            when(resolver.resolve(request)).thenReturn("10.0.0.1");
+
+            request.setRemoteAddr("127.0.0.1");
+
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver);
+
+            service.createChallenge(request, config);
+            verify(resolver).resolve(request);
+            verify(rateLimiter).tryAcquire("10.0.0.1");
         }
     }
 
@@ -537,7 +566,7 @@ class PaygateChallengeServiceTest {
         @DisplayName("accepts null properties and defaults service name")
         void acceptsNullProperties() {
             var service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, null, applicationContext, null, null);
+                    createTrackingRootKeyStore(), lightningBackend, null, applicationContext, null, null, null);
             assertThat(service).isNotNull();
         }
 
@@ -545,7 +574,7 @@ class PaygateChallengeServiceTest {
         @DisplayName("accepts null applicationContext")
         void acceptsNullApplicationContext() {
             var service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, null, null, null);
+                    createTrackingRootKeyStore(), lightningBackend, properties, null, null, null, null);
             assertThat(service).isNotNull();
         }
     }
@@ -556,7 +585,7 @@ class PaygateChallengeServiceTest {
 
     private PaygateChallengeService createService(RootKeyStore rootKeyStore) {
         return new PaygateChallengeService(
-                rootKeyStore, lightningBackend, properties, applicationContext, null, null);
+                rootKeyStore, lightningBackend, properties, applicationContext, null, null, null);
     }
 
     private static ZeroizationTrackingRootKeyStore createTrackingRootKeyStore() {

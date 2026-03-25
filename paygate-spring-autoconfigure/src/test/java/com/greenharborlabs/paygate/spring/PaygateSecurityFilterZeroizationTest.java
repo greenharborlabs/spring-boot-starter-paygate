@@ -135,7 +135,7 @@ class PaygateSecurityFilterZeroizationTest {
         var properties = new PaygateProperties();
         properties.setServiceName("test-service");
         var challengeService = new PaygateChallengeService(
-                rootKeyStore, lightningBackend, properties, mock(ApplicationContext.class), null, null);
+                rootKeyStore, lightningBackend, properties, mock(ApplicationContext.class), null, null, null);
         return new PaygateSecurityFilter(
                 registry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                 null, null, null, null);

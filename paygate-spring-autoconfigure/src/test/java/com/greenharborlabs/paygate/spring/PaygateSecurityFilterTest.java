@@ -169,7 +169,7 @@ class PaygateSecurityFilterTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
             var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, null);
+                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, paygateEarningsTracker, null);

@@ -165,7 +165,7 @@ class PaygateMetricsTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
             var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, properties, applicationContext, null, null);
+                    rootKeyStore, lightningBackendBean, properties, applicationContext, null, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, paygateMetrics, null, null);

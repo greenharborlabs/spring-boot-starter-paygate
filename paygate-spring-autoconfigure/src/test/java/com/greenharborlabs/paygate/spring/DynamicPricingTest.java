@@ -161,7 +161,7 @@ class DynamicPricingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
             var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, applicationContext, null, null);
+                    rootKeyStore, lightningBackendBean, null, applicationContext, null, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, null, null);

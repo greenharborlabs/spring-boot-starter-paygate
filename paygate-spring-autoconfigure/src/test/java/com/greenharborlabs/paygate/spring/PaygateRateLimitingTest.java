@@ -310,7 +310,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter);
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
@@ -378,7 +378,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null);
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, null);
@@ -453,7 +453,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter);
+                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
@@ -471,9 +471,7 @@ class PaygateRateLimitingTest {
 
         @Bean
         PaygateProperties paygateProperties() {
-            var props = new PaygateProperties();
-            props.setTrustForwardedHeaders(true);
-            return props;
+            return new PaygateProperties();
         }
 
         @Bean
@@ -516,6 +514,12 @@ class PaygateRateLimitingTest {
         }
 
         @Bean
+        ClientIpResolver clientIpResolver() {
+            // Trust XFF from MockMvc's default remoteAddr (127.0.0.1)
+            return new ClientIpResolver(true, List.of("127.0.0.1"));
+        }
+
+        @Bean
         PaygateSecurityFilter paygateSecurityFilter(
                 PaygateEndpointRegistry endpointRegistry,
                 LightningBackend lightningBackendBean,
@@ -524,12 +528,13 @@ class PaygateRateLimitingTest {
                 List<CaveatVerifier> caveatVerifiers,
                 PaygateEarningsTracker paygateEarningsTracker,
                 PaygateRateLimiter paygateRateLimiter,
+                ClientIpResolver clientIpResolver,
                 PaygateProperties paygateProperties
         ) {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter);
+                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, clientIpResolver);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);

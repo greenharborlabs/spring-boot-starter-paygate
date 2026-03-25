@@ -362,9 +362,10 @@ public class PaygateAutoConfiguration {
                                                       PaygateProperties properties,
                                                       ApplicationContext applicationContext,
                                                       @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
-                                                      @Autowired(required = false) PaygateRateLimiter paygateRateLimiter) {
+                                                      @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
+                                                      @Autowired(required = false) ClientIpResolver clientIpResolver) {
         return new PaygateChallengeService(rootKeyStore, lightningBackend,
-                properties, applicationContext, paygateEarningsTracker, paygateRateLimiter);
+                properties, applicationContext, paygateEarningsTracker, paygateRateLimiter, clientIpResolver);
     }
 
     @Bean
