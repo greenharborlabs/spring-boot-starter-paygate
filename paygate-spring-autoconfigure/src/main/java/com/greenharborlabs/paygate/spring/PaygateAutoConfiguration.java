@@ -348,11 +348,28 @@ public class PaygateAutoConfiguration {
         return registry;
     }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public PaygateRateLimiter paygateRateLimiter(PaygateProperties properties) {
-        var rl = properties.getRateLimit();
-        return new TokenBucketRateLimiter(rl.getBurstSize(), rl.getRequestsPerSecond());
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "com.github.benmanes.caffeine.cache.Caffeine")
+    static class CaffeineRateLimiterConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        PaygateRateLimiter paygateRateLimiter(PaygateProperties properties) {
+            var rl = properties.getRateLimit();
+            return new CaffeineTokenBucketRateLimiter(
+                    rl.getBurstSize(), rl.getRequestsPerSecond(), rl.getMaxBuckets(),
+                    System::nanoTime, com.github.benmanes.caffeine.cache.Ticker.systemTicker());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnMissingClass("com.github.benmanes.caffeine.cache.Caffeine")
+    static class InMemoryRateLimiterConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        PaygateRateLimiter paygateRateLimiter(PaygateProperties properties) {
+            var rl = properties.getRateLimit();
+            return new TokenBucketRateLimiter(rl.getBurstSize(), rl.getRequestsPerSecond(), rl.getMaxBuckets());
+        }
     }
 
     @Bean

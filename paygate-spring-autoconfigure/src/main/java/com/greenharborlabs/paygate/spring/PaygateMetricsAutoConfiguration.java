@@ -5,6 +5,9 @@ import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 
 import io.micrometer.core.instrument.MeterRegistry;
 
+import java.util.Locale;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -30,9 +33,19 @@ public class PaygateMetricsAutoConfiguration {
     @ConditionalOnMissingBean
     public PaygateMetrics paygateMetrics(MeterRegistry meterRegistry,
                                    CredentialStore credentialStore,
-                                   LightningBackend lightningBackend) {
+                                   LightningBackend lightningBackend,
+                                   @Autowired(required = false) PaygateRateLimiter rateLimiter) {
         var metrics = new PaygateMetrics(meterRegistry, credentialStore, lightningBackend);
         credentialStore.setEvictionListener((tokenId, reason) -> metrics.recordCacheEviction(reason));
+
+        if (rateLimiter instanceof CaffeineTokenBucketRateLimiter caffeineRl) {
+            metrics.registerRateLimiterMetrics(caffeineRl::currentBucketCount);
+            caffeineRl.setEvictionCallback((key, reason) ->
+                    metrics.recordRateLimiterEviction(reason.toLowerCase(Locale.ROOT)));
+        } else if (rateLimiter instanceof TokenBucketRateLimiter jdkRl) {
+            metrics.registerRateLimiterMetrics(jdkRl::currentBucketCount);
+        }
+
         return metrics;
     }
 

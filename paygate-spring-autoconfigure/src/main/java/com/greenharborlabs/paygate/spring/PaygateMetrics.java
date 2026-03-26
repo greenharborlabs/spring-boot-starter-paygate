@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
@@ -39,6 +40,8 @@ public class PaygateMetrics implements AutoCloseable {
     private final ConcurrentHashMap<String, Counter> invoicesSettledCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<EvictionReason, Counter> evictionCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> caveatRejectedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> rateLimiterEvictionCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> rateLimitRejectionCounters = new ConcurrentHashMap<>();
     private final Timer caveatVerifyTimer;
 
     public PaygateMetrics(MeterRegistry registry,
@@ -161,6 +164,58 @@ public class PaygateMetrics implements AutoCloseable {
                         .description("Caveat verification rejections by type")
                         .register(registry)
         ).increment();
+    }
+
+    /**
+     * Registers a gauge tracking the number of active rate-limiter buckets.
+     * Called once after construction when a rate limiter is available.
+     *
+     * @param bucketCountSupplier supplies the current bucket count
+     */
+    public void registerRateLimiterMetrics(Supplier<Long> bucketCountSupplier) {
+        try {
+            Gauge.builder("paygate.ratelimiter.buckets.active", bucketCountSupplier, Supplier::get)
+                    .description("Current number of tracked IP rate-limit buckets")
+                    .register(registry);
+        } catch (Exception e) {
+            // Best-effort: do not fail the application if metric registration fails
+        }
+    }
+
+    /**
+     * Records a rate-limiter bucket eviction: increments {@code paygate.ratelimiter.evictions}
+     * counter tagged with the eviction reason (e.g., "expired", "size").
+     *
+     * <p>Thread-safe: may be called from Caffeine's async removal listener thread.
+     */
+    public void recordRateLimiterEviction(String reason) {
+        try {
+            rateLimiterEvictionCounters.computeIfAbsent(reason, r ->
+                    Counter.builder("paygate.ratelimiter.evictions")
+                            .tag("reason", r)
+                            .description("Rate limiter bucket evictions")
+                            .register(registry)
+            ).increment();
+        } catch (Exception e) {
+            // Best-effort: do not fail the request if metric recording fails
+        }
+    }
+
+    /**
+     * Records a rate-limit rejection (429 response): increments
+     * {@code paygate.ratelimiter.rejections} counter tagged with the endpoint.
+     */
+    public void recordRateLimitRejection(String endpoint) {
+        try {
+            rateLimitRejectionCounters.computeIfAbsent(endpoint, ep ->
+                    Counter.builder("paygate.ratelimiter.rejections")
+                            .tag("endpoint", ep)
+                            .description("Rate limit rejections (429 responses)")
+                            .register(registry)
+            ).increment();
+        } catch (Exception e) {
+            // Best-effort: do not fail the request if metric recording fails
+        }
     }
 
     private Counter requestCounter(String endpoint, String result, String protocol) {

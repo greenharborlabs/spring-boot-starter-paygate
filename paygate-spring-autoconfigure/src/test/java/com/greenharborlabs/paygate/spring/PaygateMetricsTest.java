@@ -770,6 +770,81 @@ class PaygateMetricsTest {
     }
 
     // -----------------------------------------------------------------------
+    // Rate limiter metrics — unit tests using direct PaygateMetrics construction
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("rate limiter metrics")
+    class RateLimiterMetrics {
+
+        private SimpleMeterRegistry unitRegistry;
+        private PaygateMetrics unitMetrics;
+
+        @BeforeEach
+        void setUp() {
+            unitRegistry = new SimpleMeterRegistry();
+            var stubBackend = new StubLightningBackend();
+            stubBackend.setHealthy(true);
+            var stubStore = new InMemoryTestCredentialStore();
+            unitMetrics = new PaygateMetrics(unitRegistry, stubStore, stubBackend);
+        }
+
+        @Test
+        @DisplayName("registerRateLimiterMetrics registers gauge with supplier value")
+        void gaugeRegistered() {
+            unitMetrics.registerRateLimiterMetrics(() -> 42L);
+
+            double value = unitRegistry.get("paygate.ratelimiter.buckets.active").gauge().value();
+            assertThat(value).isEqualTo(42.0);
+        }
+
+        @Test
+        @DisplayName("recordRateLimiterEviction increments counter tagged with reason")
+        void evictionCounter() {
+            unitMetrics.recordRateLimiterEviction("size");
+            unitMetrics.recordRateLimiterEviction("size");
+
+            double count = unitRegistry.get("paygate.ratelimiter.evictions")
+                    .tag("reason", "size").counter().count();
+            assertThat(count).isEqualTo(2.0);
+        }
+
+        @Test
+        @DisplayName("recordRateLimiterEviction tracks different reasons independently")
+        void evictionReasonsIndependent() {
+            unitMetrics.recordRateLimiterEviction("size");
+            unitMetrics.recordRateLimiterEviction("expired");
+            unitMetrics.recordRateLimiterEviction("expired");
+
+            assertThat(unitRegistry.get("paygate.ratelimiter.evictions")
+                    .tag("reason", "size").counter().count()).isEqualTo(1.0);
+            assertThat(unitRegistry.get("paygate.ratelimiter.evictions")
+                    .tag("reason", "expired").counter().count()).isEqualTo(2.0);
+        }
+
+        @Test
+        @DisplayName("recordRateLimitRejection increments counter tagged with endpoint")
+        void rejectionCounter() {
+            unitMetrics.recordRateLimitRejection("/api/data");
+            unitMetrics.recordRateLimitRejection("/api/data");
+            unitMetrics.recordRateLimitRejection("/api/data");
+
+            double count = unitRegistry.get("paygate.ratelimiter.rejections")
+                    .tag("endpoint", "/api/data").counter().count();
+            assertThat(count).isEqualTo(3.0);
+        }
+
+        @Test
+        @DisplayName("no rate limiter meters registered when registerRateLimiterMetrics not called")
+        void notRegistered() {
+            // Do NOT call registerRateLimiterMetrics — verify no meters exist and no NPE
+            assertThat(unitRegistry.find("paygate.ratelimiter.buckets.active").gauge()).isNull();
+            assertThat(unitRegistry.find("paygate.ratelimiter.evictions").counter()).isNull();
+            assertThat(unitRegistry.find("paygate.ratelimiter.rejections").counter()).isNull();
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Unprotected endpoint — should not increment any L402 counters
     // -----------------------------------------------------------------------
 

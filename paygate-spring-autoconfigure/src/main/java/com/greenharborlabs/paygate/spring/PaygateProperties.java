@@ -228,6 +228,8 @@ public class PaygateProperties {
 
         private int burstSize = 20;
 
+        private int maxBuckets = 100_000;
+
         public double getRequestsPerSecond() {
             return requestsPerSecond;
         }
@@ -242,6 +244,14 @@ public class PaygateProperties {
 
         public void setBurstSize(int burstSize) {
             this.burstSize = burstSize;
+        }
+
+        public int getMaxBuckets() {
+            return maxBuckets;
+        }
+
+        public void setMaxBuckets(int maxBuckets) {
+            this.maxBuckets = maxBuckets;
         }
     }
 

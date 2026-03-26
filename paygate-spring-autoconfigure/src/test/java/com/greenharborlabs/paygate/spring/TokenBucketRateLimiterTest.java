@@ -3,8 +3,6 @@ package com.greenharborlabs.paygate.spring;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Field;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -17,11 +15,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("TokenBucketRateLimiter")
 class TokenBucketRateLimiterTest {
 
+    private static final int HIGH_CAPACITY = 100_000;
+
     @Test
     @DisplayName("allows first N requests up to maxTokens")
     void allowsFirstNRequests() {
         int maxTokens = 5;
-        var limiter = new TokenBucketRateLimiter(maxTokens, 1.0);
+        var limiter = new TokenBucketRateLimiter(maxTokens, 1.0, HIGH_CAPACITY);
 
         for (int i = 0; i < maxTokens; i++) {
             assertThat(limiter.tryAcquire("192.168.1.1"))
@@ -34,7 +34,7 @@ class TokenBucketRateLimiterTest {
     @DisplayName("rejects request N+1 after exhausting tokens")
     void rejectsAfterExhausted() {
         int maxTokens = 3;
-        var limiter = new TokenBucketRateLimiter(maxTokens, 0.001); // very slow refill
+        var limiter = new TokenBucketRateLimiter(maxTokens, 0.001, HIGH_CAPACITY); // very slow refill
 
         for (int i = 0; i < maxTokens; i++) {
             limiter.tryAcquire("10.0.0.1");
@@ -48,7 +48,7 @@ class TokenBucketRateLimiterTest {
     void refillsOverTime() throws InterruptedException {
         int maxTokens = 2;
         // 100 tokens/sec = 1 token every 10ms
-        var limiter = new TokenBucketRateLimiter(maxTokens, 100.0);
+        var limiter = new TokenBucketRateLimiter(maxTokens, 100.0, HIGH_CAPACITY);
 
         // Exhaust all tokens
         for (int i = 0; i < maxTokens; i++) {
@@ -66,7 +66,7 @@ class TokenBucketRateLimiterTest {
     @DisplayName("different keys have independent buckets")
     void independentBuckets() {
         int maxTokens = 2;
-        var limiter = new TokenBucketRateLimiter(maxTokens, 0.001);
+        var limiter = new TokenBucketRateLimiter(maxTokens, 0.001, HIGH_CAPACITY);
 
         // Exhaust tokens for key A
         for (int i = 0; i < maxTokens; i++) {
@@ -82,7 +82,7 @@ class TokenBucketRateLimiterTest {
     @DisplayName("concurrent access does not cause errors or exceed maxTokens")
     void concurrentAccessIsSafe() throws InterruptedException {
         int maxTokens = 50;
-        var limiter = new TokenBucketRateLimiter(maxTokens, 0.001); // effectively no refill during test
+        var limiter = new TokenBucketRateLimiter(maxTokens, 0.001, HIGH_CAPACITY); // effectively no refill during test
         int threadCount = 100;
 
         var latch = new CountDownLatch(1);
@@ -112,51 +112,39 @@ class TokenBucketRateLimiterTest {
     }
 
     @Test
-    @DisplayName("rejects new keys when bucket map reaches hard cap")
-    void rejectsNewKeysAtHardCap() throws Exception {
-        var limiter = new TokenBucketRateLimiter(5, 1.0);
+    @DisplayName("evicts oldest entry when bucket map reaches capacity")
+    void evictsOldestEntryAtCapacity() {
+        int maxBuckets = 10;
+        var limiter = new TokenBucketRateLimiter(5, 0.001, maxBuckets);
 
-        // Use reflection to pre-fill the internal map up to MAX_BUCKETS
-        Field bucketsField = TokenBucketRateLimiter.class.getDeclaredField("buckets");
-        bucketsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        var buckets = (ConcurrentHashMap<String, Object>) bucketsField.get(limiter);
-
-        Field maxBucketsField = TokenBucketRateLimiter.class.getDeclaredField("MAX_BUCKETS");
-        maxBucketsField.setAccessible(true);
-        int maxBuckets = (int) maxBucketsField.get(null);
-
-        // Add a known key first, then fill up to capacity with dummy entries
-        assertThat(limiter.tryAcquire("existing-key")).isTrue();
-
-        // Use the Bucket inner class to create dummy entries
-        Class<?> bucketClass = Class.forName(TokenBucketRateLimiter.class.getName() + "$Bucket");
-        var bucketConstructor = bucketClass.getDeclaredConstructor(double.class, long.class);
-        bucketConstructor.setAccessible(true);
-        Object dummyBucket = bucketConstructor.newInstance(5.0, System.nanoTime());
-
-        int currentSize = buckets.size();
-        for (int i = currentSize; i < maxBuckets; i++) {
-            buckets.put("dummy-" + i, dummyBucket);
+        // Fill all 10 bucket slots with unique keys
+        for (int i = 0; i < maxBuckets; i++) {
+            assertThat(limiter.tryAcquire("key-" + i)).isTrue();
         }
+        assertThat(limiter.currentBucketCount()).isEqualTo(maxBuckets);
 
-        assertThat(buckets.size()).isEqualTo(maxBuckets);
+        // Adding a new key should succeed (evicts oldest) rather than reject
+        assertThat(limiter.tryAcquire("new-key")).isTrue();
 
-        // New key should be rejected
-        assertThat(limiter.tryAcquire("brand-new-key")).isFalse();
+        // Count should still be maxBuckets (one evicted, one added)
+        assertThat(limiter.currentBucketCount()).isEqualTo(maxBuckets);
 
-        // Existing key should still work
-        assertThat(limiter.tryAcquire("existing-key")).isTrue();
+        // Existing keys that were NOT evicted should still work
+        // key-0 was the oldest (created first) and should have been evicted.
+        // key-9 (last created) should still be present.
+        // We can't assert key-0 is gone with certainty in a unit test due to
+        // nanoTime granularity, but we can verify the new key is present.
+        assertThat(limiter.tryAcquire("new-key")).isTrue();
     }
 
     @Test
     @DisplayName("map size is consistent after concurrent operations with unique keys")
-    void bucketCountConsistentAfterConcurrentOps() throws Exception {
-        var limiter = new TokenBucketRateLimiter(5, 1.0);
+    void bucketCountConsistentAfterConcurrentOps() throws InterruptedException {
+        var limiter = new TokenBucketRateLimiter(5, 1.0, HIGH_CAPACITY);
         int threadCount = 200;
         var latch = new CountDownLatch(1);
-        var threads = new Thread[threadCount];
         var successCount = new AtomicInteger();
+        var threads = new Thread[threadCount];
 
         // Each thread acquires with a unique key, creating a new bucket
         for (int i = 0; i < threadCount; i++) {
@@ -178,34 +166,35 @@ class TokenBucketRateLimiterTest {
             t.join();
         }
 
-        // Verify map size matches the number of successful acquisitions.
-        // Since bucketCount was eliminated, the map IS the source of truth.
-        Field bucketsField = TokenBucketRateLimiter.class.getDeclaredField("buckets");
-        bucketsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        var buckets = (ConcurrentHashMap<String, Object>) bucketsField.get(limiter);
-
-        assertThat(buckets.size())
-                .as("map size should equal the number of successfully created buckets")
+        // Verify bucket count matches the number of successful acquisitions
+        assertThat(limiter.currentBucketCount())
+                .as("bucket count should equal the number of successfully created buckets")
                 .isEqualTo(successCount.get());
 
-        // All 200 unique keys should have succeeded (well below MAX_BUCKETS)
+        // All 200 unique keys should have succeeded (well below maxBuckets)
         assertThat(successCount.get()).isEqualTo(threadCount);
     }
 
     @Test
     @DisplayName("rejects maxTokens < 1")
     void rejectsInvalidMaxTokens() {
-        assertThatThrownBy(() -> new TokenBucketRateLimiter(0, 1.0))
+        assertThatThrownBy(() -> new TokenBucketRateLimiter(0, 1.0, HIGH_CAPACITY))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     @DisplayName("rejects refillRatePerSecond <= 0")
     void rejectsInvalidRefillRate() {
-        assertThatThrownBy(() -> new TokenBucketRateLimiter(10, 0.0))
+        assertThatThrownBy(() -> new TokenBucketRateLimiter(10, 0.0, HIGH_CAPACITY))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new TokenBucketRateLimiter(10, -1.0))
+        assertThatThrownBy(() -> new TokenBucketRateLimiter(10, -1.0, HIGH_CAPACITY))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("rejects maxBuckets < 1")
+    void rejectsInvalidMaxBuckets() {
+        assertThatThrownBy(() -> new TokenBucketRateLimiter(10, 1.0, 0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

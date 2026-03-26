@@ -294,7 +294,7 @@ class PaygateRateLimitingTest {
 
         @Bean
         PaygateRateLimiter paygateRateLimiter() {
-            return new TokenBucketRateLimiter(MAX_TOKENS, 0.001); // effectively no refill during test
+            return new TokenBucketRateLimiter(MAX_TOKENS, 0.001, 100_000); // effectively no refill during test
         }
 
         @Bean
@@ -436,7 +436,7 @@ class PaygateRateLimitingTest {
 
         @Bean
         PaygateRateLimiter paygateRateLimiter() {
-            return new TokenBucketRateLimiter(MAX_TOKENS, 0.001);
+            return new TokenBucketRateLimiter(MAX_TOKENS, 0.001, 100_000);
         }
 
         @Bean
@@ -510,7 +510,7 @@ class PaygateRateLimitingTest {
 
         @Bean
         PaygateRateLimiter paygateRateLimiter() {
-            return new TokenBucketRateLimiter(MAX_TOKENS, 0.001);
+            return new TokenBucketRateLimiter(MAX_TOKENS, 0.001, 100_000);
         }
 
         @Bean
