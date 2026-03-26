@@ -8,6 +8,15 @@ import java.util.Set;
 
 public class ServicesCaveatVerifier implements CaveatVerifier {
 
+    private final int maxValuesPerCaveat;
+
+    public ServicesCaveatVerifier(int maxValuesPerCaveat) {
+        if (maxValuesPerCaveat < 1) {
+            throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
+        }
+        this.maxValuesPerCaveat = maxValuesPerCaveat;
+    }
+
     @Override
     public String getKey() {
         return "services";
@@ -21,7 +30,8 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
                     "Service name is null in verification context", null);
         }
 
-        String[] serviceEntries = caveat.value().split(",");
+        String[] serviceEntries = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat,
+                getKey());
         for (String entry : serviceEntries) {
             String name = entry.split(":")[0].trim();
             if (name.equals(serviceName)) {
@@ -39,6 +49,10 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
      */
     @Override
     public boolean isMoreRestrictive(Caveat previous, Caveat current) {
+        if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
+                || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
+            return false;
+        }
         Set<String> previousNames = extractServiceNames(previous.value());
         Set<String> currentNames = extractServiceNames(current.value());
         return previousNames.containsAll(currentNames);
@@ -46,7 +60,7 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
 
     private static Set<String> extractServiceNames(String serviceList) {
         Set<String> names = new HashSet<>();
-        for (String entry : serviceList.split(",")) {
+        for (String entry : serviceList.split(",", -1)) {
             String name = entry.split(":")[0].trim();
             if (!name.isEmpty()) {
                 names.add(name);

@@ -126,9 +126,9 @@ class PaygateSecurityFilterTest {
         @Bean
         List<CaveatVerifier> caveatVerifiers() {
             return List.of(
-                    new ServicesCaveatVerifier(),
+                    new ServicesCaveatVerifier(50),
                     new ValidUntilCaveatVerifier("test-service"),
-                    new CapabilitiesCaveatVerifier("test-service")
+                    new CapabilitiesCaveatVerifier("test-service", 50)
             );
         }
 

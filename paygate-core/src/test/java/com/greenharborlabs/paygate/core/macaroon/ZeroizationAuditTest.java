@@ -85,7 +85,7 @@ class ZeroizationAuditTest {
         // Verification should succeed — macaroon is valid
         MacaroonVerifier.verify(
                 macaroon, retrievedKey1.value(),
-                List.of(new ServicesCaveatVerifier()), context);
+                List.of(new ServicesCaveatVerifier(50)), context);
 
         // --- Phase 5: Close GenerationResult → assert rootKey destroyed, tokenId zeroed ---
         genResult.close();
@@ -174,7 +174,7 @@ class ZeroizationAuditTest {
 
                         MacaroonVerifier.verify(
                                 macaroon, verificationKey.value(),
-                                List.of(new ServicesCaveatVerifier()), context);
+                                List.of(new ServicesCaveatVerifier(50)), context);
                     }
                     // verificationKey is destroyed here
 

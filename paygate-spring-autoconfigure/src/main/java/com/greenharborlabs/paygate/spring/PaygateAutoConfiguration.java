@@ -184,8 +184,8 @@ public class PaygateAutoConfiguration {
             svcName = "default";
         }
         int maxValues = properties.getCaveat().getMaxValuesPerCaveat();
-        return List.of(new ServicesCaveatVerifier(), new ValidUntilCaveatVerifier(svcName),
-                new CapabilitiesCaveatVerifier(svcName), new PathCaveatVerifier(maxValues),
+        return List.of(new ServicesCaveatVerifier(maxValues), new ValidUntilCaveatVerifier(svcName),
+                new CapabilitiesCaveatVerifier(svcName, maxValues), new PathCaveatVerifier(maxValues),
                 new MethodCaveatVerifier(maxValues), new ClientIpCaveatVerifier(maxValues));
     }
 

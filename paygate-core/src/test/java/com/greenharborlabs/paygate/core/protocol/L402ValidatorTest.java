@@ -614,7 +614,7 @@ class L402ValidatorTest {
             String preimageHex = HEX.formatHex(preimageBytes);
             String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
-            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
 
@@ -639,7 +639,7 @@ class L402ValidatorTest {
             );
             String header = buildAuthHeader(caveats);
 
-            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
 
@@ -663,7 +663,7 @@ class L402ValidatorTest {
             );
             String header = buildAuthHeader(caveats);
 
-            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
 
@@ -721,7 +721,7 @@ class L402ValidatorTest {
 
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore,
-                    List.of(capturingVerifier, new CapabilitiesCaveatVerifier(SERVICE_NAME)),
+                    List.of(capturingVerifier, new CapabilitiesCaveatVerifier(SERVICE_NAME, 50)),
                     SERVICE_NAME);
 
             L402VerificationContext externalContext = L402VerificationContext.builder()

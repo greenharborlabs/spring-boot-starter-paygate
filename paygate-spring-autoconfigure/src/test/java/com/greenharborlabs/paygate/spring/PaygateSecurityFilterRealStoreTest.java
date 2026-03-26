@@ -172,7 +172,7 @@ class PaygateSecurityFilterRealStoreTest {
 
         @Bean
         List<CaveatVerifier> caveatVerifiers() {
-            return List.of(new ServicesCaveatVerifier(), new ValidUntilCaveatVerifier(SERVICE_NAME));
+            return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
         }
 
         @Bean

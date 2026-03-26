@@ -4,9 +4,9 @@ import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Verifies {@code {service}_capabilities} caveats per the L402 spec.
@@ -20,9 +20,14 @@ import java.util.stream.Collectors;
 public class CapabilitiesCaveatVerifier implements CaveatVerifier {
 
     private final String serviceName;
+    private final int maxValuesPerCaveat;
 
-    public CapabilitiesCaveatVerifier(String serviceName) {
+    public CapabilitiesCaveatVerifier(String serviceName, int maxValuesPerCaveat) {
         this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
+        if (maxValuesPerCaveat < 1) {
+            throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
+        }
+        this.maxValuesPerCaveat = maxValuesPerCaveat;
     }
 
     @Override
@@ -37,11 +42,9 @@ public class CapabilitiesCaveatVerifier implements CaveatVerifier {
             return;
         }
 
-        Set<String> allowed = parseCapabilities(caveat.value());
-        if (allowed.isEmpty()) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Empty capabilities list", null);
-        }
+        String[] segments = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat,
+                getKey());
+        Set<String> allowed = new HashSet<>(Arrays.asList(segments));
 
         if (!allowed.contains(requested)) {
             throw new L402Exception(ErrorCode.INVALID_SERVICE,
@@ -51,15 +54,24 @@ public class CapabilitiesCaveatVerifier implements CaveatVerifier {
 
     @Override
     public boolean isMoreRestrictive(Caveat previous, Caveat current) {
+        if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
+                || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
+            return false;
+        }
         Set<String> previousSet = parseCapabilities(previous.value());
         Set<String> currentSet = parseCapabilities(current.value());
         return previousSet.containsAll(currentSet);
     }
 
     private static Set<String> parseCapabilities(String value) {
-        return Arrays.stream(value.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toSet());
+        String[] segments = value.split(",", -1);
+        Set<String> result = new HashSet<>();
+        for (String segment : segments) {
+            String trimmed = segment.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
+            }
+        }
+        return result;
     }
 }

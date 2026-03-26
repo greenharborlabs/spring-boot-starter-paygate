@@ -32,28 +32,13 @@ public class PathCaveatVerifier implements CaveatVerifier {
                     "Request path missing from verification context", null);
         }
 
-        // 2. Split caveat value by comma and trim
-        String[] rawPatterns = caveat.value().split(",", -1);
+        // 2. Split, bounds-check, and trim caveat value
+        String[] patterns = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat, "path");
 
-        // 3. Reject if pattern count exceeds max (check early before iteration)
-        if (rawPatterns.length > maxValuesPerCaveat) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Path caveat contains " + rawPatterns.length
-                            + " patterns, exceeding maximum of " + maxValuesPerCaveat, null);
-        }
-
-        // 4. Reject if any pattern is empty after trim
-        for (String raw : rawPatterns) {
-            if (raw.trim().isEmpty()) {
-                throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                        "Empty path pattern in caveat value", null);
-            }
-        }
-
-        // 5. Validate each pattern and pre-normalize
-        String[] normalizedPatterns = new String[rawPatterns.length];
-        for (int i = 0; i < rawPatterns.length; i++) {
-            String trimmed = rawPatterns[i].trim();
+        // 3. Validate each pattern and pre-normalize
+        String[] normalizedPatterns = new String[patterns.length];
+        for (int i = 0; i < patterns.length; i++) {
+            String trimmed = patterns[i];
             try {
                 PathGlobMatcher.validatePattern(trimmed);
             } catch (IllegalArgumentException e) {
@@ -87,18 +72,14 @@ public class PathCaveatVerifier implements CaveatVerifier {
 
     @Override
     public boolean isMoreRestrictive(Caveat previous, Caveat current) {
-        // Split once and reuse for both the guard check and the subset computation
-        String[] previousRaw = previous.value().split(",", -1);
-        String[] currentRaw = current.value().split(",", -1);
-
         // Reject oversized caveats before expensive subset-containment check
-        if (previousRaw.length > maxValuesPerCaveat
-                || currentRaw.length > maxValuesPerCaveat) {
+        if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
+                || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
             return false;
         }
 
-        String[] previousNormalized = trimAndNormalize(previousRaw);
-        String[] currentNormalized = trimAndNormalize(currentRaw);
+        String[] previousNormalized = trimAndNormalize(previous.value().split(",", -1));
+        String[] currentNormalized = trimAndNormalize(current.value().split(",", -1));
 
         for (String cp : currentNormalized) {
             boolean contained = false;

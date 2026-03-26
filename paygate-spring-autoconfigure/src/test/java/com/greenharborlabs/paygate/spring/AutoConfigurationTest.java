@@ -479,7 +479,7 @@ class AutoConfigurationTest {
 
         @Bean
         List<CaveatVerifier> caveatVerifiers() {
-            return List.of(new ServicesCaveatVerifier());
+            return List.of(new ServicesCaveatVerifier(50));
         }
     }
 

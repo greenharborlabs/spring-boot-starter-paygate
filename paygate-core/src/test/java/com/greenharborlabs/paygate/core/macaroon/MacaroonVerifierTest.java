@@ -335,7 +335,7 @@ class MacaroonVerifierTest {
                     .serviceName("a")
                     .build();
 
-            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier(50));
 
             assertThatCode(() ->
                     MacaroonVerifier.verify(macaroon, rootKey, verifiers, ctx)
@@ -355,7 +355,7 @@ class MacaroonVerifierTest {
                     .serviceName("a")
                     .build();
 
-            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier(50));
 
             assertThatThrownBy(() ->
                     MacaroonVerifier.verify(macaroon, rootKey, verifiers, ctx)
@@ -577,7 +577,7 @@ class MacaroonVerifierTest {
                     new Caveat("test-service_valid_until", "2000000000")
             );
             List<CaveatVerifier> verifiers = List.of(
-                    new ServicesCaveatVerifier(),
+                    new ServicesCaveatVerifier(50),
                     new ValidUntilCaveatVerifier("test-service")
             );
 

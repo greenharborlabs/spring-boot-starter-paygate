@@ -7,6 +7,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -20,7 +23,7 @@ class CapabilitiesCaveatVerifierTest {
 
     @BeforeEach
     void setUp() {
-        verifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+        verifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
     }
 
     @Test
@@ -90,7 +93,7 @@ class CapabilitiesCaveatVerifierTest {
         }
 
         @Test
-        @DisplayName("throws when capabilities list is empty (reject all)")
+        @DisplayName("throws when capabilities list contains empty segments")
         void throwsWhenCapabilitiesListEmpty() {
             var caveat = new Caveat("my-api_capabilities", " , , ");
             var context = L402VerificationContext.builder()
@@ -103,7 +106,7 @@ class CapabilitiesCaveatVerifierTest {
                     .satisfies(e -> {
                         var l402 = (L402Exception) e;
                         assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
-                        assertThat(l402.getMessage()).contains("Empty capabilities list");
+                        assertThat(l402.getMessage()).contains("Empty segment");
                     });
         }
 
@@ -168,6 +171,114 @@ class CapabilitiesCaveatVerifierTest {
             var current = new Caveat("my-api_capabilities", "search,export");
 
             assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
+        }
+    }
+
+    @Nested
+    @DisplayName("bounds checking")
+    class BoundsChecking {
+
+        @Test
+        @DisplayName("verify rejects caveat exceeding max values count")
+        void verifyRejectsCaveatExceedingMaxValues() {
+            var bounded = new CapabilitiesCaveatVerifier(SERVICE_NAME, 3);
+            var caveat = new Caveat("my-api_capabilities", "a,b,c,d");
+            var context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .requestedCapability("a")
+                    .build();
+
+            assertThatThrownBy(() -> bounded.verify(caveat, context))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(e -> {
+                        var l402 = (L402Exception) e;
+                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        assertThat(l402.getMessage()).contains("4").contains("3");
+                    });
+        }
+
+        @Test
+        @DisplayName("verify accepts caveat at max values limit")
+        void verifyAcceptsCaveatAtLimit() {
+            var bounded = new CapabilitiesCaveatVerifier(SERVICE_NAME, 3);
+            var caveat = new Caveat("my-api_capabilities", "a,b,c");
+            var context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .requestedCapability("a")
+                    .build();
+
+            assertThatCode(() -> bounded.verify(caveat, context))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("verify rejects empty segment in caveat value")
+        void verifyRejectsEmptySegment() {
+            var caveat = new Caveat("my-api_capabilities", "a,,b");
+            var context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .requestedCapability("a")
+                    .build();
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(e -> {
+                        var l402 = (L402Exception) e;
+                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                    });
+        }
+
+        @Test
+        @DisplayName("verify rejects trailing comma in caveat value")
+        void verifyRejectsTrailingComma() {
+            var caveat = new Caveat("my-api_capabilities", "a,b,");
+            var context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .requestedCapability("a")
+                    .build();
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(L402Exception.class)
+                    .satisfies(e -> {
+                        var l402 = (L402Exception) e;
+                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                    });
+        }
+
+        @Test
+        @DisplayName("isMoreRestrictive returns false when previous exceeds bounds")
+        void isMoreRestrictiveRejectsOversizedPrevious() {
+            var bounded = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
+            String oversized = IntStream.rangeClosed(1, 51)
+                    .mapToObj(i -> "cap" + i)
+                    .collect(Collectors.joining(","));
+            var previous = new Caveat("my-api_capabilities", oversized);
+            var current = new Caveat("my-api_capabilities", "a");
+
+            assertThat(bounded.isMoreRestrictive(previous, current)).isFalse();
+        }
+
+        @Test
+        @DisplayName("isMoreRestrictive returns false when current exceeds bounds")
+        void isMoreRestrictiveRejectsOversizedCurrent() {
+            var bounded = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
+            String oversized = IntStream.rangeClosed(1, 51)
+                    .mapToObj(i -> "cap" + i)
+                    .collect(Collectors.joining(","));
+            var previous = new Caveat("my-api_capabilities", "a");
+            var current = new Caveat("my-api_capabilities", oversized);
+
+            assertThat(bounded.isMoreRestrictive(previous, current)).isFalse();
+        }
+
+        @Test
+        @DisplayName("isMoreRestrictive accepts values within bounds")
+        void isMoreRestrictiveAcceptsWithinBounds() {
+            var bounded = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
+            var previous = new Caveat("my-api_capabilities", "a,b,c");
+            var current = new Caveat("my-api_capabilities", "a,b");
+
+            assertThat(bounded.isMoreRestrictive(previous, current)).isTrue();
         }
     }
 }

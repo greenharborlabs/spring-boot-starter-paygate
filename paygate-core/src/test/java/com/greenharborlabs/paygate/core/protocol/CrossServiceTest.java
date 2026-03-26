@@ -72,7 +72,7 @@ class CrossServiceTest {
         void macaroonForServiceAIsRejectedByServiceB() {
             String header = buildAuthHeader(List.of(new Caveat("services", "serviceA")));
 
-            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier(50));
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, verifiers, "serviceB");
 
@@ -89,7 +89,7 @@ class CrossServiceTest {
         void macaroonForServiceAIsAcceptedByServiceA() {
             String header = buildAuthHeader(List.of(new Caveat("services", "serviceA")));
 
-            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier(50));
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, verifiers, "serviceA");
 
@@ -101,7 +101,7 @@ class CrossServiceTest {
         void multiServiceCaveatRejectsUnlistedService() {
             String header = buildAuthHeader(List.of(new Caveat("services", "serviceA,serviceB")));
 
-            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier(50));
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, verifiers, "serviceC");
 
@@ -118,7 +118,7 @@ class CrossServiceTest {
         void multiServiceCaveatAcceptsListedService() {
             String header = buildAuthHeader(List.of(new Caveat("services", "serviceA,serviceB")));
 
-            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier());
+            List<CaveatVerifier> verifiers = List.of(new ServicesCaveatVerifier(50));
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, verifiers, "serviceB");
 

@@ -638,7 +638,7 @@ public class CustomValidatorConfig {
     public L402Validator l402Validator(RootKeyStore rootKeyStore,
                                        CredentialStore credentialStore) {
         return new L402Validator(rootKeyStore, credentialStore,
-                List.of(new ServicesCaveatVerifier(), new MyCustomCaveatVerifier()),
+                List.of(new ServicesCaveatVerifier(50), new MyCustomCaveatVerifier()),
                 "my-service");
     }
 }
@@ -653,7 +653,7 @@ public class CustomCaveatConfig {
     @Bean("caveatVerifiers")
     public List<CaveatVerifier> caveatVerifiers() {
         return List.of(
-                new ServicesCaveatVerifier(),
+                new ServicesCaveatVerifier(50),
                 new ValidUntilCaveatVerifier("my-service"),
                 new MyCustomCaveatVerifier()
         );
