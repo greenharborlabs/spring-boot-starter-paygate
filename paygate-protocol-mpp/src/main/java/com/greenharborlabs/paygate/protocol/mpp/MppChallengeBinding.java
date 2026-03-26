@@ -22,14 +22,6 @@ public final class MppChallengeBinding {
 
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final char PIPE = '|';
-    private static final ThreadLocal<Mac> MAC_TL = ThreadLocal.withInitial(() -> {
-        try {
-            return Mac.getInstance(HMAC_ALGORITHM);
-        } catch (NoSuchAlgorithmException e) {
-            throw new AssertionError("HmacSHA256 not available", e);
-        }
-    });
-
     private MppChallengeBinding() {} // utility class
 
     /**
@@ -112,9 +104,11 @@ public final class MppChallengeBinding {
                 .toString();
 
         try {
-            Mac mac = MAC_TL.get();
+            Mac mac = Mac.getInstance(HMAC_ALGORITHM);
             mac.init(new SecretKeySpec(secret, HMAC_ALGORITHM));
             return mac.doFinal(input.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError("HmacSHA256 not available", e);
         } catch (InvalidKeyException e) {
             throw new IllegalArgumentException("Invalid HMAC secret key", e);
         }
