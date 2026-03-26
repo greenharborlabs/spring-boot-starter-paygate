@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -31,13 +30,13 @@ class CaveatValuesTest {
         }
 
         @Test
-        @DisplayName("rejection: count exceeds max throws L402Exception")
+        @DisplayName("rejection: count exceeds max throws MacaroonVerificationException")
         void countExceedsMax() {
             assertThatThrownBy(() -> CaveatValues.splitBounded("a,b,c,d", 3, "test"))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(ex -> {
-                        L402Exception l402 = (L402Exception) ex;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        MacaroonVerificationException mve = (MacaroonVerificationException) ex;
+                        assertThat(mve.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
                     })
                     .hasMessageContaining("4")
                     .hasMessageContaining("3")
@@ -45,13 +44,13 @@ class CaveatValuesTest {
         }
 
         @Test
-        @DisplayName("rejection: empty segment after trim throws L402Exception")
+        @DisplayName("rejection: empty segment after trim throws MacaroonVerificationException")
         void emptySegment() {
             assertThatThrownBy(() -> CaveatValues.splitBounded("a,,b", 5, "test"))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(ex -> {
-                        L402Exception l402 = (L402Exception) ex;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        MacaroonVerificationException mve = (MacaroonVerificationException) ex;
+                        assertThat(mve.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
                     })
                     .hasMessageContaining("Empty");
         }
@@ -60,10 +59,10 @@ class CaveatValuesTest {
         @DisplayName("rejection: trailing comma produces empty segment")
         void trailingComma() {
             assertThatThrownBy(() -> CaveatValues.splitBounded("a,b,", 5, "test"))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(ex -> {
-                        L402Exception l402 = (L402Exception) ex;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        MacaroonVerificationException mve = (MacaroonVerificationException) ex;
+                        assertThat(mve.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
                     });
         }
 

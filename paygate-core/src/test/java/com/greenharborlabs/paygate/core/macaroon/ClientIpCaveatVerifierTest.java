@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -56,9 +55,9 @@ class ClientIpCaveatVerifierTest {
             L402VerificationContext context = contextWithClientIp("10.0.0.1");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -97,9 +96,9 @@ class ClientIpCaveatVerifierTest {
             L402VerificationContext context = contextWithClientIp("172.16.0.1");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -177,9 +176,9 @@ class ClientIpCaveatVerifierTest {
             L402VerificationContext context = contextWithClientIp("192.168.1.100");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -191,9 +190,9 @@ class ClientIpCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -204,9 +203,9 @@ class ClientIpCaveatVerifierTest {
             L402VerificationContext context = contextWithClientIp("192.168.1.1");
 
             assertThatThrownBy(() -> restrictedVerifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -226,9 +225,9 @@ class ClientIpCaveatVerifierTest {
             L402VerificationContext context = contextWithClientIp("192.168.1.100");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -238,9 +237,9 @@ class ClientIpCaveatVerifierTest {
             L402VerificationContext context = contextWithClientIp("192.168.1.100");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -260,9 +259,9 @@ class ClientIpCaveatVerifierTest {
             L402VerificationContext context = contextWithClientIp("1.2.3.4");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 

@@ -1,6 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -52,7 +52,7 @@ class CaveatVerifierIntegrationTest {
                     .build();
 
             assertThatThrownBy(() -> MacaroonVerifier.verifyCaveats(caveats, allVerifiers, context))
-                    .isInstanceOf(L402Exception.class);
+                    .isInstanceOf(MacaroonVerificationException.class);
         }
 
         @Test
@@ -94,7 +94,7 @@ class CaveatVerifierIntegrationTest {
                     .build();
 
             assertThatThrownBy(() -> MacaroonVerifier.verifyCaveats(caveats, allVerifiers, context))
-                    .isInstanceOf(L402Exception.class);
+                    .isInstanceOf(MacaroonVerificationException.class);
         }
 
         @Test
@@ -140,7 +140,7 @@ class CaveatVerifierIntegrationTest {
                     .build();
 
             assertThatThrownBy(() -> MacaroonVerifier.verifyCaveats(caveats, allVerifiers, contextB))
-                    .isInstanceOf(L402Exception.class);
+                    .isInstanceOf(MacaroonVerificationException.class);
         }
 
         @Test
@@ -164,7 +164,7 @@ class CaveatVerifierIntegrationTest {
                     .build();
 
             assertThatThrownBy(() -> MacaroonVerifier.verifyCaveats(caveats, allVerifiers, contextB))
-                    .isInstanceOf(L402Exception.class);
+                    .isInstanceOf(MacaroonVerificationException.class);
         }
     }
 }

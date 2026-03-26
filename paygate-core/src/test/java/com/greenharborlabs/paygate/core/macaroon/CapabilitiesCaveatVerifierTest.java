@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -84,11 +83,11 @@ class CapabilitiesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(e -> {
-                        var l402 = (L402Exception) e;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
-                        assertThat(l402.getMessage()).contains("delete").contains("not allowed");
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+                        assertThat(ex.getMessage()).contains("delete").contains("not allowed");
                     });
         }
 
@@ -102,11 +101,11 @@ class CapabilitiesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(e -> {
-                        var l402 = (L402Exception) e;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
-                        assertThat(l402.getMessage()).contains("Empty segment");
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+                        assertThat(ex.getMessage()).contains("Empty segment");
                     });
         }
 
@@ -189,11 +188,11 @@ class CapabilitiesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> bounded.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(e -> {
-                        var l402 = (L402Exception) e;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
-                        assertThat(l402.getMessage()).contains("4").contains("3");
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+                        assertThat(ex.getMessage()).contains("4").contains("3");
                     });
         }
 
@@ -221,10 +220,10 @@ class CapabilitiesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(e -> {
-                        var l402 = (L402Exception) e;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
                     });
         }
 
@@ -238,10 +237,10 @@ class CapabilitiesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(e -> {
-                        var l402 = (L402Exception) e;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
                     });
         }
 

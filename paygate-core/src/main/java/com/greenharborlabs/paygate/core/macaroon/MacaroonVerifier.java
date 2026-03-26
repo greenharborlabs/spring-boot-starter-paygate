@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
@@ -103,7 +100,7 @@ public final class MacaroonVerifier {
 
             Caveat previous = lastSeenByKey.get(caveat.key());
             if (previous != null && !verifier.isMoreRestrictive(previous, caveat)) {
-                throw new MacaroonVerificationException(
+                throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_ESCALATION,
                         "caveat escalation detected for key: " + caveat.key());
             }
             lastSeenByKey.put(caveat.key(), caveat);
@@ -118,9 +115,9 @@ public final class MacaroonVerifier {
         if (requestedCapability != null && context.getServiceName() != null) {
             String capabilitiesKey = context.getServiceName() + "_capabilities";
             if (!lastSeenByKey.containsKey(capabilitiesKey)) {
-                throw new L402Exception(ErrorCode.INVALID_SERVICE,
+                throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
                         "Macaroon missing required capabilities caveat for capability '"
-                                + requestedCapability + "'", null);
+                                + requestedCapability + "'");
             }
         }
     }

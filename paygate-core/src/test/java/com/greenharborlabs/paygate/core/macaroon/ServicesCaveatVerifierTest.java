@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -64,7 +63,7 @@ class ServicesCaveatVerifierTest {
     class InvalidService {
 
         @Test
-        @DisplayName("throws L402Exception with INVALID_SERVICE when service name does not match")
+        @DisplayName("throws MacaroonVerificationException with CAVEAT_NOT_MET when service name does not match")
         void throwsWhenServiceDoesNotMatch() {
             Caveat caveat = new Caveat("services", "other-api:0");
             L402VerificationContext context = L402VerificationContext.builder()
@@ -72,13 +71,13 @@ class ServicesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
-        @DisplayName("throws L402Exception with INVALID_SERVICE when service list is empty")
+        @DisplayName("throws MacaroonVerificationException with CAVEAT_NOT_MET when service list is empty")
         void throwsWhenServiceListEmpty() {
             // Caveat record rejects blank values, so test with a service list
             // that doesn't contain the requested service
@@ -88,22 +87,22 @@ class ServicesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
-        @DisplayName("throws L402Exception when context service name is null")
+        @DisplayName("throws MacaroonVerificationException when context service name is null")
         void throwsWhenContextServiceNameIsNull() {
             Caveat caveat = new Caveat("services", "my-api:0");
             L402VerificationContext context = L402VerificationContext.builder()
                     .build(); // serviceName defaults to null
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -171,11 +170,11 @@ class ServicesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> bounded.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(e -> {
-                        var l402 = (L402Exception) e;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
-                        assertThat(l402.getMessage()).contains("4").contains("3");
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+                        assertThat(ex.getMessage()).contains("4").contains("3");
                     });
         }
 
@@ -201,10 +200,10 @@ class ServicesCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
+                    .isInstanceOf(MacaroonVerificationException.class)
                     .satisfies(e -> {
-                        var l402 = (L402Exception) e;
-                        assertThat(l402.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
                     });
         }
 

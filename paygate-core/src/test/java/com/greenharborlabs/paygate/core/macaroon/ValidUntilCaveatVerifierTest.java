@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -72,7 +71,7 @@ class ValidUntilCaveatVerifierTest {
     class PastTimestamp {
 
         @Test
-        @DisplayName("throws L402Exception with EXPIRED_CREDENTIAL when expiry is in the past")
+        @DisplayName("throws MacaroonVerificationException with CREDENTIAL_EXPIRED when expiry is in the past")
         void throwsWhenExpiryInPast() {
             Instant now = Instant.now();
             long pastEpochSeconds = now.minusSeconds(3600).getEpochSecond();
@@ -83,13 +82,13 @@ class ValidUntilCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CREDENTIAL_EXPIRED);
         }
 
         @Test
-        @DisplayName("throws L402Exception with EXPIRED_CREDENTIAL when expiry is epoch zero")
+        @DisplayName("throws MacaroonVerificationException with CREDENTIAL_EXPIRED when expiry is epoch zero")
         void throwsWhenExpiryIsEpochZero() {
             Caveat caveat = new Caveat("my-api_valid_until", "0");
             L402VerificationContext context = L402VerificationContext.builder()
@@ -98,13 +97,13 @@ class ValidUntilCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CREDENTIAL_EXPIRED);
         }
 
         @Test
-        @DisplayName("throws L402Exception when expiry equals current time exactly (already expired)")
+        @DisplayName("throws MacaroonVerificationException when expiry equals current time exactly (already expired)")
         void throwsWhenExpiryEqualsCurrentTime() {
             Instant now = Instant.ofEpochSecond(1700000000);
             Caveat caveat = new Caveat("my-api_valid_until", "1700000000");
@@ -114,9 +113,9 @@ class ValidUntilCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CREDENTIAL_EXPIRED);
         }
     }
 

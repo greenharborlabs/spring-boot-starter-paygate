@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 final class CaveatValues {
 
     private CaveatValues() {
@@ -11,17 +8,15 @@ final class CaveatValues {
     static String[] splitBounded(String value, int max, String caveatName) {
         String[] segments = value.split(",", -1);
         if (segments.length > max) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
                     "Caveat '" + caveatName + "' has " + segments.length
-                            + " values, maximum allowed is " + max,
-                    null);
+                            + " values, maximum allowed is " + max);
         }
         for (int i = 0; i < segments.length; i++) {
             segments[i] = segments[i].trim();
             if (segments[i].isEmpty()) {
-                throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                        "Empty segment in caveat '" + caveatName + "'",
-                        null);
+                throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                        "Empty segment in caveat '" + caveatName + "'");
             }
         }
         return segments;

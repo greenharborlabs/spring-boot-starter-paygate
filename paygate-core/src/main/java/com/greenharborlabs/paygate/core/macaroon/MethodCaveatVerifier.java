@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -32,8 +29,8 @@ public class MethodCaveatVerifier implements CaveatVerifier {
         String requestMethod = context.getRequestMetadata()
                 .get(VerificationContextKeys.REQUEST_METHOD);
         if (requestMethod == null) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Request method missing from verification context", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Request method missing from verification context");
         }
 
         // 2. Split, bounds-check, and trim caveat value
@@ -47,8 +44,8 @@ public class MethodCaveatVerifier implements CaveatVerifier {
         }
 
         // 6. No method matched — reject
-        throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                "Request method does not match any allowed method", null);
+        throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                "Request method does not match any allowed method");
     }
 
     @Override

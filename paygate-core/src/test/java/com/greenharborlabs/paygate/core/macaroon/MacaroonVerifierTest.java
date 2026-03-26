@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -492,11 +489,11 @@ class MacaroonVerifierTest {
 
             assertThatThrownBy(() ->
                     MacaroonVerifier.verifyCaveats(caveats, verifiers, ctx)
-            ).isInstanceOf(L402Exception.class)
+            ).isInstanceOf(MacaroonVerificationException.class)
              .satisfies(ex -> {
-                 L402Exception l402Ex = (L402Exception) ex;
-                 assertThatCode(() -> {}).doesNotThrowAnyException(); // no-op
-                 org.assertj.core.api.Assertions.assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                 MacaroonVerificationException mve = (MacaroonVerificationException) ex;
+                 org.assertj.core.api.Assertions.assertThat(mve.getReason())
+                         .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
              })
              .hasMessageContaining("missing required capabilities caveat")
              .hasMessageContaining("search");
@@ -583,10 +580,11 @@ class MacaroonVerifierTest {
 
             assertThatThrownBy(() ->
                     MacaroonVerifier.verifyCaveats(caveats, verifiers, ctx)
-            ).isInstanceOf(L402Exception.class)
+            ).isInstanceOf(MacaroonVerificationException.class)
              .satisfies(ex -> {
-                 L402Exception l402Ex = (L402Exception) ex;
-                 org.assertj.core.api.Assertions.assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                 MacaroonVerificationException mve = (MacaroonVerificationException) ex;
+                 org.assertj.core.api.Assertions.assertThat(mve.getReason())
+                         .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
              })
              .hasMessageContaining("missing required capabilities caveat")
              .hasMessageContaining("write");

@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -56,9 +55,9 @@ class MethodCaveatVerifierTest {
             L402VerificationContext context = contextWithMethod("POST");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -68,9 +67,9 @@ class MethodCaveatVerifierTest {
             L402VerificationContext context = contextWithMethod("HEAD");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -149,9 +148,9 @@ class MethodCaveatVerifierTest {
             L402VerificationContext context = contextWithMethod("GET");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -163,9 +162,9 @@ class MethodCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -176,9 +175,9 @@ class MethodCaveatVerifierTest {
             L402VerificationContext context = contextWithMethod("GET");
 
             assertThatThrownBy(() -> restrictedVerifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -188,9 +187,9 @@ class MethodCaveatVerifierTest {
             L402VerificationContext context = contextWithMethod("GET");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test

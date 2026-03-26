@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.Set;
@@ -36,8 +33,8 @@ public class ClientIpCaveatVerifier implements CaveatVerifier {
         String requestClientIp = context.getRequestMetadata()
                 .get(VerificationContextKeys.REQUEST_CLIENT_IP);
         if (requestClientIp == null) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Client IP missing from verification context", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Client IP missing from verification context");
         }
 
         // 2. Split, bounds-check, and trim caveat value
@@ -52,8 +49,8 @@ public class ClientIpCaveatVerifier implements CaveatVerifier {
         }
 
         // 6. No IP matched — reject
-        throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                "Request client IP does not match any allowed IP", null);
+        throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                "Request client IP does not match any allowed IP");
     }
 
     @Override

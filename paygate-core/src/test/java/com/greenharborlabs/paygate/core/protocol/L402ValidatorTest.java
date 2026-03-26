@@ -10,6 +10,8 @@ import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
+import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -400,7 +402,7 @@ class L402ValidatorTest {
             String preimageHex = HEX.formatHex(preimageBytes);
             String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
-            // Create a valid_until caveat verifier that throws EXPIRED_CREDENTIAL for past timestamps
+            // Create a valid_until caveat verifier that throws MacaroonVerificationException for past timestamps
             CaveatVerifier validUntilVerifier = new CaveatVerifier() {
                 @Override
                 public String getKey() {
@@ -412,10 +414,9 @@ class L402ValidatorTest {
                     long expiryEpoch = Long.parseLong(caveat.value());
                     Instant expiry = Instant.ofEpochSecond(expiryEpoch);
                     if (!expiry.isAfter(context.getCurrentTime())) {
-                        throw new L402Exception(
-                                ErrorCode.EXPIRED_CREDENTIAL,
-                                "Credential expired at " + expiry,
-                                null);
+                        throw new MacaroonVerificationException(
+                                VerificationFailureReason.CREDENTIAL_EXPIRED,
+                                "Credential expired at " + expiry);
                     }
                 }
             };
@@ -799,10 +800,9 @@ class L402ValidatorTest {
                 long expiryEpoch = Long.parseLong(caveat.value());
                 Instant expiry = Instant.ofEpochSecond(expiryEpoch);
                 if (!expiry.isAfter(context.getCurrentTime())) {
-                    throw new L402Exception(
-                            ErrorCode.EXPIRED_CREDENTIAL,
-                            "Credential expired at " + expiry,
-                            null);
+                    throw new MacaroonVerificationException(
+                            VerificationFailureReason.CREDENTIAL_EXPIRED,
+                            "Credential expired at " + expiry);
                 }
             }
         };

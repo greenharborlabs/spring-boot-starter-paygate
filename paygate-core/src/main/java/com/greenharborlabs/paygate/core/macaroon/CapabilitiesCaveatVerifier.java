@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Objects;
@@ -47,8 +44,8 @@ public class CapabilitiesCaveatVerifier implements CaveatVerifier {
         Set<String> allowed = new HashSet<>(Arrays.asList(segments));
 
         if (!allowed.contains(requested)) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Capability '" + requested + "' not allowed", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Capability '" + requested + "' not allowed");
         }
     }
 

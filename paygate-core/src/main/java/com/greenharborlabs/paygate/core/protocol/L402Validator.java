@@ -10,6 +10,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
+import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 
@@ -122,16 +123,8 @@ public final class L402Validator {
             try {
                 MacaroonVerifier.verify(credential.macaroon(), rootKey, caveatVerifiers, context);
             } catch (MacaroonVerificationException e) {
-                throw new L402Exception(ErrorCode.INVALID_MACAROON,
-                        "Macaroon verification failed: " + e.getMessage(), tokenId);
-            } catch (L402Exception e) {
-                // Caveat verifiers throw L402Exception with the correct ErrorCode
-                // (EXPIRED_CREDENTIAL, INVALID_SERVICE) but without tokenId context.
-                // Re-throw with tokenId enriched if missing.
-                if (e.getTokenId() == null) {
-                    throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
-                }
-                throw e;
+                throw new L402Exception(mapReasonToErrorCode(e.getReason()),
+                        e.getMessage(), tokenId);
             } finally {
                 KeyMaterial.zeroize(rootKey);
             }
@@ -180,14 +173,8 @@ public final class L402Validator {
             MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiers, context);
         } catch (MacaroonVerificationException e) {
             credentialStore.revoke(tokenId);
-            throw new L402Exception(ErrorCode.INVALID_MACAROON,
-                    "Macaroon verification failed: " + e.getMessage(), tokenId);
-        } catch (L402Exception e) {
-            credentialStore.revoke(tokenId);
-            if (e.getTokenId() == null) {
-                throw new L402Exception(e.getErrorCode(), e.getMessage(), tokenId);
-            }
-            throw e;
+            throw new L402Exception(mapReasonToErrorCode(e.getReason()),
+                    e.getMessage(), tokenId);
         }
 
         return new ValidationResult(cached, false);
@@ -212,6 +199,17 @@ public final class L402Validator {
             throw new L402Exception(ErrorCode.INVALID_PREIMAGE,
                     "Preimage does not match payment hash", credential.tokenId());
         }
+    }
+
+    private static ErrorCode mapReasonToErrorCode(VerificationFailureReason reason) {
+        if (reason == null) {
+            return ErrorCode.INVALID_MACAROON;
+        }
+        return switch (reason) {
+            case CAVEAT_NOT_MET -> ErrorCode.INVALID_SERVICE;
+            case CREDENTIAL_EXPIRED -> ErrorCode.EXPIRED_CREDENTIAL;
+            case SIGNATURE_INVALID, CAVEAT_ESCALATION -> ErrorCode.INVALID_MACAROON;
+        };
     }
 
     /**

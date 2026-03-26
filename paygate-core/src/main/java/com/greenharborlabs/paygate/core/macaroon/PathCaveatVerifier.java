@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 /**
  * Verifies that the request path matches at least one glob pattern
  * specified in the {@code path} caveat value (comma-separated).
@@ -28,8 +25,8 @@ public class PathCaveatVerifier implements CaveatVerifier {
         String requestPath = context.getRequestMetadata()
                 .get(VerificationContextKeys.REQUEST_PATH);
         if (requestPath == null) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Request path missing from verification context", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Request path missing from verification context");
         }
 
         // 2. Split, bounds-check, and trim caveat value
@@ -42,8 +39,8 @@ public class PathCaveatVerifier implements CaveatVerifier {
             try {
                 PathGlobMatcher.validatePattern(trimmed);
             } catch (IllegalArgumentException e) {
-                throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                        "Invalid path pattern: " + e.getMessage(), null);
+                throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                        "Invalid path pattern: " + e.getMessage());
             }
             normalizedPatterns[i] = PathGlobMatcher.normalizePath(trimmed);
         }
@@ -51,8 +48,8 @@ public class PathCaveatVerifier implements CaveatVerifier {
         // 6. Reject encoded slashes — prevents path traversal attacks.
         //    Check is case-insensitive on the hex digits.
         if (containsEncodedSlash(requestPath)) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Request path contains encoded slash", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Request path contains encoded slash");
         }
 
         // 7. Normalize request path once
@@ -66,8 +63,8 @@ public class PathCaveatVerifier implements CaveatVerifier {
         }
 
         // 9. No pattern matched — reject
-        throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                "Request path does not match any allowed path pattern", null);
+        throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                "Request path does not match any allowed path pattern");
     }
 
     @Override

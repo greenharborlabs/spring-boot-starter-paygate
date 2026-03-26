@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.util.HashSet;
 import java.util.Set;
 
@@ -26,8 +23,8 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
     public void verify(Caveat caveat, L402VerificationContext context) {
         String serviceName = context.getServiceName();
         if (serviceName == null) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Service name is null in verification context", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Service name is null in verification context");
         }
 
         String[] serviceEntries = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat,
@@ -39,8 +36,8 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
             }
         }
 
-        throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                "Service '" + serviceName + "' not found in caveat services list", null);
+        throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                "Service '" + serviceName + "' not found in caveat services list");
     }
 
     /**
