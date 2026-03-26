@@ -239,11 +239,8 @@ public class PaygateAutoConfiguration {
                                      ProtocolStartupValidator _validator) {
             String secret = properties.getProtocols().getMpp().getChallengeBindingSecret();
             byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
-            try {
-                return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(secretBytes);
-            } finally {
-                Arrays.fill(secretBytes, (byte) 0);
-            }
+            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(
+                    new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(secretBytes));
         }
     }
 

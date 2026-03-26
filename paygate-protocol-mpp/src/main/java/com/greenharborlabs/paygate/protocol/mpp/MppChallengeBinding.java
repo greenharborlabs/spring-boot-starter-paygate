@@ -9,6 +9,9 @@ import java.util.Objects;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+
 /**
  * HMAC-SHA256 challenge binding for stateless server-side verification of MPP challenges.
  *
@@ -34,12 +37,12 @@ public final class MppChallengeBinding {
      * @param expires    RFC 3339 timestamp or null (absent)
      * @param digest     RFC 9530 content digest or null (absent)
      * @param opaqueB64  base64url-nopad encoded JCS opaque or null (absent)
-     * @param secret     server HMAC secret key bytes (never null)
+     * @param secret     server HMAC secret key (never null)
      * @return base64url-nopad encoded HMAC-SHA256
      */
     public static String createId(String realm, String method, String intent,
                                    String requestB64, String expires, String digest,
-                                   String opaqueB64, byte[] secret) {
+                                   String opaqueB64, SensitiveBytes secret) {
         Objects.requireNonNull(realm, "realm must not be null");
         Objects.requireNonNull(method, "method must not be null");
         Objects.requireNonNull(intent, "intent must not be null");
@@ -62,12 +65,12 @@ public final class MppChallengeBinding {
      * @param expires    RFC 3339 timestamp or null (absent)
      * @param digest     RFC 9530 content digest or null (absent)
      * @param opaqueB64  base64url-nopad encoded JCS opaque or null (absent)
-     * @param secret     server HMAC secret key bytes (never null)
+     * @param secret     server HMAC secret key (never null)
      * @return true if the ID matches the expected HMAC, false otherwise
      */
     public static boolean verify(String id, String realm, String method, String intent,
                                   String requestB64, String expires, String digest,
-                                  String opaqueB64, byte[] secret) {
+                                  String opaqueB64, SensitiveBytes secret) {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(realm, "realm must not be null");
         Objects.requireNonNull(method, "method must not be null");
@@ -92,7 +95,7 @@ public final class MppChallengeBinding {
      */
     private static byte[] computeHmac(String realm, String method, String intent,
                                        String requestB64, String expires, String digest,
-                                       String opaqueB64, byte[] secret) {
+                                       String opaqueB64, SensitiveBytes secret) {
         String input = new StringBuilder()
                 .append(realm).append(PIPE)
                 .append(method).append(PIPE)
@@ -103,14 +106,17 @@ public final class MppChallengeBinding {
                 .append(nullToEmpty(opaqueB64))
                 .toString();
 
+        byte[] secretBytes = secret.value();
         try {
             Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-            mac.init(new SecretKeySpec(secret, HMAC_ALGORITHM));
+            mac.init(new SecretKeySpec(secretBytes, HMAC_ALGORITHM));
             return mac.doFinal(input.getBytes(StandardCharsets.UTF_8));
         } catch (NoSuchAlgorithmException e) {
             throw new AssertionError("HmacSHA256 not available", e);
         } catch (InvalidKeyException e) {
             throw new IllegalArgumentException("Invalid HMAC secret key", e);
+        } finally {
+            CryptoUtils.zeroize(secretBytes);
         }
     }
 

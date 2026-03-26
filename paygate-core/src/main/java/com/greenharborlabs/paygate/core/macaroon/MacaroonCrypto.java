@@ -1,5 +1,8 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.security.auth.DestroyFailedException;
@@ -93,14 +96,7 @@ public final class MacaroonCrypto {
      * of where (or whether) a difference exists.
      */
     public static boolean constantTimeEquals(byte[] a, byte[] b) {
-        if (a.length != b.length) {
-            return false;
-        }
-        int result = 0;
-        for (int i = 0; i < a.length; i++) {
-            result |= a[i] ^ b[i];
-        }
-        return result == 0;
+        return CryptoUtils.constantTimeEquals(a, b);
     }
 
     /**
@@ -115,6 +111,6 @@ public final class MacaroonCrypto {
      * Convenience method that delegates to {@link KeyMaterial#zeroize(byte[])}.
      */
     public static void zeroize(byte[] data) {
-        KeyMaterial.zeroize(data);
+        CryptoUtils.zeroize(data);
     }
 }

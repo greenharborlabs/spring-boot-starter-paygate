@@ -1,4 +1,4 @@
-package com.greenharborlabs.paygate.core.macaroon;
+package com.greenharborlabs.paygate.api.crypto;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -42,7 +42,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
             throw new IllegalArgumentException("Key material must not be empty");
         }
         this.data = Arrays.copyOf(raw, raw.length);
-        KeyMaterial.zeroize(raw);
+        CryptoUtils.zeroize(raw);
     }
 
     /**
@@ -71,7 +71,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
         lock.lock();
         try {
             if (!destroyed) {
-                KeyMaterial.zeroize(data);
+                CryptoUtils.zeroize(data);
                 destroyed = true;
             }
         } finally {
@@ -93,7 +93,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
     }
 
     /**
-     * Constant-time equality comparison using {@link MacaroonCrypto#constantTimeEquals}.
+     * Constant-time equality comparison using {@link CryptoUtils#constantTimeEquals}.
      * Two destroyed instances are never equal.
      */
     @Override
@@ -124,7 +124,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
 
         try {
             if (this.destroyed || other.destroyed) return false;
-            return MacaroonCrypto.constantTimeEquals(this.data, other.data);
+            return CryptoUtils.constantTimeEquals(this.data, other.data);
         } finally {
             other.lock.unlock();
             this.lock.unlock();

@@ -25,6 +25,7 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.PaymentValidationException.ErrorCode;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,13 +33,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MppProtocolTest {
 
     private static final HexFormat HEX = HexFormat.of();
-    private static final byte[] SECRET = new byte[32]; // all zeros, valid 32-byte secret
+    private static final byte[] SECRET_BYTES = new byte[32];
 
     static {
         // Fill with non-zero pattern for realistic HMAC
-        for (int i = 0; i < SECRET.length; i++) {
-            SECRET[i] = (byte) (i + 1);
+        for (int i = 0; i < SECRET_BYTES.length; i++) {
+            SECRET_BYTES[i] = (byte) (i + 1);
         }
+    }
+
+    /** Creates a fresh SensitiveBytes wrapping a clone of SECRET_BYTES (safe for repeated use). */
+    private static SensitiveBytes secret() {
+        return new SensitiveBytes(SECRET_BYTES.clone());
     }
 
     private static final String REALM = "test-service";
@@ -62,7 +68,7 @@ class MppProtocolTest {
 
     @BeforeEach
     void setUp() {
-        protocol = new MppProtocol(SECRET);
+        protocol = new MppProtocol(secret());
     }
 
     // --- Constructor ---
@@ -79,7 +85,7 @@ class MppProtocolTest {
 
         @Test
         void rejectsShortSecret() {
-            byte[] tooShort = new byte[31];
+            SensitiveBytes tooShort = new SensitiveBytes(new byte[31]);
             assertThatThrownBy(() -> new MppProtocol(tooShort))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("at least 32 bytes");
@@ -87,20 +93,21 @@ class MppProtocolTest {
 
         @Test
         void rejectsEmptySecret() {
-            assertThatThrownBy(() -> new MppProtocol(new byte[0]))
+            // SensitiveBytes itself rejects zero-length arrays
+            assertThatThrownBy(() -> new SensitiveBytes(new byte[0]))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("at least 32 bytes");
+                    .hasMessageContaining("must not be empty");
         }
 
         @Test
         void acceptsExactly32ByteSecret() {
-            MppProtocol p = new MppProtocol(new byte[32]);
+            MppProtocol p = new MppProtocol(new SensitiveBytes(new byte[32]));
             assertThat(p.scheme()).isEqualTo("Payment");
         }
 
         @Test
         void acceptsLongerSecret() {
-            MppProtocol p = new MppProtocol(new byte[64]);
+            MppProtocol p = new MppProtocol(new SensitiveBytes(new byte[64]));
             assertThat(p.scheme()).isEqualTo("Payment");
         }
     }
@@ -641,7 +648,7 @@ class MppProtocolTest {
 
         String id = MppChallengeBinding.createId(
                 REALM, "lightning", "charge", requestB64,
-                expires, null, null, SECRET);
+                expires, null, null, secret());
 
         Map<String, String> echoedChallenge = new LinkedHashMap<>();
         echoedChallenge.put("id", id);
@@ -666,7 +673,7 @@ class MppProtocolTest {
 
         String id = MppChallengeBinding.createId(
                 REALM, "lightning", "charge", requestB64,
-                expires, null, null, SECRET);
+                expires, null, null, secret());
 
         Map<String, String> echoedChallenge = new LinkedHashMap<>();
         echoedChallenge.put("id", id);

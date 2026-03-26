@@ -11,7 +11,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
-import com.greenharborlabs.paygate.core.macaroon.SensitiveBytes;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 
 import java.time.Instant;
 import java.util.List;

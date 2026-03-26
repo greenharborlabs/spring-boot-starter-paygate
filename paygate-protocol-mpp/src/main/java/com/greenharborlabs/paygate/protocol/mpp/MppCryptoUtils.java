@@ -1,5 +1,7 @@
 package com.greenharborlabs.paygate.protocol.mpp;
 
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -33,14 +35,7 @@ final class MppCryptoUtils {
      * @return true if arrays are equal, false otherwise
      */
     static boolean constantTimeEquals(byte[] a, byte[] b) {
-        if (a.length != b.length) {
-            return false;
-        }
-        int result = 0;
-        for (int i = 0; i < a.length; i++) {
-            result |= a[i] ^ b[i];
-        }
-        return result == 0;
+        return CryptoUtils.constantTimeEquals(a, b);
     }
 
     /**

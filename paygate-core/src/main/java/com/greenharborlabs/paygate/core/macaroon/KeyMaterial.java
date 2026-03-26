@@ -1,6 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import java.util.Arrays;
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 
 /**
  * Static utilities for zeroizing sensitive key material in raw byte arrays.
@@ -8,14 +8,6 @@ import java.util.Arrays;
  * in {@code SensitiveBytes} is impractical.
  */
 public final class KeyMaterial {
-
-    /**
-     * Volatile write fence to prevent the JIT compiler from dead-store-eliminating
-     * the {@link Arrays#fill} call. The volatile write after the fill acts as a
-     * compiler barrier, ensuring the zeroing is not optimized away.
-     */
-    @SuppressWarnings("unused")
-    private static volatile int FENCE = 0;
 
     private KeyMaterial() {
         // utility class
@@ -30,10 +22,7 @@ public final class KeyMaterial {
      * @param data the array to zeroize, may be null
      */
     public static void zeroize(byte[] data) {
-        if (data != null) {
-            Arrays.fill(data, (byte) 0);
-            FENCE = data.length;
-        }
+        CryptoUtils.zeroize(data);
     }
 
     /**
@@ -42,11 +31,6 @@ public final class KeyMaterial {
      * @param arrays the arrays to zeroize, individual entries may be null
      */
     public static void zeroize(byte[]... arrays) {
-        if (arrays == null) {
-            return;
-        }
-        for (byte[] data : arrays) {
-            zeroize(data);
-        }
+        CryptoUtils.zeroize(arrays);
     }
 }

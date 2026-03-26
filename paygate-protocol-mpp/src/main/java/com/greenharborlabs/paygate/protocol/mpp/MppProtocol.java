@@ -18,6 +18,8 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.PaymentValidationException.ErrorCode;
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 
 /**
  * MPP (Multi-Part Payment) protocol implementation for HTTP 402 payment challenges.
@@ -35,7 +37,7 @@ public final class MppProtocol implements PaymentProtocol {
     private static final int MIN_SECRET_LENGTH = 32;
     private static final HexFormat HEX = HexFormat.of();
 
-    private final byte[] challengeBindingSecret;
+    private final SensitiveBytes challengeBindingSecret;
 
     /**
      * Creates a new MPP protocol instance.
@@ -44,14 +46,19 @@ public final class MppProtocol implements PaymentProtocol {
      * @throws NullPointerException     if secret is null
      * @throws IllegalArgumentException if secret is shorter than 32 bytes
      */
-    public MppProtocol(byte[] challengeBindingSecret) {
+    public MppProtocol(SensitiveBytes challengeBindingSecret) {
         Objects.requireNonNull(challengeBindingSecret, "challengeBindingSecret must not be null");
-        if (challengeBindingSecret.length < MIN_SECRET_LENGTH) {
-            throw new IllegalArgumentException(
-                    "challengeBindingSecret must be at least " + MIN_SECRET_LENGTH
-                            + " bytes, got " + challengeBindingSecret.length);
+        byte[] temp = challengeBindingSecret.value();
+        try {
+            if (temp.length < MIN_SECRET_LENGTH) {
+                throw new IllegalArgumentException(
+                        "challengeBindingSecret must be at least " + MIN_SECRET_LENGTH
+                                + " bytes, got " + temp.length);
+            }
+        } finally {
+            CryptoUtils.zeroize(temp);
         }
-        this.challengeBindingSecret = challengeBindingSecret.clone();
+        this.challengeBindingSecret = challengeBindingSecret;
     }
 
     @Override

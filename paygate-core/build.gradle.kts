@@ -8,6 +8,7 @@ plugins {
 val jacksonVersion: String by extra
 
 dependencies {
+    api(project(":paygate-api"))
     testImplementation("com.fasterxml.jackson.core:jackson-databind:$jacksonVersion")
 }
 

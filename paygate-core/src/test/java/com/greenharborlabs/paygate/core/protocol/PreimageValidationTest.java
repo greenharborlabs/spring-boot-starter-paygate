@@ -50,13 +50,13 @@ class PreimageValidationTest {
             RANDOM.nextBytes(key);
             byte[] tokenId = new byte[32];
             RANDOM.nextBytes(tokenId);
-            return new GenerationResult(new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(key.clone()), tokenId);
+            return new GenerationResult(new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(key.clone()), tokenId);
         }
 
         @Override
-        public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
+        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
             byte[] stored = rootKeyMap.get(HEX.formatHex(keyId));
-            return stored == null ? null : new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(stored.clone());
+            return stored == null ? null : new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(stored.clone());
         }
 
         @Override

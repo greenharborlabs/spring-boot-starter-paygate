@@ -57,13 +57,13 @@ class L402ValidatorTest {
             RANDOM.nextBytes(key);
             byte[] tokenId = new byte[32];
             RANDOM.nextBytes(tokenId);
-            return new GenerationResult(new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(key.clone()), tokenId);
+            return new GenerationResult(new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(key.clone()), tokenId);
         }
 
         @Override
-        public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
+        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
             byte[] stored = rootKeyMap.get(HEX.formatHex(keyId));
-            return stored == null ? null : new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(stored.clone());
+            return stored == null ? null : new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(stored.clone());
         }
 
         @Override
@@ -512,7 +512,7 @@ class L402ValidatorTest {
         @Test
         @DisplayName("root key SensitiveBytes is destroyed after successful validation")
         void rootKeyIsDestroyedAfterSuccessfulValidation() {
-            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.core.macaroon.SensitiveBytes>();
+            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.api.crypto.SensitiveBytes>();
             RootKeyStore trackingStore = new RootKeyStore() {
                 @Override
                 public GenerationResult generateRootKey() {
@@ -520,7 +520,7 @@ class L402ValidatorTest {
                 }
 
                 @Override
-                public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
+                public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
                     var sb = rootKeyStore.getRootKey(keyId);
                     if (sb != null) issuedKeys.add(sb);
                     return sb;
@@ -553,7 +553,7 @@ class L402ValidatorTest {
             String preimageHex = HEX.formatHex(preimageBytes);
             String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
-            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.core.macaroon.SensitiveBytes>();
+            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.api.crypto.SensitiveBytes>();
             RootKeyStore trackingStore = new RootKeyStore() {
                 @Override
                 public GenerationResult generateRootKey() {
@@ -561,7 +561,7 @@ class L402ValidatorTest {
                 }
 
                 @Override
-                public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
+                public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
                     var sb = rootKeyStore.getRootKey(keyId);
                     if (sb != null) issuedKeys.add(sb);
                     return sb;

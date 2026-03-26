@@ -1,4 +1,4 @@
-package com.greenharborlabs.paygate.core.macaroon;
+package com.greenharborlabs.paygate.api.crypto;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

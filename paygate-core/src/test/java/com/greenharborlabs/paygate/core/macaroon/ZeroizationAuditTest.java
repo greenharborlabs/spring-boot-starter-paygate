@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

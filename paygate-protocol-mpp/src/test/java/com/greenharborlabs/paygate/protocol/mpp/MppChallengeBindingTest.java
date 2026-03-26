@@ -9,9 +9,16 @@ import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+
 class MppChallengeBindingTest {
 
-    private static final byte[] SECRET = "test-hmac-secret-key-32bytes!!!!".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] SECRET_BYTES = "test-hmac-secret-key-32bytes!!!!".getBytes(StandardCharsets.UTF_8);
+
+    /** Creates a fresh SensitiveBytes wrapping a clone of SECRET_BYTES (safe for repeated use). */
+    private static SensitiveBytes secret() {
+        return new SensitiveBytes(SECRET_BYTES.clone());
+    }
     private static final String REALM = "api.example.com";
     private static final String METHOD = "lightning";
     private static final String INTENT = "charge";
@@ -30,10 +37,10 @@ class MppChallengeBindingTest {
     @Test
     void roundTrip_allSlotsFilled_verifyReturnsTrue() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         boolean result = MppChallengeBinding.verify(
-                id, REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                id, REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         assertThat(result).isTrue();
     }
@@ -43,10 +50,10 @@ class MppChallengeBindingTest {
     @Test
     void roundTrip_nullOptionalSlots_verifyReturnsTrue() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, null, null, null, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, null, null, null, secret());
 
         boolean result = MppChallengeBinding.verify(
-                id, REALM, METHOD, INTENT, REQUEST_B64, null, null, null, SECRET);
+                id, REALM, METHOD, INTENT, REQUEST_B64, null, null, null, secret());
 
         assertThat(result).isTrue();
     }
@@ -54,10 +61,10 @@ class MppChallengeBindingTest {
     @Test
     void roundTrip_onlyExpiresNull_verifyReturnsTrue() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, null, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, null, DIGEST, OPAQUE_B64, secret());
 
         boolean result = MppChallengeBinding.verify(
-                id, REALM, METHOD, INTENT, REQUEST_B64, null, DIGEST, OPAQUE_B64, SECRET);
+                id, REALM, METHOD, INTENT, REQUEST_B64, null, DIGEST, OPAQUE_B64, secret());
 
         assertThat(result).isTrue();
     }
@@ -67,7 +74,7 @@ class MppChallengeBindingTest {
     @Test
     void verify_tamperedId_oneByteFlipped_returnsFalse() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         // Decode, flip one byte, re-encode
         byte[] decoded = Base64.getUrlDecoder().decode(id);
@@ -75,7 +82,7 @@ class MppChallengeBindingTest {
         String tampered = Base64.getUrlEncoder().withoutPadding().encodeToString(decoded);
 
         boolean result = MppChallengeBinding.verify(
-                tampered, REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                tampered, REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         assertThat(result).isFalse();
     }
@@ -85,42 +92,43 @@ class MppChallengeBindingTest {
     @Test
     void verify_differentRealm_returnsFalse() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         assertThat(MppChallengeBinding.verify(
-                id, "other.example.com", METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                id, "other.example.com", METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isFalse();
     }
 
     @Test
     void verify_differentMethod_returnsFalse() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         assertThat(MppChallengeBinding.verify(
-                id, REALM, "onchain", INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                id, REALM, "onchain", INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isFalse();
     }
 
     @Test
     void verify_differentRequest_returnsFalse() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         String otherRequest = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"amount\":999}".getBytes(StandardCharsets.UTF_8));
 
         assertThat(MppChallengeBinding.verify(
-                id, REALM, METHOD, INTENT, otherRequest, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                id, REALM, METHOD, INTENT, otherRequest, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isFalse();
     }
 
     @Test
     void verify_differentSecret_returnsFalse() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
-        byte[] otherSecret = "different-secret-key-32bytes!!!!!".getBytes(StandardCharsets.UTF_8);
+        SensitiveBytes otherSecret = new SensitiveBytes(
+                "different-secret-key-32bytes!!!!!".getBytes(StandardCharsets.UTF_8));
 
         assertThat(MppChallengeBinding.verify(
                 id, REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, otherSecret))
@@ -133,7 +141,7 @@ class MppChallengeBindingTest {
     void verify_malformedBase64Id_returnsFalse() {
         // '!!!' is not valid base64url
         assertThat(MppChallengeBinding.verify(
-                "!!!not-valid-base64!!!", REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                "!!!not-valid-base64!!!", REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isFalse();
     }
 
@@ -141,7 +149,7 @@ class MppChallengeBindingTest {
     void verify_emptyId_returnsFalse() {
         // Empty string decodes to zero-length byte array, which differs in length from 32-byte HMAC
         assertThat(MppChallengeBinding.verify(
-                "", REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                "", REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isFalse();
     }
 
@@ -150,7 +158,7 @@ class MppChallengeBindingTest {
     @Test
     void createId_nullRealm_throwsNpe() {
         assertThatThrownBy(() -> MppChallengeBinding.createId(
-                null, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                null, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("realm");
     }
@@ -158,7 +166,7 @@ class MppChallengeBindingTest {
     @Test
     void createId_nullMethod_throwsNpe() {
         assertThatThrownBy(() -> MppChallengeBinding.createId(
-                REALM, null, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                REALM, null, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("method");
     }
@@ -166,7 +174,7 @@ class MppChallengeBindingTest {
     @Test
     void createId_nullIntent_throwsNpe() {
         assertThatThrownBy(() -> MppChallengeBinding.createId(
-                REALM, METHOD, null, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                REALM, METHOD, null, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("intent");
     }
@@ -174,7 +182,7 @@ class MppChallengeBindingTest {
     @Test
     void createId_nullRequestB64_throwsNpe() {
         assertThatThrownBy(() -> MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, null, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                REALM, METHOD, INTENT, null, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("requestB64");
     }
@@ -190,7 +198,7 @@ class MppChallengeBindingTest {
     @Test
     void verify_nullId_throwsNpe() {
         assertThatThrownBy(() -> MppChallengeBinding.verify(
-                null, REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                null, REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("id");
     }
@@ -198,7 +206,7 @@ class MppChallengeBindingTest {
     @Test
     void verify_nullRealm_throwsNpe() {
         assertThatThrownBy(() -> MppChallengeBinding.verify(
-                "dummy", null, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET))
+                "dummy", null, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("realm");
     }
@@ -216,7 +224,7 @@ class MppChallengeBindingTest {
     @Test
     void createId_outputIsValidBase64urlNoPad() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         assertThat(id).matches(BASE64URL_NOPAD);
         assertThat(id).doesNotContain("=");
@@ -227,7 +235,7 @@ class MppChallengeBindingTest {
     @Test
     void createId_outputDecodesToExactly32Bytes() {
         String id = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         byte[] decoded = Base64.getUrlDecoder().decode(id);
         // HMAC-SHA256 always produces 32 bytes
@@ -239,9 +247,9 @@ class MppChallengeBindingTest {
     @Test
     void createId_sameInputs_producesSameOutput() {
         String id1 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
         String id2 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
         assertThat(id1).isEqualTo(id2);
     }
@@ -253,9 +261,9 @@ class MppChallengeBindingTest {
         // null expires -> empty string slot, but if caller explicitly passes ""
         // both should produce the same ID since nullToEmpty("") == ""
         String idWithNull = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, null, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, null, DIGEST, OPAQUE_B64, secret());
         String idWithEmpty = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, "", DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, "", DIGEST, OPAQUE_B64, secret());
 
         assertThat(idWithNull).isEqualTo(idWithEmpty);
     }
@@ -265,9 +273,9 @@ class MppChallengeBindingTest {
     @Test
     void differentExpires_producesDifferentId() {
         String id1 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
         String id2 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, "2027-01-01T00:00:00Z", DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, "2027-01-01T00:00:00Z", DIGEST, OPAQUE_B64, secret());
 
         assertThat(id1).isNotEqualTo(id2);
     }
@@ -275,9 +283,9 @@ class MppChallengeBindingTest {
     @Test
     void differentDigest_producesDifferentId() {
         String id1 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
         String id2 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, "sha-256=:different:", OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, "sha-256=:different:", OPAQUE_B64, secret());
 
         assertThat(id1).isNotEqualTo(id2);
     }
@@ -285,11 +293,11 @@ class MppChallengeBindingTest {
     @Test
     void differentOpaque_producesDifferentId() {
         String id1 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
         String otherOpaque = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"other\":true}".getBytes(StandardCharsets.UTF_8));
         String id2 = MppChallengeBinding.createId(
-                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, otherOpaque, SECRET);
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, otherOpaque, secret());
 
         assertThat(id1).isNotEqualTo(id2);
     }
