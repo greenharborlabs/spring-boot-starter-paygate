@@ -42,7 +42,6 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -232,15 +231,23 @@ public class PaygateAutoConfiguration {
     @Conditional(PaygateAutoConfiguration.MppEnabledCondition.class)
     static class MppProtocolConfiguration {
 
+        @Bean(destroyMethod = "destroy")
+        @ConditionalOnMissingBean(name = "mppChallengeBindingSecret")
+        com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret(
+                PaygateProperties properties,
+                ProtocolStartupValidator _validator) {
+            String secret = properties.getProtocols().getMpp().getChallengeBindingSecret();
+            byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
+            return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(secretBytes);
+        }
+
         @Bean
         @ConditionalOnMissingBean(name = "mppProtocol")
         @Order(2)
-        PaymentProtocol mppProtocol(PaygateProperties properties,
-                                     ProtocolStartupValidator _validator) {
-            String secret = properties.getProtocols().getMpp().getChallengeBindingSecret();
-            byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
-            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(
-                    new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(secretBytes));
+        PaymentProtocol mppProtocol(
+                com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret,
+                ProtocolStartupValidator _validator) {
+            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(mppChallengeBindingSecret);
         }
     }
 
