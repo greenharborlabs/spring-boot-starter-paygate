@@ -222,11 +222,11 @@ class PaygateMetricsAutoConfigurationTest {
                 MeterRegistry registry = context.getBean(MeterRegistry.class);
 
                 // registerRateLimiterMetrics registers a gauge named
-                // "paygate.rate_limiter.buckets". Asserting it exists proves the
+                // "paygate.ratelimiter.buckets.active". Asserting it exists proves the
                 // Caffeine branch (lines 42-44) was executed.
-                Gauge gauge = registry.find("paygate.rate_limiter.buckets").gauge();
+                Gauge gauge = registry.find("paygate.ratelimiter.buckets.active").gauge();
                 assertThat(gauge)
-                        .as("paygate.rate_limiter.buckets gauge should be registered")
+                        .as("paygate.ratelimiter.buckets.active gauge should be registered")
                         .isNotNull();
             });
         }
@@ -252,8 +252,8 @@ class PaygateMetricsAutoConfigurationTest {
                 // The counter only appears after at least one eviction is recorded;
                 // fire it once through PaygateMetrics directly to confirm the path
                 metrics.recordRateLimiterEviction("size");
-                var counter = registry.find("paygate.rate_limiter.evictions")
-                        .tag("cause", "size")
+                var counter = registry.find("paygate.ratelimiter.evictions")
+                        .tag("reason", "size")
                         .counter();
                 assertThat(counter).isNotNull();
                 assertThat(counter.count()).isEqualTo(1.0);
@@ -283,9 +283,9 @@ class PaygateMetricsAutoConfigurationTest {
 
                 // registerRateLimiterMetrics also registers this gauge for the JDK
                 // path (line 46). Asserting it exists proves that branch was taken.
-                Gauge gauge = registry.find("paygate.rate_limiter.buckets").gauge();
+                Gauge gauge = registry.find("paygate.ratelimiter.buckets.active").gauge();
                 assertThat(gauge)
-                        .as("paygate.rate_limiter.buckets gauge should be registered for JDK limiter")
+                        .as("paygate.ratelimiter.buckets.active gauge should be registered for JDK limiter")
                         .isNotNull();
             });
         }
