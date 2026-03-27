@@ -24,6 +24,19 @@ class ValidUntilCaveatVerifierTest {
         verifier = new ValidUntilCaveatVerifier(SERVICE_NAME);
     }
 
+    // -------------------------------------------------------------------------
+    // Constructor
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("constructor throws NullPointerException when serviceName is null")
+    void constructorRejectsNullServiceName() {
+        // Objects.requireNonNull should fire immediately — we never want a
+        // verifier that silently builds a broken key like "null_valid_until".
+        assertThatThrownBy(() -> new ValidUntilCaveatVerifier(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
     @Test
     @DisplayName("getKey returns '<serviceName>_valid_until'")
     void getKeyReturnsServiceNameValidUntil() {
@@ -63,6 +76,45 @@ class ValidUntilCaveatVerifierTest {
 
             assertThatCode(() -> verifier.verify(caveat, context))
                     .doesNotThrowAnyException();
+        }
+    }
+
+    @Nested
+    @DisplayName("verify with malformed timestamp")
+    class MalformedTimestamp {
+
+        @Test
+        @DisplayName("throws MacaroonVerificationException with CREDENTIAL_EXPIRED when value is not a number")
+        void throwsWhenValueIsNotANumber() {
+            // This hits the NumberFormatException catch block in verify().
+            // Even though "abc" isn't a date, we treat any unparseable value as
+            // an expired / invalid credential rather than leaking a generic error.
+            Caveat caveat = new Caveat("my-api_valid_until", "not-a-number");
+            L402VerificationContext context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .currentTime(Instant.now())
+                    .build();
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CREDENTIAL_EXPIRED);
+        }
+
+        @Test
+        @DisplayName("exception message includes the malformed value")
+        void exceptionMessageContainsMalformedValue() {
+            // The message should be useful for debugging — include the raw string.
+            String badValue = "tuesday";
+            Caveat caveat = new Caveat("my-api_valid_until", badValue);
+            L402VerificationContext context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .currentTime(Instant.now())
+                    .build();
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .hasMessageContaining(badValue);
         }
     }
 
