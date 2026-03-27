@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import jakarta.servlet.FilterChain;
@@ -289,7 +290,7 @@ class PaygateAuthenticationFilterTest {
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
 
-        assertThat(captor.getValue().getRequestedCapability()).isEqualTo("read");
+        assertThat(captor.getValue().getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("read");
     }
 
     @Test
@@ -306,7 +307,7 @@ class PaygateAuthenticationFilterTest {
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
 
-        assertThat(captor.getValue().getRequestedCapability()).isNull();
+        assertThat(captor.getValue().getRequestMetadata()).doesNotContainKey(VerificationContextKeys.REQUESTED_CAPABILITY);
     }
 
     @Test
@@ -324,7 +325,7 @@ class PaygateAuthenticationFilterTest {
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
 
-        assertThat(captor.getValue().getRequestedCapability()).isNull();
+        assertThat(captor.getValue().getRequestMetadata()).doesNotContainKey(VerificationContextKeys.REQUESTED_CAPABILITY);
     }
 
     @Test
@@ -342,7 +343,7 @@ class PaygateAuthenticationFilterTest {
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
 
-        assertThat(captor.getValue().getRequestedCapability()).isNull();
+        assertThat(captor.getValue().getRequestMetadata()).doesNotContainKey(VerificationContextKeys.REQUESTED_CAPABILITY);
     }
 
     @Test
@@ -377,7 +378,7 @@ class PaygateAuthenticationFilterTest {
         verify(endpointRegistry).findConfig("GET", "/api/protected");
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
-        assertThat(captor.getValue().getRequestedCapability()).isEqualTo("read");
+        assertThat(captor.getValue().getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("read");
     }
 
     @Test
@@ -395,7 +396,7 @@ class PaygateAuthenticationFilterTest {
         verify(endpointRegistry).findConfig("GET", "/api/protected");
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
-        assertThat(captor.getValue().getRequestedCapability()).isEqualTo("write");
+        assertThat(captor.getValue().getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("write");
     }
 
     @Test
@@ -413,7 +414,7 @@ class PaygateAuthenticationFilterTest {
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
 
-        assertThat(captor.getValue().getRequestedCapability()).isNull();
+        assertThat(captor.getValue().getRequestMetadata()).doesNotContainKey(VerificationContextKeys.REQUESTED_CAPABILITY);
     }
 
     // --- Protocol-agnostic (MPP) detection tests ---
@@ -482,7 +483,7 @@ class PaygateAuthenticationFilterTest {
 
         ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
         verify(authenticationManager).authenticate(captor.capture());
-        assertThat(captor.getValue().getRequestedCapability()).isEqualTo("read");
+        assertThat(captor.getValue().getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("read");
     }
 
     @Test

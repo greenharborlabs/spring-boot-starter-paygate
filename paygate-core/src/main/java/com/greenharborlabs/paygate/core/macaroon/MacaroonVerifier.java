@@ -111,7 +111,7 @@ public final class MacaroonVerifier {
         // Post-loop enforcement: if a capability is required, the macaroon MUST contain
         // a capabilities caveat. Without this check, a macaroon lacking the caveat
         // entirely would bypass capability enforcement.
-        String requestedCapability = context.getRequestedCapability();
+        String requestedCapability = context.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY);
         if (requestedCapability != null && context.getServiceName() != null) {
             String capabilitiesKey = context.getServiceName() + "_capabilities";
             if (!lastSeenByKey.containsKey(capabilitiesKey)) {

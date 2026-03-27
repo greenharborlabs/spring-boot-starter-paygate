@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -41,7 +42,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", "search,analyze");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("search")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
                     .build();
 
             assertThatCode(() -> verifier.verify(caveat, context))
@@ -54,7 +55,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", "search,analyze,export");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("analyze")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "analyze"))
                     .build();
 
             assertThatCode(() -> verifier.verify(caveat, context))
@@ -62,7 +63,7 @@ class CapabilitiesCaveatVerifierTest {
         }
 
         @Test
-        @DisplayName("passes when requestedCapability is null (permissive skip)")
+        @DisplayName("passes when capability is absent from metadata (permissive skip)")
         void passesWhenRequestedCapabilityIsNull() {
             var caveat = new Caveat("my-api_capabilities", "search,analyze");
             var context = L402VerificationContext.builder()
@@ -79,7 +80,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", "search,analyze");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("delete")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "delete"))
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
@@ -97,7 +98,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", " , , ");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("search")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
@@ -115,7 +116,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", " search , analyze ");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("search")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
                     .build();
 
             assertThatCode(() -> verifier.verify(caveat, context))
@@ -184,7 +185,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", "a,b,c,d");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("a")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "a"))
                     .build();
 
             assertThatThrownBy(() -> bounded.verify(caveat, context))
@@ -203,7 +204,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", "a,b,c");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("a")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "a"))
                     .build();
 
             assertThatCode(() -> bounded.verify(caveat, context))
@@ -216,7 +217,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", "a,,b");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("a")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "a"))
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
@@ -233,7 +234,7 @@ class CapabilitiesCaveatVerifierTest {
             var caveat = new Caveat("my-api_capabilities", "a,b,");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
-                    .requestedCapability("a")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "a"))
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))

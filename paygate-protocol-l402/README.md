@@ -155,8 +155,7 @@ Validates a previously parsed credential. The delegation chain is:
 2. Builds an `L402VerificationContext` with:
    - `serviceName` from the protocol's configured service name
    - `currentTime` set to `Instant.now()`
-   - `requestMetadata` from the caller's request context map (path, method, client_ip, etc.)
-   - `requestedCapability` extracted from the request context using `VerificationContextKeys.REQUESTED_CAPABILITY`
+   - `requestMetadata` from the caller's request context map (path, method, client_ip, capability, etc.) -- the requested capability flows through the metadata map via `VerificationContextKeys.REQUESTED_CAPABILITY`
 3. Delegates to `L402Validator.validate()` with the raw authorization header from the metadata and the verification context
 4. Maps any `L402Exception` to a `PaymentValidationException` (see [Error Code Mapping](#error-code-mapping))
 

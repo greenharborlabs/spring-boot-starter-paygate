@@ -97,10 +97,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        Map<String, String> requestMetadata = extractRequestMetadata(request, normalizedPath);
+        Map<String, String> requestMetadata = extractRequestMetadata(request, normalizedPath, capability);
 
         PaygateAuthenticationToken unauthenticatedToken =
-                Objects.requireNonNull(createAuthToken(authHeader, capability, requestMetadata),
+                Objects.requireNonNull(createAuthToken(authHeader, requestMetadata),
                         "Token creation must succeed after shouldNotFilter");
 
         try {
@@ -123,16 +123,13 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private PaygateAuthenticationToken createAuthToken(String authHeader,
-                                                       String capability,
                                                        Map<String, String> requestMetadata) {
         var componentsOpt = L402HeaderComponents.extract(authHeader);
         if (componentsOpt.isPresent()) {
-            return new PaygateAuthenticationToken(
-                    componentsOpt.get(), capability, requestMetadata);
+            return new PaygateAuthenticationToken(componentsOpt.get(), requestMetadata);
         }
         if (matchesAnyProtocol(authHeader)) {
-            return PaygateAuthenticationToken.unauthenticated(
-                    authHeader, capability, requestMetadata);
+            return PaygateAuthenticationToken.unauthenticated(authHeader, requestMetadata);
         }
         return null;
     }
@@ -146,14 +143,18 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         return false;
     }
 
-    private Map<String, String> extractRequestMetadata(HttpServletRequest request, String normalizedPath) {
-        Map<String, String> metadata = new HashMap<>(3);
+    private Map<String, String> extractRequestMetadata(HttpServletRequest request, String normalizedPath,
+                                                       String capability) {
+        Map<String, String> metadata = new HashMap<>(4);
         metadata.put(VerificationContextKeys.REQUEST_PATH, normalizedPath);
         metadata.put(VerificationContextKeys.REQUEST_METHOD, request.getMethod());
         String clientIp = clientIpResolver != null
                 ? clientIpResolver.resolve(request)
                 : request.getRemoteAddr();
         metadata.put(VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
+        if (capability != null && !capability.isBlank()) {
+            metadata.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
+        }
         return metadata;
     }
 

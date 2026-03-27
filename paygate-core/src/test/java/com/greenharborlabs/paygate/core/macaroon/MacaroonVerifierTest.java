@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -475,7 +476,7 @@ class MacaroonVerifierTest {
         void rejectsMissingCapabilitiesCaveat() {
             L402VerificationContext ctx = L402VerificationContext.builder()
                     .serviceName("test-service")
-                    .requestedCapability("search")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
                     .build();
 
             List<Caveat> caveats = List.of(
@@ -504,7 +505,7 @@ class MacaroonVerifierTest {
         void passesWithCapabilitiesCaveatPresent() {
             L402VerificationContext ctx = L402VerificationContext.builder()
                     .serviceName("test-service")
-                    .requestedCapability("search")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
                     .build();
 
             List<Caveat> caveats = List.of(
@@ -566,7 +567,7 @@ class MacaroonVerifierTest {
             // directly without going through verify() first
             L402VerificationContext ctx = L402VerificationContext.builder()
                     .serviceName("test-service")
-                    .requestedCapability("write")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "write"))
                     .build();
 
             List<Caveat> caveats = List.of(

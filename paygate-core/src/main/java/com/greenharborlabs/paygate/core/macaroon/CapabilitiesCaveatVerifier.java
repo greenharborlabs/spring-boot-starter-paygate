@@ -34,7 +34,7 @@ public class CapabilitiesCaveatVerifier implements CaveatVerifier {
 
     @Override
     public void verify(Caveat caveat, L402VerificationContext context) {
-        String requested = context.getRequestedCapability();
+        String requested = context.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY);
         if (requested == null) {
             return;
         }

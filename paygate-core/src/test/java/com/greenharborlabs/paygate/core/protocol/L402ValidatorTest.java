@@ -11,6 +11,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import org.junit.jupiter.api.BeforeEach;
@@ -647,7 +648,7 @@ class L402ValidatorTest {
             L402VerificationContext context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
                     .currentTime(Instant.now())
-                    .requestedCapability("search")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
                     .build();
 
             L402Validator.ValidationResult result = validator.validate(header, context);
@@ -671,7 +672,7 @@ class L402ValidatorTest {
             L402VerificationContext context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
                     .currentTime(Instant.now())
-                    .requestedCapability("admin")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "admin"))
                     .build();
 
             assertThatThrownBy(() -> validator.validate(header, context))
@@ -728,14 +729,14 @@ class L402ValidatorTest {
             L402VerificationContext externalContext = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
                     .currentTime(Instant.now())
-                    .requestedCapability("custom-cap")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "custom-cap"))
                     .build();
 
             validator.validate(header, externalContext);
 
             // The verifier should have received the external context, not a locally-built one
             assertThat(capturedContext.get()).isSameAs(externalContext);
-            assertThat(capturedContext.get().getRequestedCapability()).isEqualTo("custom-cap");
+            assertThat(capturedContext.get().getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("custom-cap");
         }
 
         @Test
