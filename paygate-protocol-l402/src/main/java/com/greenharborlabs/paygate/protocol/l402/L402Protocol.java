@@ -16,7 +16,6 @@ import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
-import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
@@ -126,12 +125,10 @@ public class L402Protocol implements PaymentProtocol {
                     credential.tokenId());
         }
 
-        String requestedCapability = requestContext.get(VerificationContextKeys.REQUESTED_CAPABILITY);
         L402VerificationContext context = L402VerificationContext.builder()
                 .serviceName(serviceName)
                 .currentTime(Instant.now())
                 .requestMetadata(requestContext)
-                .requestedCapability(requestedCapability)
                 .build();
 
         try {

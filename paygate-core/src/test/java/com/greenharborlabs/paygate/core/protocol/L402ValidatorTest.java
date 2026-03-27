@@ -10,6 +10,9 @@ import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
+import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -57,13 +60,13 @@ class L402ValidatorTest {
             RANDOM.nextBytes(key);
             byte[] tokenId = new byte[32];
             RANDOM.nextBytes(tokenId);
-            return new GenerationResult(new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(key.clone()), tokenId);
+            return new GenerationResult(new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(key.clone()), tokenId);
         }
 
         @Override
-        public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
+        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
             byte[] stored = rootKeyMap.get(HEX.formatHex(keyId));
-            return stored == null ? null : new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(stored.clone());
+            return stored == null ? null : new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(stored.clone());
         }
 
         @Override
@@ -400,7 +403,7 @@ class L402ValidatorTest {
             String preimageHex = HEX.formatHex(preimageBytes);
             String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
-            // Create a valid_until caveat verifier that throws EXPIRED_CREDENTIAL for past timestamps
+            // Create a valid_until caveat verifier that throws MacaroonVerificationException for past timestamps
             CaveatVerifier validUntilVerifier = new CaveatVerifier() {
                 @Override
                 public String getKey() {
@@ -412,10 +415,9 @@ class L402ValidatorTest {
                     long expiryEpoch = Long.parseLong(caveat.value());
                     Instant expiry = Instant.ofEpochSecond(expiryEpoch);
                     if (!expiry.isAfter(context.getCurrentTime())) {
-                        throw new L402Exception(
-                                ErrorCode.EXPIRED_CREDENTIAL,
-                                "Credential expired at " + expiry,
-                                null);
+                        throw new MacaroonVerificationException(
+                                VerificationFailureReason.CREDENTIAL_EXPIRED,
+                                "Credential expired at " + expiry);
                     }
                 }
             };
@@ -512,7 +514,7 @@ class L402ValidatorTest {
         @Test
         @DisplayName("root key SensitiveBytes is destroyed after successful validation")
         void rootKeyIsDestroyedAfterSuccessfulValidation() {
-            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.core.macaroon.SensitiveBytes>();
+            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.api.crypto.SensitiveBytes>();
             RootKeyStore trackingStore = new RootKeyStore() {
                 @Override
                 public GenerationResult generateRootKey() {
@@ -520,7 +522,7 @@ class L402ValidatorTest {
                 }
 
                 @Override
-                public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
+                public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
                     var sb = rootKeyStore.getRootKey(keyId);
                     if (sb != null) issuedKeys.add(sb);
                     return sb;
@@ -553,7 +555,7 @@ class L402ValidatorTest {
             String preimageHex = HEX.formatHex(preimageBytes);
             String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
-            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.core.macaroon.SensitiveBytes>();
+            var issuedKeys = new java.util.concurrent.ConcurrentLinkedQueue<com.greenharborlabs.paygate.api.crypto.SensitiveBytes>();
             RootKeyStore trackingStore = new RootKeyStore() {
                 @Override
                 public GenerationResult generateRootKey() {
@@ -561,7 +563,7 @@ class L402ValidatorTest {
                 }
 
                 @Override
-                public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
+                public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
                     var sb = rootKeyStore.getRootKey(keyId);
                     if (sb != null) issuedKeys.add(sb);
                     return sb;
@@ -614,7 +616,7 @@ class L402ValidatorTest {
             String preimageHex = HEX.formatHex(preimageBytes);
             String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
-            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
 
@@ -639,14 +641,14 @@ class L402ValidatorTest {
             );
             String header = buildAuthHeader(caveats);
 
-            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
 
             L402VerificationContext context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
                     .currentTime(Instant.now())
-                    .requestedCapability("search")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
                     .build();
 
             L402Validator.ValidationResult result = validator.validate(header, context);
@@ -663,14 +665,14 @@ class L402ValidatorTest {
             );
             String header = buildAuthHeader(caveats);
 
-            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME);
+            CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
 
             L402VerificationContext context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
                     .currentTime(Instant.now())
-                    .requestedCapability("admin")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "admin"))
                     .build();
 
             assertThatThrownBy(() -> validator.validate(header, context))
@@ -721,20 +723,20 @@ class L402ValidatorTest {
 
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore,
-                    List.of(capturingVerifier, new CapabilitiesCaveatVerifier(SERVICE_NAME)),
+                    List.of(capturingVerifier, new CapabilitiesCaveatVerifier(SERVICE_NAME, 50)),
                     SERVICE_NAME);
 
             L402VerificationContext externalContext = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
                     .currentTime(Instant.now())
-                    .requestedCapability("custom-cap")
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "custom-cap"))
                     .build();
 
             validator.validate(header, externalContext);
 
             // The verifier should have received the external context, not a locally-built one
             assertThat(capturedContext.get()).isSameAs(externalContext);
-            assertThat(capturedContext.get().getRequestedCapability()).isEqualTo("custom-cap");
+            assertThat(capturedContext.get().getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("custom-cap");
         }
 
         @Test
@@ -799,10 +801,9 @@ class L402ValidatorTest {
                 long expiryEpoch = Long.parseLong(caveat.value());
                 Instant expiry = Instant.ofEpochSecond(expiryEpoch);
                 if (!expiry.isAfter(context.getCurrentTime())) {
-                    throw new L402Exception(
-                            ErrorCode.EXPIRED_CREDENTIAL,
-                            "Credential expired at " + expiry,
-                            null);
+                    throw new MacaroonVerificationException(
+                            VerificationFailureReason.CREDENTIAL_EXPIRED,
+                            "Credential expired at " + expiry);
                 }
             }
         };

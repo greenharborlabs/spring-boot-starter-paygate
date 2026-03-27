@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.Set;
@@ -36,58 +33,39 @@ public class ClientIpCaveatVerifier implements CaveatVerifier {
         String requestClientIp = context.getRequestMetadata()
                 .get(VerificationContextKeys.REQUEST_CLIENT_IP);
         if (requestClientIp == null) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Client IP missing from verification context", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Client IP missing from verification context");
         }
 
-        // 2. Split caveat value by comma
-        String[] rawIps = caveat.value().split(",", -1);
+        // 2. Split, bounds-check, and trim caveat value
+        String[] ips = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat, "client_ip");
 
-        // 3. Reject if IP count exceeds max
-        if (rawIps.length > maxValuesPerCaveat) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Client IP caveat contains " + rawIps.length
-                            + " values, exceeding maximum of " + maxValuesPerCaveat, null);
-        }
-
-        // 4. Reject if any IP is empty after trim
-        for (String raw : rawIps) {
-            if (raw.trim().isEmpty()) {
-                throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                        "Empty client IP in caveat value", null);
-            }
-        }
-
-        // 5. Match request client IP against each allowed IP (normalized for IPv6)
+        // 3. Match request client IP against each allowed IP (normalized for IPv6)
         String normalizedRequestIp = normalizeIp(requestClientIp);
-        for (String raw : rawIps) {
-            if (normalizedRequestIp.equals(normalizeIp(raw.trim()))) {
+        for (String ip : ips) {
+            if (normalizedRequestIp.equals(normalizeIp(ip))) {
                 return;
             }
         }
 
         // 6. No IP matched — reject
-        throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                "Request client IP does not match any allowed IP", null);
+        throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                "Request client IP does not match any allowed IP");
     }
 
     @Override
     public boolean isMoreRestrictive(Caveat previous, Caveat current) {
-        // Split once and reuse for both the guard check and the subset computation
-        String[] previousRaw = previous.value().split(",", -1);
-        String[] currentRaw = current.value().split(",", -1);
-
         // Reject oversized caveats before expensive subset-containment check
-        if (previousRaw.length > maxValuesPerCaveat
-                || currentRaw.length > maxValuesPerCaveat) {
+        if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
+                || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
             return false;
         }
 
-        Set<String> previousIps = Arrays.stream(previousRaw)
+        Set<String> previousIps = Arrays.stream(previous.value().split(",", -1))
                 .map(String::trim)
                 .map(ClientIpCaveatVerifier::normalizeIp)
                 .collect(Collectors.toSet());
-        Set<String> currentIps = Arrays.stream(currentRaw)
+        Set<String> currentIps = Arrays.stream(current.value().split(",", -1))
                 .map(String::trim)
                 .map(ClientIpCaveatVerifier::normalizeIp)
                 .collect(Collectors.toSet());

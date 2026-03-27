@@ -56,7 +56,6 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     private final String tokenId;
     private final String serviceName;
     private final Map<String, String> attributes;
-    private final String requestedCapability;
     private final Map<String, String> requestMetadata;
 
     // ========== L402 Unauthenticated Constructors (preserved) ==========
@@ -65,28 +64,17 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
      * Creates an unauthenticated token from parsed L402 header components.
      */
     public PaygateAuthenticationToken(L402HeaderComponents components) {
-        this(components, null);
+        this(components, Collections.emptyMap());
     }
 
     /**
-     * Creates an unauthenticated token from parsed L402 header components with an optional requested capability.
+     * Creates an unauthenticated token from parsed header components with request metadata
+     * for delegation caveat verification.
      *
-     * @param components          parsed L402 header components, must not be null
-     * @param requestedCapability the capability being requested, may be null (permissive)
+     * @param components      parsed L402 header components, must not be null
+     * @param requestMetadata request metadata (path, method, client IP, capability), must not be null
      */
-    public PaygateAuthenticationToken(L402HeaderComponents components, String requestedCapability) {
-        this(components, requestedCapability, Collections.emptyMap());
-    }
-
-    /**
-     * Creates an unauthenticated token from parsed header components with an optional requested
-     * capability and request metadata for delegation caveat verification.
-     *
-     * @param components          parsed L402 header components, must not be null
-     * @param requestedCapability the capability being requested, may be null (permissive)
-     * @param requestMetadata     request metadata (path, method, client IP), must not be null
-     */
-    public PaygateAuthenticationToken(L402HeaderComponents components, String requestedCapability,
+    public PaygateAuthenticationToken(L402HeaderComponents components,
                                      Map<String, String> requestMetadata) {
         super(Collections.emptyList());
         this.components = Objects.requireNonNull(components, "components must not be null");
@@ -97,7 +85,6 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
         this.tokenId = null;
         this.serviceName = null;
         this.attributes = Collections.emptyMap();
-        this.requestedCapability = requestedCapability;
         this.requestMetadata = Map.copyOf(
                 Objects.requireNonNull(requestMetadata, "requestMetadata must not be null"));
         setAuthenticated(false);
@@ -110,16 +97,13 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
      * authentication. Used when the filter detects a non-L402 credential (e.g., MPP).
      *
      * @param authorizationHeader raw Authorization header value, must not be null
-     * @param requestedCapability the capability being requested, may be null (permissive)
-     * @param requestMetadata     request metadata (path, method, client IP), must not be null
+     * @param requestMetadata     request metadata (path, method, client IP, capability), must not be null
      * @return unauthenticated token carrying the raw header
      */
     public static PaygateAuthenticationToken unauthenticated(String authorizationHeader,
-                                                             String requestedCapability,
                                                              Map<String, String> requestMetadata) {
         return new PaygateAuthenticationToken(
                 Objects.requireNonNull(authorizationHeader, "authorizationHeader must not be null"),
-                requestedCapability,
                 Objects.requireNonNull(requestMetadata, "requestMetadata must not be null"),
                 null);
     }
@@ -128,7 +112,7 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
      * Private constructor for protocol-agnostic unauthenticated tokens.
      * The unused marker parameter disambiguates from L402 constructors.
      */
-    private PaygateAuthenticationToken(String authorizationHeader, String requestedCapability,
+    private PaygateAuthenticationToken(String authorizationHeader,
                                       Map<String, String> requestMetadata, Void marker) {
         super(Collections.emptyList());
         this.components = null;
@@ -139,7 +123,6 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
         this.tokenId = null;
         this.serviceName = null;
         this.attributes = Collections.emptyMap();
-        this.requestedCapability = requestedCapability;
         this.requestMetadata = Map.copyOf(requestMetadata);
         setAuthenticated(false);
     }
@@ -147,9 +130,9 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     // ========== L402-Only Authenticated Constructor (preserved) ==========
 
     /**
-     * Creates an authenticated token from a validated L402 credential.
+     * Private constructor for L402 authenticated tokens.
      */
-    public PaygateAuthenticationToken(L402Credential credential, String serviceName,
+    private PaygateAuthenticationToken(L402Credential credential, String serviceName,
                                     Collection<? extends GrantedAuthority> authorities,
                                     Map<String, String> attributes) {
         super(List.copyOf(authorities));
@@ -161,7 +144,6 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
         this.tokenId = credential.tokenId();
         this.serviceName = serviceName;
         this.attributes = Map.copyOf(attributes);
-        this.requestedCapability = null;
         this.requestMetadata = Collections.emptyMap();
         super.setAuthenticated(true);
     }
@@ -183,7 +165,6 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
         this.tokenId = paymentCredential.tokenId();
         this.serviceName = serviceName;
         this.attributes = Map.copyOf(attributes);
-        this.requestedCapability = null;
         this.requestMetadata = Collections.emptyMap();
         super.setAuthenticated(true);
     }
@@ -327,10 +308,6 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
 
     public String getAttribute(String key) {
         return attributes.get(key);
-    }
-
-    public String getRequestedCapability() {
-        return requestedCapability;
     }
 
     public L402HeaderComponents getComponents() {

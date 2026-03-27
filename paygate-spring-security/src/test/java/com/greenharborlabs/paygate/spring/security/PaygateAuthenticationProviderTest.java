@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
@@ -23,6 +24,7 @@ import org.springframework.security.core.GrantedAuthority;
 
 import java.security.SecureRandom;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -150,7 +152,9 @@ class PaygateAuthenticationProviderTest {
         when(l402Validator.validate(any(L402HeaderComponents.class), any(L402VerificationContext.class)))
                 .thenReturn(new L402Validator.ValidationResult(credential, true));
 
-        var unauthToken = new PaygateAuthenticationToken(new L402HeaderComponents("L402", macaroonB64, preimageHex), "read");
+        var unauthToken = new PaygateAuthenticationToken(
+                new L402HeaderComponents("L402", macaroonB64, preimageHex),
+                Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "read"));
 
         Authentication result = provider.authenticate(unauthToken);
 
@@ -162,7 +166,7 @@ class PaygateAuthenticationProviderTest {
 
         L402VerificationContext capturedContext = contextCaptor.getValue();
         assertThat(capturedContext.getServiceName()).isEqualTo(SERVICE_NAME);
-        assertThat(capturedContext.getRequestedCapability()).isEqualTo("read");
+        assertThat(capturedContext.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("read");
     }
 
     @Test
@@ -184,7 +188,7 @@ class PaygateAuthenticationProviderTest {
 
         L402VerificationContext capturedContext = contextCaptor.getValue();
         assertThat(capturedContext.getServiceName()).isEqualTo(SERVICE_NAME);
-        assertThat(capturedContext.getRequestedCapability()).isNull();
+        assertThat(capturedContext.getRequestMetadata()).doesNotContainKey(VerificationContextKeys.REQUESTED_CAPABILITY);
     }
 
     @Test
@@ -195,7 +199,9 @@ class PaygateAuthenticationProviderTest {
         when(l402Validator.validate(any(L402HeaderComponents.class), any(L402VerificationContext.class)))
                 .thenThrow(new L402Exception(ErrorCode.INVALID_SERVICE, "capability mismatch", "tok1"));
 
-        var unauthToken = new PaygateAuthenticationToken(new L402HeaderComponents("L402", macaroonB64, preimageHex), "write");
+        var unauthToken = new PaygateAuthenticationToken(
+                new L402HeaderComponents("L402", macaroonB64, preimageHex),
+                Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "write"));
 
         assertThatThrownBy(() -> provider.authenticate(unauthToken))
                 .isInstanceOf(BadCredentialsException.class)

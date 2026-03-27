@@ -144,12 +144,12 @@ class BeanOverrideTest {
 
         @Override
         public GenerationResult generateRootKey() {
-            return new GenerationResult(new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(new byte[32]), new byte[32]);
+            return new GenerationResult(new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(new byte[32]), new byte[32]);
         }
 
         @Override
-        public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
-            return new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(new byte[32]);
+        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
+            return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(new byte[32]);
         }
 
         @Override

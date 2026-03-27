@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -56,9 +55,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/orders/1");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -103,9 +102,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/products/123/reviews");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -125,9 +124,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/api/orders/123/details");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -137,9 +136,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/api/details");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -199,9 +198,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/products/foo%2Fbar");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -211,9 +210,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/products/foo%2Fbar");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -258,9 +257,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/products");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -292,9 +291,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/api/foo/details");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -304,9 +303,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/api/product-123");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -345,9 +344,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/api/other");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -366,9 +365,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/products/123");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -380,9 +379,9 @@ class PathCaveatVerifierTest {
                     .build();
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -393,9 +392,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/a/1");
 
             assertThatThrownBy(() -> restrictedVerifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -405,9 +404,9 @@ class PathCaveatVerifierTest {
             L402VerificationContext context = contextWithPath("/products/123");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
-                    .isInstanceOf(L402Exception.class)
-                    .extracting(e -> ((L402Exception) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_SERVICE);
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 

@@ -1,5 +1,7 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+
 import java.io.Closeable;
 import java.util.Arrays;
 

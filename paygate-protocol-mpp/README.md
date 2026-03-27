@@ -121,7 +121,7 @@ Utility class that computes and verifies HMAC-SHA256 challenge IDs for stateless
 | `createId(realm, method, intent, requestB64, expires, digest, opaqueB64, secret)` | Computes HMAC-SHA256 over the pipe-delimited 7-slot input and returns base64url-nopad encoded result |
 | `verify(id, realm, method, intent, requestB64, expires, digest, opaqueB64, secret)` | Recomputes the HMAC and compares against the presented ID using constant-time comparison |
 
-The HMAC input is a pipe-delimited string with 7 slots. Absent optional fields (expires, digest, opaque) use empty string in their slot. A `ThreadLocal<Mac>` is used for thread-safe `Mac` instance reuse.
+The HMAC input is a pipe-delimited string with 7 slots. Absent optional fields (expires, digest, opaque) use empty string in their slot. A fresh `Mac.getInstance("HmacSHA256")` is obtained per call for virtual-thread safety; JCA provider lookups are cached after the first call, so the overhead is negligible.
 
 ### MppCredentialParser
 
@@ -375,9 +375,9 @@ This prevents timing side-channel attacks. The method is used for:
 
 `MppProtocol.sanitizeHeaderValue()` rejects any string containing control characters (`0x00`-`0x1F`, `0x7F`) or double-quote characters before including it in the `WWW-Authenticate` header. This prevents HTTP header injection attacks where a malicious service name or description could break out of a quoted-string parameter.
 
-### ThreadLocal Mac Reuse
+### Virtual-Thread-Safe Mac Instantiation
 
-`MppChallengeBinding` uses a `ThreadLocal<Mac>` to avoid creating a new `Mac` instance on every HMAC computation. The `Mac` is re-initialized with `mac.init(new SecretKeySpec(...))` on each call, which clears any previous state.
+`MppChallengeBinding` calls `Mac.getInstance("HmacSHA256")` fresh on each HMAC computation rather than caching instances in a `ThreadLocal`. This is safe for virtual threads (no pinning or memory-leak risk) and has negligible overhead because the JCA provider lookup is cached internally after the first call. Each fresh `Mac` instance is initialized with `mac.init(new SecretKeySpec(...))` and discarded after use.
 
 ### Defensive Secret Copying
 

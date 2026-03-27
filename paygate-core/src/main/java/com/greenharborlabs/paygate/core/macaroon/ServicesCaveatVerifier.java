@@ -1,12 +1,18 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.util.HashSet;
 import java.util.Set;
 
 public class ServicesCaveatVerifier implements CaveatVerifier {
+
+    private final int maxValuesPerCaveat;
+
+    public ServicesCaveatVerifier(int maxValuesPerCaveat) {
+        if (maxValuesPerCaveat < 1) {
+            throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
+        }
+        this.maxValuesPerCaveat = maxValuesPerCaveat;
+    }
 
     @Override
     public String getKey() {
@@ -17,11 +23,12 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
     public void verify(Caveat caveat, L402VerificationContext context) {
         String serviceName = context.getServiceName();
         if (serviceName == null) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Service name is null in verification context", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Service name is null in verification context");
         }
 
-        String[] serviceEntries = caveat.value().split(",");
+        String[] serviceEntries = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat,
+                getKey());
         for (String entry : serviceEntries) {
             String name = entry.split(":")[0].trim();
             if (name.equals(serviceName)) {
@@ -29,8 +36,8 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
             }
         }
 
-        throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                "Service '" + serviceName + "' not found in caveat services list", null);
+        throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                "Service '" + serviceName + "' not found in caveat services list");
     }
 
     /**
@@ -39,6 +46,10 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
      */
     @Override
     public boolean isMoreRestrictive(Caveat previous, Caveat current) {
+        if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
+                || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
+            return false;
+        }
         Set<String> previousNames = extractServiceNames(previous.value());
         Set<String> currentNames = extractServiceNames(current.value());
         return previousNames.containsAll(currentNames);
@@ -46,7 +57,7 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
 
     private static Set<String> extractServiceNames(String serviceList) {
         Set<String> names = new HashSet<>();
-        for (String entry : serviceList.split(",")) {
+        for (String entry : serviceList.split(",", -1)) {
             String name = entry.split(":")[0].trim();
             if (!name.isEmpty()) {
                 names.add(name);

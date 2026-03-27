@@ -670,7 +670,7 @@ class L402ProtocolTest {
             protocol.validate(credential, requestContext);
 
             var capturedContext = contextCaptor.getValue();
-            assertThat(capturedContext.getRequestedCapability()).isEqualTo("write");
+            assertThat(capturedContext.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("write");
         }
     }
 

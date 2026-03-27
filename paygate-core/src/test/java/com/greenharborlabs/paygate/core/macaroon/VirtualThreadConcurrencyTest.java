@@ -14,11 +14,11 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Exercises both cached JCA paths (ThreadLocal Mac in MacaroonCrypto and
- * ThreadLocal MessageDigest in PaymentPreimage) under virtual thread
+ * Exercises JCA paths (fresh Mac.getInstance() in MacaroonCrypto and
+ * fresh MessageDigest.getInstance() in PaymentPreimage) under virtual thread
  * concurrency to verify no state leakage between concurrent computations.
  */
-class JcaCachingConcurrencyTest {
+class VirtualThreadConcurrencyTest {
 
     private static final byte[] FIXED_DATA = "l402-concurrency-test-data".getBytes();
 

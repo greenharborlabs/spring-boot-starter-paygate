@@ -67,6 +67,34 @@ class MppCryptoUtilsTest {
             byte[] b = {(byte) 0xFE};
             assertThat(MppCryptoUtils.constantTimeEquals(a, b)).isFalse();
         }
+
+        @Test
+        void hmacSizedArrays_sameLengthDifferentContent() {
+            byte[] a = new byte[32];
+            byte[] b = new byte[32];
+            a[0] = 0x01;
+            b[0] = 0x02;
+            assertThat(MppCryptoUtils.constantTimeEquals(a, b)).isFalse();
+        }
+
+        @Test
+        void hmacSizedArrays_differentLength() {
+            byte[] a = new byte[32];
+            byte[] b = new byte[31];
+            assertThat(MppCryptoUtils.constantTimeEquals(a, b)).isFalse();
+            assertThat(MppCryptoUtils.constantTimeEquals(b, a)).isFalse();
+        }
+
+        @Test
+        void hmacSizedArrays_identicalContent() {
+            byte[] a = new byte[32];
+            byte[] b = new byte[32];
+            for (int i = 0; i < 32; i++) {
+                a[i] = (byte) i;
+                b[i] = (byte) i;
+            }
+            assertThat(MppCryptoUtils.constantTimeEquals(a, b)).isTrue();
+        }
     }
 
     @Nested

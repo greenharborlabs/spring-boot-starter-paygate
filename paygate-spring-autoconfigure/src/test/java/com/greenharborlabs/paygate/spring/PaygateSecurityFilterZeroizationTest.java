@@ -5,7 +5,7 @@ import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
-import com.greenharborlabs.paygate.core.macaroon.SensitiveBytes;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
@@ -135,7 +135,7 @@ class PaygateSecurityFilterZeroizationTest {
         var properties = new PaygateProperties();
         properties.setServiceName("test-service");
         var challengeService = new PaygateChallengeService(
-                rootKeyStore, lightningBackend, properties, mock(ApplicationContext.class), null, null);
+                rootKeyStore, lightningBackend, properties, mock(ApplicationContext.class), null, null, null);
         return new PaygateSecurityFilter(
                 registry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                 null, null, null, null);

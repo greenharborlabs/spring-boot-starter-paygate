@@ -1,5 +1,8 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.security.auth.DestroyFailedException;
@@ -16,14 +19,6 @@ public final class MacaroonCrypto {
     private static final System.Logger log = System.getLogger(MacaroonCrypto.class.getName());
     private static final String HMAC_SHA256 = "HmacSHA256";
     private static final byte[] GENERATOR_KEY = "macaroons-key-generator".getBytes(StandardCharsets.UTF_8);
-
-    private static final ThreadLocal<Mac> MAC_PROTOTYPE = ThreadLocal.withInitial(() -> {
-        try {
-            return Mac.getInstance(HMAC_SHA256);
-        } catch (NoSuchAlgorithmException e) {
-            throw new AssertionError("HmacSHA256 must be available", e);
-        }
-    });
 
     private MacaroonCrypto() {}
 
@@ -55,12 +50,7 @@ public final class MacaroonCrypto {
      */
     public static byte[] hmac(byte[] key, byte[] data) {
         try {
-            Mac mac;
-            try {
-                mac = (Mac) MAC_PROTOTYPE.get().clone();
-            } catch (CloneNotSupportedException e) {
-                mac = Mac.getInstance(HMAC_SHA256);
-            }
+            Mac mac = Mac.getInstance(HMAC_SHA256);
             SecretKeySpec keySpec = new SecretKeySpec(key, HMAC_SHA256);
             try {
                 mac.init(keySpec);
@@ -106,14 +96,7 @@ public final class MacaroonCrypto {
      * of where (or whether) a difference exists.
      */
     public static boolean constantTimeEquals(byte[] a, byte[] b) {
-        if (a.length != b.length) {
-            return false;
-        }
-        int result = 0;
-        for (int i = 0; i < a.length; i++) {
-            result |= a[i] ^ b[i];
-        }
-        return result == 0;
+        return CryptoUtils.constantTimeEquals(a, b);
     }
 
     /**
@@ -128,6 +111,6 @@ public final class MacaroonCrypto {
      * Convenience method that delegates to {@link KeyMaterial#zeroize(byte[])}.
      */
     public static void zeroize(byte[] data) {
-        KeyMaterial.zeroize(data);
+        CryptoUtils.zeroize(data);
     }
 }

@@ -172,7 +172,7 @@ class PaygateSecurityFilterRealStoreTest {
 
         @Bean
         List<CaveatVerifier> caveatVerifiers() {
-            return List.of(new ServicesCaveatVerifier(), new ValidUntilCaveatVerifier(SERVICE_NAME));
+            return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
         }
 
         @Bean
@@ -195,7 +195,7 @@ class PaygateSecurityFilterRealStoreTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
             var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, null, null);
+                    rootKeyStore, lightningBackendBean, null, null, null, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, null, null);

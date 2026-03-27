@@ -7,7 +7,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
-import com.greenharborlabs.paygate.core.macaroon.SensitiveBytes;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

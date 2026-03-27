@@ -136,6 +136,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 |----------|------|---------|-------------|
 | `paygate.rate-limit.requests-per-second` | `double` | `10.0` | Token refill rate per second per client IP. Controls the sustained rate of 402 challenge issuance. |
 | `paygate.rate-limit.burst-size` | `int` | `20` | Maximum burst capacity per client IP. Allows short bursts above the sustained rate before throttling. |
+| `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum number of tracked IP rate-limit buckets. Limits memory usage under high-cardinality traffic. |
 
 ### Health Cache Properties
 
@@ -216,7 +217,7 @@ The following table shows every bean created by `PaygateAutoConfiguration`, the 
 | `protocolStartupValidator` | `ProtocolStartupValidator` | Always (when auto-config is active) | Validates protocol configuration and secret requirements at startup |
 | `clientIpResolver` | `ClientIpResolver` | `@ConditionalOnMissingBean` | Resolves client IP from request, with optional X-Forwarded-For and trusted proxy support |
 | `l402EndpointRegistry` | `PaygateEndpointRegistry` | `@ConditionalOnMissingBean` | Scans `@PaymentRequired` annotations from Spring MVC handler mappings |
-| `l402RateLimiter` | `PaygateRateLimiter` | `@ConditionalOnMissingBean` | `TokenBucketRateLimiter` with configured burst size and refill rate |
+| `l402RateLimiter` | `PaygateRateLimiter` | `@ConditionalOnMissingBean` | `CaffeineTokenBucketRateLimiter` when Caffeine is on the classpath; `TokenBucketRateLimiter` (JDK-only) otherwise. Both use configured burst size, refill rate, and max buckets. |
 | `l402EarningsTracker` | `PaygateEarningsTracker` | `@ConditionalOnMissingBean` | In-memory tracker; resets on restart |
 | `l402ChallengeService` | `PaygateChallengeService` | `@ConditionalOnMissingBean` | Encapsulates challenge generation and invoice creation logic |
 | `l402SecurityModeResolver` | `PaygateSecurityModeResolver` | `@ConditionalOnMissingBean` | Determines which security integration mode to use (servlet filter vs Spring Security) |
@@ -351,14 +352,17 @@ The filter follows a strict fail-closed security model:
 
 ## Rate Limiting
 
-Rate limiting prevents invoice flooding attacks by throttling 402 challenge issuance per client IP address. It uses a token bucket algorithm implemented in `TokenBucketRateLimiter`.
+Rate limiting prevents invoice flooding attacks by throttling 402 challenge issuance per client IP address. It uses a token bucket algorithm with two implementations selected automatically:
+
+- **`CaffeineTokenBucketRateLimiter`** (default when Caffeine is on the classpath) -- uses a Caffeine cache with LRU eviction, automatic idle-entry expiry, and bounded memory. This is the recommended production implementation.
+- **`TokenBucketRateLimiter`** (JDK-only fallback when Caffeine is absent) -- uses a `ConcurrentHashMap` with lazy stale-entry cleanup and sampling-based eviction at capacity.
 
 ### How It Works
 
 - Each client IP gets an independent token bucket with `paygate.rate-limit.burst-size` maximum tokens and a refill rate of `paygate.rate-limit.requests-per-second` tokens per second.
 - New buckets start full. Each challenge request consumes one token.
 - When a bucket is empty, the client receives HTTP 429 until tokens refill.
-- Stale entries are cleaned up lazily every 1000 `tryAcquire` calls. The total number of tracked IPs is capped at 100,000 to prevent memory exhaustion.
+- The total number of tracked IPs is capped at `paygate.rate-limit.max-buckets` (default 100,000) to prevent memory exhaustion. When the Caffeine implementation is active, Caffeine handles LRU eviction and idle-entry expiry automatically. The JDK fallback cleans up stale entries lazily and evicts a sampled oldest entry at capacity.
 
 ### Client IP Resolution
 
@@ -370,16 +374,32 @@ By default, the filter uses `request.getRemoteAddr()` for rate limiting. If the 
 
 ### Overriding the Rate Limiter
 
-Provide your own `PaygateRateLimiter` bean to replace the default `TokenBucketRateLimiter`:
+The default rate limiter bean is `@ConditionalOnMissingBean`, so defining your own `PaygateRateLimiter` bean replaces it entirely. The `PaygateRateLimiter` interface is `@FunctionalInterface` with a single method: `boolean tryAcquire(String key)`.
+
+**Disable rate limiting:**
 
 ```java
 @Bean
-public PaygateRateLimiter l402RateLimiter() {
-    return key -> true; // disable rate limiting
+public PaygateRateLimiter paygateRateLimiter() {
+    return key -> true; // always allow
 }
 ```
 
-The `PaygateRateLimiter` interface is `@FunctionalInterface` with a single method: `boolean tryAcquire(String key)`.
+**Redis-backed distributed rate limiter** (e.g., using [Bucket4j](https://github.com/bucket4j/bucket4j) with Redis):
+
+```java
+@Bean
+public PaygateRateLimiter paygateRateLimiter(ProxyManager<String> proxyManager) {
+    var bucketConfig = BucketConfiguration.builder()
+            .addLimit(Bandwidth.simple(10, Duration.ofSeconds(1)))
+            .build();
+    return key -> proxyManager.builder()
+            .build(key, () -> bucketConfig)
+            .tryConsume(1);
+}
+```
+
+This gives you distributed rate limiting across multiple application instances -- the default in-memory implementation limits per-JVM only.
 
 ---
 
@@ -618,7 +638,7 @@ public class CustomValidatorConfig {
     public L402Validator l402Validator(RootKeyStore rootKeyStore,
                                        CredentialStore credentialStore) {
         return new L402Validator(rootKeyStore, credentialStore,
-                List.of(new ServicesCaveatVerifier(), new MyCustomCaveatVerifier()),
+                List.of(new ServicesCaveatVerifier(50), new MyCustomCaveatVerifier()),
                 "my-service");
     }
 }
@@ -633,7 +653,7 @@ public class CustomCaveatConfig {
     @Bean("caveatVerifiers")
     public List<CaveatVerifier> caveatVerifiers() {
         return List.of(
-                new ServicesCaveatVerifier(),
+                new ServicesCaveatVerifier(50),
                 new ValidUntilCaveatVerifier("my-service"),
                 new MyCustomCaveatVerifier()
         );
@@ -706,7 +726,8 @@ paygate-spring-autoconfigure/
     PaygateMeterFilter.java                  Micrometer meter filter for endpoint cardinality
     PaygateEarningsTracker.java              In-memory invoice/earnings tracker
     PaygateRateLimiter.java                  @FunctionalInterface for rate limiting
-    TokenBucketRateLimiter.java              IP-based token bucket implementation
+    CaffeineTokenBucketRateLimiter.java      Caffeine-backed rate limiter (primary)
+    TokenBucketRateLimiter.java              JDK-only rate limiter (fallback)
     PaygatePricingStrategy.java              @FunctionalInterface for dynamic pricing
     TestModeLightningBackend.java            Dummy backend for test mode
     MacaroonClientInterceptor.java           gRPC interceptor for LND macaroon auth

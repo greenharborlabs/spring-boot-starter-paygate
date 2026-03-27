@@ -1,5 +1,7 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;

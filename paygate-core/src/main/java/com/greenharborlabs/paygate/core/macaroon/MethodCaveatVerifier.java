@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -32,54 +29,35 @@ public class MethodCaveatVerifier implements CaveatVerifier {
         String requestMethod = context.getRequestMetadata()
                 .get(VerificationContextKeys.REQUEST_METHOD);
         if (requestMethod == null) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Request method missing from verification context", null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Request method missing from verification context");
         }
 
-        // 2. Split caveat value by comma
-        String[] rawMethods = caveat.value().split(",", -1);
+        // 2. Split, bounds-check, and trim caveat value
+        String[] methods = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat, "method");
 
-        // 3. Reject if method count exceeds max
-        if (rawMethods.length > maxValuesPerCaveat) {
-            throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                    "Method caveat contains " + rawMethods.length
-                            + " values, exceeding maximum of " + maxValuesPerCaveat, null);
-        }
-
-        // 4. Reject if any method is empty after trim
-        for (String raw : rawMethods) {
-            if (raw.trim().isEmpty()) {
-                throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                        "Empty method in caveat value", null);
-            }
-        }
-
-        // 5. Match request method against each allowed method (case-insensitive)
-        for (String raw : rawMethods) {
-            if (requestMethod.equalsIgnoreCase(raw.trim())) {
+        // 3. Match request method against each allowed method (case-insensitive)
+        for (String method : methods) {
+            if (requestMethod.equalsIgnoreCase(method)) {
                 return;
             }
         }
 
         // 6. No method matched — reject
-        throw new L402Exception(ErrorCode.INVALID_SERVICE,
-                "Request method does not match any allowed method", null);
+        throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                "Request method does not match any allowed method");
     }
 
     @Override
     public boolean isMoreRestrictive(Caveat previous, Caveat current) {
-        // Split once and reuse for both the guard check and the subset computation
-        String[] previousRaw = previous.value().split(",", -1);
-        String[] currentRaw = current.value().split(",", -1);
-
         // Reject oversized caveats before expensive subset-containment check
-        if (previousRaw.length > maxValuesPerCaveat
-                || currentRaw.length > maxValuesPerCaveat) {
+        if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
+                || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
             return false;
         }
 
-        Set<String> previousSet = toMethodSet(previousRaw);
-        Set<String> currentSet = toMethodSet(currentRaw);
+        Set<String> previousSet = toMethodSet(previous.value().split(",", -1));
+        Set<String> currentSet = toMethodSet(current.value().split(",", -1));
         return previousSet.containsAll(currentSet);
     }
 

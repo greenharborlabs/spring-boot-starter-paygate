@@ -178,7 +178,9 @@ public class PaygateSecurityFilter implements Filter {
                         // Consume rate limiter token on auth failure to penalize brute-force probing
                         PaygateRateLimiter limiter = this.rateLimiter;
                         if (limiter != null) {
-                            limiter.tryAcquire(this.challengeService.resolveClientIp(httpRequest));
+                            limiter.tryAcquire(this.clientIpResolver != null
+                                ? this.clientIpResolver.resolve(httpRequest)
+                                : httpRequest.getRemoteAddr());
                         }
                         // Sanitize the token ID before logging — it is derived from user-supplied input
                         // and could contain newlines or other control characters used in log injection attacks.

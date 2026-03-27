@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import com.greenharborlabs.paygate.core.protocol.ErrorCode;
-import com.greenharborlabs.paygate.core.protocol.L402Exception;
-
 import java.time.Instant;
 import java.util.Objects;
 
@@ -25,15 +22,14 @@ public class ValidUntilCaveatVerifier implements CaveatVerifier {
         try {
             epochSeconds = Long.parseLong(caveat.value());
         } catch (NumberFormatException e) {
-            throw new L402Exception(ErrorCode.EXPIRED_CREDENTIAL,
-                    "Invalid valid_until timestamp: " + caveat.value(), null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CREDENTIAL_EXPIRED,
+                    "Invalid valid_until timestamp: " + caveat.value());
         }
         Instant expiresAt = Instant.ofEpochSecond(epochSeconds);
 
         if (!expiresAt.isAfter(context.getCurrentTime())) {
-            throw new L402Exception(ErrorCode.EXPIRED_CREDENTIAL,
-                    "Credential expired at " + expiresAt + " (current time: " + context.getCurrentTime() + ")",
-                    null);
+            throw new MacaroonVerificationException(VerificationFailureReason.CREDENTIAL_EXPIRED,
+                    "Credential expired at " + expiresAt + " (current time: " + context.getCurrentTime() + ")");
         }
     }
 

@@ -118,7 +118,7 @@ class FailClosedTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
             var l402Protocol = new L402Protocol(validator, "test-service");
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, null, null);
+                    rootKeyStore, lightningBackendBean, null, null, null, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
                     null, null, null, null);
@@ -305,12 +305,12 @@ class FailClosedTest {
         public GenerationResult generateRootKey() {
             byte[] tokenId = new byte[32];
             new SecureRandom().nextBytes(tokenId);
-            return new GenerationResult(new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(rootKey.clone()), tokenId);
+            return new GenerationResult(new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone()), tokenId);
         }
 
         @Override
-        public com.greenharborlabs.paygate.core.macaroon.SensitiveBytes getRootKey(byte[] keyId) {
-            return new com.greenharborlabs.paygate.core.macaroon.SensitiveBytes(rootKey.clone());
+        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
+            return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone());
         }
 
         @Override

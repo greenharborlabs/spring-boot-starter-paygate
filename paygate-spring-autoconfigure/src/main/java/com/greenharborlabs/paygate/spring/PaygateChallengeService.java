@@ -34,29 +34,29 @@ public class PaygateChallengeService {
 
     private final RootKeyStore rootKeyStore;
     private final LightningBackend lightningBackend;
-    private final PaygateProperties properties;
     private final ApplicationContext applicationContext;
     private final String serviceName;
 
     private final PaygateEarningsTracker earningsTracker;
     private final PaygateRateLimiter rateLimiter;
+    private final ClientIpResolver clientIpResolver;
     private final ConcurrentHashMap<String, PaygatePricingStrategy> pricingStrategyCache = new ConcurrentHashMap<>();
-    private volatile boolean reverseProxyWarningLogged;
 
     public PaygateChallengeService(RootKeyStore rootKeyStore,
                                  LightningBackend lightningBackend,
                                  @Nullable PaygateProperties properties,
                                  @Nullable ApplicationContext applicationContext,
                                  @Nullable PaygateEarningsTracker earningsTracker,
-                                 @Nullable PaygateRateLimiter rateLimiter) {
+                                 @Nullable PaygateRateLimiter rateLimiter,
+                                 @Nullable ClientIpResolver clientIpResolver) {
         this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
         this.lightningBackend = Objects.requireNonNull(lightningBackend, "lightningBackend must not be null");
-        this.properties = properties;
         this.applicationContext = applicationContext;
         String svcName = (properties != null) ? properties.getServiceName() : null;
         this.serviceName = (svcName == null || svcName.isBlank()) ? "default" : svcName;
         this.earningsTracker = earningsTracker;
         this.rateLimiter = rateLimiter;
+        this.clientIpResolver = clientIpResolver;
     }
 
     /**
@@ -88,7 +88,10 @@ public class PaygateChallengeService {
 
         // 2. Check rate limit
         PaygateRateLimiter limiter = this.rateLimiter;
-        if (limiter != null && !limiter.tryAcquire(resolveClientIp(request))) {
+        String clientIp = clientIpResolver != null
+                ? clientIpResolver.resolve(request)
+                : request.getRemoteAddr();
+        if (limiter != null && !limiter.tryAcquire(clientIp)) {
             throw new PaygateRateLimitedException("Rate limit exceeded for client");
         }
 
@@ -230,33 +233,4 @@ public class PaygateChallengeService {
         return bolt11;
     }
 
-    /**
-     * Extracts the client IP address. Only reads the X-Forwarded-For header
-     * when {@code trustForwardedHeaders} is explicitly enabled in properties,
-     * to prevent rate-limit bypass via header spoofing.
-     */
-    String resolveClientIp(HttpServletRequest request) {
-        if (this.properties != null && this.properties.isTrustForwardedHeaders()) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                // X-Forwarded-For: client, proxy1, proxy2 -- take leftmost
-                int comma = xff.indexOf(',');
-                String ip = (comma > 0 ? xff.substring(0, comma) : xff).strip();
-                if (!ip.isEmpty()) {
-                    return ip;
-                }
-            }
-        } else if (!reverseProxyWarningLogged) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                reverseProxyWarningLogged = true;
-                log.log(System.Logger.Level.WARNING,
-                        "X-Forwarded-For header detected but trustForwardedHeaders is false. "
-                                + "Rate limiting uses the direct remote address, which may be the proxy IP. "
-                                + "If this service is behind a reverse proxy, set paygate.trust-forwarded-headers=true "
-                                + "to use the client IP from X-Forwarded-For for rate limiting.");
-            }
-        }
-        return request.getRemoteAddr();
-    }
 }

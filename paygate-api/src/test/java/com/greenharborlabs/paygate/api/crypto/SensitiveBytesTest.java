@@ -1,4 +1,4 @@
-package com.greenharborlabs.paygate.core.macaroon;
+package com.greenharborlabs.paygate.api.crypto;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -269,6 +269,117 @@ class SensitiveBytesTest {
             doneLatch.await();
             assertThat(errors).isEmpty();
             assertThat(sb.isDestroyed()).isTrue();
+        }
+
+        @Test
+        @DisplayName("concurrent equals and destroy produces consistent results")
+        void concurrent_equals_and_destroy_consistent() throws Exception {
+            int iterations = 500;
+            var errors = new ConcurrentLinkedQueue<Throwable>();
+
+            for (int iter = 0; iter < iterations; iter++) {
+                var a = new SensitiveBytes(new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
+                var b = new SensitiveBytes(new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
+                var startLatch = new CountDownLatch(1);
+                var doneLatch = new CountDownLatch(2);
+
+                // Thread 1: destroy b
+                Thread.startVirtualThread(() -> {
+                    try {
+                        startLatch.await();
+                        b.destroy();
+                    } catch (Throwable t) {
+                        errors.add(t);
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                });
+
+                // Thread 2: call a.equals(b) — result must be consistent:
+                //   true  = both were alive during comparison (valid)
+                //   false = at least one was destroyed during comparison (valid)
+                // The old bug: equals() could read other.destroyed=false but then
+                // compare against zeroed data (TOCTOU), producing an incorrect false
+                // without the destroyed flag being set — or no exception is thrown.
+                // With correct locking, equals() must not throw any exception.
+                Thread.startVirtualThread(() -> {
+                    try {
+                        startLatch.await();
+                        // Must not throw — either returns true or false
+                        a.equals(b);
+                    } catch (Throwable t) {
+                        errors.add(t);
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                });
+
+                startLatch.countDown();
+                doneLatch.await();
+            }
+            assertThat(errors).isEmpty();
+        }
+
+        @Test
+        @DisplayName("equals under concurrent destroy on other never observes partial state")
+        void concurrent_equals_destroy_atomicity() throws Exception {
+            // Verify that equals() + destroy() on the other operand are serialized:
+            // If we call equals() many times while another thread destroys 'other',
+            // every equals() call must return either true (both alive) or false
+            // (at least one destroyed) — never a corrupted comparison.
+            int iterations = 200;
+            var errors = new ConcurrentLinkedQueue<Throwable>();
+
+            for (int iter = 0; iter < iterations; iter++) {
+                var a = new SensitiveBytes(new byte[]{9, 8, 7, 6, 5, 4, 3, 2});
+                var b = new SensitiveBytes(new byte[]{9, 8, 7, 6, 5, 4, 3, 2});
+                var startLatch = new CountDownLatch(1);
+                var doneLatch = new CountDownLatch(3);
+
+                // Thread 1: rapidly call equals from a's perspective
+                Thread.startVirtualThread(() -> {
+                    try {
+                        startLatch.await();
+                        for (int i = 0; i < 50; i++) {
+                            a.equals(b);
+                        }
+                    } catch (Throwable t) {
+                        errors.add(t);
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                });
+
+                // Thread 2: rapidly call equals from b's perspective
+                Thread.startVirtualThread(() -> {
+                    try {
+                        startLatch.await();
+                        for (int i = 0; i < 50; i++) {
+                            b.equals(a);
+                        }
+                    } catch (Throwable t) {
+                        errors.add(t);
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                });
+
+                // Thread 3: destroy b mid-flight
+                Thread.startVirtualThread(() -> {
+                    try {
+                        startLatch.await();
+                        b.destroy();
+                    } catch (Throwable t) {
+                        errors.add(t);
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                });
+
+                startLatch.countDown();
+                doneLatch.await();
+            }
+            assertThat(errors).isEmpty();
         }
 
         @Test

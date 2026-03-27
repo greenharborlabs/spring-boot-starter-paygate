@@ -102,7 +102,7 @@ cd integration-tests && docker-compose up --build   # Run Docker-based integrati
 - **Coverage minimums**: paygate-core ≥80%, other modules ≥60%, example app ≥40%
 - No compilation warnings, clean code inspection passes
 - Javadoc for public APIs, inline comments only where necessary
-- Avoid unnecessary object creation; use `ThreadLocal` for reusable resources (e.g., `Mac` instances)
+- For JCA objects (e.g., `Mac`), call `Mac.getInstance()` fresh per operation rather than caching in a `ThreadLocal`; JCA provider lookups are cached after the first call so the cost is negligible, and `ThreadLocal` is problematic with virtual threads (pinning, memory leaks)
 
 ---
 

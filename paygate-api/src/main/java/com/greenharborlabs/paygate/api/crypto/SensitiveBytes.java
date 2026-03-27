@@ -1,4 +1,4 @@
-package com.greenharborlabs.paygate.core.macaroon;
+package com.greenharborlabs.paygate.api.crypto;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -16,6 +16,13 @@ import javax.security.auth.Destroyable;
  * {@code Serializable} to prevent bypassing the zeroization lifecycle.
  */
 public final class SensitiveBytes implements AutoCloseable, Destroyable {
+
+    /**
+     * Tie-breaker lock for the rare case when two distinct instances have the same
+     * {@code System.identityHashCode}. Acquiring this lock first guarantees a total
+     * order even when the identity hash codes collide.
+     */
+    private static final ReentrantLock TIE_BREAKER_LOCK = new ReentrantLock();
 
     private final byte[] data;
     private volatile boolean destroyed;
@@ -35,7 +42,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
             throw new IllegalArgumentException("Key material must not be empty");
         }
         this.data = Arrays.copyOf(raw, raw.length);
-        KeyMaterial.zeroize(raw);
+        CryptoUtils.zeroize(raw);
     }
 
     /**
@@ -64,7 +71,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
         lock.lock();
         try {
             if (!destroyed) {
-                KeyMaterial.zeroize(data);
+                CryptoUtils.zeroize(data);
                 destroyed = true;
             }
         } finally {
@@ -86,19 +93,41 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
     }
 
     /**
-     * Constant-time equality comparison using {@link MacaroonCrypto#constantTimeEquals}.
+     * Constant-time equality comparison using {@link CryptoUtils#constantTimeEquals}.
      * Two destroyed instances are never equal.
      */
     @Override
     public boolean equals(Object o) {
-        lock.lock();
+        if (this == o) return true;
+        if (!(o instanceof SensitiveBytes other)) return false;
+
+        // Acquire both locks in System.identityHashCode order to prevent deadlock.
+        int thisHash = System.identityHashCode(this);
+        int otherHash = System.identityHashCode(other);
+
+        if (thisHash < otherHash) {
+            this.lock.lock();
+            other.lock.lock();
+        } else if (thisHash > otherHash) {
+            other.lock.lock();
+            this.lock.lock();
+        } else {
+            // Identity hash collision — use global tie-breaker to establish order
+            TIE_BREAKER_LOCK.lock();
+            try {
+                this.lock.lock();
+                other.lock.lock();
+            } finally {
+                TIE_BREAKER_LOCK.unlock();
+            }
+        }
+
         try {
-            if (this == o) return true;
-            if (!(o instanceof SensitiveBytes other)) return false;
             if (this.destroyed || other.destroyed) return false;
-            return MacaroonCrypto.constantTimeEquals(this.data, other.data);
+            return CryptoUtils.constantTimeEquals(this.data, other.data);
         } finally {
-            lock.unlock();
+            other.lock.unlock();
+            this.lock.unlock();
         }
     }
 

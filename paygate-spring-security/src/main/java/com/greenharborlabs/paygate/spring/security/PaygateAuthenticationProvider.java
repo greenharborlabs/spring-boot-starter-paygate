@@ -67,7 +67,6 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
                                             L402HeaderComponents components) {
         L402VerificationContext context = L402VerificationContext.builder()
                 .serviceName(serviceName)
-                .requestedCapability(token.getRequestedCapability())
                 .requestMetadata(token.getRequestMetadata())
                 .currentTime(Instant.now())
                 .build();

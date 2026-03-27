@@ -1,5 +1,7 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.HexFormat;

@@ -135,7 +135,7 @@ L402AuthenticationFilter (OncePerRequestFilter)
      |   L402AuthenticationProvider
      |       |
      |       |-- Reconstructs "L402 <macaroon>:<preimage>" header
-     |       |-- Builds L402VerificationContext with requestedCapability
+     |       |-- Builds L402VerificationContext with requestMetadata (including capability)
      |       |-- Delegates to L402Validator.validate() (includes CapabilitiesCaveatVerifier)
      |       |-- Returns authenticated L402AuthenticationToken with:
      |       |     - ROLE_L402 authority
@@ -420,7 +420,7 @@ Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no c
 
 Capability enforcement happens at two levels:
 
-1. **Macaroon verification (core layer):** The `L402AuthenticationProvider` builds an `L402VerificationContext` with the `requestedCapability` resolved from the endpoint's `@PaymentRequired` configuration. The `CapabilitiesCaveatVerifier` checks that the requested capability is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
+1. **Macaroon verification (core layer):** The `L402AuthenticationProvider` builds an `L402VerificationContext` with `requestMetadata` that includes the requested capability (via `VerificationContextKeys.REQUESTED_CAPABILITY`) resolved from the endpoint's `@PaymentRequired` configuration. The `CapabilitiesCaveatVerifier` reads the capability from the metadata map and checks that it is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
 
 2. **Spring Security authorization (security layer):** The `L402AuthenticationToken.authenticated()` factory method parses the `{serviceName}_capabilities` caveat and maps each capability to a `GrantedAuthority` named `L402_CAPABILITY_{name}`. These authorities are available to `@PreAuthorize` expressions and `authorizeHttpRequests` rules.
 

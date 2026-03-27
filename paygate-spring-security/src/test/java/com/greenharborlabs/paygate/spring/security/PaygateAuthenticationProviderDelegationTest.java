@@ -197,7 +197,7 @@ class PaygateAuthenticationProviderDelegationTest {
             when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(
-                    authHeader, "read", Map.of());
+                    authHeader, Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "read"));
 
             Authentication result = provider.authenticate(unauthToken);
 
@@ -225,7 +225,7 @@ class PaygateAuthenticationProviderDelegationTest {
             when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(
-                    authHeader, "read", metadata);
+                    authHeader, metadata);
 
             provider.authenticate(unauthToken);
 
@@ -251,7 +251,7 @@ class PaygateAuthenticationProviderDelegationTest {
                     .when(mppProtocol).validate(eq(credential), any());
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(
-                    authHeader, null, Map.of());
+                    authHeader, Map.of());
 
             assertThatThrownBy(() -> provider.authenticate(unauthToken))
                     .isInstanceOf(BadCredentialsException.class)
@@ -269,7 +269,7 @@ class PaygateAuthenticationProviderDelegationTest {
                             PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL, "cannot parse"));
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(
-                    authHeader, null, Map.of());
+                    authHeader, Map.of());
 
             assertThatThrownBy(() -> provider.authenticate(unauthToken))
                     .isInstanceOf(BadCredentialsException.class)
@@ -284,7 +284,7 @@ class PaygateAuthenticationProviderDelegationTest {
             when(mppProtocol.canHandle(authHeader)).thenReturn(false);
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(
-                    authHeader, null, Map.of());
+                    authHeader, Map.of());
 
             assertThatThrownBy(() -> provider.authenticate(unauthToken))
                     .isInstanceOf(BadCredentialsException.class)
@@ -330,7 +330,6 @@ class PaygateAuthenticationProviderDelegationTest {
                 VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
         return new PaygateAuthenticationToken(
                 new L402HeaderComponents("L402", "dGVzdG1hY2Fyb29u", "a".repeat(64)),
-                "read",
                 metadata);
     }
 

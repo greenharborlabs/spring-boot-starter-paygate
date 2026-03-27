@@ -42,7 +42,6 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -184,8 +183,8 @@ public class PaygateAutoConfiguration {
             svcName = "default";
         }
         int maxValues = properties.getCaveat().getMaxValuesPerCaveat();
-        return List.of(new ServicesCaveatVerifier(), new ValidUntilCaveatVerifier(svcName),
-                new CapabilitiesCaveatVerifier(svcName), new PathCaveatVerifier(maxValues),
+        return List.of(new ServicesCaveatVerifier(maxValues), new ValidUntilCaveatVerifier(svcName),
+                new CapabilitiesCaveatVerifier(svcName, maxValues), new PathCaveatVerifier(maxValues),
                 new MethodCaveatVerifier(maxValues), new ClientIpCaveatVerifier(maxValues));
     }
 
@@ -232,18 +231,23 @@ public class PaygateAutoConfiguration {
     @Conditional(PaygateAutoConfiguration.MppEnabledCondition.class)
     static class MppProtocolConfiguration {
 
+        @Bean(destroyMethod = "destroy")
+        @ConditionalOnMissingBean(name = "mppChallengeBindingSecret")
+        com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret(
+                PaygateProperties properties,
+                ProtocolStartupValidator _validator) {
+            String secret = properties.getProtocols().getMpp().getChallengeBindingSecret();
+            byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
+            return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(secretBytes);
+        }
+
         @Bean
         @ConditionalOnMissingBean(name = "mppProtocol")
         @Order(2)
-        PaymentProtocol mppProtocol(PaygateProperties properties,
-                                     ProtocolStartupValidator _validator) {
-            String secret = properties.getProtocols().getMpp().getChallengeBindingSecret();
-            byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
-            try {
-                return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(secretBytes);
-            } finally {
-                Arrays.fill(secretBytes, (byte) 0);
-            }
+        PaymentProtocol mppProtocol(
+                com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret,
+                ProtocolStartupValidator _validator) {
+            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(mppChallengeBindingSecret);
         }
     }
 
@@ -348,11 +352,28 @@ public class PaygateAutoConfiguration {
         return registry;
     }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public PaygateRateLimiter paygateRateLimiter(PaygateProperties properties) {
-        var rl = properties.getRateLimit();
-        return new TokenBucketRateLimiter(rl.getBurstSize(), rl.getRequestsPerSecond());
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "com.github.benmanes.caffeine.cache.Caffeine")
+    static class CaffeineRateLimiterConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        PaygateRateLimiter paygateRateLimiter(PaygateProperties properties) {
+            var rl = properties.getRateLimit();
+            return new CaffeineTokenBucketRateLimiter(
+                    rl.getBurstSize(), rl.getRequestsPerSecond(), rl.getMaxBuckets(),
+                    System::nanoTime, com.github.benmanes.caffeine.cache.Ticker.systemTicker());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnMissingClass("com.github.benmanes.caffeine.cache.Caffeine")
+    static class InMemoryRateLimiterConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        PaygateRateLimiter paygateRateLimiter(PaygateProperties properties) {
+            var rl = properties.getRateLimit();
+            return new TokenBucketRateLimiter(rl.getBurstSize(), rl.getRequestsPerSecond(), rl.getMaxBuckets());
+        }
     }
 
     @Bean
@@ -362,9 +383,10 @@ public class PaygateAutoConfiguration {
                                                       PaygateProperties properties,
                                                       ApplicationContext applicationContext,
                                                       @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
-                                                      @Autowired(required = false) PaygateRateLimiter paygateRateLimiter) {
+                                                      @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
+                                                      @Autowired(required = false) ClientIpResolver clientIpResolver) {
         return new PaygateChallengeService(rootKeyStore, lightningBackend,
-                properties, applicationContext, paygateEarningsTracker, paygateRateLimiter);
+                properties, applicationContext, paygateEarningsTracker, paygateRateLimiter, clientIpResolver);
     }
 
     @Bean

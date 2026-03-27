@@ -8,7 +8,7 @@ import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.ObservableRootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
-import com.greenharborlabs.paygate.core.macaroon.SensitiveBytes;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 
 import org.junit.jupiter.api.DisplayName;

@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.GrantedAuthority;
@@ -222,11 +223,11 @@ class PaygateAuthenticationTokenTest {
     @Test
     void unauthenticatedProtocolAgnosticTokenHoldsAuthorizationHeader() {
         var token = PaygateAuthenticationToken.unauthenticated(
-                "Payment preimage=abcd1234", "read", Map.of("method", "GET"));
+                "Payment preimage=abcd1234", Map.of("method", "GET", VerificationContextKeys.REQUESTED_CAPABILITY, "read"));
 
         assertThat(token.isAuthenticated()).isFalse();
         assertThat(token.getAuthorizationHeader()).isEqualTo("Payment preimage=abcd1234");
-        assertThat(token.getRequestedCapability()).isEqualTo("read");
+        assertThat(token.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("read");
         assertThat(token.getRequestMetadata()).containsEntry("method", "GET");
         assertThat(token.getComponents()).isNull();
         assertThat(token.getTokenId()).isNull();
@@ -237,7 +238,7 @@ class PaygateAuthenticationTokenTest {
     @Test
     void unauthenticatedProtocolAgnosticTokenRedactsSensitiveValues() {
         var token = PaygateAuthenticationToken.unauthenticated(
-                "Payment preimage=secret", null, Map.of());
+                "Payment preimage=secret", Map.of());
 
         assertThat(token.getPrincipal()).isEqualTo("[unauthenticated]");
         assertThat(token.getCredentials()).isEqualTo("[REDACTED]");
@@ -246,7 +247,7 @@ class PaygateAuthenticationTokenTest {
     @Test
     void unauthenticatedProtocolAgnosticTokenRejectsNullHeader() {
         assertThatThrownBy(() -> PaygateAuthenticationToken.unauthenticated(
-                null, "read", Map.of()))
+                null, Map.of()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("authorizationHeader");
     }
@@ -254,23 +255,23 @@ class PaygateAuthenticationTokenTest {
     @Test
     void unauthenticatedProtocolAgnosticTokenRejectsNullMetadata() {
         assertThatThrownBy(() -> PaygateAuthenticationToken.unauthenticated(
-                "Payment preimage=x", "read", null))
+                "Payment preimage=x", null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("requestMetadata");
     }
 
     @Test
-    void unauthenticatedProtocolAgnosticTokenAcceptsNullCapability() {
+    void unauthenticatedProtocolAgnosticTokenAcceptsAbsentCapability() {
         var token = PaygateAuthenticationToken.unauthenticated(
-                "Payment preimage=x", null, Map.of());
+                "Payment preimage=x", Map.of());
 
-        assertThat(token.getRequestedCapability()).isNull();
+        assertThat(token.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isNull();
     }
 
     @Test
     void unauthenticatedProtocolAgnosticTokenAcceptsEmptyMetadata() {
         var token = PaygateAuthenticationToken.unauthenticated(
-                "Payment preimage=x", "write", Map.of());
+                "Payment preimage=x", Map.of());
 
         assertThat(token.getRequestMetadata()).isEmpty();
     }
@@ -418,13 +419,14 @@ class PaygateAuthenticationTokenTest {
     }
 
     @Test
-    void threeArgConstructorPreservesRequestMetadata() {
+    void twoArgConstructorPreservesRequestMetadata() {
         var components = new L402HeaderComponents("L402", "mac-base64", "abcd".repeat(16));
-        var metadata = Map.of("path", "/api/data", "method", "POST", "client_ip", "10.0.0.1");
-        var token = new PaygateAuthenticationToken(components, "write", metadata);
+        var metadata = Map.of("path", "/api/data", "method", "POST", "client_ip", "10.0.0.1",
+                VerificationContextKeys.REQUESTED_CAPABILITY, "write");
+        var token = new PaygateAuthenticationToken(components, metadata);
 
         assertThat(token.getRequestMetadata()).isEqualTo(metadata);
-        assertThat(token.getRequestedCapability()).isEqualTo("write");
+        assertThat(token.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY)).isEqualTo("write");
         assertThat(token.getComponents()).isSameAs(components);
     }
 
@@ -463,7 +465,7 @@ class PaygateAuthenticationTokenTest {
     @Test
     void setAuthenticatedTrueThrowsOnProtocolAgnosticUnauthenticatedToken() {
         var token = PaygateAuthenticationToken.unauthenticated(
-                "Payment preimage=x", "read", Map.of());
+                "Payment preimage=x", Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "read"));
 
         assertThatThrownBy(() -> token.setAuthenticated(true))
                 .isInstanceOf(IllegalArgumentException.class)
