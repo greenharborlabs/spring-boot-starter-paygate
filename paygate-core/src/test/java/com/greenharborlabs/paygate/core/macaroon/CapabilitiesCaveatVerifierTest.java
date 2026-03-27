@@ -63,15 +63,20 @@ class CapabilitiesCaveatVerifierTest {
         }
 
         @Test
-        @DisplayName("passes when capability is absent from metadata (permissive skip)")
-        void passesWhenRequestedCapabilityIsNull() {
+        @DisplayName("rejects when capability is absent from metadata (fail-closed)")
+        void rejectsWhenRequestedCapabilityIsNull() {
             var caveat = new Caveat("my-api_capabilities", "search,analyze");
             var context = L402VerificationContext.builder()
                     .serviceName(SERVICE_NAME)
                     .build();
 
-            assertThatCode(() -> verifier.verify(caveat, context))
-                    .doesNotThrowAnyException();
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .satisfies(e -> {
+                        var ex = (MacaroonVerificationException) e;
+                        assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+                        assertThat(ex.getMessage()).contains("no capability declared");
+                    });
         }
 
         @Test

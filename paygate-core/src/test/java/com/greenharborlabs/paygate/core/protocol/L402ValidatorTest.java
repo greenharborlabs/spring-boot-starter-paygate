@@ -620,7 +620,15 @@ class L402ValidatorTest {
             L402Validator validator = new L402Validator(
                     rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
 
-            assertThatThrownBy(() -> validator.validate(header))
+            // Provide a requested capability so the verifier can proceed past
+            // the first caveat and detect escalation in the second caveat.
+            L402VerificationContext context = L402VerificationContext.builder()
+                    .serviceName(SERVICE_NAME)
+                    .currentTime(Instant.now())
+                    .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
+                    .build();
+
+            assertThatThrownBy(() -> validator.validate(header, context))
                     .isInstanceOf(L402Exception.class)
                     .satisfies(ex -> {
                         L402Exception l402Ex = (L402Exception) ex;

@@ -561,6 +561,33 @@ class MacaroonVerifierTest {
         }
 
         @Test
+        @DisplayName("rejects capabilities caveat when no capability is requested (fail-closed)")
+        void rejectsCapabilitiesCaveatWhenNoCapabilityRequested() {
+            L402VerificationContext ctx = L402VerificationContext.builder()
+                    .serviceName("test-service")
+                    .build();
+
+            List<Caveat> caveats = List.of(
+                    new Caveat("services", "test-service:0"),
+                    new Caveat("test-service_capabilities", "search")
+            );
+            List<CaveatVerifier> verifiers = List.of(
+                    new ServicesCaveatVerifier(50),
+                    new CapabilitiesCaveatVerifier("test-service", 50)
+            );
+
+            assertThatThrownBy(() ->
+                    MacaroonVerifier.verifyCaveats(caveats, verifiers, ctx)
+            ).isInstanceOf(MacaroonVerificationException.class)
+             .satisfies(ex -> {
+                 MacaroonVerificationException mve = (MacaroonVerificationException) ex;
+                 org.assertj.core.api.Assertions.assertThat(mve.getReason())
+                         .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+             })
+             .hasMessageContaining("no capability declared");
+        }
+
+        @Test
         @DisplayName("rejects on cached path (direct verifyCaveats call) when capabilities caveat missing")
         void rejectsOnCachedPath() {
             // This simulates the cached credential path where verifyCaveats is called

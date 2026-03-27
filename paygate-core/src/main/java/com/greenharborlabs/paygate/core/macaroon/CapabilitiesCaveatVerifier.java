@@ -10,9 +10,9 @@ import java.util.Set;
  * The caveat value is a comma-separated list of capability names (e.g., "search,analyze").
  * Verification checks that the requested capability is present in the allowed list.
  *
- * <p>If the context does not specify a requested capability (null), verification is permissive
- * and passes without checking. If the capabilities list in the caveat is empty, all requests
- * are rejected.
+ * <p>If the context does not specify a requested capability (null), verification fails closed
+ * by throwing {@link MacaroonVerificationException}. Endpoints must declare which capability
+ * they provide. If the capabilities list in the caveat is empty, all requests are rejected.
  */
 public class CapabilitiesCaveatVerifier implements CaveatVerifier {
 
@@ -36,7 +36,8 @@ public class CapabilitiesCaveatVerifier implements CaveatVerifier {
     public void verify(Caveat caveat, L402VerificationContext context) {
         String requested = context.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY);
         if (requested == null) {
-            return;
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Capabilities caveat present but no capability declared by endpoint");
         }
 
         String[] segments = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat,
