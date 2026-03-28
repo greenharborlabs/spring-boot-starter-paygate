@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -32,7 +33,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -508,7 +508,7 @@ class PaygateAuthenticationFilterTest {
     @Test
     void l402TakesPrecedenceOverProtocolMatch() throws ServletException, IOException {
         // Use a lenient mock since canHandle should NOT be called when L402 is detected first
-        PaymentProtocol alwaysMatch = mock(PaymentProtocol.class, withSettings().lenient());
+        PaymentProtocol alwaysMatch = mock(PaymentProtocol.class, withSettings().strictness(Strictness.LENIENT));
         when(alwaysMatch.canHandle(anyString())).thenReturn(true);
         filter = new PaygateAuthenticationFilter(authenticationManager, List.of(alwaysMatch), endpointRegistry);
 
@@ -559,30 +559,30 @@ class PaygateAuthenticationFilterTest {
     // --- shouldNotFilter tests ---
 
     @Test
-    void shouldNotFilterWhenNoAuthorizationHeader() throws ServletException {
+    void shouldNotFilterWhenNoAuthorizationHeader() {
         assertThat(filter.shouldNotFilter(request)).isTrue();
     }
 
     @Test
-    void shouldNotFilterWhenBlankAuthorizationHeader() throws ServletException {
+    void shouldNotFilterWhenBlankAuthorizationHeader() {
         request.addHeader("Authorization", "   ");
         assertThat(filter.shouldNotFilter(request)).isTrue();
     }
 
     @Test
-    void shouldNotFilterWhenUnrecognizedAuthScheme() throws ServletException {
+    void shouldNotFilterWhenUnrecognizedAuthScheme() {
         request.addHeader("Authorization", "Bearer some-jwt-token");
         assertThat(filter.shouldNotFilter(request)).isTrue();
     }
 
     @Test
-    void shouldFilterWhenL402AuthorizationHeader() throws ServletException {
+    void shouldFilterWhenL402AuthorizationHeader() {
         request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
         assertThat(filter.shouldNotFilter(request)).isFalse();
     }
 
     @Test
-    void shouldFilterWhenMppProtocolMatches() throws ServletException {
+    void shouldFilterWhenMppProtocolMatches() {
         filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mockMppProtocol()), endpointRegistry);
         request.addHeader("Authorization", "Payment preimage=abc123");
         assertThat(filter.shouldNotFilter(request)).isFalse();
@@ -591,7 +591,7 @@ class PaygateAuthenticationFilterTest {
     // --- Receipt generation tests ---
 
     private PaymentProtocol mockMppProtocolWithScheme() {
-        PaymentProtocol protocol = mock(PaymentProtocol.class, withSettings().lenient());
+        PaymentProtocol protocol = mock(PaymentProtocol.class, withSettings().strictness(Strictness.LENIENT));
         when(protocol.canHandle(anyString())).thenAnswer(invocation -> {
             String header = invocation.getArgument(0);
             return header.startsWith("Payment ");
