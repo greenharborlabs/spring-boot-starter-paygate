@@ -145,7 +145,7 @@ public class PaygateSecurityFilter implements Filter {
                         recordCaveatVerifyDuration(verifyStart);
                         // Treat all validated credentials as freshValidation=true; the credential
                         // cache inside L402Validator handles deduplication internally.
-                        recordPassed(config.pathPattern(), config.priceSats(), true, protocol.scheme());
+                        recordPassed(config.pathPattern(), config.priceSats(), protocol.scheme());
                         return;
 
                     } catch (PaymentValidationException e) {
@@ -227,7 +227,7 @@ public class PaygateSecurityFilter implements Filter {
             ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
             List<ChallengeResponse> challenges = buildChallenges(challengeContext);
             PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
-            recordChallenge(config.pathPattern(), "all");
+            recordChallenge(config.pathPattern());
         } catch (PaygateRateLimitedException _) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
         } catch (PaygateLightningUnavailableException e) {
@@ -356,26 +356,24 @@ public class PaygateSecurityFilter implements Filter {
         return Instant.now().plus(config.timeoutSeconds(), ChronoUnit.SECONDS);
     }
 
-    private void recordChallenge(String endpoint, String protocol) {
+    private void recordChallenge(String endpoint) {
         try {
-            if (metrics != null) { metrics.recordChallenge(endpoint, protocol); }
+            if (metrics != null) { metrics.recordChallenge(endpoint, "all"); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record challenge metric: {0}", e.getMessage());
         }
     }
 
-    private void recordPassed(String endpoint, long priceSats, boolean freshValidation, String protocol) {
+    private void recordPassed(String endpoint, long priceSats, String protocol) {
         try {
             if (metrics != null) { metrics.recordPassed(endpoint, priceSats, protocol); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record passed metric: {0}", e.getMessage());
         }
-        if (freshValidation) {
-            try {
-                if (earningsTracker != null) { earningsTracker.recordInvoiceSettled(priceSats); }
-            } catch (Exception e) {
-                log.log(System.Logger.Level.WARNING, "Failed to record invoice settlement in earnings tracker: {0}", e.getMessage());
-            }
+        try {
+            if (earningsTracker != null) { earningsTracker.recordInvoiceSettled(priceSats); }
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Failed to record invoice settlement in earnings tracker: {0}", e.getMessage());
         }
     }
 
