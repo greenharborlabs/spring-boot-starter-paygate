@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.spring.CapabilityCache;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -47,8 +48,9 @@ public class PaygateSecurityAutoConfiguration {
     public PaygateAuthenticationProvider paygateAuthenticationProvider(
             L402Validator l402Validator,
             List<PaymentProtocol> protocols,
-            @Value("${paygate.service-name:default}") String serviceName) {
-        return new PaygateAuthenticationProvider(l402Validator, protocols, serviceName);
+            @Value("${paygate.service-name:default}") String serviceName,
+            @Autowired(required = false) CapabilityCache capabilityCache) {
+        return new PaygateAuthenticationProvider(l402Validator, protocols, serviceName, capabilityCache);
     }
 
     @Bean

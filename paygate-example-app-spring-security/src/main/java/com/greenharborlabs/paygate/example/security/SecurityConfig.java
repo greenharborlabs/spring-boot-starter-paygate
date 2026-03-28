@@ -29,8 +29,11 @@ import org.springframework.security.web.authentication.www.BasicAuthenticationFi
  *       will be rejected with a 403 Forbidden because they are not granted the {@code ROLE_L402}
  *       authority.</li>
  *   <li>{@code @EnableMethodSecurity} enables the use of {@code @PreAuthorize} annotations on
- *       controller methods for fine-grained, capability-based authorization (e.g.,
- *       {@code @PreAuthorize("hasAuthority('L402_CAPABILITY_premium-analyze')")}).</li>
+ *       controller methods for fine-grained, capability-based authorization. The recommended
+ *       authority prefix is {@code PAYGATE_CAPABILITY_*} (e.g.,
+ *       {@code @PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_premium-analyze')")}). The legacy
+ *       {@code L402_CAPABILITY_*} prefix is still emitted for backward compatibility, so existing
+ *       {@code @PreAuthorize} expressions using it will continue to work.</li>
  * </ul>
  */
 @Configuration

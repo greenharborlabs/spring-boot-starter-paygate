@@ -128,7 +128,7 @@ class PaygateChallengeServiceTest {
             when(rateLimiter.tryAcquire(anyString())).thenReturn(false);
 
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, null);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, null, null);
 
             assertThatThrownBy(() -> service.createChallenge(request, config))
                     .isInstanceOf(PaygateRateLimitedException.class);
@@ -365,7 +365,7 @@ class PaygateChallengeServiceTest {
 
             PaygateEarningsTracker earningsTracker = mock(PaygateEarningsTracker.class);
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, earningsTracker, null, null);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, earningsTracker, null, null, null);
 
             service.createChallenge(request, config);
 
@@ -407,7 +407,7 @@ class PaygateChallengeServiceTest {
             request.setRemoteAddr("10.0.0.2");
 
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver, null);
 
             service.createChallenge(request, config);
             verify(rateLimiter).tryAcquire("203.0.113.50");
@@ -425,7 +425,7 @@ class PaygateChallengeServiceTest {
             request.setRemoteAddr("192.168.1.1");
 
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, null);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, null, null);
 
             service.createChallenge(request, config);
             verify(rateLimiter).tryAcquire("192.168.1.1");
@@ -445,7 +445,7 @@ class PaygateChallengeServiceTest {
             // No XFF header added
 
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver, null);
 
             service.createChallenge(request, config);
             verify(rateLimiter).tryAcquire("192.168.1.1");
@@ -466,11 +466,96 @@ class PaygateChallengeServiceTest {
             request.setRemoteAddr("127.0.0.1");
 
             PaygateChallengeService service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver);
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext, null, rateLimiter, resolver, null);
 
             service.createChallenge(request, config);
             verify(resolver).resolve(request);
             verify(rateLimiter).tryAcquire("10.0.0.1");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Capability cache population
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("capability cache population")
+    class CapabilityCachePopulation {
+
+        @Test
+        @DisplayName("stores capability in cache after successful challenge creation")
+        void storesCapabilityInCacheAfterSuccess() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            CapabilityCache capabilityCache = mock(CapabilityCache.class);
+            PaygateEndpointConfig configWithCapability = new PaygateEndpointConfig(
+                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "search");
+
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext,
+                    null, null, null, capabilityCache);
+
+            ChallengeContext ctx = service.createChallenge(request, configWithCapability);
+
+            verify(capabilityCache).store(eq(ctx.tokenId()), eq("search"), eq(TIMEOUT_SECONDS));
+        }
+
+        @Test
+        @DisplayName("does not store in cache when capability is empty")
+        void doesNotStoreWhenCapabilityEmpty() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            CapabilityCache capabilityCache = mock(CapabilityCache.class);
+
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext,
+                    null, null, null, capabilityCache);
+
+            service.createChallenge(request, config);
+
+            verify(capabilityCache, never()).store(anyString(), anyString(), anyLong());
+        }
+
+        @Test
+        @DisplayName("challenge completes normally when capabilityCache is null")
+        void completesNormallyWhenCacheNull() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            PaygateEndpointConfig configWithCapability = new PaygateEndpointConfig(
+                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "search");
+
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext,
+                    null, null, null, null);
+
+            ChallengeContext ctx = service.createChallenge(request, configWithCapability);
+            assertThat(ctx).isNotNull();
+            assertThat(ctx.capability()).isEqualTo("search");
+        }
+
+        @Test
+        @DisplayName("cache store failure is swallowed and challenge still succeeds")
+        void cacheStoreFailureDoesNotBreakChallenge() throws Exception {
+            when(lightningBackend.isHealthy()).thenReturn(true);
+            when(lightningBackend.createInvoice(anyLong(), anyString())).thenReturn(createStubInvoice(null));
+
+            CapabilityCache capabilityCache = mock(CapabilityCache.class);
+            org.mockito.Mockito.doThrow(new RuntimeException("cache explosion"))
+                    .when(capabilityCache).store(anyString(), anyString(), anyLong());
+
+            PaygateEndpointConfig configWithCapability = new PaygateEndpointConfig(
+                    "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "search");
+
+            PaygateChallengeService service = new PaygateChallengeService(
+                    createTrackingRootKeyStore(), lightningBackend, properties, applicationContext,
+                    null, null, null, capabilityCache);
+
+            ChallengeContext ctx = service.createChallenge(request, configWithCapability);
+            assertThat(ctx).isNotNull();
+            assertThat(ctx.capability()).isEqualTo("search");
         }
     }
 
@@ -566,7 +651,7 @@ class PaygateChallengeServiceTest {
         @DisplayName("accepts null properties and defaults service name")
         void acceptsNullProperties() {
             var service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, null, applicationContext, null, null, null);
+                    createTrackingRootKeyStore(), lightningBackend, null, applicationContext, null, null, null, null);
             assertThat(service).isNotNull();
         }
 
@@ -574,7 +659,7 @@ class PaygateChallengeServiceTest {
         @DisplayName("accepts null applicationContext")
         void acceptsNullApplicationContext() {
             var service = new PaygateChallengeService(
-                    createTrackingRootKeyStore(), lightningBackend, properties, null, null, null, null);
+                    createTrackingRootKeyStore(), lightningBackend, properties, null, null, null, null, null);
             assertThat(service).isNotNull();
         }
     }
@@ -585,7 +670,7 @@ class PaygateChallengeServiceTest {
 
     private PaygateChallengeService createService(RootKeyStore rootKeyStore) {
         return new PaygateChallengeService(
-                rootKeyStore, lightningBackend, properties, applicationContext, null, null, null);
+                rootKeyStore, lightningBackend, properties, applicationContext, null, null, null, null);
     }
 
     private static ZeroizationTrackingRootKeyStore createTrackingRootKeyStore() {

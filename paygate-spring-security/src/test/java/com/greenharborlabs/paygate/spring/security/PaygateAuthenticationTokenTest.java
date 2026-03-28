@@ -13,8 +13,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.core.GrantedAuthority;
 
 import java.security.SecureRandom;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -481,6 +483,156 @@ class PaygateAuthenticationTokenTest {
         assertThatThrownBy(() -> token.setAuthenticated(true))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Cannot set this token to trusted");
+    }
+
+    // ========== 3-arg authenticated() with capabilities tests ==========
+
+    @Test
+    void l402WithExplicitCapabilitiesProducesPaygateCapabilityAuthorities() {
+        L402Credential credential = createTestCredential(List.of());
+        var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("search"));
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402", "PAYGATE_CAPABILITY_search");
+    }
+
+    @Test
+    void l402DualEmitCaveatAndExplicitCapabilityProducesBothPrefixes() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("svc_capabilities", "search")
+        ));
+        var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("search"));
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder(
+                        "ROLE_PAYMENT", "ROLE_L402",
+                        "L402_CAPABILITY_search", "PAYGATE_CAPABILITY_search");
+    }
+
+    @Test
+    void l402ThreeArgWithCaveatCapabilitiesEmitsBothPrefixes() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("svc_capabilities", "search,analyze")
+        ));
+        var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("extra"));
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder(
+                        "ROLE_PAYMENT", "ROLE_L402",
+                        "L402_CAPABILITY_search", "L402_CAPABILITY_analyze",
+                        "PAYGATE_CAPABILITY_search", "PAYGATE_CAPABILITY_analyze",
+                        "PAYGATE_CAPABILITY_extra");
+    }
+
+    @Test
+    void l402TwoArgBackwardCompatNoPaygateCapabilities() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("svc_capabilities", "search")
+        ));
+        var token = PaygateAuthenticationToken.authenticated(credential, "svc");
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .doesNotContain("PAYGATE_CAPABILITY_search");
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .contains("L402_CAPABILITY_search");
+    }
+
+    @Test
+    void l402ThreeArgEmptyCapabilitiesNoPaygateAuthorities() {
+        L402Credential credential = createTestCredential(List.of());
+        var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of());
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
+    }
+
+    @Test
+    void mppWithCapabilitiesProducesPaygateCapabilityAuthorities() {
+        PaymentCredential cred = createMppCredential("tok", null);
+        var token = PaygateAuthenticationToken.authenticated(cred, "svc", Set.of("search", "analyze"));
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "PAYGATE_CAPABILITY_search", "PAYGATE_CAPABILITY_analyze");
+    }
+
+    @Test
+    void mppWithEmptyCapabilitiesSameAsTwoArg() {
+        PaymentCredential cred = createMppCredential("tok", null);
+        var token = PaygateAuthenticationToken.authenticated(cred, "svc", Set.of());
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactly("ROLE_PAYMENT");
+    }
+
+    @Test
+    void mppNullCapabilitiesThrowsNpe() {
+        PaymentCredential cred = createMppCredential("tok", null);
+
+        assertThatThrownBy(() -> PaygateAuthenticationToken.authenticated(cred, "svc", null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("capabilities must not be null");
+    }
+
+    @Test
+    void l402NullCapabilitiesThrowsNpe() {
+        L402Credential credential = createTestCredential(List.of());
+
+        assertThatThrownBy(() -> PaygateAuthenticationToken.authenticated(credential, "svc", null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("capabilities must not be null");
+    }
+
+    @Test
+    void mppL402ProtocolSchemeWithCapabilitiesHasRoleL402() {
+        PaymentCredential cred = createL402PaymentCredential("tok");
+        var token = PaygateAuthenticationToken.authenticated(cred, "svc", Set.of("read"));
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402", "PAYGATE_CAPABILITY_read");
+    }
+
+    @Test
+    void capabilitiesSetWithNullElementsSkipsNullsSilently() {
+        PaymentCredential cred = createMppCredential("tok", null);
+        Set<String> caps = new HashSet<>();
+        caps.add("search");
+        caps.add(null);
+        caps.add("analyze");
+
+        var token = PaygateAuthenticationToken.authenticated(cred, "svc", caps);
+
+        assertThat(token.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "PAYGATE_CAPABILITY_search", "PAYGATE_CAPABILITY_analyze");
+    }
+
+    @Test
+    void l402AuthorityOrdering() {
+        L402Credential credential = createTestCredential(List.of(
+                new Caveat("svc_capabilities", "search")
+        ));
+        var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("extra"));
+
+        var authorityStrings = token.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .toList();
+
+        // ROLE_PAYMENT before ROLE_L402 before L402_CAPABILITY before PAYGATE_CAPABILITY
+        assertThat(authorityStrings.indexOf("ROLE_PAYMENT"))
+                .isLessThan(authorityStrings.indexOf("ROLE_L402"));
+        assertThat(authorityStrings.indexOf("ROLE_L402"))
+                .isLessThan(authorityStrings.indexOf("L402_CAPABILITY_search"));
+        assertThat(authorityStrings.indexOf("L402_CAPABILITY_search"))
+                .isLessThan(authorityStrings.indexOf("PAYGATE_CAPABILITY_search"));
     }
 
     // ========== Helpers ==========

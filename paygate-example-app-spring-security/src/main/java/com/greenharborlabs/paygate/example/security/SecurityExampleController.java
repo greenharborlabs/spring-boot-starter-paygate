@@ -89,7 +89,7 @@ public class SecurityExampleController {
      */
     @PaymentRequired(priceSats = 25, capability = "premium-analyze",
             description = "Capability-gated analysis")
-    @PreAuthorize("hasAuthority('L402_CAPABILITY_premium-analyze')")
+    @PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_premium-analyze')")
     @PostMapping(value = "/premium-analyze", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     public AnalyzeResponse premiumAnalyze(@RequestBody AnalyzeRequest request) {

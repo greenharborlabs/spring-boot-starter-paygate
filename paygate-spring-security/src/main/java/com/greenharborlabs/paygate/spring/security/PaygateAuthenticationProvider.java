@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.spring.CapabilityCache;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
@@ -15,6 +16,7 @@ import org.springframework.security.core.AuthenticationException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Spring Security {@link AuthenticationProvider} that validates payment credentials
@@ -27,21 +29,32 @@ import java.util.Objects;
  */
 public final class PaygateAuthenticationProvider implements AuthenticationProvider {
 
+    private static final System.Logger log = System.getLogger(PaygateAuthenticationProvider.class.getName());
+
     private final L402Validator l402Validator;
     private final List<PaymentProtocol> protocols;
     private final String serviceName;
+    private final CapabilityCache capabilityCache;
 
     public PaygateAuthenticationProvider(L402Validator l402Validator, String serviceName) {
-        this(l402Validator, List.of(), serviceName);
+        this(l402Validator, List.of(), serviceName, null);
     }
 
     public PaygateAuthenticationProvider(L402Validator l402Validator,
                                          List<PaymentProtocol> protocols,
                                          String serviceName) {
+        this(l402Validator, protocols, serviceName, null);
+    }
+
+    public PaygateAuthenticationProvider(L402Validator l402Validator,
+                                         List<PaymentProtocol> protocols,
+                                         String serviceName,
+                                         CapabilityCache capabilityCache) {
         this.l402Validator = Objects.requireNonNull(l402Validator, "l402Validator must not be null");
         this.protocols = List.copyOf(
                 Objects.requireNonNull(protocols, "protocols must not be null"));
         this.serviceName = serviceName;
+        this.capabilityCache = capabilityCache;
     }
 
     @Override
@@ -73,7 +86,8 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
 
         try {
             L402Validator.ValidationResult result = l402Validator.validate(components, context);
-            return PaygateAuthenticationToken.authenticated(result.credential(), serviceName);
+            Set<String> capabilities = resolveCapabilities(result.credential().tokenId());
+            return PaygateAuthenticationToken.authenticated(result.credential(), serviceName, capabilities);
         } catch (L402Exception e) {
             throw new BadCredentialsException("L402 authentication failed", e);
         }
@@ -86,7 +100,8 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
                 try {
                     PaymentCredential credential = protocol.parseCredential(authorizationHeader);
                     protocol.validate(credential, token.getRequestMetadata());
-                    return PaygateAuthenticationToken.authenticated(credential, serviceName);
+                    Set<String> capabilities = resolveCapabilities(credential.tokenId());
+                    return PaygateAuthenticationToken.authenticated(credential, serviceName, capabilities);
                 } catch (PaymentValidationException e) {
                     throw new BadCredentialsException("Payment authentication failed", e);
                 }
@@ -94,6 +109,22 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
         }
 
         throw new BadCredentialsException("No payment protocol found for authorization header");
+    }
+
+    private Set<String> resolveCapabilities(String tokenId) {
+        if (capabilityCache == null || tokenId == null) {
+            return Set.of();
+        }
+        try {
+            String capability = capabilityCache.get(tokenId);
+            if (capability != null) {
+                return Set.of(capability);
+            }
+        } catch (RuntimeException e) {
+            log.log(System.Logger.Level.WARNING,
+                    "Capability cache lookup failed for token; proceeding without cached capability", e);
+        }
+        return Set.of();
     }
 
     @Override

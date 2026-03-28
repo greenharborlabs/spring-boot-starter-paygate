@@ -310,7 +310,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter, null);
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
@@ -378,7 +378,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null, null);
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, null);
@@ -453,7 +453,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, null);
+                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
@@ -534,7 +534,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, clientIpResolver);
+                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, clientIpResolver, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
