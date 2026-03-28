@@ -1,55 +1,19 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-
 /**
  * Static utility for path normalization and glob matching used by delegation caveat verifiers.
+ * Path normalization delegates to {@link PathNormalizer} — the canonical source of truth.
  * Zero external dependencies — JDK only.
  */
 public final class PathGlobMatcher {
 
-    private static final Set<String> RESERVED_ENCODED = Set.of("2f", "3f", "23", "3a");
-
     private PathGlobMatcher() {}
 
     /**
-     * Normalizes a request path: strips query string, prepends /, collapses slashes,
-     * resolves dot-segments, percent-decodes (single-pass, preserving reserved delimiters),
-     * and strips trailing slash.
+     * Normalizes a request path. Delegates to {@link PathNormalizer#normalize(String)}.
      */
     public static String normalizePath(String path) {
-        if (path == null || path.isEmpty()) {
-            return "/";
-        }
-
-        // Strip query string
-        int queryIdx = path.indexOf('?');
-        if (queryIdx >= 0) {
-            path = path.substring(0, queryIdx);
-        }
-
-        // Prepend / if missing
-        if (!path.startsWith("/")) {
-            path = "/" + path;
-        }
-
-        // Single-pass percent-decode (preserving reserved path delimiters)
-        path = decodePercent(path);
-
-        // Collapse consecutive slashes
-        path = collapseSlashes(path);
-
-        // Resolve dot-segments per RFC 3986 Section 5.2.4
-        path = resolveDotSegments(path);
-
-        // Strip trailing slash unless root
-        if (path.length() > 1 && path.endsWith("/")) {
-            path = path.substring(0, path.length() - 1);
-        }
-
-        return path;
+        return PathNormalizer.normalize(path);
     }
 
     /**
@@ -209,96 +173,5 @@ public final class PathGlobMatcher {
         }
 
         return false;
-    }
-
-    /**
-     * Single-pass percent-decode. Decodes all percent-encoded characters except
-     * reserved path delimiters: %2F (/), %3F (?), %23 (#), %3A (:).
-     */
-    private static String decodePercent(String input) {
-        int len = input.length();
-        var sb = new StringBuilder(len);
-        int i = 0;
-        while (i < len) {
-            char c = input.charAt(i);
-            if (c == '%' && i + 2 < len) {
-                String hex = input.substring(i + 1, i + 3);
-                if (isValidHex(hex)) {
-                    // Check if this is a reserved delimiter (case-insensitive)
-                    if (RESERVED_ENCODED.contains(hex.toLowerCase())) {
-                        // Preserve the percent-encoding, uppercase the hex for consistency
-                        sb.append('%').append(hex.toUpperCase());
-                        i += 3;
-                    } else {
-                        int value = Integer.parseInt(hex, 16);
-                        sb.append((char) value);
-                        i += 3;
-                    }
-                } else {
-                    sb.append(c);
-                    i++;
-                }
-            } else {
-                sb.append(c);
-                i++;
-            }
-        }
-        return sb.toString();
-    }
-
-    private static boolean isValidHex(String hex) {
-        if (hex.length() != 2) return false;
-        for (int i = 0; i < 2; i++) {
-            char c = hex.charAt(i);
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static String collapseSlashes(String path) {
-        var sb = new StringBuilder(path.length());
-        boolean prevSlash = false;
-        for (int i = 0; i < path.length(); i++) {
-            char c = path.charAt(i);
-            if (c == '/') {
-                if (!prevSlash) {
-                    sb.append(c);
-                }
-                prevSlash = true;
-            } else {
-                sb.append(c);
-                prevSlash = false;
-            }
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Resolves dot-segments per RFC 3986 Section 5.2.4.
-     */
-    private static String resolveDotSegments(String path) {
-        String[] parts = path.split("/", -1);
-        List<String> output = new ArrayList<>();
-        for (String part : parts) {
-            switch (part) {
-                case "." -> {
-                    // skip
-                }
-                case ".." -> {
-                    if (!output.isEmpty()) {
-                        output.removeLast();
-                    }
-                }
-                default -> output.add(part);
-            }
-        }
-        String result = String.join("/", output);
-        // Ensure leading slash
-        if (!result.startsWith("/")) {
-            result = "/" + result;
-        }
-        return result;
     }
 }

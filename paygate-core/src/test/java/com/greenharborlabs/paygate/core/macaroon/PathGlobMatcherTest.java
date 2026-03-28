@@ -86,10 +86,11 @@ class PathGlobMatcherTest {
         }
 
         @Test
-        @DisplayName("single-pass decode — no double-decode of %25")
-        void singlePassDecodeNoDoubleDecoding() {
+        @DisplayName("iterative decode — double-encoded %2520 fully decoded")
+        void iterativeDecodeFullyDecodes() {
+            // Iterative decode: %2520 -> %20 (pass 1) -> space (pass 2)
             assertThat(PathGlobMatcher.normalizePath("/products/%2520item"))
-                    .isEqualTo("/products/%20item");
+                    .isEqualTo("/products/ item");
         }
     }
 
@@ -295,6 +296,28 @@ class PathGlobMatcherTest {
         @DisplayName("matches delegates to matchNormalized correctly with non-normalized inputs")
         void matchesDelegatesToMatchNormalized() {
             assertThat(PathGlobMatcher.matches("/api//products/**", "/api/products/123"))
+                    .isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("double-encoded bypass regression")
+    class DoubleEncodedBypassRegression {
+
+        @Test
+        @DisplayName("normalizePath resolves double-encoded dot-segments (%252e%252e)")
+        void normalizePathResolvesDoubleEncodedDotSegments() {
+            // %252e decodes to %2e (pass 1), then to '.' (pass 2)
+            // So /api/%252e%252e/secret -> /api/../secret -> /secret
+            assertThat(PathGlobMatcher.normalizePath("/api/%252e%252e/secret"))
+                    .isEqualTo("/secret");
+        }
+
+        @Test
+        @DisplayName("matches resolves double-encoded traversal in request path")
+        void matchesResolvesDoubleEncodedTraversal() {
+            // /public/%252e%252e/api/data -> /public/../api/data -> /api/data
+            assertThat(PathGlobMatcher.matches("/api/**", "/public/%252e%252e/api/data"))
                     .isTrue();
         }
     }

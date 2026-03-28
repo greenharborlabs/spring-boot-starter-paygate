@@ -6,7 +6,7 @@ import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
-import com.greenharborlabs.paygate.spring.PaygatePathUtils;
+import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 
@@ -89,10 +89,10 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
     }
 
     /**
-     * Delegates to {@link PaygatePathUtils#normalizePath(String)}.
+     * Delegates to {@link PathNormalizer#normalize(String)}.
      */
     static String normalizePath(String rawPath) {
-        return PaygatePathUtils.normalizePath(rawPath);
+        return PathNormalizer.normalize(rawPath);
     }
 
     /**

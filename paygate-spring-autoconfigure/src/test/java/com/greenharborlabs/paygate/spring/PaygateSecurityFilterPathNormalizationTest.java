@@ -9,8 +9,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Pure unit tests for {@link PaygateSecurityFilter#normalizePath(String)} and
- * {@link PaygatePathUtils#percentDecodePath(String)}.
+ * Pure unit tests for {@link PaygateSecurityFilter#normalizePath(String)}.
  * No Spring context needed.
  */
 @DisplayName("PaygateSecurityFilter path normalization")
@@ -127,99 +126,6 @@ class PaygateSecurityFilterPathNormalizationTest {
     }
 
     @Nested
-    @DisplayName("percentDecodePath")
-    class PercentDecodePath {
-
-        @Test
-        @DisplayName("null returns null")
-        void nullReturnsNull() {
-            assertThat(PaygatePathUtils.percentDecodePath(null)).isNull();
-        }
-
-        @Test
-        @DisplayName("empty returns empty")
-        void emptyReturnsEmpty() {
-            assertThat(PaygatePathUtils.percentDecodePath("")).isEmpty();
-        }
-
-        @Test
-        @DisplayName("no percent sequences passes through")
-        void noPercentPassesThrough() {
-            assertThat(PaygatePathUtils.percentDecodePath("/api/protected")).isEqualTo("/api/protected");
-        }
-
-        @Test
-        @DisplayName("decodes %2e to dot")
-        void decodesPercentToDot() {
-            assertThat(PaygatePathUtils.percentDecodePath("%2e")).isEqualTo(".");
-        }
-
-        @Test
-        @DisplayName("decodes uppercase %2E to dot")
-        void decodesUppercasePercentToDot() {
-            assertThat(PaygatePathUtils.percentDecodePath("%2E")).isEqualTo(".");
-        }
-
-        @Test
-        @DisplayName("decodes %25 to percent")
-        void decodesPercentToPercent() {
-            assertThat(PaygatePathUtils.percentDecodePath("%25")).isEqualTo("%");
-        }
-
-        @Test
-        @DisplayName("plus sign is not treated as space")
-        void plusIsNotSpace() {
-            assertThat(PaygatePathUtils.percentDecodePath("a+b")).isEqualTo("a+b");
-        }
-
-        @Test
-        @DisplayName("incomplete percent at end passes through")
-        void incompletePercentAtEnd() {
-            assertThat(PaygatePathUtils.percentDecodePath("abc%")).isEqualTo("abc%");
-        }
-
-        @Test
-        @DisplayName("incomplete percent with one hex char passes through")
-        void incompletePercentOneHex() {
-            assertThat(PaygatePathUtils.percentDecodePath("abc%2")).isEqualTo("abc%2");
-        }
-
-        @Test
-        @DisplayName("invalid hex digits after percent passes through")
-        void invalidHexAfterPercent() {
-            assertThat(PaygatePathUtils.percentDecodePath("%ZZ")).isEqualTo("%ZZ");
-        }
-
-        @Test
-        @DisplayName("decodes multi-byte UTF-8 sequence")
-        void decodesMultiByteUtf8() {
-            // U+00E9 (e-acute) = UTF-8 bytes C3 A9
-            assertThat(PaygatePathUtils.percentDecodePath("%C3%A9")).isEqualTo("\u00e9");
-        }
-
-        @Test
-        @DisplayName("FR-003b: preserves %2F (uppercase) encoded slash")
-        void preservesUppercaseEncodedSlash() {
-            assertThat(PaygatePathUtils.percentDecodePath("/api/v1%2Fbypass"))
-                    .isEqualTo("/api/v1%2Fbypass");
-        }
-
-        @Test
-        @DisplayName("FR-003b: preserves %2f (lowercase) encoded slash")
-        void preservesLowercaseEncodedSlash() {
-            assertThat(PaygatePathUtils.percentDecodePath("/api/v1%2fbypass"))
-                    .isEqualTo("/api/v1%2fbypass");
-        }
-
-        @Test
-        @DisplayName("FR-003b: still decodes %2E for traversal protection alongside preserved %2F")
-        void decodesDotsButPreservesSlashes() {
-            assertThat(PaygatePathUtils.percentDecodePath("/api/%2e%2e/v1%2Fbypass"))
-                    .isEqualTo("/api/../v1%2Fbypass");
-        }
-    }
-
-    @Nested
     @DisplayName("normalizePath — %2F preservation (FR-003b)")
     class NormalizePathEncodedSlash {
 
@@ -231,10 +137,11 @@ class PaygateSecurityFilterPathNormalizationTest {
         }
 
         @Test
-        @DisplayName("FR-003b: %2f (lowercase) preserved through full normalization")
+        @DisplayName("FR-003b: %2f (lowercase) uppercased and preserved through full normalization")
         void lowercaseEncodedSlashPreservedThroughNormalization() {
+            // PathNormalizer uppercases reserved hex digits per RFC 3986 Section 2.1
             assertThat(PaygateSecurityFilter.normalizePath("/api/v1%2fbypass"))
-                    .isEqualTo("/api/v1%2fbypass");
+                    .isEqualTo("/api/v1%2Fbypass");
         }
 
         @Test
@@ -242,6 +149,46 @@ class PaygateSecurityFilterPathNormalizationTest {
         void traversalDecodedWhileSlashPreserved() {
             assertThat(PaygateSecurityFilter.normalizePath("/api/%2e%2e/v1%2Fbypass"))
                     .isEqualTo("/v1%2Fbypass");
+        }
+    }
+
+    @Nested
+    @DisplayName("normalizePath — reserved delimiter preservation")
+    class NormalizePathReservedDelimiters {
+
+        @Test
+        @DisplayName("reserved ? (%3F) preserved through normalization")
+        void encodedQuestionMarkPreserved() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/a%3Fb"))
+                    .isEqualTo("/api/a%3Fb");
+        }
+
+        @Test
+        @DisplayName("reserved ? (%3f lowercase) uppercased and preserved")
+        void lowercaseEncodedQuestionMarkPreserved() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/a%3fb"))
+                    .isEqualTo("/api/a%3Fb");
+        }
+
+        @Test
+        @DisplayName("reserved # (%23) preserved through normalization")
+        void encodedHashPreserved() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/a%23b"))
+                    .isEqualTo("/api/a%23b");
+        }
+
+        @Test
+        @DisplayName("reserved : (%3A) preserved through normalization")
+        void encodedColonPreserved() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/a%3Ab"))
+                    .isEqualTo("/api/a%3Ab");
+        }
+
+        @Test
+        @DisplayName("reserved : (%3a lowercase) uppercased and preserved")
+        void lowercaseEncodedColonPreserved() {
+            assertThat(PaygateSecurityFilter.normalizePath("/api/a%3ab"))
+                    .isEqualTo("/api/a%3Ab");
         }
     }
 }

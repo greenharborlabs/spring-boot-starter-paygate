@@ -9,7 +9,7 @@ import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
-import com.greenharborlabs.paygate.spring.PaygatePathUtils;
+import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -94,7 +94,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         String authHeader = request.getHeader(AUTHORIZATION_HEADER);
-        String normalizedPath = PaygatePathUtils.normalizePath(request.getRequestURI());
+        String normalizedPath = PathNormalizer.normalize(request.getRequestURI());
 
         PaygateEndpointConfig endpointConfig;
         String capability;

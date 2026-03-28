@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
+import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.protocol.l402.L402Metadata;
 import jakarta.servlet.Filter;
@@ -433,10 +434,10 @@ public class PaygateSecurityFilter implements Filter {
     }
 
     /**
-     * Delegates to {@link PaygatePathUtils#normalizePath(String)}.
+     * Delegates to {@link PathNormalizer#normalize(String)}.
      */
     static String normalizePath(String rawPath) {
-        return PaygatePathUtils.normalizePath(rawPath);
+        return PathNormalizer.normalize(rawPath);
     }
 
     static String sanitizeForLog(String value) {

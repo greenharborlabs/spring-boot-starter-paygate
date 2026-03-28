@@ -234,6 +234,18 @@ class PathCaveatVerifierTest {
             assertThatCode(() -> verifier.verify(caveat, context))
                     .doesNotThrowAnyException();
         }
+
+        @Test
+        @DisplayName("regression: double-encoded traversal (%252e%252e) is resolved before matching")
+        void doubleEncodedTraversalResolved() {
+            // %252e decodes to %2e (pass 1), then to '.' (pass 2)
+            // /public/%252e%252e/api/data -> /public/../api/data -> /api/data
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/public/%252e%252e/api/data");
+
+            assertThatCode(() -> verifier.verify(caveat, context))
+                    .doesNotThrowAnyException();
+        }
     }
 
     @Nested
