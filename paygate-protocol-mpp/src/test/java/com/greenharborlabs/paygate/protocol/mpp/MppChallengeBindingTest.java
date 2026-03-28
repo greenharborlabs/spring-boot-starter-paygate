@@ -290,6 +290,60 @@ class MppChallengeBindingTest {
         assertThat(id1).isNotEqualTo(id2);
     }
 
+    // ---- Pipe delimiter injection ----
+
+    @Test
+    void createId_pipeInRealm_throwsIllegalArgument() {
+        assertThatThrownBy(() -> MppChallengeBinding.createId(
+                "evil|lightning", METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("realm");
+    }
+
+    @Test
+    void createId_pipeInMethod_throwsIllegalArgument() {
+        assertThatThrownBy(() -> MppChallengeBinding.createId(
+                REALM, "x|y", INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("method");
+    }
+
+    @Test
+    void createId_pipeInIntent_throwsIllegalArgument() {
+        assertThatThrownBy(() -> MppChallengeBinding.createId(
+                REALM, METHOD, "a|b", REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("intent");
+    }
+
+    @Test
+    void createId_pipeInExpires_throwsIllegalArgument() {
+        assertThatThrownBy(() -> MppChallengeBinding.createId(
+                REALM, METHOD, INTENT, REQUEST_B64, "2026|01", DIGEST, OPAQUE_B64, secret()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("expires");
+    }
+
+    @Test
+    void createId_pipeInDigest_throwsIllegalArgument() {
+        assertThatThrownBy(() -> MppChallengeBinding.createId(
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, "sha|256", OPAQUE_B64, secret()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("digest");
+    }
+
+    @Test
+    void verify_pipeInRealm_throwsIllegalArgument() {
+        // Use a valid base64url ID so the decode step succeeds before computeHmac is reached
+        String validId = MppChallengeBinding.createId(
+                REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
+
+        assertThatThrownBy(() -> MppChallengeBinding.verify(
+                validId, "evil|x", METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("realm");
+    }
+
     @Test
     void differentOpaque_producesDifferentId() {
         String id1 = MppChallengeBinding.createId(

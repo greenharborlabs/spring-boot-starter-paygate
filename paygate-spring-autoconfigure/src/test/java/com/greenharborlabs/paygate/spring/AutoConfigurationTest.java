@@ -366,6 +366,49 @@ class AutoConfigurationTest {
             contextRunner.run(context ->
                     assertThat(context).doesNotHaveBean("mppProtocol"));
         }
+
+        @Test
+        @DisplayName("custom MPP parser limit properties flow through to MppProtocol bean")
+        void customMppParserLimitsFlowThrough() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.mpp.enabled=true",
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET,
+                            "paygate.protocols.mpp.max-json-depth=3",
+                            "paygate.protocols.mpp.max-string-length=4096",
+                            "paygate.protocols.mpp.max-keys-per-object=16",
+                            "paygate.protocols.mpp.max-credential-bytes=32768")
+                    .run(context -> {
+                        assertThat(context).hasBean("mppProtocol");
+                        PaymentProtocol mpp = context.getBean("mppProtocol", PaymentProtocol.class);
+                        assertThat(mpp).isInstanceOf(MppProtocol.class);
+
+                        // Verify properties were bound correctly
+                        PaygateProperties props = context.getBean(PaygateProperties.class);
+                        var mppProps = props.getProtocols().getMpp();
+                        assertThat(mppProps.getMaxJsonDepth()).isEqualTo(3);
+                        assertThat(mppProps.getMaxStringLength()).isEqualTo(4096);
+                        assertThat(mppProps.getMaxKeysPerObject()).isEqualTo(16);
+                        assertThat(mppProps.getMaxCredentialBytes()).isEqualTo(32768);
+                    });
+        }
+
+        @Test
+        @DisplayName("MPP parser limit properties default to MppParserLimits.defaults() values")
+        void mppParserLimitsDefaultValues() {
+            contextRunner
+                    .withPropertyValues(
+                            "paygate.protocols.mpp.enabled=true",
+                            "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET)
+                    .run(context -> {
+                        PaygateProperties props = context.getBean(PaygateProperties.class);
+                        var mppProps = props.getProtocols().getMpp();
+                        assertThat(mppProps.getMaxJsonDepth()).isEqualTo(5);
+                        assertThat(mppProps.getMaxStringLength()).isEqualTo(8192);
+                        assertThat(mppProps.getMaxKeysPerObject()).isEqualTo(32);
+                        assertThat(mppProps.getMaxCredentialBytes()).isEqualTo(65_536);
+                    });
+        }
     }
 
     @Nested

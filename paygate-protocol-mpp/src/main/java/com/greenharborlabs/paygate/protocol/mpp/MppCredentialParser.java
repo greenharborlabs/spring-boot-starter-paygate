@@ -35,13 +35,30 @@ public final class MppCredentialParser {
     private MppCredentialParser() {} // utility class
 
     /**
-     * Parses an MPP credential blob (base64url-nopad encoded JSON).
+     * Parses an MPP credential blob (base64url-nopad encoded JSON) using default parser limits.
      *
      * @param credentialBlob the raw credential after stripping the "Payment " prefix
      * @return the parsed {@link PaymentCredential}
      * @throws PaymentValidationException on any parse failure
      */
     public static PaymentCredential parse(String credentialBlob) {
+        return parse(credentialBlob, MppParserLimits.defaults());
+    }
+
+    /**
+     * Parses an MPP credential blob (base64url-nopad encoded JSON) with the given parser limits.
+     *
+     * @param credentialBlob the raw credential after stripping the "Payment " prefix
+     * @param limits         parser limits for resource exhaustion protection
+     * @return the parsed {@link PaymentCredential}
+     * @throws PaymentValidationException on any parse failure
+     */
+    public static PaymentCredential parse(String credentialBlob, MppParserLimits limits) {
+        // Step 0: pre-decode size check (cast to long before multiplication to prevent overflow)
+        if (credentialBlob.length() > (long) limits.maxInputLength() * 2) {
+            throw malformed("Credential exceeds maximum size");
+        }
+
         // Step 1: base64url decode
         byte[] jsonBytes;
         try {
@@ -55,7 +72,7 @@ public final class MppCredentialParser {
         // Step 2: parse JSON
         Map<String, Object> root;
         try {
-            var parser = new MinimalJsonParser(json);
+            var parser = new MinimalJsonParser(json, limits);
             root = parser.parseObject();
             parser.expectEnd();
         } catch (MinimalJsonParser.JsonParseException e) {
@@ -115,7 +132,7 @@ public final class MppCredentialParser {
         byte[] preimageBytes = HEX.parseHex(preimageHex);
 
         // Step 7b: extract payment hash from echoed challenge's request field
-        byte[] paymentHash = extractPaymentHashFromRequest(echoedChallenge);
+        byte[] paymentHash = extractPaymentHashFromRequest(echoedChallenge, limits);
 
         // Step 8: extract optional source
         Object sourceRaw = root.get("source");
@@ -145,7 +162,7 @@ public final class MppCredentialParser {
      * The request field is base64url-nopad encoded JCS JSON containing
      * {@code methodDetails.paymentHash} as a hex string.
      */
-    private static byte[] extractPaymentHashFromRequest(Map<String, String> echoedChallenge) {
+    private static byte[] extractPaymentHashFromRequest(Map<String, String> echoedChallenge, MppParserLimits limits) {
         String requestB64 = echoedChallenge.get("request");
         if (requestB64 == null) {
             throw malformed("Missing 'request' in echoed challenge for payment hash extraction");
@@ -162,7 +179,7 @@ public final class MppCredentialParser {
 
         Map<String, Object> requestMap;
         try {
-            var parser = new MinimalJsonParser(requestJson);
+            var parser = new MinimalJsonParser(requestJson, limits);
             requestMap = parser.parseObject();
         } catch (MinimalJsonParser.JsonParseException e) {
             throw malformed("Missing methodDetails.paymentHash in charge request", e);

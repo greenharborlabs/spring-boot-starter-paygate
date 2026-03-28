@@ -256,8 +256,15 @@ public class PaygateAutoConfiguration {
         @Order(2)
         PaymentProtocol mppProtocol(
                 com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret,
+                PaygateProperties properties,
                 ProtocolStartupValidator _validator) {
-            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(mppChallengeBindingSecret);
+            var mpp = properties.getProtocols().getMpp();
+            var limits = new com.greenharborlabs.paygate.protocol.mpp.MppParserLimits(
+                    mpp.getMaxJsonDepth(),
+                    mpp.getMaxStringLength(),
+                    mpp.getMaxKeysPerObject(),
+                    mpp.getMaxCredentialBytes());
+            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(mppChallengeBindingSecret, limits);
         }
     }
 
