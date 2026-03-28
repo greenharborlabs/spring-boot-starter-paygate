@@ -15,6 +15,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.jspecify.annotations.NonNull;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
@@ -63,13 +64,6 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
                                      List<PaymentProtocol> protocols,
                                      PaygateEndpointRegistry endpointRegistry,
-                                     ClientIpResolver clientIpResolver) {
-        this(authenticationManager, protocols, endpointRegistry, clientIpResolver, null);
-    }
-
-    public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
-                                     List<PaymentProtocol> protocols,
-                                     PaygateEndpointRegistry endpointRegistry,
                                      ClientIpResolver clientIpResolver,
                                      String serviceName) {
         this.authenticationManager = Objects.requireNonNull(authenticationManager,
@@ -95,8 +89,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
-                                     HttpServletResponse response,
-                                     FilterChain filterChain)
+                                    @NonNull HttpServletResponse response,
+                                    @NonNull FilterChain filterChain)
             throws ServletException, IOException {
 
         String authHeader = request.getHeader(AUTHORIZATION_HEADER);
