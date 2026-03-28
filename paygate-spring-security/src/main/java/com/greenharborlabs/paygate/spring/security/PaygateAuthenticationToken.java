@@ -227,18 +227,16 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
         }
 
         // PAYGATE_CAPABILITY_* from caveat-extracted + explicit set (merged, deduplicated by LinkedHashSet).
-        // Only emitted when explicit capabilities are provided (non-empty set); an empty set
-        // preserves backward-compatible behavior where only L402_CAPABILITY_* authorities appear.
-        if (!capabilities.isEmpty()) {
-            Set<String> allPaygateCapabilities = new LinkedHashSet<>(caveatCapabilities);
-            for (String cap : capabilities) {
-                if (cap != null) {
-                    allPaygateCapabilities.add(cap);
-                }
+        // Caveats are the authoritative source: always emit PAYGATE_CAPABILITY_* from caveat capabilities,
+        // plus any explicit capabilities provided by the cache.
+        Set<String> allPaygateCapabilities = new LinkedHashSet<>(caveatCapabilities);
+        for (String cap : capabilities) {
+            if (cap != null) {
+                allPaygateCapabilities.add(cap);
             }
-            for (String cap : allPaygateCapabilities) {
-                authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + cap));
-            }
+        }
+        for (String cap : allPaygateCapabilities) {
+            authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + cap));
         }
 
         return new PaygateAuthenticationToken(credential, serviceName, authorities, attrs);

@@ -13,7 +13,6 @@ import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
-import com.greenharborlabs.paygate.spring.CapabilityCache;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -27,10 +26,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 
 import java.security.SecureRandom;
-import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -322,26 +321,26 @@ class PaygateAuthenticationProviderDelegationTest {
         }
     }
 
-    // ========== MPP / protocol-agnostic capability cache tests ==========
+    // ========== MPP / protocol-agnostic capability resolver tests ==========
 
     @Nested
-    @DisplayName("Protocol-agnostic CapabilityCache resolution")
-    class ProtocolCapabilityCacheTests {
+    @DisplayName("Protocol-agnostic CapabilityResolver resolution")
+    class ProtocolCapabilityResolverTests {
 
         @Mock
-        private CapabilityCache capabilityCache;
+        private CapabilityResolver capabilityResolver;
 
         @Test
-        void mppWithCachedCapabilityAddsPaygateCapabilityAuthority() {
+        void mppWithResolvedCapabilityAddsPaygateCapabilityAuthority() {
             String authHeader = "Payment token123";
             PaymentCredential credential = createPaymentCredential("Payment");
 
             when(mppProtocol.canHandle(authHeader)).thenReturn(true);
             when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-            when(capabilityCache.get(credential.tokenId())).thenReturn("analyze");
+            when(capabilityResolver.resolve(any())).thenReturn(Set.of("analyze"));
 
             var provider = new PaygateAuthenticationProvider(
-                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityCache);
+                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityResolver);
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
 
@@ -354,16 +353,16 @@ class PaygateAuthenticationProviderDelegationTest {
         }
 
         @Test
-        void mppWithoutCachedCapabilityHasOnlyRolePayment() {
+        void mppWithoutResolvedCapabilityHasOnlyRolePayment() {
             String authHeader = "Payment token123";
             PaymentCredential credential = createPaymentCredential("Payment");
 
             when(mppProtocol.canHandle(authHeader)).thenReturn(true);
             when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-            when(capabilityCache.get(credential.tokenId())).thenReturn(null);
+            when(capabilityResolver.resolve(any())).thenReturn(Set.of());
 
             var provider = new PaygateAuthenticationProvider(
-                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityCache);
+                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityResolver);
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
 
@@ -376,17 +375,17 @@ class PaygateAuthenticationProviderDelegationTest {
         }
 
         @Test
-        void mppCacheThrowsRuntimeExceptionStillAuthenticates() {
+        void mppResolverThrowsRuntimeExceptionStillAuthenticates() {
             String authHeader = "Payment token123";
             PaymentCredential credential = createPaymentCredential("Payment");
 
             when(mppProtocol.canHandle(authHeader)).thenReturn(true);
             when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-            when(capabilityCache.get(credential.tokenId()))
-                    .thenThrow(new RuntimeException("cache down"));
+            when(capabilityResolver.resolve(any()))
+                    .thenThrow(new RuntimeException("resolver down"));
 
             var provider = new PaygateAuthenticationProvider(
-                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityCache);
+                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityResolver);
 
             var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
 
@@ -400,14 +399,14 @@ class PaygateAuthenticationProviderDelegationTest {
         }
 
         @Test
-        void nullCacheOnProtocolPathPreservesExistingBehavior() {
+        void noopResolverOnProtocolPathPreservesExistingBehavior() {
             String authHeader = "Payment token123";
             PaymentCredential credential = createPaymentCredential("Payment");
 
             when(mppProtocol.canHandle(authHeader)).thenReturn(true);
             when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
 
-            // Provider with null cache (3-arg constructor)
+            // Provider with 3-arg constructor (no-op resolver)
             var provider = new PaygateAuthenticationProvider(
                     l402Validator, List.of(mppProtocol), SERVICE_NAME);
 
@@ -420,7 +419,7 @@ class PaygateAuthenticationProviderDelegationTest {
             assertThat(authToken.getAuthorities())
                     .extracting(GrantedAuthority::getAuthority)
                     .containsExactly("ROLE_PAYMENT");
-            verifyNoInteractions(capabilityCache);
+            verifyNoInteractions(capabilityResolver);
         }
     }
 

@@ -44,13 +44,21 @@ import java.util.List;
 public class PaygateSecurityAutoConfiguration {
 
     @Bean
+    @ConditionalOnMissingBean(CapabilityResolver.class)
+    public CapabilityResolver defaultCapabilityResolver(
+            @Autowired(required = false) CapabilityCache capabilityCache,
+            @Value("${paygate.service-name:default}") String serviceName) {
+        return new DefaultCapabilityResolver(capabilityCache, serviceName);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(PaygateAuthenticationProvider.class)
     public PaygateAuthenticationProvider paygateAuthenticationProvider(
             L402Validator l402Validator,
             List<PaymentProtocol> protocols,
             @Value("${paygate.service-name:default}") String serviceName,
-            @Autowired(required = false) CapabilityCache capabilityCache) {
-        return new PaygateAuthenticationProvider(l402Validator, protocols, serviceName, capabilityCache);
+            CapabilityResolver capabilityResolver) {
+        return new PaygateAuthenticationProvider(l402Validator, protocols, serviceName, capabilityResolver);
     }
 
     @Bean

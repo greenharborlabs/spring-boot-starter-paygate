@@ -144,7 +144,9 @@ class PaygateAuthenticationTokenTest {
 
         assertThat(token.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
-                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search", "L402_CAPABILITY_analyze");
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402",
+                        "L402_CAPABILITY_search", "L402_CAPABILITY_analyze",
+                        "PAYGATE_CAPABILITY_search", "PAYGATE_CAPABILITY_analyze");
     }
 
     @Test
@@ -177,7 +179,8 @@ class PaygateAuthenticationTokenTest {
 
         assertThat(token.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
-                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search");
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402",
+                        "L402_CAPABILITY_search", "PAYGATE_CAPABILITY_search");
     }
 
     @Test
@@ -190,7 +193,9 @@ class PaygateAuthenticationTokenTest {
 
         assertThat(token.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
-                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search", "L402_CAPABILITY_analyze");
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402",
+                        "L402_CAPABILITY_search", "L402_CAPABILITY_analyze",
+                        "PAYGATE_CAPABILITY_search", "PAYGATE_CAPABILITY_analyze");
     }
 
     @Test
@@ -217,7 +222,9 @@ class PaygateAuthenticationTokenTest {
 
         assertThat(token.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
-                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search", "L402_CAPABILITY_read", "L402_CAPABILITY_write");
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402",
+                        "L402_CAPABILITY_search", "L402_CAPABILITY_read", "L402_CAPABILITY_write",
+                        "PAYGATE_CAPABILITY_search", "PAYGATE_CAPABILITY_read", "PAYGATE_CAPABILITY_write");
     }
 
     // ========== Protocol-agnostic unauthenticated token tests ==========
@@ -528,7 +535,7 @@ class PaygateAuthenticationTokenTest {
     }
 
     @Test
-    void l402TwoArgBackwardCompatNoPaygateCapabilities() {
+    void l402TwoArgAlwaysEmitsPaygateCapabilitiesFromCaveats() {
         L402Credential credential = createTestCredential(List.of(
                 new Caveat("svc_capabilities", "search")
         ));
@@ -536,10 +543,8 @@ class PaygateAuthenticationTokenTest {
 
         assertThat(token.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
-                .doesNotContain("PAYGATE_CAPABILITY_search");
-        assertThat(token.getAuthorities())
-                .extracting(GrantedAuthority::getAuthority)
-                .contains("L402_CAPABILITY_search");
+                .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402",
+                        "L402_CAPABILITY_search", "PAYGATE_CAPABILITY_search");
     }
 
     @Test
