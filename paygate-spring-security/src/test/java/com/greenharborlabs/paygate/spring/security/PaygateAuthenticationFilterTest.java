@@ -1,6 +1,10 @@
 package com.greenharborlabs.paygate.spring.security;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentReceipt;
+import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -22,11 +26,13 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -580,5 +586,182 @@ class PaygateAuthenticationFilterTest {
         filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mockMppProtocol()), endpointRegistry);
         request.addHeader("Authorization", "Payment preimage=abc123");
         assertThat(filter.shouldNotFilter(request)).isFalse();
+    }
+
+    // --- Receipt generation tests ---
+
+    private PaymentProtocol mockMppProtocolWithScheme() {
+        PaymentProtocol protocol = mock(PaymentProtocol.class, withSettings().lenient());
+        when(protocol.canHandle(anyString())).thenAnswer(invocation -> {
+            String header = invocation.getArgument(0);
+            return header.startsWith("Payment ");
+        });
+        when(protocol.scheme()).thenReturn("Payment");
+        return protocol;
+    }
+
+    private PaygateAuthenticationToken createAuthenticatedMppToken() {
+        byte[] paymentHash = new byte[32];
+        byte[] preimage = new byte[32];
+        PaymentCredential credential = new PaymentCredential(
+                paymentHash, preimage, "test-token-id", "Payment", null,
+                new ProtocolMetadata() {});
+        return PaygateAuthenticationToken.authenticated(credential, "test-service");
+    }
+
+    @Test
+    void mppAuthenticationProducesPaymentReceiptHeader() throws ServletException, IOException {
+        PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
+        var receipt = new PaymentReceipt("success", "challenge-123", "lightning",
+                null, 100, "2026-03-26T00:00:00Z", "Payment");
+        when(mppProtocol.createReceipt(any(PaymentCredential.class), any(ChallengeContext.class)))
+                .thenReturn(Optional.of(receipt));
+
+        PaygateAuthenticationToken authenticatedToken = createAuthenticatedMppToken();
+
+        filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mppProtocol),
+                endpointRegistry, null, "test-service");
+
+        request.setMethod("GET");
+        request.setRequestURI("/api/resource");
+        request.addHeader("Authorization", "Payment preimage=abc123");
+
+        var config = new PaygateEndpointConfig("GET", "/api/resource", 100, 3600, "Test resource", "", "read");
+        when(endpointRegistry.findConfig("GET", "/api/resource")).thenReturn(config);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedToken);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getHeader("Payment-Receipt")).isNotNull();
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    void l402AuthenticationDoesNotProducePaymentReceiptHeader() throws ServletException, IOException {
+        PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
+        // L402 authenticated token has null paymentCredential
+        filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mppProtocol),
+                endpointRegistry, null, "test-service");
+
+        request.setMethod("GET");
+        request.setRequestURI("/api/resource");
+        request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+        var config = new PaygateEndpointConfig("GET", "/api/resource", 100, 3600, "Test resource", "", "read");
+        when(endpointRegistry.findConfig("GET", "/api/resource")).thenReturn(config);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getHeader("Payment-Receipt")).isNull();
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    void receiptCreationFailureDoesNotBlockRequest() throws ServletException, IOException {
+        PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
+        when(mppProtocol.createReceipt(any(PaymentCredential.class), any(ChallengeContext.class)))
+                .thenThrow(new RuntimeException("receipt creation failed"));
+
+        PaygateAuthenticationToken authenticatedToken = createAuthenticatedMppToken();
+
+        filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mppProtocol),
+                endpointRegistry, null, "test-service");
+
+        request.setMethod("GET");
+        request.setRequestURI("/api/resource");
+        request.addHeader("Authorization", "Payment preimage=abc123");
+
+        var config = new PaygateEndpointConfig("GET", "/api/resource", 100, 3600, "Test resource", "", "read");
+        when(endpointRegistry.findConfig("GET", "/api/resource")).thenReturn(config);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedToken);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getHeader("Payment-Receipt")).isNull();
+        assertThat(response.getStatus()).isEqualTo(200);
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    void missingEndpointConfigSkipsReceiptButSucceeds() throws ServletException, IOException {
+        PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
+        PaygateAuthenticationToken authenticatedToken = createAuthenticatedMppToken();
+
+        filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mppProtocol),
+                endpointRegistry, null, "test-service");
+
+        request.setMethod("GET");
+        request.setRequestURI("/api/unregistered");
+        request.addHeader("Authorization", "Payment preimage=abc123");
+
+        when(endpointRegistry.findConfig("GET", "/api/unregistered")).thenReturn(null);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedToken);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getHeader("Payment-Receipt")).isNull();
+        assertThat(response.getStatus()).isEqualTo(200);
+        verify(filterChain).doFilter(request, response);
+        verify(mppProtocol, never()).createReceipt(any(), any());
+    }
+
+    @Test
+    void nonPaygateAuthenticationTokenSkipsReceiptAndSucceeds() throws ServletException, IOException {
+        PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
+
+        filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mppProtocol),
+                endpointRegistry, null, "test-service");
+
+        request.setMethod("GET");
+        request.setRequestURI("/api/resource");
+        request.addHeader("Authorization", "Payment preimage=abc123");
+
+        var config = new PaygateEndpointConfig("GET", "/api/resource", 100, 3600, "Test resource", "", "read");
+        when(endpointRegistry.findConfig("GET", "/api/resource")).thenReturn(config);
+        // Return a non-PaygateAuthenticationToken
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getHeader("Payment-Receipt")).isNull();
+        verify(filterChain).doFilter(request, response);
+        verify(mppProtocol, never()).createReceipt(any(), any());
+    }
+
+    @Test
+    void challengeContextBolt11InvoiceIsEmptyString() throws ServletException, IOException {
+        PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
+        when(mppProtocol.createReceipt(any(PaymentCredential.class), any(ChallengeContext.class)))
+                .thenReturn(Optional.empty());
+
+        PaygateAuthenticationToken authenticatedToken = createAuthenticatedMppToken();
+
+        filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mppProtocol),
+                endpointRegistry, null, "test-service");
+
+        request.setMethod("GET");
+        request.setRequestURI("/api/resource");
+        request.addHeader("Authorization", "Payment preimage=abc123");
+
+        var config = new PaygateEndpointConfig("GET", "/api/resource", 100, 3600, "Test resource", "", "read");
+        when(endpointRegistry.findConfig("GET", "/api/resource")).thenReturn(config);
+        when(authenticationManager.authenticate(any())).thenReturn(authenticatedToken);
+
+        filter.doFilter(request, response, filterChain);
+
+        ArgumentCaptor<ChallengeContext> contextCaptor = ArgumentCaptor.forClass(ChallengeContext.class);
+        verify(mppProtocol).createReceipt(any(PaymentCredential.class), contextCaptor.capture());
+
+        ChallengeContext capturedContext = contextCaptor.getValue();
+        assertThat(capturedContext.bolt11Invoice()).isEqualTo("");
+        assertThat(capturedContext.priceSats()).isEqualTo(100);
+        assertThat(capturedContext.description()).isEqualTo("Test resource");
+        assertThat(capturedContext.serviceName()).isEqualTo("test-service");
+        assertThat(capturedContext.timeoutSeconds()).isEqualTo(3600);
+        assertThat(capturedContext.capability()).isEqualTo("read");
+        assertThat(capturedContext.rootKeyBytes()).isNull();
+        assertThat(capturedContext.opaque()).isNull();
+        assertThat(capturedContext.digest()).isNull();
     }
 }

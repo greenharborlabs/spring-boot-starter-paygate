@@ -1,6 +1,9 @@
 package com.greenharborlabs.paygate.spring.security;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
@@ -23,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Spring Security filter that extracts payment credentials from the Authorization header
@@ -48,23 +52,33 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     private final List<PaymentProtocol> protocols;
     private final PaygateEndpointRegistry endpointRegistry;
     private final ClientIpResolver clientIpResolver;
+    private final String serviceName;
 
     public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
                                      List<PaymentProtocol> protocols,
                                      PaygateEndpointRegistry endpointRegistry) {
-        this(authenticationManager, protocols, endpointRegistry, null);
+        this(authenticationManager, protocols, endpointRegistry, null, null);
     }
 
     public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
                                      List<PaymentProtocol> protocols,
                                      PaygateEndpointRegistry endpointRegistry,
                                      ClientIpResolver clientIpResolver) {
+        this(authenticationManager, protocols, endpointRegistry, clientIpResolver, null);
+    }
+
+    public PaygateAuthenticationFilter(AuthenticationManager authenticationManager,
+                                     List<PaymentProtocol> protocols,
+                                     PaygateEndpointRegistry endpointRegistry,
+                                     ClientIpResolver clientIpResolver,
+                                     String serviceName) {
         this.authenticationManager = Objects.requireNonNull(authenticationManager,
                 "authenticationManager must not be null");
         this.protocols = protocols != null ? List.copyOf(protocols) : List.of();
         this.endpointRegistry = Objects.requireNonNull(endpointRegistry,
                 "endpointRegistry must not be null");
         this.clientIpResolver = clientIpResolver;
+        this.serviceName = serviceName;
     }
 
     @Override
@@ -88,9 +102,11 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         String authHeader = request.getHeader(AUTHORIZATION_HEADER);
         String normalizedPath = PaygatePathUtils.normalizePath(request.getRequestURI());
 
+        PaygateEndpointConfig endpointConfig;
         String capability;
         try {
-            capability = resolveCapability(request, normalizedPath);
+            endpointConfig = resolveEndpointConfig(request, normalizedPath);
+            capability = extractCapability(endpointConfig);
         } catch (RuntimeException e) {
             SecurityContextHolder.clearContext();
             PaygateResponseWriter.writeLightningUnavailable(response);
@@ -103,8 +119,9 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
                 Objects.requireNonNull(createAuthToken(authHeader, requestMetadata),
                         "Token creation must succeed after shouldNotFilter");
 
+        Authentication authenticated;
         try {
-            Authentication authenticated = authenticationManager.authenticate(unauthenticatedToken);
+            authenticated = authenticationManager.authenticate(unauthenticatedToken);
             var securityContext = SecurityContextHolder.createEmptyContext();
             securityContext.setAuthentication(authenticated);
             SecurityContextHolder.setContext(securityContext);
@@ -118,6 +135,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
             PaygateResponseWriter.writeLightningUnavailable(response);
             return;
         }
+
+        generateReceipt(authenticated, endpointConfig, response);
 
         filterChain.doFilter(request, response);
     }
@@ -159,27 +178,79 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Resolves the capability for the current request by looking up the endpoint registry.
-     * Returns {@code null} (permissive) if no config is found or the capability is blank.
+     * Resolves the endpoint configuration for the current request by looking up the endpoint registry.
+     * Returns {@code null} if no config is found for the given method and path.
      * Re-throws {@link RuntimeException} to enforce fail-closed behavior.
      */
-    private String resolveCapability(HttpServletRequest request, String normalizedPath) {
+    private PaygateEndpointConfig resolveEndpointConfig(HttpServletRequest request, String normalizedPath) {
         try {
-            PaygateEndpointConfig config = endpointRegistry.findConfig(
-                    request.getMethod(), normalizedPath);
-            if (config == null) {
-                return null;
-            }
-            String capability = config.capability();
-            if (capability == null || capability.isBlank()) {
-                return null;
-            }
-            return capability;
+            return endpointRegistry.findConfig(request.getMethod(), normalizedPath);
         } catch (RuntimeException e) {
             log.log(System.Logger.Level.WARNING,
-                    "Failed to resolve capability for {0} {1}; denying request",
+                    "Failed to resolve endpoint config for {0} {1}; denying request",
                     request.getMethod(), sanitizeForLog(request.getRequestURI()), e);
             throw e;
+        }
+    }
+
+    private static String extractCapability(PaygateEndpointConfig config) {
+        if (config == null) {
+            return null;
+        }
+        String capability = config.capability();
+        if (capability == null || capability.isBlank()) {
+            return null;
+        }
+        return capability;
+    }
+
+    /**
+     * Generates a payment receipt after successful authentication for protocols that support it
+     * (e.g., MPP produces receipts, L402 does not).
+     *
+     * <p>Receipt generation is best-effort: failures are logged at DEBUG level and do not
+     * block request processing.
+     */
+    private void generateReceipt(Authentication authenticated,
+                                  PaygateEndpointConfig config,
+                                  HttpServletResponse response) {
+        if (config == null) {
+            return;
+        }
+        if (!(authenticated instanceof PaygateAuthenticationToken authToken)) {
+            return;
+        }
+        PaymentCredential credential = authToken.getPaymentCredential();
+        if (credential == null) {
+            return;
+        }
+
+        for (PaymentProtocol protocol : protocols) {
+            if (protocol.scheme().equals(credential.sourceProtocolScheme())) {
+                try {
+                    ChallengeContext receiptContext = new ChallengeContext(
+                            credential.paymentHash(),
+                            credential.tokenId(),
+                            "",  // bolt11 not needed for receipt
+                            config.priceSats(),
+                            config.description(),
+                            serviceName,
+                            config.timeoutSeconds(),
+                            config.capability(),
+                            null,  // rootKeyBytes not needed for receipt
+                            null,  // opaque
+                            null   // digest
+                    );
+                    Optional<PaymentReceipt> receiptOpt = protocol.createReceipt(credential, receiptContext);
+                    if (receiptOpt.isPresent()) {
+                        PaygateResponseWriter.writeReceipt(response, receiptOpt.get());
+                    }
+                } catch (Exception e) {
+                    log.log(System.Logger.Level.DEBUG,
+                            "Receipt creation failed for protocol {0}", protocol.scheme(), e);
+                }
+                return;
+            }
         }
     }
 

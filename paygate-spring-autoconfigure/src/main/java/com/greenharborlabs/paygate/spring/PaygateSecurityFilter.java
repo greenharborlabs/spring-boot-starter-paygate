@@ -139,29 +139,7 @@ public class PaygateSecurityFilter implements Filter {
                         }
 
                         // Check for receipt (MPP produces receipts, L402 does not)
-                        try {
-                            ChallengeContext receiptContext = new ChallengeContext(
-                                    credential.paymentHash(),
-                                    credential.tokenId(),
-                                    "",  // bolt11 not needed for receipt
-                                    config.priceSats(),
-                                    config.description(),
-                                    serviceName,
-                                    config.timeoutSeconds(),
-                                    config.capability(),
-                                    null,  // rootKeyBytes not needed for receipt
-                                    null,  // opaque
-                                    null   // digest
-                            );
-                            Optional<PaymentReceipt> receiptOpt = protocol.createReceipt(credential, receiptContext);
-                            if (receiptOpt.isPresent()) {
-                                PaygateResponseWriter.writeReceipt(httpResponse, receiptOpt.get());
-                            }
-                        } catch (Exception _) {
-                            // Receipt creation is best-effort; failure does not block the request
-                            log.log(System.Logger.Level.DEBUG,
-                                    "Receipt creation skipped for {0}: not applicable", protocol.scheme());
-                        }
+                        generateReceipt(credential, config, protocol, httpResponse);
 
                         chain.doFilter(request, response);
                         recordCaveatVerifyDuration(verifyStart);
@@ -302,6 +280,39 @@ public class PaygateSecurityFilter implements Filter {
             challenges.add(protocol.formatChallenge(challengeContext));
         }
         return challenges;
+    }
+
+    /**
+     * Generates a payment receipt after successful credential validation.
+     * Receipt creation is best-effort; failure does not block the request.
+     */
+    private void generateReceipt(PaymentCredential credential,
+                                  PaygateEndpointConfig config,
+                                  PaymentProtocol protocol,
+                                  HttpServletResponse httpResponse) {
+        try {
+            ChallengeContext receiptContext = new ChallengeContext(
+                    credential.paymentHash(),
+                    credential.tokenId(),
+                    "",  // bolt11 not needed for receipt
+                    config.priceSats(),
+                    config.description(),
+                    serviceName,
+                    config.timeoutSeconds(),
+                    config.capability(),
+                    null,  // rootKeyBytes not needed for receipt
+                    null,  // opaque
+                    null   // digest
+            );
+            Optional<PaymentReceipt> receiptOpt = protocol.createReceipt(credential, receiptContext);
+            if (receiptOpt.isPresent()) {
+                PaygateResponseWriter.writeReceipt(httpResponse, receiptOpt.get());
+            }
+        } catch (Exception e) {
+            // Receipt creation is best-effort; failure does not block the request
+            log.log(System.Logger.Level.DEBUG,
+                    "Receipt creation failed for protocol {0}", protocol.scheme(), e);
+        }
     }
 
     /**
