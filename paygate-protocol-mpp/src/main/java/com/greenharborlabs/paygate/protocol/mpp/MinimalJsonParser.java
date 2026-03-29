@@ -17,11 +17,23 @@ import java.util.Map;
 final class MinimalJsonParser {
 
     private final String input;
+    private final MppParserLimits limits;
     private int pos;
+    private int currentDepth;
 
     MinimalJsonParser(String input) {
+        this(input, MppParserLimits.defaults());
+    }
+
+    MinimalJsonParser(String input, MppParserLimits limits) {
+        if (input.length() > limits.maxInputLength()) {
+            throw new JsonParseException(
+                    "JSON input length exceeds maximum of %d".formatted(limits.maxInputLength()));
+        }
         this.input = input;
+        this.limits = limits;
         this.pos = 0;
+        this.currentDepth = 0;
     }
 
     /**
@@ -33,32 +45,45 @@ final class MinimalJsonParser {
      *         unsupported value types
      */
     Map<String, Object> parseObject() {
-        skipWhitespace();
-        expect('{');
-        Map<String, Object> map = new LinkedHashMap<>();
-        skipWhitespace();
-        if (peek() == '}') {
-            advance();
-            return map;
+        currentDepth++;
+        if (currentDepth > limits.maxDepth()) {
+            throw error("JSON nesting depth exceeds maximum of %d".formatted(limits.maxDepth()));
         }
-        while (true) {
+        try {
             skipWhitespace();
-            String key = parseString();
+            expect('{');
+            Map<String, Object> map = new LinkedHashMap<>();
             skipWhitespace();
-            expect(':');
-            skipWhitespace();
-            Object value = parseValue();
-            map.put(key, value);
-            skipWhitespace();
-            char c = peek();
-            if (c == ',') {
-                advance();
-            } else if (c == '}') {
+            if (peek() == '}') {
                 advance();
                 return map;
-            } else {
-                throw error("Expected ',' or '}' but got '%c'".formatted(c));
             }
+            int keyCount = 0;
+            while (true) {
+                skipWhitespace();
+                String key = parseString();
+                keyCount++;
+                if (keyCount > limits.maxKeysPerObject()) {
+                    throw error("JSON object key count exceeds maximum of %d".formatted(limits.maxKeysPerObject()));
+                }
+                skipWhitespace();
+                expect(':');
+                skipWhitespace();
+                Object value = parseValue();
+                map.put(key, value);
+                skipWhitespace();
+                char c = peek();
+                if (c == ',') {
+                    advance();
+                } else if (c == '}') {
+                    advance();
+                    return map;
+                } else {
+                    throw error("Expected ',' or '}' but got '%c'".formatted(c));
+                }
+            }
+        } finally {
+            currentDepth--;
         }
     }
 
@@ -92,7 +117,11 @@ final class MinimalJsonParser {
             char c = input.charAt(pos);
             if (c == '"') {
                 advance();
-                return sb.toString();
+                String result = sb.toString();
+                if (result.length() > limits.maxStringLength()) {
+                    throw error("JSON string length exceeds maximum of %d".formatted(limits.maxStringLength()));
+                }
+                return result;
             }
             if (c == '\\') {
                 advance();

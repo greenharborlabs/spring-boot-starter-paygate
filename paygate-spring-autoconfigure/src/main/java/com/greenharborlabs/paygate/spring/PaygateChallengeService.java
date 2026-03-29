@@ -40,6 +40,7 @@ public class PaygateChallengeService {
     private final PaygateEarningsTracker earningsTracker;
     private final PaygateRateLimiter rateLimiter;
     private final ClientIpResolver clientIpResolver;
+    private final CapabilityCache capabilityCache;
     private final ConcurrentHashMap<String, PaygatePricingStrategy> pricingStrategyCache = new ConcurrentHashMap<>();
 
     public PaygateChallengeService(RootKeyStore rootKeyStore,
@@ -48,7 +49,8 @@ public class PaygateChallengeService {
                                  @Nullable ApplicationContext applicationContext,
                                  @Nullable PaygateEarningsTracker earningsTracker,
                                  @Nullable PaygateRateLimiter rateLimiter,
-                                 @Nullable ClientIpResolver clientIpResolver) {
+                                 @Nullable ClientIpResolver clientIpResolver,
+                                 @Nullable CapabilityCache capabilityCache) {
         this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
         this.lightningBackend = Objects.requireNonNull(lightningBackend, "lightningBackend must not be null");
         this.applicationContext = applicationContext;
@@ -57,6 +59,7 @@ public class PaygateChallengeService {
         this.earningsTracker = earningsTracker;
         this.rateLimiter = rateLimiter;
         this.clientIpResolver = clientIpResolver;
+        this.capabilityCache = capabilityCache;
     }
 
     /**
@@ -154,7 +157,7 @@ public class PaygateChallengeService {
                 // Clone rootKey so ChallengeContext has its own copy before we zeroize
                 byte[] rootKeyClone = rootKey.clone();
 
-                return new ChallengeContext(
+                var challengeContext = new ChallengeContext(
                         invoice.paymentHash(),
                         tokenIdHex,
                         invoice.bolt11(),
@@ -167,6 +170,19 @@ public class PaygateChallengeService {
                         opaque,
                         null
                 );
+
+                // Populate capability cache after successful invoice creation
+                if (capabilityCache != null && config.capability() != null && !config.capability().isEmpty()) {
+                    try {
+                        capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
+                    } catch (RuntimeException e) {
+                        log.log(System.Logger.Level.WARNING,
+                                "Failed to store capability in cache for token {0}: {1}",
+                                tokenIdHex, e.getMessage());
+                    }
+                }
+
+                return challengeContext;
             } finally {
                 KeyMaterial.zeroize(rootKey);
             }

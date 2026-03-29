@@ -15,6 +15,7 @@ import org.springframework.security.core.AuthenticationException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Spring Security {@link AuthenticationProvider} that validates payment credentials
@@ -27,21 +28,34 @@ import java.util.Objects;
  */
 public final class PaygateAuthenticationProvider implements AuthenticationProvider {
 
+    private static final System.Logger log = System.getLogger(PaygateAuthenticationProvider.class.getName());
+
+    private static final CapabilityResolver NOOP_RESOLVER = _ -> Set.of();
+
     private final L402Validator l402Validator;
     private final List<PaymentProtocol> protocols;
     private final String serviceName;
+    private final CapabilityResolver capabilityResolver;
 
     public PaygateAuthenticationProvider(L402Validator l402Validator, String serviceName) {
-        this(l402Validator, List.of(), serviceName);
+        this(l402Validator, List.of(), serviceName, NOOP_RESOLVER);
     }
 
     public PaygateAuthenticationProvider(L402Validator l402Validator,
                                          List<PaymentProtocol> protocols,
                                          String serviceName) {
+        this(l402Validator, protocols, serviceName, NOOP_RESOLVER);
+    }
+
+    public PaygateAuthenticationProvider(L402Validator l402Validator,
+                                         List<PaymentProtocol> protocols,
+                                         String serviceName,
+                                         CapabilityResolver capabilityResolver) {
         this.l402Validator = Objects.requireNonNull(l402Validator, "l402Validator must not be null");
         this.protocols = List.copyOf(
                 Objects.requireNonNull(protocols, "protocols must not be null"));
         this.serviceName = serviceName;
+        this.capabilityResolver = capabilityResolver != null ? capabilityResolver : NOOP_RESOLVER;
     }
 
     @Override
@@ -73,7 +87,13 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
 
         try {
             L402Validator.ValidationResult result = l402Validator.validate(components, context);
-            return PaygateAuthenticationToken.authenticated(result.credential(), serviceName);
+            Set<String> capabilities = resolveCapabilitiesSafely(
+                    new CapabilityResolutionContext(
+                            result.credential().tokenId(),
+                            serviceName,
+                            result.credential(),
+                            token.getRequestMetadata()));
+            return PaygateAuthenticationToken.authenticated(result.credential(), serviceName, capabilities);
         } catch (L402Exception e) {
             throw new BadCredentialsException("L402 authentication failed", e);
         }
@@ -86,7 +106,13 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
                 try {
                     PaymentCredential credential = protocol.parseCredential(authorizationHeader);
                     protocol.validate(credential, token.getRequestMetadata());
-                    return PaygateAuthenticationToken.authenticated(credential, serviceName);
+                    Set<String> capabilities = resolveCapabilitiesSafely(
+                            new CapabilityResolutionContext(
+                                    credential.tokenId(),
+                                    serviceName,
+                                    null,
+                                    token.getRequestMetadata()));
+                    return PaygateAuthenticationToken.authenticated(credential, serviceName, capabilities);
                 } catch (PaymentValidationException e) {
                     throw new BadCredentialsException("Payment authentication failed", e);
                 }
@@ -94,6 +120,16 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
         }
 
         throw new BadCredentialsException("No payment protocol found for authorization header");
+    }
+
+    private Set<String> resolveCapabilitiesSafely(CapabilityResolutionContext context) {
+        try {
+            return capabilityResolver.resolve(context);
+        } catch (RuntimeException e) {
+            log.log(System.Logger.Level.WARNING,
+                    "Capability resolution failed for token; proceeding without resolved capabilities", e);
+            return Set.of();
+        }
     }
 
     @Override

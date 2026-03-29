@@ -38,16 +38,30 @@ public final class MppProtocol implements PaymentProtocol {
     private static final HexFormat HEX = HexFormat.of();
 
     private final SensitiveBytes challengeBindingSecret;
+    private final MppParserLimits parserLimits;
 
     /**
-     * Creates a new MPP protocol instance.
+     * Creates a new MPP protocol instance with default parser limits.
      *
      * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
      * @throws NullPointerException     if secret is null
      * @throws IllegalArgumentException if secret is shorter than 32 bytes
      */
     public MppProtocol(SensitiveBytes challengeBindingSecret) {
+        this(challengeBindingSecret, MppParserLimits.defaults());
+    }
+
+    /**
+     * Creates a new MPP protocol instance with custom parser limits.
+     *
+     * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
+     * @param parserLimits           limits for JSON parser resource exhaustion protection
+     * @throws NullPointerException     if secret or parserLimits is null
+     * @throws IllegalArgumentException if secret is shorter than 32 bytes
+     */
+    public MppProtocol(SensitiveBytes challengeBindingSecret, MppParserLimits parserLimits) {
         Objects.requireNonNull(challengeBindingSecret, "challengeBindingSecret must not be null");
+        Objects.requireNonNull(parserLimits, "parserLimits must not be null");
         byte[] temp = challengeBindingSecret.value();
         try {
             if (temp.length < MIN_SECRET_LENGTH) {
@@ -59,6 +73,7 @@ public final class MppProtocol implements PaymentProtocol {
             CryptoUtils.zeroize(temp);
         }
         this.challengeBindingSecret = challengeBindingSecret;
+        this.parserLimits = parserLimits;
     }
 
     @Override
@@ -82,7 +97,7 @@ public final class MppProtocol implements PaymentProtocol {
         // Strip "Payment " prefix (case-insensitive match already done via canHandle)
         String blob = authorizationHeader.substring(SCHEME_PREFIX.length());
 
-        PaymentCredential credential = MppCredentialParser.parse(blob);
+        PaymentCredential credential = MppCredentialParser.parse(blob, parserLimits);
 
         // Verify method is "lightning"
         if (credential.metadata() instanceof MppMetadata mppMetadata) {

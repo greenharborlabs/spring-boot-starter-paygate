@@ -1,8 +1,10 @@
 package com.greenharborlabs.paygate.example.security;
 
+import com.greenharborlabs.paygate.spring.security.PaygateAuthFailureRateLimitFilter;
 import com.greenharborlabs.paygate.spring.security.PaygateAuthenticationEntryPoint;
 import com.greenharborlabs.paygate.spring.security.PaygateAuthenticationFilter;
 import com.greenharborlabs.paygate.spring.security.PaygateAuthenticationProvider;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -29,8 +31,11 @@ import org.springframework.security.web.authentication.www.BasicAuthenticationFi
  *       will be rejected with a 403 Forbidden because they are not granted the {@code ROLE_L402}
  *       authority.</li>
  *   <li>{@code @EnableMethodSecurity} enables the use of {@code @PreAuthorize} annotations on
- *       controller methods for fine-grained, capability-based authorization (e.g.,
- *       {@code @PreAuthorize("hasAuthority('L402_CAPABILITY_premium-analyze')")}).</li>
+ *       controller methods for fine-grained, capability-based authorization. The recommended
+ *       authority prefix is {@code PAYGATE_CAPABILITY_*} (e.g.,
+ *       {@code @PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_premium-analyze')")}). The legacy
+ *       {@code L402_CAPABILITY_*} prefix is still emitted for backward compatibility, so existing
+ *       {@code @PreAuthorize} expressions using it will continue to work.</li>
  * </ul>
  */
 @Configuration
@@ -54,7 +59,13 @@ public class SecurityConfig {
             HttpSecurity http,
             PaygateAuthenticationFilter paygateFilter,
             PaygateAuthenticationProvider paygateProvider,
-            PaygateAuthenticationEntryPoint paygateEntryPoint) throws Exception {
+            PaygateAuthenticationEntryPoint paygateEntryPoint,
+            ObjectProvider<PaygateAuthFailureRateLimitFilter> rateLimitFilterProvider) throws Exception {
+
+        PaygateAuthFailureRateLimitFilter rateLimitFilter = rateLimitFilterProvider.getIfAvailable();
+        if (rateLimitFilter != null) {
+            http.addFilterBefore(rateLimitFilter, BasicAuthenticationFilter.class);
+        }
 
         return http
                 .authenticationProvider(paygateProvider)

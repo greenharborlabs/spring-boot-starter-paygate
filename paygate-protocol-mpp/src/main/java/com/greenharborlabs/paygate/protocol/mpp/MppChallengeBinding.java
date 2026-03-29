@@ -93,9 +93,22 @@ public final class MppChallengeBinding {
     /**
      * Builds the pipe-delimited input and computes HMAC-SHA256.
      */
+    private static void rejectPipe(String value, String fieldName) {
+        if (value != null && value.indexOf(PIPE) >= 0) {
+            throw new IllegalArgumentException(
+                    fieldName + " must not contain the pipe delimiter character '|'");
+        }
+    }
+
     private static byte[] computeHmac(String realm, String method, String intent,
                                        String requestB64, String expires, String digest,
                                        String opaqueB64, SensitiveBytes secret) {
+        rejectPipe(realm, "realm");
+        rejectPipe(method, "method");
+        rejectPipe(intent, "intent");
+        rejectPipe(expires, "expires");
+        rejectPipe(digest, "digest");
+
         String input = new StringBuilder()
                 .append(realm).append(PIPE)
                 .append(method).append(PIPE)

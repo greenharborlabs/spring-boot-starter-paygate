@@ -1,5 +1,11 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentCredential;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentReceipt;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -15,6 +21,7 @@ import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +47,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.hamcrest.Matchers.is;
@@ -59,6 +67,11 @@ class PaygateRateLimitingTest {
     private static final String SERVICE_NAME = "test-service";
     private static final long TIMEOUT_SECONDS = 600;
     private static final int MAX_TOKENS = 3;
+    /**
+     * Higher token budget for tests that need room for both unauthenticated
+     * and authenticated requests (pre-check consumes a token per request).
+     */
+    private static final int LARGE_BUCKET_TOKENS = 10;
 
     static {
         new SecureRandom().nextBytes(ROOT_KEY);
@@ -104,23 +117,144 @@ class PaygateRateLimitingTest {
         }
 
         @Test
-        @DisplayName("authenticated requests are NOT rate limited")
-        void authenticatedRequestsAreNotRateLimited() throws Exception {
-            // Exhaust the rate limit with unauthenticated requests
+        @DisplayName("pre-check exhausted returns 429 before credential parsing")
+        void preCheckExhaustedReturns429BeforeCredentialParsing() throws Exception {
+            // Exhaust all tokens with unauthenticated requests
             for (int i = 0; i < MAX_TOKENS; i++) {
                 mockMvc.perform(get(PROTECTED_PATH))
                         .andExpect(status().isPaymentRequired());
             }
 
-            // Verify rate limit is hit for unauthenticated
-            mockMvc.perform(get(PROTECTED_PATH))
-                    .andExpect(status().is(429));
+            // Even with a valid auth header, pre-check should reject with 429
+            String authHeader = buildValidAuthHeader();
+            mockMvc.perform(get(PROTECTED_PATH)
+                            .header("Authorization", authHeader))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.error", is("RATE_LIMITED")));
+        }
+    }
 
-            // Authenticated request should still pass through
+    // -----------------------------------------------------------------------
+    // Test: authenticated requests pass when tokens are available (pre-check consumes 1)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @SpringBootTest(classes = RateLimitLargeBucketApp.class)
+    @AutoConfigureMockMvc
+    @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
+    @DisplayName("with large bucket rate limiting")
+    class RateLimitLargeBucket {
+
+        @Autowired
+        private MockMvc mockMvc;
+
+        @Autowired
+        private LightningBackend lightningBackend;
+
+        @BeforeEach
+        void setUp() {
+            ((StubLightningBackend) lightningBackend).setHealthy(true);
+            ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+        }
+
+        @Test
+        @DisplayName("valid credential with pre-check consumes exactly 1 token")
+        void validCredentialConsumesExactlyOneToken() throws Exception {
+            // Use LARGE_BUCKET_TOKENS - 1 unauthenticated requests to leave exactly 1 token
+            for (int i = 0; i < LARGE_BUCKET_TOKENS - 1; i++) {
+                mockMvc.perform(get(PROTECTED_PATH))
+                        .andExpect(status().isPaymentRequired());
+            }
+
+            // Valid auth should succeed (consumes the last token via pre-check, no penalty)
             String authHeader = buildValidAuthHeader();
             mockMvc.perform(get(PROTECTED_PATH)
                             .header("Authorization", authHeader))
                     .andExpect(status().isOk());
+
+            // Next unauthenticated request should be rate-limited (bucket is empty)
+            mockMvc.perform(get(PROTECTED_PATH))
+                    .andExpect(status().is(429));
+        }
+
+        @Test
+        @DisplayName("invalid credential consumes 2 tokens (pre-check + penalty)")
+        void invalidCredentialConsumesTwoTokens() throws Exception {
+            // Use LARGE_BUCKET_TOKENS - 2 unauthenticated requests to leave exactly 2 tokens
+            for (int i = 0; i < LARGE_BUCKET_TOKENS - 2; i++) {
+                mockMvc.perform(get(PROTECTED_PATH))
+                        .andExpect(status().isPaymentRequired());
+            }
+
+            // Invalid auth should fail and consume 2 tokens (pre-check + penalty)
+            mockMvc.perform(get(PROTECTED_PATH)
+                            .header("Authorization", "L402 invalidmacaroon:invalidpreimage"))
+                    .andExpect(status().is4xxClientError());
+
+            // Bucket should now be empty — next request gets 429
+            mockMvc.perform(get(PROTECTED_PATH))
+                    .andExpect(status().is(429));
+        }
+
+        @Test
+        @DisplayName("authenticated requests pass even after unauthenticated exhaust most tokens")
+        void authenticatedRequestsPassWithAvailableTokens() throws Exception {
+            // Exhaust most tokens with unauthenticated requests, leaving 1
+            for (int i = 0; i < LARGE_BUCKET_TOKENS - 1; i++) {
+                mockMvc.perform(get(PROTECTED_PATH))
+                        .andExpect(status().isPaymentRequired());
+            }
+
+            // Authenticated request should still pass (pre-check consumes 1 token)
+            String authHeader = buildValidAuthHeader();
+            mockMvc.perform(get(PROTECTED_PATH)
+                            .header("Authorization", authHeader))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: generic RuntimeException path consumes rate limiter penalty
+    // Uses a custom "bomb" protocol that throws RuntimeException on validate
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @SpringBootTest(classes = RateLimitBombProtocolApp.class)
+    @AutoConfigureMockMvc
+    @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
+    @DisplayName("with bomb protocol for generic exception path")
+    class RateLimitBombProtocol {
+
+        @Autowired
+        private MockMvc mockMvc;
+
+        @Autowired
+        private LightningBackend lightningBackend;
+
+        @BeforeEach
+        void setUp() {
+            ((StubLightningBackend) lightningBackend).setHealthy(true);
+            ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+        }
+
+        @Test
+        @DisplayName("generic RuntimeException path consumes rate limiter penalty")
+        void genericRuntimeExceptionConsumesRateLimiter() throws Exception {
+            // Use LARGE_BUCKET_TOKENS - 2 unauthenticated requests to leave exactly 2 tokens
+            for (int i = 0; i < LARGE_BUCKET_TOKENS - 2; i++) {
+                mockMvc.perform(get(PROTECTED_PATH))
+                        .andExpect(status().isPaymentRequired());
+            }
+
+            // Send a request with "Bomb" auth scheme that triggers RuntimeException
+            // Pre-check consumes 1 token, penalty consumes another = 2 tokens total
+            mockMvc.perform(get(PROTECTED_PATH)
+                            .header("Authorization", "Bomb trigger-explosion"))
+                    .andExpect(status().is(503));
+
+            // Bucket should now be empty — next request gets 429
+            mockMvc.perform(get(PROTECTED_PATH))
+                    .andExpect(status().is(429));
         }
     }
 
@@ -251,6 +385,79 @@ class PaygateRateLimitingTest {
 
     @Configuration
     @EnableAutoConfiguration
+    static class RateLimitLargeBucketApp {
+
+        @Bean
+        PaygateProperties paygateProperties() {
+            return new PaygateProperties();
+        }
+
+        @Bean
+        LightningBackend lightningBackend() {
+            return new StubLightningBackend();
+        }
+
+        @Bean
+        RootKeyStore rootKeyStore() {
+            return new InMemoryTestRootKeyStore(ROOT_KEY);
+        }
+
+        @Bean
+        CredentialStore credentialStore() {
+            return new InMemoryTestCredentialStore();
+        }
+
+        @Bean
+        List<CaveatVerifier> caveatVerifiers() {
+            return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+        }
+
+        @Bean
+        PaygateEndpointRegistry paygateEndpointRegistry() {
+            var registry = new PaygateEndpointRegistry();
+            registry.register(
+                    new PaygateEndpointConfig("GET", PROTECTED_PATH, 10, TIMEOUT_SECONDS, "Rate limited endpoint", "", "")
+            );
+            return registry;
+        }
+
+        @Bean
+        PaygateEarningsTracker paygateEarningsTracker() {
+            return new PaygateEarningsTracker();
+        }
+
+        @Bean
+        PaygateRateLimiter paygateRateLimiter() {
+            return new TokenBucketRateLimiter(LARGE_BUCKET_TOKENS, 0.001, 100_000);
+        }
+
+        @Bean
+        PaygateSecurityFilter paygateSecurityFilter(
+                PaygateEndpointRegistry endpointRegistry,
+                LightningBackend lightningBackendBean,
+                RootKeyStore rootKeyStore,
+                CredentialStore credentialStore,
+                List<CaveatVerifier> caveatVerifiers,
+                PaygateEarningsTracker paygateEarningsTracker,
+                PaygateRateLimiter paygateRateLimiter
+        ) {
+            var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
+            var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
+            var challengeService = new PaygateChallengeService(
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter, null, null);
+            return new PaygateSecurityFilter(
+                    endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
+                    null, null, paygateEarningsTracker, paygateRateLimiter);
+        }
+
+        @Bean
+        TestController testController() {
+            return new TestController();
+        }
+    }
+
+    @Configuration
+    @EnableAutoConfiguration
     static class RateLimitEnabledApp {
 
         @Bean
@@ -310,7 +517,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter, null);
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
@@ -378,7 +585,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null, null);
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, null, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, null);
@@ -453,7 +660,7 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, null);
+                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, null, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
@@ -534,15 +741,127 @@ class PaygateRateLimitingTest {
             var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
             var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
             var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, clientIpResolver);
+                    rootKeyStore, lightningBackendBean, paygateProperties, null, paygateEarningsTracker, paygateRateLimiter, clientIpResolver, null);
             return new PaygateSecurityFilter(
                     endpointRegistry, List.of(l402Protocol), challengeService, SERVICE_NAME,
+                    clientIpResolver, null, paygateEarningsTracker, paygateRateLimiter);
+        }
+
+        @Bean
+        TestController testController() {
+            return new TestController();
+        }
+    }
+
+    @Configuration
+    @EnableAutoConfiguration
+    static class RateLimitBombProtocolApp {
+
+        @Bean
+        PaygateProperties paygateProperties() {
+            return new PaygateProperties();
+        }
+
+        @Bean
+        LightningBackend lightningBackend() {
+            return new StubLightningBackend();
+        }
+
+        @Bean
+        RootKeyStore rootKeyStore() {
+            return new InMemoryTestRootKeyStore(ROOT_KEY);
+        }
+
+        @Bean
+        CredentialStore credentialStore() {
+            return new InMemoryTestCredentialStore();
+        }
+
+        @Bean
+        List<CaveatVerifier> caveatVerifiers() {
+            return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+        }
+
+        @Bean
+        PaygateEndpointRegistry paygateEndpointRegistry() {
+            var registry = new PaygateEndpointRegistry();
+            registry.register(
+                    new PaygateEndpointConfig("GET", PROTECTED_PATH, 10, TIMEOUT_SECONDS, "Rate limited endpoint", "", "")
+            );
+            return registry;
+        }
+
+        @Bean
+        PaygateEarningsTracker paygateEarningsTracker() {
+            return new PaygateEarningsTracker();
+        }
+
+        @Bean
+        PaygateRateLimiter paygateRateLimiter() {
+            return new TokenBucketRateLimiter(LARGE_BUCKET_TOKENS, 0.001, 100_000);
+        }
+
+        @Bean
+        PaygateSecurityFilter paygateSecurityFilter(
+                PaygateEndpointRegistry endpointRegistry,
+                LightningBackend lightningBackendBean,
+                RootKeyStore rootKeyStore,
+                CredentialStore credentialStore,
+                List<CaveatVerifier> caveatVerifiers,
+                PaygateEarningsTracker paygateEarningsTracker,
+                PaygateRateLimiter paygateRateLimiter
+        ) {
+            var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, SERVICE_NAME);
+            var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
+            var bombProtocol = new BombProtocol();
+            var challengeService = new PaygateChallengeService(
+                    rootKeyStore, lightningBackendBean, null, null, paygateEarningsTracker, paygateRateLimiter, null, null);
+            // Bomb protocol is listed first so it matches "Bomb" auth headers before L402
+            return new PaygateSecurityFilter(
+                    endpointRegistry, List.of(bombProtocol, l402Protocol), challengeService, SERVICE_NAME,
                     null, null, paygateEarningsTracker, paygateRateLimiter);
         }
 
         @Bean
         TestController testController() {
             return new TestController();
+        }
+    }
+
+    /**
+     * A test protocol that always throws a generic {@link RuntimeException}
+     * during validation, exercising the generic {@code catch (Exception e)} path
+     * in {@link PaygateSecurityFilter}.
+     */
+    static class BombProtocol implements PaymentProtocol {
+
+        @Override
+        public String scheme() { return "Bomb"; }
+
+        @Override
+        public boolean canHandle(String authorizationHeader) {
+            return authorizationHeader.startsWith("Bomb ");
+        }
+
+        @Override
+        public PaymentCredential parseCredential(String authorizationHeader) throws PaymentValidationException {
+            return new PaymentCredential(new byte[32], new byte[32], null, null, null, null);
+        }
+
+        @Override
+        public ChallengeResponse formatChallenge(ChallengeContext context) {
+            return new ChallengeResponse("Bomb realm=\"test\"", "Bomb", null);
+        }
+
+        @Override
+        public void validate(PaymentCredential credential, Map<String, String> requestContext) {
+            throw new RuntimeException("Simulated unexpected failure");
+        }
+
+        @Override
+        public Optional<PaymentReceipt> createReceipt(
+                PaymentCredential credential, ChallengeContext context) {
+            return Optional.empty();
         }
     }
 
@@ -631,11 +950,11 @@ class PaygateRateLimitingTest {
         public GenerationResult generateRootKey() {
             byte[] tokenId = new byte[32];
             new SecureRandom().nextBytes(tokenId);
-            return new GenerationResult(new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone()), tokenId);
+            return new GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
         }
 
         @Override
-        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) { return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone()); }
+        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) { return new SensitiveBytes(rootKey.clone()); }
 
         @Override
         public void revokeRootKey(byte[] keyId) { }

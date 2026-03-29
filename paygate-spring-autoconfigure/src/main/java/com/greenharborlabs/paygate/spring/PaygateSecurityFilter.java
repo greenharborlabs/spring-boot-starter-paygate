@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
+import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.protocol.l402.L402Metadata;
 import jakarta.servlet.Filter;
@@ -122,6 +123,13 @@ public class PaygateSecurityFilter implements Filter {
         if (authHeader != null) {
             for (PaymentProtocol protocol : protocols) {
                 if (protocol.canHandle(authHeader)) {
+                    // Pre-check: consume a rate limiter token before credential parsing.
+                    // This prevents unauthenticated probing from burning CPU on parse/validate.
+                    if (!tryAcquireRateLimit(httpRequest)) {
+                        PaygateResponseWriter.writeRateLimited(httpResponse);
+                        return;
+                    }
+
                     // Found matching protocol — try validate
                     long verifyStart = System.nanoTime();
                     try {
@@ -139,35 +147,13 @@ public class PaygateSecurityFilter implements Filter {
                         }
 
                         // Check for receipt (MPP produces receipts, L402 does not)
-                        try {
-                            ChallengeContext receiptContext = new ChallengeContext(
-                                    credential.paymentHash(),
-                                    credential.tokenId(),
-                                    "",  // bolt11 not needed for receipt
-                                    config.priceSats(),
-                                    config.description(),
-                                    serviceName,
-                                    config.timeoutSeconds(),
-                                    config.capability(),
-                                    null,  // rootKeyBytes not needed for receipt
-                                    null,  // opaque
-                                    null   // digest
-                            );
-                            Optional<PaymentReceipt> receiptOpt = protocol.createReceipt(credential, receiptContext);
-                            if (receiptOpt.isPresent()) {
-                                PaygateResponseWriter.writeReceipt(httpResponse, receiptOpt.get());
-                            }
-                        } catch (Exception _) {
-                            // Receipt creation is best-effort; failure does not block the request
-                            log.log(System.Logger.Level.DEBUG,
-                                    "Receipt creation skipped for {0}: not applicable", protocol.scheme());
-                        }
+                        generateReceipt(credential, config, protocol, httpResponse);
 
                         chain.doFilter(request, response);
                         recordCaveatVerifyDuration(verifyStart);
                         // Treat all validated credentials as freshValidation=true; the credential
                         // cache inside L402Validator handles deduplication internally.
-                        recordPassed(config.pathPattern(), config.priceSats(), true, protocol.scheme());
+                        recordPassed(config.pathPattern(), config.priceSats(), protocol.scheme());
                         return;
 
                     } catch (PaymentValidationException e) {
@@ -175,13 +161,8 @@ public class PaygateSecurityFilter implements Filter {
                         // classifyCaveatType only does keyword matching and returns a constant string —
                         // sanitize the message anyway to satisfy static analysis taint tracking.
                         recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
-                        // Consume rate limiter token on auth failure to penalize brute-force probing
-                        PaygateRateLimiter limiter = this.rateLimiter;
-                        if (limiter != null) {
-                            limiter.tryAcquire(this.clientIpResolver != null
-                                ? this.clientIpResolver.resolve(httpRequest)
-                                : httpRequest.getRemoteAddr());
-                        }
+                        // Consume penalty token on auth failure to penalize brute-force probing
+                        consumeRateLimitPenalty(httpRequest);
                         // Sanitize the token ID before logging — it is derived from user-supplied input
                         // and could contain newlines or other control characters used in log injection attacks.
                         String tokenDetail = sanitizeForLog(e.getTokenId() != null ? e.getTokenId() : "");
@@ -229,6 +210,8 @@ public class PaygateSecurityFilter implements Filter {
                         if (e instanceof MacaroonVerificationException) {
                             recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
                         }
+                        // Consume penalty token on any auth failure, not just PaymentValidationException
+                        consumeRateLimitPenalty(httpRequest);
                         // Fail closed: any unexpected exception from validation produces 503, never 500
                         String safeMessage = sanitizeForLog(e.getMessage());
                         log.log(System.Logger.Level.WARNING, "Unexpected error during {0} validation for {1} {2}: {3}",
@@ -249,7 +232,7 @@ public class PaygateSecurityFilter implements Filter {
             ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
             List<ChallengeResponse> challenges = buildChallenges(challengeContext);
             PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
-            recordChallenge(config.pathPattern(), "all");
+            recordChallenge(config.pathPattern());
         } catch (PaygateRateLimitedException _) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
         } catch (PaygateLightningUnavailableException e) {
@@ -276,9 +259,7 @@ public class PaygateSecurityFilter implements Filter {
     private Map<String, String> buildRequestContext(HttpServletRequest httpRequest,
                                                      String path, String method,
                                                      PaygateEndpointConfig config) {
-        String clientIp = clientIpResolver != null
-                ? clientIpResolver.resolve(httpRequest)
-                : httpRequest.getRemoteAddr();
+        String clientIp = resolveClientIp(httpRequest);
         String capability = config.capability();
         if (capability != null && !capability.isEmpty()) {
             return Map.of(
@@ -294,6 +275,50 @@ public class PaygateSecurityFilter implements Filter {
     }
 
     /**
+     * Resolves the client IP from the request, using the configured
+     * {@link ClientIpResolver} if available, falling back to {@code getRemoteAddr()}.
+     */
+    private String resolveClientIp(HttpServletRequest request) {
+        return clientIpResolver != null
+                ? clientIpResolver.resolve(request)
+                : request.getRemoteAddr();
+    }
+
+    /**
+     * Attempts to acquire a rate limiter token for the requesting client.
+     * Returns {@code true} if the request is allowed (or no rate limiter is configured).
+     * Rate limiter exceptions are logged and treated as allowed (defense-in-depth, not fail-closed).
+     */
+    private boolean tryAcquireRateLimit(HttpServletRequest request) {
+        PaygateRateLimiter limiter = this.rateLimiter;
+        if (limiter == null) {
+            return true;
+        }
+        try {
+            return limiter.tryAcquire(resolveClientIp(request));
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Rate limiter threw exception, allowing request: {0}", e.getMessage());
+            return true;
+        }
+    }
+
+    /**
+     * Consumes a penalty rate limiter token after a failed credential validation.
+     * Failures in the rate limiter itself are logged and swallowed (defense-in-depth).
+     */
+    private void consumeRateLimitPenalty(HttpServletRequest request) {
+        PaygateRateLimiter limiter = this.rateLimiter;
+        if (limiter == null) {
+            return;
+        }
+        try {
+            limiter.tryAcquire(resolveClientIp(request));
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Rate limiter threw exception during penalty consumption: {0}", e.getMessage());
+        }
+    }
+
+    /**
      * Builds challenge responses from all registered protocols.
      */
     private List<ChallengeResponse> buildChallenges(ChallengeContext challengeContext) {
@@ -302,6 +327,39 @@ public class PaygateSecurityFilter implements Filter {
             challenges.add(protocol.formatChallenge(challengeContext));
         }
         return challenges;
+    }
+
+    /**
+     * Generates a payment receipt after successful credential validation.
+     * Receipt creation is best-effort; failure does not block the request.
+     */
+    private void generateReceipt(PaymentCredential credential,
+                                  PaygateEndpointConfig config,
+                                  PaymentProtocol protocol,
+                                  HttpServletResponse httpResponse) {
+        try {
+            ChallengeContext receiptContext = new ChallengeContext(
+                    credential.paymentHash(),
+                    credential.tokenId(),
+                    "",  // bolt11 not needed for receipt
+                    config.priceSats(),
+                    config.description(),
+                    serviceName,
+                    config.timeoutSeconds(),
+                    config.capability(),
+                    null,  // rootKeyBytes not needed for receipt
+                    null,  // opaque
+                    null   // digest
+            );
+            Optional<PaymentReceipt> receiptOpt = protocol.createReceipt(credential, receiptContext);
+            if (receiptOpt.isPresent()) {
+                PaygateResponseWriter.writeReceipt(httpResponse, receiptOpt.get());
+            }
+        } catch (Exception e) {
+            // Receipt creation is best-effort; failure does not block the request
+            log.log(System.Logger.Level.DEBUG,
+                    "Receipt creation failed for protocol {0}", protocol.scheme(), e);
+        }
     }
 
     /**
@@ -345,26 +403,24 @@ public class PaygateSecurityFilter implements Filter {
         return Instant.now().plus(config.timeoutSeconds(), ChronoUnit.SECONDS);
     }
 
-    private void recordChallenge(String endpoint, String protocol) {
+    private void recordChallenge(String endpoint) {
         try {
-            if (metrics != null) { metrics.recordChallenge(endpoint, protocol); }
+            if (metrics != null) { metrics.recordChallenge(endpoint, "all"); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record challenge metric: {0}", e.getMessage());
         }
     }
 
-    private void recordPassed(String endpoint, long priceSats, boolean freshValidation, String protocol) {
+    private void recordPassed(String endpoint, long priceSats, String protocol) {
         try {
             if (metrics != null) { metrics.recordPassed(endpoint, priceSats, protocol); }
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to record passed metric: {0}", e.getMessage());
         }
-        if (freshValidation) {
-            try {
-                if (earningsTracker != null) { earningsTracker.recordInvoiceSettled(priceSats); }
-            } catch (Exception e) {
-                log.log(System.Logger.Level.WARNING, "Failed to record invoice settlement in earnings tracker: {0}", e.getMessage());
-            }
+        try {
+            if (earningsTracker != null) { earningsTracker.recordInvoiceSettled(priceSats); }
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Failed to record invoice settlement in earnings tracker: {0}", e.getMessage());
         }
     }
 
@@ -424,10 +480,10 @@ public class PaygateSecurityFilter implements Filter {
     }
 
     /**
-     * Delegates to {@link PaygatePathUtils#normalizePath(String)}.
+     * Delegates to {@link PathNormalizer#normalize(String)}.
      */
     static String normalizePath(String rawPath) {
-        return PaygatePathUtils.normalizePath(rawPath);
+        return PathNormalizer.normalize(rawPath);
     }
 
     static String sanitizeForLog(String value) {

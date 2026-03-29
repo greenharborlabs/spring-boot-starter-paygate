@@ -182,6 +182,30 @@
       "name": "paygate.protocols.mpp.challenge-binding-secret",
       "type": "java.lang.String",
       "description": "HMAC secret used to bind MPP payment challenges to specific requests. Must be at least 32 bytes. Required when MPP is enabled. Keep this value secret."
+    },
+    {
+      "name": "paygate.protocols.mpp.max-credential-bytes",
+      "type": "java.lang.Integer",
+      "description": "Maximum raw MPP credential length in bytes. Credentials exceeding this limit are rejected before parsing to prevent resource exhaustion.",
+      "defaultValue": 65536
+    },
+    {
+      "name": "paygate.protocols.mpp.max-json-depth",
+      "type": "java.lang.Integer",
+      "description": "Maximum JSON nesting depth allowed in MPP credentials. Limits recursive parsing to prevent stack overflow attacks.",
+      "defaultValue": 5
+    },
+    {
+      "name": "paygate.protocols.mpp.max-string-length",
+      "type": "java.lang.Integer",
+      "description": "Maximum parsed string length in characters for individual JSON string values in MPP credentials.",
+      "defaultValue": 8192
+    },
+    {
+      "name": "paygate.protocols.mpp.max-keys-per-object",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of keys allowed in a single JSON object within MPP credentials. Prevents hash-collision DoS attacks.",
+      "defaultValue": 32
     }
   ],
   "hints": [

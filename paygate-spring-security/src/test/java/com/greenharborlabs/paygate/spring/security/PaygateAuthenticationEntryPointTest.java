@@ -258,8 +258,8 @@ class PaygateAuthenticationEntryPointTest {
 
     @Test
     void normalizePathPreservesLowercaseEncodedSlash() {
-        // FR-003b: %2f (lowercase) must also be preserved
-        assertThat(PaygateAuthenticationEntryPoint.normalizePath("/api/v1%2fbypass")).isEqualTo("/api/v1%2fbypass");
+        // FR-003b: %2f (lowercase) uppercased and preserved per RFC 3986 Section 2.1
+        assertThat(PaygateAuthenticationEntryPoint.normalizePath("/api/v1%2fbypass")).isEqualTo("/api/v1%2Fbypass");
     }
 
     @Test

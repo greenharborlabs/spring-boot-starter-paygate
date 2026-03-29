@@ -26,10 +26,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 
 import java.security.SecureRandom;
-import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -317,6 +318,108 @@ class PaygateAuthenticationProviderDelegationTest {
 
             assertThat(result).isNotNull();
             assertThat(result.isAuthenticated()).isTrue();
+        }
+    }
+
+    // ========== MPP / protocol-agnostic capability resolver tests ==========
+
+    @Nested
+    @DisplayName("Protocol-agnostic CapabilityResolver resolution")
+    class ProtocolCapabilityResolverTests {
+
+        @Mock
+        private CapabilityResolver capabilityResolver;
+
+        @Test
+        void mppWithResolvedCapabilityAddsPaygateCapabilityAuthority() {
+            String authHeader = "Payment token123";
+            PaymentCredential credential = createPaymentCredential("Payment");
+
+            when(mppProtocol.canHandle(authHeader)).thenReturn(true);
+            when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
+            when(capabilityResolver.resolve(any())).thenReturn(Set.of("analyze"));
+
+            var provider = new PaygateAuthenticationProvider(
+                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityResolver);
+
+            var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
+
+            Authentication result = provider.authenticate(unauthToken);
+
+            var authToken = (PaygateAuthenticationToken) result;
+            assertThat(authToken.getAuthorities())
+                    .extracting(GrantedAuthority::getAuthority)
+                    .containsExactlyInAnyOrder("ROLE_PAYMENT", "PAYGATE_CAPABILITY_analyze");
+        }
+
+        @Test
+        void mppWithoutResolvedCapabilityHasOnlyRolePayment() {
+            String authHeader = "Payment token123";
+            PaymentCredential credential = createPaymentCredential("Payment");
+
+            when(mppProtocol.canHandle(authHeader)).thenReturn(true);
+            when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
+            when(capabilityResolver.resolve(any())).thenReturn(Set.of());
+
+            var provider = new PaygateAuthenticationProvider(
+                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityResolver);
+
+            var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
+
+            Authentication result = provider.authenticate(unauthToken);
+
+            var authToken = (PaygateAuthenticationToken) result;
+            assertThat(authToken.getAuthorities())
+                    .extracting(GrantedAuthority::getAuthority)
+                    .containsExactly("ROLE_PAYMENT");
+        }
+
+        @Test
+        void mppResolverThrowsRuntimeExceptionStillAuthenticates() {
+            String authHeader = "Payment token123";
+            PaymentCredential credential = createPaymentCredential("Payment");
+
+            when(mppProtocol.canHandle(authHeader)).thenReturn(true);
+            when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
+            when(capabilityResolver.resolve(any()))
+                    .thenThrow(new RuntimeException("resolver down"));
+
+            var provider = new PaygateAuthenticationProvider(
+                    l402Validator, List.of(mppProtocol), SERVICE_NAME, capabilityResolver);
+
+            var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
+
+            Authentication result = provider.authenticate(unauthToken);
+
+            assertThat(result.isAuthenticated()).isTrue();
+            var authToken = (PaygateAuthenticationToken) result;
+            assertThat(authToken.getAuthorities())
+                    .extracting(GrantedAuthority::getAuthority)
+                    .containsExactly("ROLE_PAYMENT");
+        }
+
+        @Test
+        void noopResolverOnProtocolPathPreservesExistingBehavior() {
+            String authHeader = "Payment token123";
+            PaymentCredential credential = createPaymentCredential("Payment");
+
+            when(mppProtocol.canHandle(authHeader)).thenReturn(true);
+            when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
+
+            // Provider with 3-arg constructor (no-op resolver)
+            var provider = new PaygateAuthenticationProvider(
+                    l402Validator, List.of(mppProtocol), SERVICE_NAME);
+
+            var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
+
+            Authentication result = provider.authenticate(unauthToken);
+
+            assertThat(result.isAuthenticated()).isTrue();
+            var authToken = (PaygateAuthenticationToken) result;
+            assertThat(authToken.getAuthorities())
+                    .extracting(GrantedAuthority::getAuthority)
+                    .containsExactly("ROLE_PAYMENT");
+            verifyNoInteractions(capabilityResolver);
         }
     }
 

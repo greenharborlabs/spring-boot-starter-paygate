@@ -110,6 +110,27 @@ class MppProtocolTest {
             MppProtocol p = new MppProtocol(new SensitiveBytes(new byte[64]));
             assertThat(p.scheme()).isEqualTo("Payment");
         }
+
+        @Test
+        void rejectsNullLimits() {
+            assertThatThrownBy(() -> new MppProtocol(secret(), null))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("parserLimits must not be null");
+        }
+
+        @Test
+        void acceptsCustomLimits() {
+            MppParserLimits limits = new MppParserLimits(10, 16384, 64, 131_072);
+            MppProtocol p = new MppProtocol(secret(), limits);
+            assertThat(p.scheme()).isEqualTo("Payment");
+        }
+
+        @Test
+        void singleArgConstructorUsesDefaults() {
+            // Should not throw -- backward compatible
+            MppProtocol p = new MppProtocol(secret());
+            assertThat(p.scheme()).isEqualTo("Payment");
+        }
     }
 
     // --- scheme() ---

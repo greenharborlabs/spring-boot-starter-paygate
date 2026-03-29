@@ -493,6 +493,67 @@ class MppCredentialParserTest {
                 });
     }
 
+    // --- Parser limits ---
+
+    @Test
+    void rejectsOversizedCredentialBeforeDecode() {
+        // maxInputLength default is 65_536, so base64url blob > 65_536 * 2 = 131_072 chars
+        // should be rejected before base64 decode even happens
+        int oversizedLength = 65_536 * 2 + 1;
+        String oversized = "A".repeat(oversizedLength);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(oversized))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                    assertThat(pve.getMessage()).isEqualTo("Credential exceeds maximum size");
+                });
+    }
+
+    @Test
+    void rejectsOversizedCredentialWithCustomLimits() {
+        MppParserLimits tinyLimits = new MppParserLimits(5, 8192, 32, 100);
+        // 100 * 2 = 200 char limit; create a 201-char blob
+        String oversized = "A".repeat(201);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(oversized, tinyLimits))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                    assertThat(pve.getMessage()).isEqualTo("Credential exceeds maximum size");
+                });
+    }
+
+    @Test
+    void rejectsDeeplyNestedCredential() {
+        // Default maxDepth is 5; create a credential with depth > 5
+        // Build JSON with nesting: {"a":{"a":{"a":{"a":{"a":{"a":"x"}}}}}}
+        String nested = "{\"a\":".repeat(6) + "\"x\"" + "}".repeat(6);
+        String blob = toBlob(nested);
+
+        assertThatThrownBy(() -> MppCredentialParser.parse(blob))
+                .isInstanceOf(PaymentValidationException.class)
+                .satisfies(e -> {
+                    PaymentValidationException pve = (PaymentValidationException) e;
+                    assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+                });
+    }
+
+    @Test
+    void parseWithDefaultLimitsDelegatesToOverload() {
+        // Verify parse(String) produces same result as parse(String, defaults())
+        String blob = toBlob(validJson());
+
+        PaymentCredential cred1 = MppCredentialParser.parse(blob);
+        PaymentCredential cred2 = MppCredentialParser.parse(blob, MppParserLimits.defaults());
+
+        assertThat(cred1.tokenId()).isEqualTo(cred2.tokenId());
+        assertThat(cred1.paymentHash()).isEqualTo(cred2.paymentHash());
+        assertThat(cred1.preimage()).isEqualTo(cred2.preimage());
+    }
+
     @Test
     void rejectsWrongLengthPaymentHash() {
         // 16-byte payment hash (32 hex chars) instead of 32 bytes (64 hex chars)

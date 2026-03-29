@@ -173,8 +173,25 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
 
     /**
      * Creates an authenticated token from a validated L402 credential, extracting attributes from caveats.
+     * Delegates to the 3-arg overload with an empty capabilities set.
      */
     public static PaygateAuthenticationToken authenticated(L402Credential credential, String serviceName) {
+        return authenticated(credential, serviceName, Set.of());
+    }
+
+    /**
+     * Creates an authenticated token from a validated L402 credential, extracting attributes from caveats,
+     * and adding {@code PAYGATE_CAPABILITY_*} authorities from both caveat-extracted and explicit capabilities.
+     *
+     * @param credential   validated L402 credential, must not be null
+     * @param serviceName  service name, may be null
+     * @param capabilities explicit capabilities to grant as {@code PAYGATE_CAPABILITY_*} authorities, must not be null
+     * @return authenticated token
+     */
+    public static PaygateAuthenticationToken authenticated(L402Credential credential, String serviceName,
+                                                           Set<String> capabilities) {
+        Objects.requireNonNull(capabilities, "capabilities must not be null");
+
         Map<String, String> attrs = new HashMap<>();
         for (Caveat caveat : credential.macaroon().caveats()) {
             attrs.put(caveat.key(), caveat.value());
@@ -190,6 +207,8 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
         authorities.add(new SimpleGrantedAuthority("ROLE_PAYMENT"));
         authorities.add(new SimpleGrantedAuthority("ROLE_L402"));
 
+        // Collect caveat-extracted capabilities for dual-emit (L402_CAPABILITY_ + PAYGATE_CAPABILITY_)
+        Set<String> caveatCapabilities = new LinkedHashSet<>();
         if (serviceName != null) {
             String capabilitiesKey = serviceName + "_capabilities";
             for (Caveat caveat : credential.macaroon().caveats()) {
@@ -197,10 +216,27 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
                     Arrays.stream(caveat.value().split(","))
                             .map(String::trim)
                             .filter(s -> !s.isEmpty())
-                            .forEach(cap -> authorities.add(
-                                    new SimpleGrantedAuthority("L402_CAPABILITY_" + cap)));
+                            .forEach(caveatCapabilities::add);
                 }
             }
+        }
+
+        // L402_CAPABILITY_* from caveats
+        for (String cap : caveatCapabilities) {
+            authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + cap));
+        }
+
+        // PAYGATE_CAPABILITY_* from caveat-extracted + explicit set (merged, deduplicated by LinkedHashSet).
+        // Caveats are the authoritative source: always emit PAYGATE_CAPABILITY_* from caveat capabilities,
+        // plus any explicit capabilities provided by the cache.
+        Set<String> allPaygateCapabilities = new LinkedHashSet<>(caveatCapabilities);
+        for (String cap : capabilities) {
+            if (cap != null) {
+                allPaygateCapabilities.add(cap);
+            }
+        }
+        for (String cap : allPaygateCapabilities) {
+            authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + cap));
         }
 
         return new PaygateAuthenticationToken(credential, serviceName, authorities, attrs);
@@ -208,9 +244,7 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
 
     /**
      * Creates an authenticated token from a validated protocol-agnostic payment credential.
-     *
-     * <p>For L402 credentials, grants {@code ROLE_L402} and {@code ROLE_PAYMENT} authorities.
-     * For MPP credentials, grants {@code ROLE_PAYMENT} authority with simpler attributes.
+     * Delegates to the 3-arg overload with an empty capabilities set.
      *
      * @param paymentCredential validated payment credential, must not be null
      * @param serviceName       service name, may be null
@@ -218,7 +252,26 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
      */
     public static PaygateAuthenticationToken authenticated(PaymentCredential paymentCredential,
                                                            String serviceName) {
+        return authenticated(paymentCredential, serviceName, Set.of());
+    }
+
+    /**
+     * Creates an authenticated token from a validated protocol-agnostic payment credential,
+     * adding {@code PAYGATE_CAPABILITY_*} authorities from the explicit capabilities set.
+     *
+     * <p>For L402 credentials, grants {@code ROLE_L402} and {@code ROLE_PAYMENT} authorities.
+     * For MPP credentials, grants {@code ROLE_PAYMENT} authority with simpler attributes.
+     *
+     * @param paymentCredential validated payment credential, must not be null
+     * @param serviceName       service name, may be null
+     * @param capabilities      explicit capabilities to grant as {@code PAYGATE_CAPABILITY_*} authorities, must not be null
+     * @return authenticated token
+     */
+    public static PaygateAuthenticationToken authenticated(PaymentCredential paymentCredential,
+                                                           String serviceName,
+                                                           Set<String> capabilities) {
         Objects.requireNonNull(paymentCredential, "paymentCredential must not be null");
+        Objects.requireNonNull(capabilities, "capabilities must not be null");
 
         Map<String, String> attrs = new HashMap<>();
         attrs.put("tokenId", paymentCredential.tokenId());
@@ -235,6 +288,12 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
 
         if ("L402".equals(paymentCredential.sourceProtocolScheme())) {
             authorities.add(new SimpleGrantedAuthority("ROLE_L402"));
+        }
+
+        for (String cap : capabilities) {
+            if (cap != null) {
+                authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + cap));
+            }
         }
 
         return new PaygateAuthenticationToken(paymentCredential, serviceName, authorities, attrs);

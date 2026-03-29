@@ -166,6 +166,16 @@ public class PaygateAutoConfiguration {
     }
 
     @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "com.github.benmanes.caffeine.cache.Caffeine")
+    static class CaffeineCapabilityCacheConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        CapabilityCache capabilityCache(PaygateProperties properties) {
+            return new CaffeineCapabilityCache(properties.getCredentialCacheMaxSize());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
     @ConditionalOnMissingClass("com.github.benmanes.caffeine.cache.Caffeine")
     static class InMemoryCredentialStoreConfiguration {
         @Bean
@@ -246,8 +256,15 @@ public class PaygateAutoConfiguration {
         @Order(2)
         PaymentProtocol mppProtocol(
                 com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret,
+                PaygateProperties properties,
                 ProtocolStartupValidator _validator) {
-            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(mppChallengeBindingSecret);
+            var mpp = properties.getProtocols().getMpp();
+            var limits = new com.greenharborlabs.paygate.protocol.mpp.MppParserLimits(
+                    mpp.getMaxJsonDepth(),
+                    mpp.getMaxStringLength(),
+                    mpp.getMaxKeysPerObject(),
+                    mpp.getMaxCredentialBytes());
+            return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(mppChallengeBindingSecret, limits);
         }
     }
 
@@ -384,9 +401,11 @@ public class PaygateAutoConfiguration {
                                                       ApplicationContext applicationContext,
                                                       @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
                                                       @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
-                                                      @Autowired(required = false) ClientIpResolver clientIpResolver) {
+                                                      @Autowired(required = false) ClientIpResolver clientIpResolver,
+                                                      @Autowired(required = false) CapabilityCache capabilityCache) {
         return new PaygateChallengeService(rootKeyStore, lightningBackend,
-                properties, applicationContext, paygateEarningsTracker, paygateRateLimiter, clientIpResolver);
+                properties, applicationContext, paygateEarningsTracker, paygateRateLimiter, clientIpResolver,
+                capabilityCache);
     }
 
     @Bean
@@ -410,6 +429,21 @@ public class PaygateAutoConfiguration {
         var registration = new FilterRegistrationBean<>(paygateSecurityFilter);
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
         registration.addUrlPatterns("/*");
+        return registration;
+    }
+
+    /**
+     * Prevents Spring Boot from auto-registering {@link PaygateSecurityFilter} as a
+     * servlet filter when in spring-security mode. Without this, both the servlet
+     * filter and the Spring Security {@code PaygateAuthenticationFilter} would process
+     * payment credentials, causing conflicts with {@code @PreAuthorize} enforcement.
+     */
+    @Bean
+    @Conditional(PaygateSpringSecurityModeCondition.class)
+    public FilterRegistrationBean<PaygateSecurityFilter> paygateSecurityFilterDisabledRegistration(
+            PaygateSecurityFilter paygateSecurityFilter) {
+        var registration = new FilterRegistrationBean<>(paygateSecurityFilter);
+        registration.setEnabled(false);
         return registration;
     }
 

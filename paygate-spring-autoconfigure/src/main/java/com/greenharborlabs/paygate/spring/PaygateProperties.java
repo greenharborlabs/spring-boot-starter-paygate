@@ -561,6 +561,14 @@ public class PaygateProperties {
 
             private String challengeBindingSecret;
 
+            private int maxCredentialBytes = 65_536;
+
+            private int maxJsonDepth = 5;
+
+            private int maxStringLength = 8192;
+
+            private int maxKeysPerObject = 32;
+
             public String getEnabled() {
                 return enabled;
             }
@@ -575,6 +583,38 @@ public class PaygateProperties {
 
             public void setChallengeBindingSecret(String challengeBindingSecret) {
                 this.challengeBindingSecret = challengeBindingSecret;
+            }
+
+            public int getMaxCredentialBytes() {
+                return maxCredentialBytes;
+            }
+
+            public void setMaxCredentialBytes(int maxCredentialBytes) {
+                this.maxCredentialBytes = maxCredentialBytes;
+            }
+
+            public int getMaxJsonDepth() {
+                return maxJsonDepth;
+            }
+
+            public void setMaxJsonDepth(int maxJsonDepth) {
+                this.maxJsonDepth = maxJsonDepth;
+            }
+
+            public int getMaxStringLength() {
+                return maxStringLength;
+            }
+
+            public void setMaxStringLength(int maxStringLength) {
+                this.maxStringLength = maxStringLength;
+            }
+
+            public int getMaxKeysPerObject() {
+                return maxKeysPerObject;
+            }
+
+            public void setMaxKeysPerObject(int maxKeysPerObject) {
+                this.maxKeysPerObject = maxKeysPerObject;
             }
         }
     }

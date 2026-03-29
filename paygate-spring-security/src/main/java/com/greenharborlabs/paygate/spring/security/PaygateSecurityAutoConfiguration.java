@@ -2,9 +2,11 @@ package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.spring.CapabilityCache;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateSpringSecurityModeCondition;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,12 +45,21 @@ import java.util.List;
 public class PaygateSecurityAutoConfiguration {
 
     @Bean
+    @ConditionalOnMissingBean(CapabilityResolver.class)
+    public CapabilityResolver defaultCapabilityResolver(
+            @Autowired(required = false) CapabilityCache capabilityCache,
+            @Value("${paygate.service-name:default}") String serviceName) {
+        return new DefaultCapabilityResolver(capabilityCache, serviceName);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(PaygateAuthenticationProvider.class)
     public PaygateAuthenticationProvider paygateAuthenticationProvider(
             L402Validator l402Validator,
             List<PaymentProtocol> protocols,
-            @Value("${paygate.service-name:default}") String serviceName) {
-        return new PaygateAuthenticationProvider(l402Validator, protocols, serviceName);
+            @Value("${paygate.service-name:default}") String serviceName,
+            CapabilityResolver capabilityResolver) {
+        return new PaygateAuthenticationProvider(l402Validator, protocols, serviceName, capabilityResolver);
     }
 
     @Bean
@@ -58,8 +69,21 @@ public class PaygateSecurityAutoConfiguration {
             AuthenticationManager authenticationManager,
             List<PaymentProtocol> protocols,
             PaygateEndpointRegistry paygateEndpointRegistry,
-            @Autowired(required = false) ClientIpResolver clientIpResolver) {
-        return new PaygateAuthenticationFilter(authenticationManager, protocols, paygateEndpointRegistry, clientIpResolver);
+            @Autowired(required = false) ClientIpResolver clientIpResolver,
+            @Value("${paygate.service-name:default}") String serviceName) {
+        return new PaygateAuthenticationFilter(authenticationManager, protocols, paygateEndpointRegistry, clientIpResolver, serviceName);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(PaygateAuthFailureRateLimitFilter.class)
+    @ConditionalOnBean(PaygateRateLimiter.class)
+    public PaygateAuthFailureRateLimitFilter paygateAuthFailureRateLimitFilter(
+            PaygateRateLimiter rateLimiter,
+            @Autowired(required = false) ClientIpResolver clientIpResolver,
+            PaygateEndpointRegistry paygateEndpointRegistry,
+            List<PaymentProtocol> protocols) {
+        return new PaygateAuthFailureRateLimitFilter(rateLimiter, clientIpResolver,
+                paygateEndpointRegistry, protocols);
     }
 
     @Bean

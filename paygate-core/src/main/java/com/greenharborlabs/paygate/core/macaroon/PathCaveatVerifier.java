@@ -45,11 +45,18 @@ public class PathCaveatVerifier implements CaveatVerifier {
             normalizedPatterns[i] = PathGlobMatcher.normalizePath(trimmed);
         }
 
-        // 6. Reject encoded slashes — prevents path traversal attacks.
-        //    Check is case-insensitive on the hex digits.
-        if (containsEncodedSlash(requestPath)) {
+        // 5a. Reject dot-dot path segments — prevents traversal bypass when
+        //     server normalization differs from our own.
+        if (containsDotDotSegment(requestPath)) {
             throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
-                    "Request path contains encoded slash");
+                    "Request path contains dot-dot traversal segment");
+        }
+
+        // 6. Reject encoded path separators and double-encoding — prevents
+        //    traversal attacks via %2F, %5C, and %25 sequences.
+        if (containsEncodedPathSeparatorOrDoubleEncoding(requestPath)) {
+            throw new MacaroonVerificationException(VerificationFailureReason.CAVEAT_NOT_MET,
+                    "Request path contains encoded path separator or double-encoding");
         }
 
         // 7. Normalize request path once
@@ -102,20 +109,44 @@ public class PathCaveatVerifier implements CaveatVerifier {
     }
 
     /**
-     * Returns true if the path contains a percent-encoded slash (%2F or %2f,
-     * case-insensitive on the hex digits).
+     * Returns true if the path contains a percent-encoded path separator
+     * (%2F/%2f for forward slash, %5C/%5c for backslash) or a double-encoding
+     * indicator (%25). Case-insensitive on hex digits.
      */
-    private static boolean containsEncodedSlash(String path) {
+    private static boolean containsEncodedPathSeparatorOrDoubleEncoding(String path) {
         int len = path.length();
         for (int i = 0; i <= len - 3; i++) {
             if (path.charAt(i) == '%') {
                 char h1 = path.charAt(i + 1);
                 char h2 = path.charAt(i + 2);
-                if ((h1 == '2') && (h2 == 'F' || h2 == 'f')) {
+                // %2F / %2f — encoded forward slash
+                if (h1 == '2' && (h2 == 'F' || h2 == 'f')) {
+                    return true;
+                }
+                // %5C / %5c — encoded backslash
+                if (h1 == '5' && (h2 == 'C' || h2 == 'c')) {
+                    return true;
+                }
+                // %25 — double-encoding indicator (percent-encoded percent sign)
+                if (h1 == '2' && h2 == '5') {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /**
+     * Returns true if the path contains a {@code ..} path segment, indicating
+     * directory traversal. Checks for {@code /..} at any position and
+     * {@code ../} at the start of the path.
+     */
+    private static boolean containsDotDotSegment(String path) {
+        // Check for "../" at the very start (relative path traversal)
+        if (path.startsWith("../")) {
+            return true;
+        }
+        // Check for "/.." anywhere in the path — covers /.. at end and /../ in middle
+        return path.contains("/..");
     }
 }
