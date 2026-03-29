@@ -503,7 +503,7 @@ function verifyMacaroon(macaroon, rootKey, requestContext):
 Given:
 
 ```
-Root Key:     4f2379139f39a0b8de0c36860c5f2e58    (16 bytes, hex)
+Root Key:     4f9979139f39a0b8de0c11111c5f2e99    (16 bytes, hex)
 Macaroon:
   Identifier: "token-001"
   Caveats:    ["services = my_api:0", "expires = 1735689600"]
