@@ -49,7 +49,7 @@ subprojects {
     apply(plugin = "com.diffplug.spotless")
 
     configure<org.gradle.api.plugins.quality.PmdExtension> {
-        toolVersion = "7.0.0"
+        toolVersion = "7.14.0"
         ruleSets = emptyList()
         ruleSetFiles = files(rootProject.file("config/pmd/cyclomatic-complexity.xml"))
         isConsoleOutput = true
