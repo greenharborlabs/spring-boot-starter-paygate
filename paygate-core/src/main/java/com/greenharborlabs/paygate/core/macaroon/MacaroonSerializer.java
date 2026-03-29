@@ -69,6 +69,7 @@ public final class MacaroonSerializer {
    *
    * @throws IllegalArgumentException if the data is malformed
    */
+  @SuppressWarnings("PMD.CyclomaticComplexity") // Binary format parser — complexity is inherent
   public static Macaroon deserializeV2(byte[] data) {
     if (data == null || data.length == 0) {
       throw new IllegalArgumentException("Data must not be null or empty");

@@ -45,7 +45,15 @@ subprojects {
     apply(plugin = "java-library")
     apply(plugin = "io.spring.dependency-management")
     apply(plugin = "jacoco")
+    apply(plugin = "pmd")
     apply(plugin = "com.diffplug.spotless")
+
+    configure<PmdExtension> {
+        toolVersion = "7.14.0"
+        ruleSets = emptyList()
+        ruleSetFiles = files(rootProject.file("config/pmd/cyclomatic-complexity.xml"))
+        isConsoleOutput = true
+    }
 
     configure<com.diffplug.gradle.spotless.SpotlessExtension> {
         java {
@@ -94,6 +102,18 @@ subprojects {
     }
 
     tasks.withType<JacocoReport> {
+        reports {
+            xml.required.set(true)
+            html.required.set(true)
+        }
+    }
+
+    tasks.withType<Pmd> {
+        if (name == "pmdTest") {
+            enabled = false
+        }
+        classpath = files()
+        exclude("**/generated/**", "**/lnrpc/**")
         reports {
             xml.required.set(true)
             html.required.set(true)

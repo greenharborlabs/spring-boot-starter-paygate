@@ -65,29 +65,12 @@ public class LnbitsBackend implements LightningBackend {
 
       HttpResponse<String> response =
           httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-      if (response.statusCode() < 200 || response.statusCode() >= 300) {
-        String responseBody = truncateBody(response.body());
-        log.log(
-            System.Logger.Level.WARNING,
-            "LNbits createInvoice returned HTTP {0}: {1}",
-            response.statusCode(),
-            responseBody);
-        throw new LnbitsException(
-            "LNbits API returned HTTP " + response.statusCode() + ": " + responseBody);
-      }
+      checkResponseStatus(response, "createInvoice", "");
       JsonNode json = objectMapper.readTree(response.body());
 
-      JsonNode hashNode = json.get("payment_hash");
-      if (hashNode == null || hashNode.isNull()) {
-        throw new LnbitsException("Missing 'payment_hash' in LNbits create invoice response");
-      }
-      JsonNode bolt11Node = json.get("payment_request");
-      if (bolt11Node == null || bolt11Node.isNull()) {
-        throw new LnbitsException("Missing 'payment_request' in LNbits create invoice response");
-      }
-
-      String paymentHashHex = hashNode.asText();
-      String bolt11 = bolt11Node.asText();
+      String paymentHashHex =
+          requireField(json, "payment_hash", "create invoice response").asText();
+      String bolt11 = requireField(json, "payment_request", "create invoice response").asText();
       Instant now = Instant.now();
 
       log.log(System.Logger.Level.DEBUG, "LNbits invoice created, paymentHash={0}", paymentHashHex);
@@ -141,66 +124,9 @@ public class LnbitsBackend implements LightningBackend {
 
       HttpResponse<String> response =
           httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-      if (response.statusCode() < 200 || response.statusCode() >= 300) {
-        String body = truncateBody(response.body());
-        log.log(
-            System.Logger.Level.WARNING,
-            "LNbits lookupInvoice returned HTTP {0} for hash={1}: {2}",
-            response.statusCode(),
-            hashHex,
-            body);
-        throw new LnbitsException(
-            "LNbits API returned HTTP " + response.statusCode() + ": " + body);
-      }
+      checkResponseStatus(response, "lookupInvoice", " for hash=" + hashHex);
       JsonNode json = objectMapper.readTree(response.body());
-
-      JsonNode paidNode = json.get("paid");
-      if (paidNode == null || paidNode.isNull()) {
-        throw new LnbitsException("Missing 'paid' in LNbits lookup response");
-      }
-      boolean paid = paidNode.asBoolean();
-
-      JsonNode details = json.get("details");
-      if (details == null || details.isNull()) {
-        throw new LnbitsException("Missing 'details' in LNbits lookup response");
-      }
-
-      JsonNode bolt11Node = details.get("bolt11");
-      if (bolt11Node == null || bolt11Node.isNull()) {
-        throw new LnbitsException("Missing 'details.bolt11' in LNbits lookup response");
-      }
-      JsonNode amountNode = details.get("amount");
-      if (amountNode == null || amountNode.isNull()) {
-        throw new LnbitsException("Missing 'details.amount' in LNbits lookup response");
-      }
-
-      String bolt11 = bolt11Node.asText();
-      long amount = amountNode.asLong() / MSAT_PER_SAT;
-      String memo = details.has("memo") ? details.get("memo").asText() : null;
-
-      InvoiceStatus status = paid ? InvoiceStatus.SETTLED : InvoiceStatus.PENDING;
-      byte[] preimage = null;
-      if (paid && json.has("preimage") && !json.get("preimage").isNull()) {
-        preimage = HEX.parseHex(json.get("preimage").asText());
-      }
-
-      Instant createdAt;
-      JsonNode timeNode = details.get("time");
-      if (timeNode != null && !timeNode.isNull() && timeNode.isNumber()) {
-        createdAt = Instant.ofEpochSecond(timeNode.asLong());
-      } else {
-        createdAt = Instant.now();
-      }
-
-      Instant expiresAt;
-      JsonNode expiryNode = details.get("expiry");
-      if (expiryNode != null && !expiryNode.isNull() && expiryNode.isNumber()) {
-        expiresAt = createdAt.plusSeconds(expiryNode.asLong());
-      } else {
-        expiresAt = createdAt.plus(DEFAULT_INVOICE_EXPIRY);
-      }
-
-      return new Invoice(paymentHash, bolt11, amount, memo, status, preimage, createdAt, expiresAt);
+      return parseLookupResponse(json, paymentHash);
     } catch (HttpTimeoutException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -244,6 +170,85 @@ public class LnbitsBackend implements LightningBackend {
     } catch (Exception e) {
       log.log(System.Logger.Level.WARNING, "LNbits health check failed", e);
       return false;
+    }
+  }
+
+  /** Parses a lookup invoice JSON response into an {@link Invoice}. */
+  private Invoice parseLookupResponse(JsonNode json, byte[] paymentHash) {
+    boolean paid = requireField(json, "paid", "lookup response").asBoolean();
+    JsonNode details = requireField(json, "details", "lookup response");
+
+    String bolt11 = requireField(details, "bolt11", "lookup response", "details.bolt11").asText();
+    long amount =
+        requireField(details, "amount", "lookup response", "details.amount").asLong()
+            / MSAT_PER_SAT;
+    String memo = details.has("memo") ? details.get("memo").asText() : null;
+
+    InvoiceStatus status = paid ? InvoiceStatus.SETTLED : InvoiceStatus.PENDING;
+    byte[] preimage = null;
+    if (paid && json.has("preimage") && !json.get("preimage").isNull()) {
+      preimage = HEX.parseHex(json.get("preimage").asText());
+    }
+
+    Instant createdAt = parseEpochField(details, Instant.now());
+    Instant expiresAt =
+        parseExpiryField(details, createdAt, createdAt.plus(DEFAULT_INVOICE_EXPIRY));
+
+    return new Invoice(paymentHash, bolt11, amount, memo, status, preimage, createdAt, expiresAt);
+  }
+
+  /** Parses an optional epoch-seconds field, returning the default if absent or non-numeric. */
+  private static Instant parseEpochField(JsonNode parent, Instant defaultValue) {
+    JsonNode node = parent.get("time");
+    if (node != null && !node.isNull() && node.isNumber()) {
+      return Instant.ofEpochSecond(node.asLong());
+    }
+    return defaultValue;
+  }
+
+  /**
+   * Parses an optional expiry-seconds field relative to {@code base}, returning the default if
+   * absent or non-numeric.
+   */
+  private static Instant parseExpiryField(JsonNode parent, Instant base, Instant defaultValue) {
+    JsonNode node = parent.get("expiry");
+    if (node != null && !node.isNull() && node.isNumber()) {
+      return base.plusSeconds(node.asLong());
+    }
+    return defaultValue;
+  }
+
+  /** Returns a required non-null JSON field or throws {@link LnbitsException}. */
+  private static JsonNode requireField(JsonNode parent, String field, String context) {
+    return requireField(parent, field, context, field);
+  }
+
+  /** Returns a required non-null JSON field, using {@code displayName} in the error message. */
+  private static JsonNode requireField(
+      JsonNode parent, String field, String context, String displayName) {
+    JsonNode node = parent.get(field);
+    if (node == null || node.isNull()) {
+      throw new LnbitsException("Missing '" + displayName + "' in LNbits " + context);
+    }
+    return node;
+  }
+
+  /**
+   * Validates the HTTP response status code and throws {@link LnbitsException} with a truncated
+   * body on non-2xx responses.
+   */
+  private static void checkResponseStatus(
+      HttpResponse<String> response, String operation, String detail) {
+    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+      String body = truncateBody(response.body());
+      log.log(
+          System.Logger.Level.WARNING,
+          "LNbits {0} returned HTTP {1}{2}: {3}",
+          operation,
+          response.statusCode(),
+          detail,
+          body);
+      throw new LnbitsException("LNbits API returned HTTP " + response.statusCode() + ": " + body);
     }
   }
 

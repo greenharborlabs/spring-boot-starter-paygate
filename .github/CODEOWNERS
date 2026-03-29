@@ -1,0 +1,17 @@
+# Global ownership — all PRs require review from the maintainer
+* @greenharborlabs/maintainers
+
+# Core cryptography module — security-sensitive, zero-dependency
+/paygate-core/ @greenharborlabs/maintainers
+
+# Spring auto-configuration and security integration
+/paygate-spring-autoconfigure/ @greenharborlabs/maintainers
+/paygate-spring-security/ @greenharborlabs/maintainers
+
+# Lightning backend integrations
+/paygate-lightning-lnd/ @greenharborlabs/maintainers
+/paygate-lightning-lnbits/ @greenharborlabs/maintainers
+
+# Build and CI configuration
+/build.gradle.kts @greenharborlabs/maintainers
+/.github/workflows/ @greenharborlabs/maintainers

@@ -108,6 +108,7 @@ final class MinimalJsonParser {
     };
   }
 
+  @SuppressWarnings("PMD.CyclomaticComplexity") // JSON string escape handling — complexity inherent
   private String parseString() {
     expect('"');
     var sb = new StringBuilder();
