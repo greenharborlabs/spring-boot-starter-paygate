@@ -9,28 +9,28 @@ import java.util.concurrent.atomic.LongAdder;
  */
 public class PaygateEarningsTracker {
 
-    private final LongAdder invoicesCreated = new LongAdder();
-    private final LongAdder invoicesSettled = new LongAdder();
-    private final LongAdder satsEarned = new LongAdder();
+  private final LongAdder invoicesCreated = new LongAdder();
+  private final LongAdder invoicesSettled = new LongAdder();
+  private final LongAdder satsEarned = new LongAdder();
 
-    public void recordInvoiceCreated() {
-        invoicesCreated.increment();
-    }
+  public void recordInvoiceCreated() {
+    invoicesCreated.increment();
+  }
 
-    public void recordInvoiceSettled(long sats) {
-        invoicesSettled.increment();
-        satsEarned.add(sats);
-    }
+  public void recordInvoiceSettled(long sats) {
+    invoicesSettled.increment();
+    satsEarned.add(sats);
+  }
 
-    public long getTotalInvoicesCreated() {
-        return invoicesCreated.sum();
-    }
+  public long getTotalInvoicesCreated() {
+    return invoicesCreated.sum();
+  }
 
-    public long getTotalInvoicesSettled() {
-        return invoicesSettled.sum();
-    }
+  public long getTotalInvoicesSettled() {
+    return invoicesSettled.sum();
+  }
 
-    public long getTotalSatsEarned() {
-        return satsEarned.sum();
-    }
+  public long getTotalSatsEarned() {
+    return satsEarned.sum();
+  }
 }
