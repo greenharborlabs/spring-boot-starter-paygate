@@ -10,8 +10,8 @@
 
     <rule ref="category/java/design.xml/CyclomaticComplexity">
         <properties>
-            <property name="methodReportLevel" value="51"/>
-            <property name="classReportLevel" value="120"/>
+            <property name="methodReportLevel" value="15"/>
+            <property name="classReportLevel" value="100"/>
         </properties>
     </rule>
 </ruleset>

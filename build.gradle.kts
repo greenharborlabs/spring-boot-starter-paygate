@@ -48,7 +48,7 @@ subprojects {
     apply(plugin = "pmd")
     apply(plugin = "com.diffplug.spotless")
 
-    configure<org.gradle.api.plugins.quality.PmdExtension> {
+    configure<PmdExtension> {
         toolVersion = "7.14.0"
         ruleSets = emptyList()
         ruleSetFiles = files(rootProject.file("config/pmd/cyclomatic-complexity.xml"))
@@ -108,7 +108,7 @@ subprojects {
         }
     }
 
-    tasks.withType<org.gradle.api.plugins.quality.Pmd> {
+    tasks.withType<Pmd> {
         if (name == "pmdTest") {
             enabled = false
         }

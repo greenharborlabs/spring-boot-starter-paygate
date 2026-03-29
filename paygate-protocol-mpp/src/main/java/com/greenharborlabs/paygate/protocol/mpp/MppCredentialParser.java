@@ -53,6 +53,7 @@ public final class MppCredentialParser {
    * @return the parsed {@link PaymentCredential}
    * @throws PaymentValidationException on any parse failure
    */
+  @SuppressWarnings("PMD.CyclomaticComplexity") // Protocol credential parser — complexity inherent
   public static PaymentCredential parse(String credentialBlob, MppParserLimits limits) {
     // Step 0: pre-decode size check (cast to long before multiplication to prevent overflow)
     if (credentialBlob.length() > (long) limits.maxInputLength() * 2) {
@@ -156,6 +157,7 @@ public final class MppCredentialParser {
    * is base64url-nopad encoded JCS JSON containing {@code methodDetails.paymentHash} as a hex
    * string.
    */
+  @SuppressWarnings("PMD.CyclomaticComplexity") // Multi-step hash extraction with validation
   private static byte[] extractPaymentHashFromRequest(
       Map<String, String> echoedChallenge, MppParserLimits limits) {
     String requestB64 = echoedChallenge.get("request");

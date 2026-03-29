@@ -126,122 +126,22 @@ public class PaygateSecurityFilter implements Filter {
     if (authHeader != null) {
       for (PaymentProtocol protocol : protocols) {
         if (protocol.canHandle(authHeader)) {
-          // Pre-check: consume a rate limiter token before credential parsing.
-          // This prevents unauthenticated probing from burning CPU on parse/validate.
           if (!tryAcquireRateLimit(httpRequest)) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
             return;
           }
-
-          // Found matching protocol — try validate
-          long verifyStart = System.nanoTime();
-          try {
-            PaymentCredential credential = protocol.parseCredential(authHeader);
-
-            // Build requestContext for protocol.validate()
-            Map<String, String> requestContext =
-                buildRequestContext(httpRequest, path, method, config);
-            protocol.validate(credential, requestContext);
-
-            // Success — handle protocol-specific post-validation
-            log.log(
-                System.Logger.Level.DEBUG,
-                "{0} credential validated successfully",
-                protocol.scheme());
-
-            if ("L402".equals(protocol.scheme())) {
-              handleL402Success(credential, config, httpResponse);
-            }
-
-            // Check for receipt (MPP produces receipts, L402 does not)
-            generateReceipt(credential, config, protocol, httpResponse);
-
-            chain.doFilter(request, response);
-            recordCaveatVerifyDuration(verifyStart);
-            // Treat all validated credentials as freshValidation=true; the credential
-            // cache inside L402Validator handles deduplication internally.
-            recordPassed(config.pathPattern(), config.priceSats(), protocol.scheme());
-            return;
-
-          } catch (PaymentValidationException e) {
-            recordCaveatVerifyDuration(verifyStart);
-            // classifyCaveatType only does keyword matching and returns a constant string —
-            // sanitize the message anyway to satisfy static analysis taint tracking.
-            recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
-            // Consume penalty token on auth failure to penalize brute-force probing
-            consumeRateLimitPenalty(httpRequest);
-            // Sanitize the token ID before logging — it is derived from user-supplied input
-            // and could contain newlines or other control characters used in log injection attacks.
-            String tokenDetail = sanitizeForLog(e.getTokenId() != null ? e.getTokenId() : "");
-            int tokenCorrelationId = Objects.hash(protocol.scheme(), tokenDetail);
-            log.log(
-                System.Logger.Level.WARNING,
-                "{0} validation failed, errorCode={1}",
-                protocol.scheme(),
-                e.getErrorCode());
-
-            if (e.getErrorCode() == PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED) {
-              PaygateResponseWriter.writeMethodUnsupported(httpResponse, e.getMessage());
-              recordRejected(config.pathPattern(), protocol.scheme());
-              return;
-            }
-
-            if (e.getErrorCode() == PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL
-                && "L402".equals(protocol.scheme())) {
-              // L402-specific: clearly malformed header — return 400 Bad Request
-              // Avoid logging the raw token to prevent leaking potentially sensitive information.
-              log.log(
-                  System.Logger.Level.WARNING,
-                  "Malformed L402 header for protocol {0}",
-                  protocol.scheme());
-              PaygateResponseWriter.writeMalformedHeader(
-                  httpResponse, e.getMessage(), e.getTokenId());
-              recordRejected(config.pathPattern(), protocol.scheme());
-              return;
-            }
-
-            // For non-L402 protocols or non-malformed errors: use RFC 9457 error response
-            // Issue fresh challenges so the client can retry with a new payment.
-            // tokenDetail is sanitized; log only a non-sensitive correlation ID and the error code
-            // enum,
-            // never the exception message or the raw token value.
-            log.log(
-                System.Logger.Level.WARNING,
-                "{0} validation failed for tokenCorrelationId {1}, errorCode={2}",
-                protocol.scheme(),
-                tokenCorrelationId,
-                e.getErrorCode());
-            try {
-              ChallengeContext challengeContext =
-                  challengeService.createChallenge(httpRequest, config);
-              List<ChallengeResponse> challenges = buildChallenges(challengeContext);
-              PaygateResponseWriter.writeMppError(httpResponse, e, challenges);
-            } catch (Exception challengeEx) {
-              // If challenge creation fails, write the error without challenges
-              PaygateResponseWriter.writeMppError(httpResponse, e, List.of());
-            }
-            recordRejected(config.pathPattern(), protocol.scheme());
-            return;
-
-          } catch (Exception e) {
-            recordCaveatVerifyDuration(verifyStart);
-            if (e instanceof MacaroonVerificationException) {
-              recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
-            }
-            // Consume penalty token on any auth failure, not just PaymentValidationException
-            consumeRateLimitPenalty(httpRequest);
-            // Fail closed: any unexpected exception from validation produces 503, never 500
-            String safeMessage = sanitizeForLog(e.getMessage());
-            log.log(
-                System.Logger.Level.WARNING,
-                "Unexpected error during {0} validation for {1} {2}: {3}",
-                protocol.scheme(),
-                method,
-                safePath,
-                safeMessage);
-            if (!httpResponse.isCommitted()) {
-              PaygateResponseWriter.writeLightningUnavailable(httpResponse);
-            }
+          if (tryValidateWithProtocol(
+              protocol,
+              authHeader,
+              httpRequest,
+              httpResponse,
+              path,
+              method,
+              safePath,
+              config,
+              chain,
+              request,
+              response)) {
             return;
           }
         }
@@ -251,36 +151,7 @@ public class PaygateSecurityFilter implements Filter {
 
     // 3. No valid credential — delegate to ChallengeService for health check,
     //    rate limiting, invoice creation, and macaroon minting.
-    try {
-      ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
-      List<ChallengeResponse> challenges = buildChallenges(challengeContext);
-      PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
-      recordChallenge(config.pathPattern());
-    } catch (PaygateRateLimitedException _) {
-      PaygateResponseWriter.writeRateLimited(httpResponse);
-    } catch (PaygateLightningUnavailableException e) {
-      // Log exception type only — the message may contain internal backend hostnames/addresses.
-      log.log(
-          System.Logger.Level.WARNING,
-          "Lightning unavailable for {0} {1}: {2}",
-          method,
-          safePath,
-          e.getClass().getSimpleName());
-      if (!httpResponse.isCommitted()) {
-        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
-      }
-    } catch (Exception e) {
-      // Log exception type only — the message may contain internal backend details.
-      log.log(
-          System.Logger.Level.WARNING,
-          "Failed to create invoice for {0} {1}: {2}",
-          method,
-          safePath,
-          e.getClass().getSimpleName());
-      if (!httpResponse.isCommitted()) {
-        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
-      }
-    }
+    issuePaymentChallenge(httpRequest, httpResponse, method, safePath, config);
   }
 
   /**
@@ -302,6 +173,181 @@ public class PaygateSecurityFilter implements Filter {
         VerificationContextKeys.REQUEST_PATH, path,
         VerificationContextKeys.REQUEST_METHOD, method,
         VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
+  }
+
+  /**
+   * Issues a payment challenge when no valid credential was presented. Delegates to {@link
+   * PaygateChallengeService} for health check, rate limiting, invoice creation, and macaroon
+   * minting.
+   */
+  private void issuePaymentChallenge(
+      HttpServletRequest httpRequest,
+      HttpServletResponse httpResponse,
+      String method,
+      String safePath,
+      PaygateEndpointConfig config)
+      throws IOException {
+    try {
+      ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
+      List<ChallengeResponse> challenges = buildChallenges(challengeContext);
+      PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
+      recordChallenge(config.pathPattern());
+    } catch (PaygateRateLimitedException _) {
+      PaygateResponseWriter.writeRateLimited(httpResponse);
+    } catch (PaygateLightningUnavailableException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Lightning unavailable for {0} {1}: {2}",
+          method,
+          safePath,
+          e.getClass().getSimpleName());
+      if (!httpResponse.isCommitted()) {
+        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+      }
+    } catch (Exception e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Failed to create invoice for {0} {1}: {2}",
+          method,
+          safePath,
+          e.getClass().getSimpleName());
+      if (!httpResponse.isCommitted()) {
+        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+      }
+    }
+  }
+
+  /**
+   * Attempts to validate a credential with the given protocol. Returns {@code true} if the request
+   * was fully handled (success or error response written), {@code false} if processing should
+   * continue to the challenge flow.
+   */
+  private boolean tryValidateWithProtocol(
+      PaymentProtocol protocol,
+      String authHeader,
+      HttpServletRequest httpRequest,
+      HttpServletResponse httpResponse,
+      String path,
+      String method,
+      String safePath,
+      PaygateEndpointConfig config,
+      FilterChain chain,
+      ServletRequest request,
+      ServletResponse response)
+      throws IOException, ServletException {
+
+    long verifyStart = System.nanoTime();
+    try {
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      Map<String, String> requestContext = buildRequestContext(httpRequest, path, method, config);
+      protocol.validate(credential, requestContext);
+
+      log.log(
+          System.Logger.Level.DEBUG, "{0} credential validated successfully", protocol.scheme());
+
+      if ("L402".equals(protocol.scheme())) {
+        handleL402Success(credential, config, httpResponse);
+      }
+      generateReceipt(credential, config, protocol, httpResponse);
+
+      chain.doFilter(request, response);
+      recordCaveatVerifyDuration(verifyStart);
+      recordPassed(config.pathPattern(), config.priceSats(), protocol.scheme());
+      return true;
+
+    } catch (PaymentValidationException e) {
+      recordCaveatVerifyDuration(verifyStart);
+      handlePaymentValidationFailure(e, protocol, httpRequest, httpResponse, config);
+      return true;
+
+    } catch (Exception e) {
+      recordCaveatVerifyDuration(verifyStart);
+      handleUnexpectedValidationError(e, protocol, httpRequest, httpResponse, method, safePath);
+      return true;
+    }
+  }
+
+  /**
+   * Handles a {@link PaymentValidationException} thrown during credential validation. Writes the
+   * appropriate error response based on the error code and protocol.
+   */
+  private void handlePaymentValidationFailure(
+      PaymentValidationException e,
+      PaymentProtocol protocol,
+      HttpServletRequest httpRequest,
+      HttpServletResponse httpResponse,
+      PaygateEndpointConfig config)
+      throws IOException {
+    recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
+    consumeRateLimitPenalty(httpRequest);
+
+    String tokenDetail = sanitizeForLog(e.getTokenId() != null ? e.getTokenId() : "");
+    int tokenCorrelationId = Objects.hash(protocol.scheme(), tokenDetail);
+    log.log(
+        System.Logger.Level.WARNING,
+        "{0} validation failed, errorCode={1}",
+        protocol.scheme(),
+        e.getErrorCode());
+
+    if (e.getErrorCode() == PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED) {
+      PaygateResponseWriter.writeMethodUnsupported(httpResponse, e.getMessage());
+      recordRejected(config.pathPattern(), protocol.scheme());
+      return;
+    }
+
+    if (e.getErrorCode() == PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL
+        && "L402".equals(protocol.scheme())) {
+      log.log(
+          System.Logger.Level.WARNING, "Malformed L402 header for protocol {0}", protocol.scheme());
+      PaygateResponseWriter.writeMalformedHeader(httpResponse, e.getMessage(), e.getTokenId());
+      recordRejected(config.pathPattern(), protocol.scheme());
+      return;
+    }
+
+    // For non-L402 protocols or non-malformed errors: use RFC 9457 error response
+    log.log(
+        System.Logger.Level.WARNING,
+        "{0} validation failed for tokenCorrelationId {1}, errorCode={2}",
+        protocol.scheme(),
+        tokenCorrelationId,
+        e.getErrorCode());
+    try {
+      ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
+      List<ChallengeResponse> challenges = buildChallenges(challengeContext);
+      PaygateResponseWriter.writeMppError(httpResponse, e, challenges);
+    } catch (Exception challengeEx) {
+      PaygateResponseWriter.writeMppError(httpResponse, e, List.of());
+    }
+    recordRejected(config.pathPattern(), protocol.scheme());
+  }
+
+  /**
+   * Handles unexpected exceptions thrown during credential validation. Fails closed with a 503
+   * response.
+   */
+  private void handleUnexpectedValidationError(
+      Exception e,
+      PaymentProtocol protocol,
+      HttpServletRequest httpRequest,
+      HttpServletResponse httpResponse,
+      String method,
+      String safePath)
+      throws IOException {
+    if (e instanceof MacaroonVerificationException) {
+      recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
+    }
+    consumeRateLimitPenalty(httpRequest);
+    String safeMessage = sanitizeForLog(e.getMessage());
+    log.log(
+        System.Logger.Level.WARNING,
+        "Unexpected error during {0} validation for {1} {2}: {3}",
+        protocol.scheme(),
+        method,
+        safePath,
+        safeMessage);
+    if (!httpResponse.isCommitted()) {
+      PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+    }
   }
 
   /**

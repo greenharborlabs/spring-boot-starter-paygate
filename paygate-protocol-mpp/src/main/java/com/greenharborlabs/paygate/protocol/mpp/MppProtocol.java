@@ -202,6 +202,7 @@ public final class MppProtocol implements PaymentProtocol {
   }
 
   @Override
+  @SuppressWarnings("PMD.CyclomaticComplexity") // Security-critical validation — order matters
   public void validate(PaymentCredential credential, Map<String, String> requestContext)
       throws PaymentValidationException {
     Objects.requireNonNull(credential, "credential must not be null");
