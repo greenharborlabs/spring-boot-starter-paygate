@@ -1,5 +1,13 @@
 package com.greenharborlabs.paygate.spring;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -9,7 +17,13 @@ import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
-
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,28 +38,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.security.SecureRandom;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 /**
  * TDD test for pricing strategy fallback behavior (T087).
  *
- * <p>Verifies that when {@code @PaymentRequired(priceSats = 50, pricingStrategy = "nonExistentPricer")}
- * references a bean name that does not exist in the application context, the system falls back
- * to the static {@code priceSats} value of 50 rather than failing.
+ * <p>Verifies that when {@code @PaymentRequired(priceSats = 50, pricingStrategy =
+ * "nonExistentPricer")} references a bean name that does not exist in the application context, the
+ * system falls back to the static {@code priceSats} value of 50 rather than failing.
  *
  * <p>This test is expected NOT to compile until {@link PaygatePricingStrategy} is created (T088),
  * and NOT to pass until the filter integrates pricing strategy lookup with fallback (T089).
@@ -55,213 +53,232 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DisplayName("L402 pricing strategy fallback")
 class PricingFallbackTest {
 
-    private static final byte[] ROOT_KEY = new byte[32];
-    private static final long FALLBACK_PRICE_SATS = 50;
-    private static final String FALLBACK_PATH = "/api/fallback-price";
+  private static final byte[] ROOT_KEY = new byte[32];
+  private static final long FALLBACK_PRICE_SATS = 50;
+  private static final String FALLBACK_PATH = "/api/fallback-price";
 
-    static {
-        new SecureRandom().nextBytes(ROOT_KEY);
+  static {
+    new SecureRandom().nextBytes(ROOT_KEY);
+  }
+
+  @Autowired private MockMvc mockMvc;
+
+  @Autowired private LightningBackend lightningBackend;
+
+  // -----------------------------------------------------------------------
+  // Test application and configuration
+  // -----------------------------------------------------------------------
+
+  @Configuration
+  @EnableAutoConfiguration
+  static class TestApp {
+
+    @Bean
+    LightningBackend lightningBackend() {
+      return new PricingCapturingStubLightningBackend();
     }
 
-    @Autowired
-    private MockMvc mockMvc;
-
-    @Autowired
-    private LightningBackend lightningBackend;
-
-    // -----------------------------------------------------------------------
-    // Test application and configuration
-    // -----------------------------------------------------------------------
-
-    @Configuration
-    @EnableAutoConfiguration
-    static class TestApp {
-
-        @Bean
-        LightningBackend lightningBackend() {
-            return new PricingCapturingStubLightningBackend();
-        }
-
-        @Bean
-        RootKeyStore rootKeyStore() {
-            return new PricingFallbackTestRootKeyStore(ROOT_KEY);
-        }
-
-        @Bean
-        CredentialStore credentialStore() {
-            return new PricingFallbackTestCredentialStore();
-        }
-
-        @Bean
-        List<CaveatVerifier> caveatVerifiers() {
-            return List.of();
-        }
-
-        @Bean
-        PaygateEndpointRegistry paygateEndpointRegistry() {
-            var registry = new PaygateEndpointRegistry();
-            registry.register(
-                    new PaygateEndpointConfig("GET", FALLBACK_PATH, FALLBACK_PRICE_SATS, 600,
-                            "Fallback price endpoint", "nonExistentPricer", "")
-            );
-            return registry;
-        }
-
-        @Bean
-        PaygateSecurityFilter paygateSecurityFilter(
-                PaygateEndpointRegistry endpointRegistry,
-                LightningBackend lightningBackendBean,
-                RootKeyStore rootKeyStore,
-                CredentialStore credentialStore,
-                List<CaveatVerifier> caveatVerifiers,
-                ApplicationContext applicationContext
-        ) {
-            var validator = new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
-            var l402Protocol = new L402Protocol(validator, "test-service");
-            var challengeService = new PaygateChallengeService(
-                    rootKeyStore, lightningBackendBean, null, applicationContext, null, null, null);
-            return new PaygateSecurityFilter(
-                    endpointRegistry, List.of(l402Protocol), challengeService, "test-service",
-                    null, null, null, null);
-        }
-
-        @Bean
-        PricingFallbackController pricingFallbackController() {
-            return new PricingFallbackController();
-        }
+    @Bean
+    RootKeyStore rootKeyStore() {
+      return new PricingFallbackTestRootKeyStore(ROOT_KEY);
     }
 
-    // NOTE: No "nonExistentPricer" bean is registered — that is the entire point of this test.
-
-    @RestController
-    static class PricingFallbackController {
-
-        @PaymentRequired(priceSats = 50, pricingStrategy = "nonExistentPricer")
-        @GetMapping(FALLBACK_PATH)
-        String fallbackPriceEndpoint() {
-            return "fallback-content";
-        }
+    @Bean
+    CredentialStore credentialStore() {
+      return new PricingFallbackTestCredentialStore();
     }
 
-    // -----------------------------------------------------------------------
-    // Test scenarios
-    // -----------------------------------------------------------------------
-
-    @Test
-    @DisplayName("returns 402 with fallback price_sats=50 when pricingStrategy bean does not exist")
-    void returns402WithFallbackPriceWhenStrategyBeanMissing() throws Exception {
-        mockMvc.perform(get(FALLBACK_PATH))
-                .andExpect(status().isPaymentRequired())
-                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.code", is(402)))
-                .andExpect(jsonPath("$.message", is("Payment required")))
-                .andExpect(jsonPath("$.price_sats", is(50)))
-                .andExpect(jsonPath("$.invoice", notNullValue()));
+    @Bean
+    List<CaveatVerifier> caveatVerifiers() {
+      return List.of();
     }
 
-    @Test
-    @DisplayName("invoice is created with fallback amountSats=50 when pricingStrategy bean does not exist")
-    void invoiceCreatedWithFallbackAmount() throws Exception {
-        var stub = (PricingCapturingStubLightningBackend) lightningBackend;
-        stub.resetCapturedAmount();
-
-        mockMvc.perform(get(FALLBACK_PATH))
-                .andExpect(status().isPaymentRequired());
-
-        assertThat(stub.getCapturedAmountSats())
-                .as("Invoice should be created with the static priceSats fallback value")
-                .isEqualTo(FALLBACK_PRICE_SATS);
+    @Bean
+    PaygateEndpointRegistry paygateEndpointRegistry() {
+      var registry = new PaygateEndpointRegistry();
+      registry.register(
+          new PaygateEndpointConfig(
+              "GET",
+              FALLBACK_PATH,
+              FALLBACK_PRICE_SATS,
+              600,
+              "Fallback price endpoint",
+              "nonExistentPricer",
+              ""));
+      return registry;
     }
 
-    // -----------------------------------------------------------------------
-    // Stub / in-memory implementations for test isolation
-    // -----------------------------------------------------------------------
-
-    /**
-     * Stub LightningBackend that captures the amountSats passed to createInvoice(),
-     * allowing tests to verify the correct price was used for invoice generation.
-     */
-    static class PricingCapturingStubLightningBackend implements LightningBackend {
-
-        private final AtomicLong capturedAmountSats = new AtomicLong(-1);
-
-        void resetCapturedAmount() {
-            capturedAmountSats.set(-1);
-        }
-
-        long getCapturedAmountSats() {
-            return capturedAmountSats.get();
-        }
-
-        @Override
-        public Invoice createInvoice(long amountSats, String memo) {
-            capturedAmountSats.set(amountSats);
-            byte[] paymentHash = new byte[32];
-            new SecureRandom().nextBytes(paymentHash);
-            Instant now = Instant.now();
-            return new Invoice(paymentHash, "lnbc" + amountSats + "n1pstub", amountSats,
-                    memo, InvoiceStatus.PENDING, null, now, now.plus(1, ChronoUnit.HOURS));
-        }
-
-        @Override
-        public Invoice lookupInvoice(byte[] paymentHash) {
-            return null;
-        }
-
-        @Override
-        public boolean isHealthy() {
-            return true;
-        }
+    @Bean
+    PaygateSecurityFilter paygateSecurityFilter(
+        PaygateEndpointRegistry endpointRegistry,
+        LightningBackend lightningBackendBean,
+        RootKeyStore rootKeyStore,
+        CredentialStore credentialStore,
+        List<CaveatVerifier> caveatVerifiers,
+        ApplicationContext applicationContext) {
+      var validator =
+          new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
+      var l402Protocol = new L402Protocol(validator, "test-service");
+      var challengeService =
+          new PaygateChallengeService(
+              rootKeyStore, lightningBackendBean, null, applicationContext, null, null, null, null);
+      return new PaygateSecurityFilter(
+          endpointRegistry,
+          List.of(l402Protocol),
+          challengeService,
+          "test-service",
+          null,
+          null,
+          null,
+          null);
     }
 
-    static class PricingFallbackTestRootKeyStore implements RootKeyStore {
+    @Bean
+    PricingFallbackController pricingFallbackController() {
+      return new PricingFallbackController();
+    }
+  }
 
-        private final byte[] rootKey;
+  // NOTE: No "nonExistentPricer" bean is registered — that is the entire point of this test.
 
-        PricingFallbackTestRootKeyStore(byte[] rootKey) {
-            this.rootKey = rootKey.clone();
-        }
+  @RestController
+  static class PricingFallbackController {
 
-        @Override
-        public GenerationResult generateRootKey() {
-            byte[] tokenId = new byte[32];
-            new java.security.SecureRandom().nextBytes(tokenId);
-            return new GenerationResult(new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone()), tokenId);
-        }
+    @PaymentRequired(priceSats = 50, pricingStrategy = "nonExistentPricer")
+    @GetMapping(FALLBACK_PATH)
+    String fallbackPriceEndpoint() {
+      return "fallback-content";
+    }
+  }
 
-        @Override
-        public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
-            return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone());
-        }
+  // -----------------------------------------------------------------------
+  // Test scenarios
+  // -----------------------------------------------------------------------
 
-        @Override
-        public void revokeRootKey(byte[] keyId) {
-            // no-op for tests
-        }
+  @Test
+  @DisplayName("returns 402 with fallback price_sats=50 when pricingStrategy bean does not exist")
+  void returns402WithFallbackPriceWhenStrategyBeanMissing() throws Exception {
+    mockMvc
+        .perform(get(FALLBACK_PATH))
+        .andExpect(status().isPaymentRequired())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.code", is(402)))
+        .andExpect(jsonPath("$.message", is("Payment required")))
+        .andExpect(jsonPath("$.price_sats", is(50)))
+        .andExpect(jsonPath("$.invoice", notNullValue()));
+  }
+
+  @Test
+  @DisplayName(
+      "invoice is created with fallback amountSats=50 when pricingStrategy bean does not exist")
+  void invoiceCreatedWithFallbackAmount() throws Exception {
+    var stub = (PricingCapturingStubLightningBackend) lightningBackend;
+    stub.resetCapturedAmount();
+
+    mockMvc.perform(get(FALLBACK_PATH)).andExpect(status().isPaymentRequired());
+
+    assertThat(stub.getCapturedAmountSats())
+        .as("Invoice should be created with the static priceSats fallback value")
+        .isEqualTo(FALLBACK_PRICE_SATS);
+  }
+
+  // -----------------------------------------------------------------------
+  // Stub / in-memory implementations for test isolation
+  // -----------------------------------------------------------------------
+
+  /**
+   * Stub LightningBackend that captures the amountSats passed to createInvoice(), allowing tests to
+   * verify the correct price was used for invoice generation.
+   */
+  static class PricingCapturingStubLightningBackend implements LightningBackend {
+
+    private final AtomicLong capturedAmountSats = new AtomicLong(-1);
+
+    void resetCapturedAmount() {
+      capturedAmountSats.set(-1);
     }
 
-    static class PricingFallbackTestCredentialStore implements CredentialStore {
-
-        private final Map<String, L402Credential> store = new ConcurrentHashMap<>();
-
-        @Override
-        public void store(String tokenId, L402Credential credential, long ttlSeconds) {
-            store.put(tokenId, credential);
-        }
-
-        @Override
-        public L402Credential get(String tokenId) {
-            return store.get(tokenId);
-        }
-
-        @Override
-        public void revoke(String tokenId) {
-            store.remove(tokenId);
-        }
-
-        @Override
-        public long activeCount() {
-            return store.size();
-        }
+    long getCapturedAmountSats() {
+      return capturedAmountSats.get();
     }
+
+    @Override
+    public Invoice createInvoice(long amountSats, String memo) {
+      capturedAmountSats.set(amountSats);
+      byte[] paymentHash = new byte[32];
+      new SecureRandom().nextBytes(paymentHash);
+      Instant now = Instant.now();
+      return new Invoice(
+          paymentHash,
+          "lnbc" + amountSats + "n1pstub",
+          amountSats,
+          memo,
+          InvoiceStatus.PENDING,
+          null,
+          now,
+          now.plus(1, ChronoUnit.HOURS));
+    }
+
+    @Override
+    public Invoice lookupInvoice(byte[] paymentHash) {
+      return null;
+    }
+
+    @Override
+    public boolean isHealthy() {
+      return true;
+    }
+  }
+
+  static class PricingFallbackTestRootKeyStore implements RootKeyStore {
+
+    private final byte[] rootKey;
+
+    PricingFallbackTestRootKeyStore(byte[] rootKey) {
+      this.rootKey = rootKey.clone();
+    }
+
+    @Override
+    public GenerationResult generateRootKey() {
+      byte[] tokenId = new byte[32];
+      new java.security.SecureRandom().nextBytes(tokenId);
+      return new GenerationResult(
+          new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone()), tokenId);
+    }
+
+    @Override
+    public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
+      return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone());
+    }
+
+    @Override
+    public void revokeRootKey(byte[] keyId) {
+      // no-op for tests
+    }
+  }
+
+  static class PricingFallbackTestCredentialStore implements CredentialStore {
+
+    private final Map<String, L402Credential> store = new ConcurrentHashMap<>();
+
+    @Override
+    public void store(String tokenId, L402Credential credential, long ttlSeconds) {
+      store.put(tokenId, credential);
+    }
+
+    @Override
+    public L402Credential get(String tokenId) {
+      return store.get(tokenId);
+    }
+
+    @Override
+    public void revoke(String tokenId) {
+      store.remove(tokenId);
+    }
+
+    @Override
+    public long activeCount() {
+      return store.size();
+    }
+  }
 }

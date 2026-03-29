@@ -7,97 +7,135 @@ import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import java.time.Instant;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 
-import java.time.Instant;
-import java.util.List;
-import java.util.Objects;
-
 /**
- * Spring Security {@link AuthenticationProvider} that validates payment credentials
- * using either the core {@link L402Validator} (for L402 tokens) or a matching
- * {@link PaymentProtocol} (for protocol-agnostic tokens such as MPP).
+ * Spring Security {@link AuthenticationProvider} that validates payment credentials using either
+ * the core {@link L402Validator} (for L402 tokens) or a matching {@link PaymentProtocol} (for
+ * protocol-agnostic tokens such as MPP).
  *
- * <p>Accepts {@link PaygateAuthenticationToken} instances in their unauthenticated state
- * and returns an authenticated token with the validated credential, service name, and
- * protocol-specific attributes.
+ * <p>Accepts {@link PaygateAuthenticationToken} instances in their unauthenticated state and
+ * returns an authenticated token with the validated credential, service name, and protocol-specific
+ * attributes.
  */
 public final class PaygateAuthenticationProvider implements AuthenticationProvider {
 
-    private final L402Validator l402Validator;
-    private final List<PaymentProtocol> protocols;
-    private final String serviceName;
+  private static final System.Logger log =
+      System.getLogger(PaygateAuthenticationProvider.class.getName());
 
-    public PaygateAuthenticationProvider(L402Validator l402Validator, String serviceName) {
-        this(l402Validator, List.of(), serviceName);
+  private static final CapabilityResolver NOOP_RESOLVER = _ -> Set.of();
+
+  private final L402Validator l402Validator;
+  private final List<PaymentProtocol> protocols;
+  private final String serviceName;
+  private final CapabilityResolver capabilityResolver;
+
+  public PaygateAuthenticationProvider(L402Validator l402Validator, String serviceName) {
+    this(l402Validator, List.of(), serviceName, NOOP_RESOLVER);
+  }
+
+  public PaygateAuthenticationProvider(
+      L402Validator l402Validator, List<PaymentProtocol> protocols, String serviceName) {
+    this(l402Validator, protocols, serviceName, NOOP_RESOLVER);
+  }
+
+  public PaygateAuthenticationProvider(
+      L402Validator l402Validator,
+      List<PaymentProtocol> protocols,
+      String serviceName,
+      CapabilityResolver capabilityResolver) {
+    this.l402Validator = Objects.requireNonNull(l402Validator, "l402Validator must not be null");
+    this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
+    this.serviceName = serviceName;
+    this.capabilityResolver = capabilityResolver != null ? capabilityResolver : NOOP_RESOLVER;
+  }
+
+  @Override
+  public Authentication authenticate(Authentication authentication) throws AuthenticationException {
+    if (!(authentication instanceof PaygateAuthenticationToken token)) {
+      return null;
     }
 
-    public PaygateAuthenticationProvider(L402Validator l402Validator,
-                                         List<PaymentProtocol> protocols,
-                                         String serviceName) {
-        this.l402Validator = Objects.requireNonNull(l402Validator, "l402Validator must not be null");
-        this.protocols = List.copyOf(
-                Objects.requireNonNull(protocols, "protocols must not be null"));
-        this.serviceName = serviceName;
+    L402HeaderComponents components = token.getComponents();
+    if (components != null) {
+      return authenticateL402(token, components);
     }
 
-    @Override
-    public Authentication authenticate(Authentication authentication) throws AuthenticationException {
-        if (!(authentication instanceof PaygateAuthenticationToken token)) {
-            return null;
-        }
-
-        L402HeaderComponents components = token.getComponents();
-        if (components != null) {
-            return authenticateL402(token, components);
-        }
-
-        String authorizationHeader = token.getAuthorizationHeader();
-        if (authorizationHeader != null) {
-            return authenticateProtocol(token, authorizationHeader);
-        }
-
-        throw new BadCredentialsException("Payment token missing credentials");
+    String authorizationHeader = token.getAuthorizationHeader();
+    if (authorizationHeader != null) {
+      return authenticateProtocol(token, authorizationHeader);
     }
 
-    private Authentication authenticateL402(PaygateAuthenticationToken token,
-                                            L402HeaderComponents components) {
-        L402VerificationContext context = L402VerificationContext.builder()
-                .serviceName(serviceName)
-                .requestMetadata(token.getRequestMetadata())
-                .currentTime(Instant.now())
-                .build();
+    throw new BadCredentialsException("Payment token missing credentials");
+  }
 
+  private Authentication authenticateL402(
+      PaygateAuthenticationToken token, L402HeaderComponents components) {
+    L402VerificationContext context =
+        L402VerificationContext.builder()
+            .serviceName(serviceName)
+            .requestMetadata(token.getRequestMetadata())
+            .currentTime(Instant.now())
+            .build();
+
+    try {
+      L402Validator.ValidationResult result = l402Validator.validate(components, context);
+      Set<String> capabilities =
+          resolveCapabilitiesSafely(
+              new CapabilityResolutionContext(
+                  result.credential().tokenId(),
+                  serviceName,
+                  result.credential(),
+                  token.getRequestMetadata()));
+      return PaygateAuthenticationToken.authenticated(
+          result.credential(), serviceName, capabilities);
+    } catch (L402Exception e) {
+      throw new BadCredentialsException("L402 authentication failed", e);
+    }
+  }
+
+  private Authentication authenticateProtocol(
+      PaygateAuthenticationToken token, String authorizationHeader) {
+    for (PaymentProtocol protocol : protocols) {
+      if (protocol.canHandle(authorizationHeader)) {
         try {
-            L402Validator.ValidationResult result = l402Validator.validate(components, context);
-            return PaygateAuthenticationToken.authenticated(result.credential(), serviceName);
-        } catch (L402Exception e) {
-            throw new BadCredentialsException("L402 authentication failed", e);
+          PaymentCredential credential = protocol.parseCredential(authorizationHeader);
+          protocol.validate(credential, token.getRequestMetadata());
+          Set<String> capabilities =
+              resolveCapabilitiesSafely(
+                  new CapabilityResolutionContext(
+                      credential.tokenId(), serviceName, null, token.getRequestMetadata()));
+          return PaygateAuthenticationToken.authenticated(credential, serviceName, capabilities);
+        } catch (PaymentValidationException e) {
+          throw new BadCredentialsException("Payment authentication failed", e);
         }
+      }
     }
 
-    private Authentication authenticateProtocol(PaygateAuthenticationToken token,
-                                                String authorizationHeader) {
-        for (PaymentProtocol protocol : protocols) {
-            if (protocol.canHandle(authorizationHeader)) {
-                try {
-                    PaymentCredential credential = protocol.parseCredential(authorizationHeader);
-                    protocol.validate(credential, token.getRequestMetadata());
-                    return PaygateAuthenticationToken.authenticated(credential, serviceName);
-                } catch (PaymentValidationException e) {
-                    throw new BadCredentialsException("Payment authentication failed", e);
-                }
-            }
-        }
+    throw new BadCredentialsException("No payment protocol found for authorization header");
+  }
 
-        throw new BadCredentialsException("No payment protocol found for authorization header");
+  private Set<String> resolveCapabilitiesSafely(CapabilityResolutionContext context) {
+    try {
+      return capabilityResolver.resolve(context);
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Capability resolution failed for token; proceeding without resolved capabilities",
+          e);
+      return Set.of();
     }
+  }
 
-    @Override
-    public boolean supports(Class<?> authentication) {
-        return PaygateAuthenticationToken.class.isAssignableFrom(authentication);
-    }
+  @Override
+  public boolean supports(Class<?> authentication) {
+    return PaygateAuthenticationToken.class.isAssignableFrom(authentication);
+  }
 }

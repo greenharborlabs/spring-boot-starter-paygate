@@ -46,6 +46,7 @@ dependencies {
     securityTestImplementation("org.springframework.boot:spring-boot-starter-test")
     securityTestImplementation("org.springframework.boot:spring-boot-starter-web")
     securityTestImplementation("org.springframework.boot:spring-boot-starter-security")
+    securityTestImplementation("com.github.ben-manes.caffeine:caffeine:${project.extra["caffeineVersion"]}")
 }
 
 tasks.test {

@@ -12,13 +12,13 @@
 ### Running Single Tests
 ```bash
 # By class name
-./gradlew :paygate-core:test --tests "com.greenharborlabs.l402.core.macaroon.MacaroonCryptoTest"
+./gradlew :paygate-core:test --tests "com.greenharborlabs.paygate.core.macaroon.MacaroonCryptoTest"
 
 # By test method (within a class)
 ./gradlew :paygate-core:test --tests "*MacaroonCryptoTest.deriveKey*"
 
 # Filter by package
-./gradlew :paygate-spring-autoconfigure:test --tests "com.greenharborlabs.l402.spring.*"
+./gradlew :paygate-spring-autoconfigure:test --tests "com.greenharborlabs.paygate.spring.*"
 
 # Run with reporting
 ./gradlew test --info          # Verbose output
@@ -34,7 +34,8 @@
 
 ### Integration Tests
 ```bash
-cd integration-tests && docker-compose up --build   # Run Docker-based integration tests
+cd integration-tests && docker-compose -f docker-compose-lnd.yml up --build      # Run Docker-based integration tests (LND)
+cd integration-tests && docker-compose -f docker-compose-lnbits.yml up --build   # Run Docker-based integration tests (LNbits)
 ```
 
 ---
