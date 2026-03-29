@@ -44,6 +44,14 @@ subprojects {
     apply(plugin = "java-library")
     apply(plugin = "io.spring.dependency-management")
     apply(plugin = "jacoco")
+    apply(plugin = "pmd")
+
+    configure<org.gradle.api.plugins.quality.PmdExtension> {
+        toolVersion = "7.0.0"
+        ruleSets = emptyList()
+        ruleSetFiles = files(rootProject.file("config/pmd/cyclomatic-complexity.xml"))
+        isConsoleOutput = true
+    }
 
     the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
         imports {
@@ -82,6 +90,18 @@ subprojects {
     }
 
     tasks.withType<JacocoReport> {
+        reports {
+            xml.required.set(true)
+            html.required.set(true)
+        }
+    }
+
+    tasks.withType<org.gradle.api.plugins.quality.Pmd> {
+        if (name == "pmdTest") {
+            enabled = false
+        }
+        classpath = files()
+        exclude("**/generated/**", "**/lnrpc/**")
         reports {
             xml.required.set(true)
             html.required.set(true)
