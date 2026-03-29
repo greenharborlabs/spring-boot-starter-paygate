@@ -123,6 +123,13 @@ public class PaygateSecurityFilter implements Filter {
         if (authHeader != null) {
             for (PaymentProtocol protocol : protocols) {
                 if (protocol.canHandle(authHeader)) {
+                    // Pre-check: consume a rate limiter token before credential parsing.
+                    // This prevents unauthenticated probing from burning CPU on parse/validate.
+                    if (!tryAcquireRateLimit(httpRequest)) {
+                        PaygateResponseWriter.writeRateLimited(httpResponse);
+                        return;
+                    }
+
                     // Found matching protocol — try validate
                     long verifyStart = System.nanoTime();
                     try {
@@ -154,13 +161,8 @@ public class PaygateSecurityFilter implements Filter {
                         // classifyCaveatType only does keyword matching and returns a constant string —
                         // sanitize the message anyway to satisfy static analysis taint tracking.
                         recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
-                        // Consume rate limiter token on auth failure to penalize brute-force probing
-                        PaygateRateLimiter limiter = this.rateLimiter;
-                        if (limiter != null) {
-                            limiter.tryAcquire(this.clientIpResolver != null
-                                ? this.clientIpResolver.resolve(httpRequest)
-                                : httpRequest.getRemoteAddr());
-                        }
+                        // Consume penalty token on auth failure to penalize brute-force probing
+                        consumeRateLimitPenalty(httpRequest);
                         // Sanitize the token ID before logging — it is derived from user-supplied input
                         // and could contain newlines or other control characters used in log injection attacks.
                         String tokenDetail = sanitizeForLog(e.getTokenId() != null ? e.getTokenId() : "");
@@ -208,6 +210,8 @@ public class PaygateSecurityFilter implements Filter {
                         if (e instanceof MacaroonVerificationException) {
                             recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
                         }
+                        // Consume penalty token on any auth failure, not just PaymentValidationException
+                        consumeRateLimitPenalty(httpRequest);
                         // Fail closed: any unexpected exception from validation produces 503, never 500
                         String safeMessage = sanitizeForLog(e.getMessage());
                         log.log(System.Logger.Level.WARNING, "Unexpected error during {0} validation for {1} {2}: {3}",
@@ -255,9 +259,7 @@ public class PaygateSecurityFilter implements Filter {
     private Map<String, String> buildRequestContext(HttpServletRequest httpRequest,
                                                      String path, String method,
                                                      PaygateEndpointConfig config) {
-        String clientIp = clientIpResolver != null
-                ? clientIpResolver.resolve(httpRequest)
-                : httpRequest.getRemoteAddr();
+        String clientIp = resolveClientIp(httpRequest);
         String capability = config.capability();
         if (capability != null && !capability.isEmpty()) {
             return Map.of(
@@ -270,6 +272,50 @@ public class PaygateSecurityFilter implements Filter {
                 VerificationContextKeys.REQUEST_PATH, path,
                 VerificationContextKeys.REQUEST_METHOD, method,
                 VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
+    }
+
+    /**
+     * Resolves the client IP from the request, using the configured
+     * {@link ClientIpResolver} if available, falling back to {@code getRemoteAddr()}.
+     */
+    private String resolveClientIp(HttpServletRequest request) {
+        return clientIpResolver != null
+                ? clientIpResolver.resolve(request)
+                : request.getRemoteAddr();
+    }
+
+    /**
+     * Attempts to acquire a rate limiter token for the requesting client.
+     * Returns {@code true} if the request is allowed (or no rate limiter is configured).
+     * Rate limiter exceptions are logged and treated as allowed (defense-in-depth, not fail-closed).
+     */
+    private boolean tryAcquireRateLimit(HttpServletRequest request) {
+        PaygateRateLimiter limiter = this.rateLimiter;
+        if (limiter == null) {
+            return true;
+        }
+        try {
+            return limiter.tryAcquire(resolveClientIp(request));
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Rate limiter threw exception, allowing request: {0}", e.getMessage());
+            return true;
+        }
+    }
+
+    /**
+     * Consumes a penalty rate limiter token after a failed credential validation.
+     * Failures in the rate limiter itself are logged and swallowed (defense-in-depth).
+     */
+    private void consumeRateLimitPenalty(HttpServletRequest request) {
+        PaygateRateLimiter limiter = this.rateLimiter;
+        if (limiter == null) {
+            return;
+        }
+        try {
+            limiter.tryAcquire(resolveClientIp(request));
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "Rate limiter threw exception during penalty consumption: {0}", e.getMessage());
+        }
     }
 
     /**

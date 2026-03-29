@@ -113,13 +113,38 @@ paygate-spring-security/
     L402AuthenticationTokenTest.java       Token lifecycle and attribute extraction tests
 ```
 
+### Recommended Filter Chain Order
+
+When rate limiting is enabled (`PaygateRateLimiter` bean present), the recommended filter order is:
+
+```
+PaygateAuthFailureRateLimitFilter --> PaygateAuthenticationFilter --> (rest of chain)
+```
+
+The rate limit filter is auto-configured only when a `PaygateRateLimiter` bean exists. It applies two phases of protection:
+
+1. **Pre-check:** Consumes a rate limiter token on entry. If exhausted, returns 429 before any downstream processing.
+2. **Post-failure penalty:** After the chain returns, if the response status is 401 or 503 (auth failure), consumes an additional penalty token to penalize brute-force probing.
+
+Requests without a payment-scheme `Authorization` header bypass this filter entirely (challenge issuance in `PaygateAuthenticationEntryPoint` has its own rate limiting via `PaygateChallengeService`).
+
 ### Request Flow
 
 ```
 Client Request
      |
      v
-L402AuthenticationFilter (OncePerRequestFilter)
+PaygateAuthFailureRateLimitFilter (OncePerRequestFilter, optional)
+     |
+     |-- No payment Authorization header? --> skip (shouldNotFilter)
+     |-- Endpoint not protected? --> pass through, no rate limiting
+     |-- Rate limit exhausted? --> 429 Too Many Requests
+     |-- Rate limit OK? --> continue to next filter
+     |       |
+     |       v (after chain returns: 401/503 --> consume penalty token)
+     |
+     v
+PaygateAuthenticationFilter (OncePerRequestFilter)
      |
      |-- No "Authorization: L402 ..." header? --> continue filter chain (other filters handle it)
      |
@@ -212,13 +237,14 @@ Implements `AuthenticationProvider`. Accepts only `L402AuthenticationToken` inst
 1. `EnableWebSecurity` and `L402Validator` classes are on the classpath (`@ConditionalOnClass`)
 2. An `L402Validator` bean exists in the application context (`@ConditionalOnBean`)
 
-It registers three beans:
+It registers up to four beans:
 
 | Bean | Condition | Description |
 |------|-----------|-------------|
-| `L402AuthenticationProvider` | `@ConditionalOnMissingBean` | Validates L402 tokens using the `L402Validator` and `paygate.service-name` property |
-| `L402AuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
-| `L402AuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
+| `PaygateAuthenticationProvider` | `@ConditionalOnMissingBean` | Validates payment tokens using the `L402Validator` and `paygate.service-name` property |
+| `PaygateAuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
+| `PaygateAuthFailureRateLimitFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(PaygateRateLimiter.class)` | Rate limits auth attempts with pre-check and post-failure penalty. Only created when rate limiting is enabled. |
+| `PaygateAuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
 
 The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). This gives you full control over filter ordering and which paths are protected.
 
@@ -244,16 +270,25 @@ public L402AuthenticationProvider l402AuthenticationProvider(L402Validator valid
 @EnableWebSecurity
 public class SecurityConfig {
 
+    // Optional: only present when rate limiting is enabled (PaygateRateLimiter bean exists)
+    @Autowired(required = false)
+    private PaygateAuthFailureRateLimitFilter paygateRateLimitFilter;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                     L402AuthenticationFilter l402Filter,
-                                                     L402AuthenticationProvider l402Provider) throws Exception {
+                                                     PaygateAuthenticationFilter paygateFilter,
+                                                     PaygateAuthenticationProvider paygateProvider) throws Exception {
+        // Rate limit filter runs BEFORE the auth filter when present
+        if (paygateRateLimitFilter != null) {
+            http.addFilterBefore(paygateRateLimitFilter, BasicAuthenticationFilter.class);
+        }
+
         return http
-                .authenticationProvider(l402Provider)
-                .addFilterBefore(l402Filter, UsernamePasswordAuthenticationFilter.class)
+                .authenticationProvider(paygateProvider)
+                .addFilterBefore(paygateFilter, BasicAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/public/**").permitAll()
-                        .requestMatchers("/api/premium/**").hasRole("L402")
+                        .requestMatchers("/api/premium/**").hasRole("PAYMENT")
                         .anyRequest().authenticated()
                 )
                 .csrf(csrf -> csrf.disable())

@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.spring.CapabilityCache;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateSpringSecurityModeCondition;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -71,6 +72,18 @@ public class PaygateSecurityAutoConfiguration {
             @Autowired(required = false) ClientIpResolver clientIpResolver,
             @Value("${paygate.service-name:default}") String serviceName) {
         return new PaygateAuthenticationFilter(authenticationManager, protocols, paygateEndpointRegistry, clientIpResolver, serviceName);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(PaygateAuthFailureRateLimitFilter.class)
+    @ConditionalOnBean(PaygateRateLimiter.class)
+    public PaygateAuthFailureRateLimitFilter paygateAuthFailureRateLimitFilter(
+            PaygateRateLimiter rateLimiter,
+            @Autowired(required = false) ClientIpResolver clientIpResolver,
+            PaygateEndpointRegistry paygateEndpointRegistry,
+            List<PaymentProtocol> protocols) {
+        return new PaygateAuthFailureRateLimitFilter(rateLimiter, clientIpResolver,
+                paygateEndpointRegistry, protocols);
     }
 
     @Bean

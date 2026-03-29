@@ -1,8 +1,10 @@
 package com.greenharborlabs.paygate.example.security;
 
+import com.greenharborlabs.paygate.spring.security.PaygateAuthFailureRateLimitFilter;
 import com.greenharborlabs.paygate.spring.security.PaygateAuthenticationEntryPoint;
 import com.greenharborlabs.paygate.spring.security.PaygateAuthenticationFilter;
 import com.greenharborlabs.paygate.spring.security.PaygateAuthenticationProvider;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -57,7 +59,13 @@ public class SecurityConfig {
             HttpSecurity http,
             PaygateAuthenticationFilter paygateFilter,
             PaygateAuthenticationProvider paygateProvider,
-            PaygateAuthenticationEntryPoint paygateEntryPoint) throws Exception {
+            PaygateAuthenticationEntryPoint paygateEntryPoint,
+            ObjectProvider<PaygateAuthFailureRateLimitFilter> rateLimitFilterProvider) throws Exception {
+
+        PaygateAuthFailureRateLimitFilter rateLimitFilter = rateLimitFilterProvider.getIfAvailable();
+        if (rateLimitFilter != null) {
+            http.addFilterBefore(rateLimitFilter, BasicAuthenticationFilter.class);
+        }
 
         return http
                 .authenticationProvider(paygateProvider)
