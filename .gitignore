@@ -24,3 +24,11 @@ bin/
 .project
 .classpath
 .settings/
+
+# OS files
+.DS_Store
+
+# Secrets
+.env
+.env.local
+.env.*.local
