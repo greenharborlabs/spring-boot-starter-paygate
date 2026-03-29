@@ -4,6 +4,7 @@ plugins {
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.2.2" apply false
+    id("com.diffplug.spotless") version "7.0.4" apply false
 }
 
 val springBootVersion = "4.0.4"
@@ -44,6 +45,17 @@ subprojects {
     apply(plugin = "java-library")
     apply(plugin = "io.spring.dependency-management")
     apply(plugin = "jacoco")
+    apply(plugin = "com.diffplug.spotless")
+
+    configure<com.diffplug.gradle.spotless.SpotlessExtension> {
+        java {
+            googleJavaFormat("1.35.0")
+            removeUnusedImports()
+            trimTrailingWhitespace()
+            endWithNewline()
+            targetExclude("build/**")
+        }
+    }
 
     the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
         imports {
