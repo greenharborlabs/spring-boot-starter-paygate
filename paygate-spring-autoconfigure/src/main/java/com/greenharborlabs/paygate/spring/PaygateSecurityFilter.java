@@ -130,7 +130,7 @@ public class PaygateSecurityFilter implements Filter {
             PaygateResponseWriter.writeRateLimited(httpResponse);
             return;
           }
-          if (tryValidateWithProtocol(
+          tryValidateWithProtocol(
               protocol,
               authHeader,
               httpRequest,
@@ -141,9 +141,8 @@ public class PaygateSecurityFilter implements Filter {
               config,
               chain,
               request,
-              response)) {
-            return;
-          }
+              response);
+          return;
         }
       }
       // No protocol matched the auth header — fall through to challenge
@@ -218,11 +217,11 @@ public class PaygateSecurityFilter implements Filter {
   }
 
   /**
-   * Attempts to validate a credential with the given protocol. Returns {@code true} if the request
-   * was fully handled (success or error response written), {@code false} if processing should
-   * continue to the challenge flow.
+   * Validates a credential with the given protocol and writes the appropriate response. On success,
+   * the request is forwarded down the filter chain. On failure, an error response is written
+   * directly (fail-closed).
    */
-  private boolean tryValidateWithProtocol(
+  private void tryValidateWithProtocol(
       PaymentProtocol protocol,
       String authHeader,
       HttpServletRequest httpRequest,
@@ -234,7 +233,7 @@ public class PaygateSecurityFilter implements Filter {
       FilterChain chain,
       ServletRequest request,
       ServletResponse response)
-      throws IOException, ServletException {
+      throws IOException {
 
     long verifyStart = System.nanoTime();
     try {
@@ -253,17 +252,14 @@ public class PaygateSecurityFilter implements Filter {
       chain.doFilter(request, response);
       recordCaveatVerifyDuration(verifyStart);
       recordPassed(config.pathPattern(), config.priceSats(), protocol.scheme());
-      return true;
 
     } catch (PaymentValidationException e) {
       recordCaveatVerifyDuration(verifyStart);
       handlePaymentValidationFailure(e, protocol, httpRequest, httpResponse, config);
-      return true;
 
     } catch (Exception e) {
       recordCaveatVerifyDuration(verifyStart);
       handleUnexpectedValidationError(e, protocol, httpRequest, httpResponse, method, safePath);
-      return true;
     }
   }
 

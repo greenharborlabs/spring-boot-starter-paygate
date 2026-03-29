@@ -91,10 +91,7 @@ public final class MppCredentialParser {
       if (!(entry.getKey() instanceof String key)) {
         throw malformed("Non-string key in challenge object");
       }
-      if (entry.getValue() == null) {
-        // null JSON values in challenge are treated as absent -- skip
-        continue;
-      } else if (entry.getValue() instanceof String value) {
+      if (entry.getValue() instanceof String value) {
         echoedChallenge.put(key, value);
       } else {
         throw malformed("Non-string value for key '%s' in challenge object".formatted(key));

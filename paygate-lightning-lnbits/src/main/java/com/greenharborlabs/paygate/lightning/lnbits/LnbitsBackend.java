@@ -190,16 +190,16 @@ public class LnbitsBackend implements LightningBackend {
       preimage = HEX.parseHex(json.get("preimage").asText());
     }
 
-    Instant createdAt = parseEpochField(details, "time", Instant.now());
+    Instant createdAt = parseEpochField(details, Instant.now());
     Instant expiresAt =
-        parseExpiryField(details, "expiry", createdAt, createdAt.plus(DEFAULT_INVOICE_EXPIRY));
+        parseExpiryField(details, createdAt, createdAt.plus(DEFAULT_INVOICE_EXPIRY));
 
     return new Invoice(paymentHash, bolt11, amount, memo, status, preimage, createdAt, expiresAt);
   }
 
   /** Parses an optional epoch-seconds field, returning the default if absent or non-numeric. */
-  private static Instant parseEpochField(JsonNode parent, String field, Instant defaultValue) {
-    JsonNode node = parent.get(field);
+  private static Instant parseEpochField(JsonNode parent, Instant defaultValue) {
+    JsonNode node = parent.get("time");
     if (node != null && !node.isNull() && node.isNumber()) {
       return Instant.ofEpochSecond(node.asLong());
     }
@@ -210,9 +210,8 @@ public class LnbitsBackend implements LightningBackend {
    * Parses an optional expiry-seconds field relative to {@code base}, returning the default if
    * absent or non-numeric.
    */
-  private static Instant parseExpiryField(
-      JsonNode parent, String field, Instant base, Instant defaultValue) {
-    JsonNode node = parent.get(field);
+  private static Instant parseExpiryField(JsonNode parent, Instant base, Instant defaultValue) {
+    JsonNode node = parent.get("expiry");
     if (node != null && !node.isNull() && node.isNumber()) {
       return base.plusSeconds(node.asLong());
     }
