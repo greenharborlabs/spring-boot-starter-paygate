@@ -216,13 +216,15 @@ class PathCaveatVerifierTest {
         }
 
         @Test
-        @DisplayName("14: /api/../products/123 with path=/products/** matches (dot-segment resolution)")
-        void dotSegmentResolution() {
+        @DisplayName("14: /api/../products/123 with path=/products/** rejects (dot-dot traversal rejected)")
+        void dotSegmentRejected() {
             Caveat caveat = new Caveat("path", "/products/**");
             L402VerificationContext context = contextWithPath("/api/../products/123");
 
-            assertThatCode(() -> verifier.verify(caveat, context))
-                    .doesNotThrowAnyException();
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
 
         @Test
@@ -236,15 +238,16 @@ class PathCaveatVerifierTest {
         }
 
         @Test
-        @DisplayName("regression: double-encoded traversal (%252e%252e) is resolved before matching")
-        void doubleEncodedTraversalResolved() {
-            // %252e decodes to %2e (pass 1), then to '.' (pass 2)
-            // /public/%252e%252e/api/data -> /public/../api/data -> /api/data
+        @DisplayName("regression: double-encoded traversal (%252e%252e) rejected (contains %25 double-encoding)")
+        void doubleEncodedTraversalRejected() {
+            // %252e contains %25 which is a double-encoding indicator — rejected
             Caveat caveat = new Caveat("path", "/api/**");
             L402VerificationContext context = contextWithPath("/public/%252e%252e/api/data");
 
-            assertThatCode(() -> verifier.verify(caveat, context))
-                    .doesNotThrowAnyException();
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
         }
     }
 
@@ -354,6 +357,172 @@ class PathCaveatVerifierTest {
         void patternWithoutLeadingSlashNoMatch() {
             Caveat caveat = new Caveat("path", "products/123");
             L402VerificationContext context = contextWithPath("/api/other");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // W1-01: Encoded backslash and double-encoding bypass prevention
+    // ---------------------------------------------------------------
+
+    @Nested
+    @DisplayName("W1-01: encoded backslash and double-encoding rejection")
+    class EncodedBackslashAndDoubleEncoding {
+
+        @Test
+        @DisplayName("rejects %5C (encoded backslash uppercase)")
+        void rejectsEncodedBackslashUppercase() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/%5Csecret");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("rejects %5c (encoded backslash lowercase)")
+        void rejectsEncodedBackslashLowercase() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/%5csecret");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("rejects %252F (double-encoded forward slash)")
+        void rejectsDoubleEncodedForwardSlash() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/%252Fsecret");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("rejects %252f (double-encoded forward slash lowercase)")
+        void rejectsDoubleEncodedForwardSlashLowercase() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/%252fsecret");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("rejects %255C (double-encoded backslash)")
+        void rejectsDoubleEncodedBackslash() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/%255Csecret");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("allows normal path (no regression)")
+        void allowsNormalPath() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/normal");
+
+            assertThatCode(() -> verifier.verify(caveat, context))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("allows percent-encoded space (no regression)")
+        void allowsPercentEncodedSpace() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/my%20item");
+
+            assertThatCode(() -> verifier.verify(caveat, context))
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // W1-02: Dot-dot path traversal rejection
+    // ---------------------------------------------------------------
+
+    @Nested
+    @DisplayName("W1-02: dot-dot path traversal rejection")
+    class DotDotTraversalRejection {
+
+        @Test
+        @DisplayName("rejects /api/../secret")
+        void rejectsDotDotInMiddle() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/../secret");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("rejects /../../../api/data")
+        void rejectsDotDotAtStart() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/../../../api/data");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("rejects /api/v1/..")
+        void rejectsDotDotAtEnd() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/v1/..");
+
+            assertThatThrownBy(() -> verifier.verify(caveat, context))
+                    .isInstanceOf(MacaroonVerificationException.class)
+                    .extracting(e -> ((MacaroonVerificationException) e).getReason())
+                    .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+        }
+
+        @Test
+        @DisplayName("allows path with dots that are not dot-dot segments")
+        void allowsDotsInSegmentNames() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/v1.2/file.json");
+
+            assertThatCode(() -> verifier.verify(caveat, context))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("allows single dot segment (current directory)")
+        void allowsSingleDotSegment() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("/api/./data");
+
+            assertThatCode(() -> verifier.verify(caveat, context))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("rejects bare ../path (dot-dot without leading slash)")
+        void rejectsBareDotDot() {
+            Caveat caveat = new Caveat("path", "/api/**");
+            L402VerificationContext context = contextWithPath("../api/data");
 
             assertThatThrownBy(() -> verifier.verify(caveat, context))
                     .isInstanceOf(MacaroonVerificationException.class)

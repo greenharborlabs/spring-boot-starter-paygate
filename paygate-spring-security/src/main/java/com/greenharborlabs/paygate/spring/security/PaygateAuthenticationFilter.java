@@ -100,6 +100,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         String capability;
         try {
             endpointConfig = resolveEndpointConfig(request, normalizedPath);
+            if (endpointConfig == null) {
+                filterChain.doFilter(request, response);
+                return;
+            }
             capability = extractCapability(endpointConfig);
         } catch (RuntimeException e) {
             SecurityContextHolder.clearContext();

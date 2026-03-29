@@ -60,9 +60,13 @@ class PaygateAuthenticationFilterTest {
 
     private static final String VALID_PREIMAGE = "a".repeat(64);
     private static final String VALID_MACAROON_B64 = "dGVzdG1hY2Fyb29u";
+    private static final PaygateEndpointConfig DEFAULT_CONFIG =
+            new PaygateEndpointConfig("GET", "/", 10, 3600, "default", "", null);
 
     @BeforeEach
     void setUp() {
+        // Default: all endpoints are registered. Tests for unregistered endpoints override this.
+        org.mockito.Mockito.lenient().when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
         filter = new PaygateAuthenticationFilter(authenticationManager, List.of(), endpointRegistry);
         request = new MockHttpServletRequest();
         response = new MockHttpServletResponse();
@@ -300,20 +304,18 @@ class PaygateAuthenticationFilterTest {
     }
 
     @Test
-    void passesNullCapabilityWhenConfigNotFound() throws ServletException, IOException {
+    void skipsAuthWhenConfigNotFound() throws ServletException, IOException {
         request.setMethod("GET");
         request.setRequestURI("/api/unregistered");
         request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
 
         when(endpointRegistry.findConfig("GET", "/api/unregistered")).thenReturn(null);
-        when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
 
         filter.doFilter(request, response, filterChain);
 
-        ArgumentCaptor<PaygateAuthenticationToken> captor = ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
-        verify(authenticationManager).authenticate(captor.capture());
-
-        assertThat(captor.getValue().getRequestMetadata()).doesNotContainKey(VerificationContextKeys.REQUESTED_CAPABILITY);
+        verify(authenticationManager, never()).authenticate(any());
+        verify(filterChain).doFilter(request, response);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
     @Test
@@ -556,6 +558,42 @@ class PaygateAuthenticationFilterTest {
         verify(filterChain, never()).doFilter(request, response);
     }
 
+    // --- Unregistered endpoint bypass tests ---
+
+    @Test
+    void skipsAuthenticationWhenEndpointNotRegisteredWithL402Credential() throws ServletException, IOException {
+        request.setMethod("GET");
+        request.setRequestURI("/api/unregistered");
+        request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+        when(endpointRegistry.findConfig("GET", "/api/unregistered")).thenReturn(null);
+
+        filter.doFilter(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verify(authenticationManager, never()).authenticate(any());
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        assertThat(response.getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void skipsAuthenticationWhenEndpointNotRegisteredWithMppCredential() throws ServletException, IOException {
+        filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mockMppProtocol()), endpointRegistry);
+
+        request.setMethod("GET");
+        request.setRequestURI("/api/unregistered");
+        request.addHeader("Authorization", "Payment preimage=abc123");
+
+        when(endpointRegistry.findConfig("GET", "/api/unregistered")).thenReturn(null);
+
+        filter.doFilter(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verify(authenticationManager, never()).authenticate(any());
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        assertThat(response.getStatus()).isEqualTo(200);
+    }
+
     // --- shouldNotFilter tests ---
 
     @Test
@@ -684,9 +722,8 @@ class PaygateAuthenticationFilterTest {
     }
 
     @Test
-    void missingEndpointConfigSkipsReceiptButSucceeds() throws ServletException, IOException {
+    void missingEndpointConfigSkipsAuthAndReceipt() throws ServletException, IOException {
         PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
-        PaygateAuthenticationToken authenticatedToken = createAuthenticatedMppToken();
 
         filter = new PaygateAuthenticationFilter(authenticationManager, List.of(mppProtocol),
                 endpointRegistry, null, "test-service");
@@ -696,14 +733,15 @@ class PaygateAuthenticationFilterTest {
         request.addHeader("Authorization", "Payment preimage=abc123");
 
         when(endpointRegistry.findConfig("GET", "/api/unregistered")).thenReturn(null);
-        when(authenticationManager.authenticate(any())).thenReturn(authenticatedToken);
 
         filter.doFilter(request, response, filterChain);
 
         assertThat(response.getHeader("Payment-Receipt")).isNull();
         assertThat(response.getStatus()).isEqualTo(200);
         verify(filterChain).doFilter(request, response);
+        verify(authenticationManager, never()).authenticate(any());
         verify(mppProtocol, never()).createReceipt(any(), any());
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
     @Test
