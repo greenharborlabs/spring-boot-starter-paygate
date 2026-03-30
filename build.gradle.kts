@@ -256,6 +256,37 @@ subprojects {
     }
 }
 
+// Install git pre-commit hook that runs spotlessApply before each commit
+tasks.register("installGitHook") {
+    group = "verification"
+    description = "Installs a git pre-commit hook that auto-formats code with Spotless."
+    val hookFile = file(".git/hooks/pre-commit")
+    outputs.file(hookFile)
+    doLast {
+        hookFile.writeText(
+            """
+            |#!/bin/sh
+            |# Auto-installed by Gradle — runs spotlessApply before each commit
+            |echo "Running spotlessApply..."
+            |./gradlew spotlessApply --daemon -q
+            |
+            |# Re-stage any files that were reformatted
+            |git diff --name-only | xargs -r git add
+            |
+            """.trimMargin()
+        )
+        hookFile.setExecutable(true)
+        logger.lifecycle("Installed git pre-commit hook: ${hookFile.absolutePath}")
+    }
+}
+
+// Auto-install the hook when any subproject is compiled
+subprojects {
+    tasks.matching { it.name == "compileJava" }.configureEach {
+        dependsOn(rootProject.tasks.named("installGitHook"))
+    }
+}
+
 // Aggregate Javadoc task: collects sources from all subprojects with Java sources
 tasks.register<Javadoc>("aggregateJavadoc") {
     group = "documentation"

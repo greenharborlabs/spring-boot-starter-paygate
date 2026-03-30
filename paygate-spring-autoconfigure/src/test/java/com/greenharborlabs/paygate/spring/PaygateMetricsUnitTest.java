@@ -22,7 +22,8 @@ class PaygateMetricsUnitTest {
     meterRegistry = new SimpleMeterRegistry();
     var lightningBackend = new StubLightningBackend();
     lightningBackend.setHealthy(true);
-    paygateMetrics = new PaygateMetrics(meterRegistry, new InMemoryTestCredentialStore(), lightningBackend);
+    paygateMetrics =
+        new PaygateMetrics(meterRegistry, new InMemoryTestCredentialStore(), lightningBackend);
   }
 
   @Nested
@@ -212,7 +213,11 @@ class PaygateMetricsUnitTest {
       paygateMetrics.recordRateLimiterEviction("size");
 
       double count =
-          meterRegistry.get("paygate.ratelimiter.evictions").tag("reason", "size").counter().count();
+          meterRegistry
+              .get("paygate.ratelimiter.evictions")
+              .tag("reason", "size")
+              .counter()
+              .count();
       assertThat(count).isEqualTo(2.0);
     }
 

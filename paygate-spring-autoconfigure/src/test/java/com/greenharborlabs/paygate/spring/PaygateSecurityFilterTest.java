@@ -13,9 +13,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.greenharborlabs.paygate.api.PaymentCredential;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -33,6 +30,9 @@ import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Metadata;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;

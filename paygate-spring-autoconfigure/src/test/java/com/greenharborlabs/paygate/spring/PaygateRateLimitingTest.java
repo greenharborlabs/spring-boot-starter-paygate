@@ -13,9 +13,6 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
@@ -29,6 +26,9 @@ import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
@@ -965,5 +965,4 @@ class PaygateRateLimitingTest {
       throw new AssertionError("Failed to build auth header", e);
     }
   }
-
 }

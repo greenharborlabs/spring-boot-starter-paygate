@@ -6,9 +6,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
-import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -20,6 +17,9 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -895,5 +895,4 @@ class PaygateMetricsTest {
 
     return "L402 " + macaroonBase64 + ":" + wrongPreimageHex;
   }
-
 }
