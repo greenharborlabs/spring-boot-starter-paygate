@@ -1,5 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
+import static com.greenharborlabs.paygate.spring.PaygateTestSupport.createStubInvoice;
+import static com.greenharborlabs.paygate.spring.PaygateTestSupport.sha256;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -11,10 +13,10 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
-import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
-import com.greenharborlabs.paygate.core.lightning.Invoice;
-import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
@@ -25,19 +27,15 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
-import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -92,7 +90,7 @@ class PaygateRateLimitingTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(10));
     }
 
     @Test
@@ -146,7 +144,7 @@ class PaygateRateLimitingTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(10));
     }
 
     @Test
@@ -220,7 +218,7 @@ class PaygateRateLimitingTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(10));
     }
 
     @Test
@@ -260,7 +258,7 @@ class PaygateRateLimitingTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(10));
     }
 
     @Test
@@ -301,7 +299,7 @@ class PaygateRateLimitingTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(10));
     }
 
     @Test
@@ -343,7 +341,7 @@ class PaygateRateLimitingTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(10));
     }
 
     @Test
@@ -947,7 +945,7 @@ class PaygateRateLimitingTest {
     try {
       byte[] preimage = new byte[32];
       new SecureRandom().nextBytes(preimage);
-      byte[] paymentHash = MessageDigest.getInstance("SHA-256").digest(preimage);
+      byte[] paymentHash = sha256(preimage);
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
@@ -968,112 +966,4 @@ class PaygateRateLimitingTest {
     }
   }
 
-  private static Invoice createStubInvoice() {
-    byte[] paymentHash = new byte[32];
-    new SecureRandom().nextBytes(paymentHash);
-    Instant now = Instant.now();
-    return new Invoice(
-        paymentHash,
-        "lnbc100n1p0testinvoice",
-        10,
-        "Test invoice",
-        InvoiceStatus.PENDING,
-        null,
-        now,
-        now.plus(1, ChronoUnit.HOURS));
-  }
-
-  // -----------------------------------------------------------------------
-  // Stub implementations (mirrors PaygateSecurityFilterTest stubs)
-  // -----------------------------------------------------------------------
-
-  static class StubLightningBackend implements LightningBackend {
-
-    private volatile boolean healthy = true;
-    private volatile Invoice nextInvoice;
-
-    void setHealthy(boolean healthy) {
-      this.healthy = healthy;
-    }
-
-    void setNextInvoice(Invoice invoice) {
-      this.nextInvoice = invoice;
-    }
-
-    @Override
-    public Invoice createInvoice(long amountSats, String memo) {
-      if (nextInvoice != null) return nextInvoice;
-      byte[] ph = new byte[32];
-      new SecureRandom().nextBytes(ph);
-      Instant now = Instant.now();
-      return new Invoice(
-          ph,
-          "lnbc" + amountSats + "n1pstub",
-          amountSats,
-          memo,
-          InvoiceStatus.PENDING,
-          null,
-          now,
-          now.plus(1, ChronoUnit.HOURS));
-    }
-
-    @Override
-    public Invoice lookupInvoice(byte[] paymentHash) {
-      return null;
-    }
-
-    @Override
-    public boolean isHealthy() {
-      return healthy;
-    }
-  }
-
-  static class InMemoryTestRootKeyStore implements RootKeyStore {
-
-    private final byte[] rootKey;
-
-    InMemoryTestRootKeyStore(byte[] rootKey) {
-      this.rootKey = rootKey.clone();
-    }
-
-    @Override
-    public GenerationResult generateRootKey() {
-      byte[] tokenId = new byte[32];
-      new SecureRandom().nextBytes(tokenId);
-      return new GenerationResult(new SensitiveBytes(rootKey.clone()), tokenId);
-    }
-
-    @Override
-    public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
-      return new SensitiveBytes(rootKey.clone());
-    }
-
-    @Override
-    public void revokeRootKey(byte[] keyId) {}
-  }
-
-  static class InMemoryTestCredentialStore implements CredentialStore {
-
-    private final Map<String, L402Credential> store = new ConcurrentHashMap<>();
-
-    @Override
-    public void store(String tokenId, L402Credential credential, long ttlSeconds) {
-      store.put(tokenId, credential);
-    }
-
-    @Override
-    public L402Credential get(String tokenId) {
-      return store.get(tokenId);
-    }
-
-    @Override
-    public void revoke(String tokenId) {
-      store.remove(tokenId);
-    }
-
-    @Override
-    public long activeCount() {
-      return store.size();
-    }
-  }
 }
