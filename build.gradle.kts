@@ -24,6 +24,47 @@ allprojects {
     }
 }
 
+dependencyAnalysis {
+    issues {
+        all {
+            onUnusedDependencies {
+                severity("fail")
+                exclude(
+                    // JUnit platform launcher is a runtime-only transitive required by the test engine
+                    "org.junit.platform:junit-platform-launcher",
+                    // JUnit Jupiter aggregator pulls in junit-jupiter-api + params; the aggregator itself is "unused"
+                    "org.junit.jupiter:junit-jupiter",
+                    // Spring Boot starter aggregators are used by convention — they aggregate transitives intentionally
+                    "org.springframework.boot:spring-boot-starter-test",
+                    "org.springframework.boot:spring-boot-starter-web",
+                    "org.springframework.boot:spring-boot-starter-webmvc-test",
+                    "org.springframework.boot:spring-boot-starter-actuator",
+                    "org.springframework.boot:spring-boot-starter-security",
+                    "org.springframework.security:spring-security-test",
+                )
+            }
+            onUsedTransitiveDependencies {
+                severity("warn")
+            }
+            onIncorrectConfiguration {
+                severity("warn")
+            }
+        }
+
+        // Example apps intentionally depend on starters which aggregate transitive deps
+        project(":paygate-example-app") {
+            onUnusedDependencies { severity("warn") }
+        }
+        project(":paygate-example-app-spring-security") {
+            onUnusedDependencies { severity("warn") }
+        }
+        // Starter aggregator module — dependencies are intentionally re-exported for consumers
+        project(":paygate-spring-boot-starter") {
+            onUnusedDependencies { severity("warn") }
+        }
+    }
+}
+
 nexusPublishing {
     repositories {
         sonatype {

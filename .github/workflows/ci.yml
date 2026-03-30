@@ -91,6 +91,9 @@ jobs:
       - name: Build
         run: ./gradlew build
 
+      - name: Detect unused dependencies
+        run: ./gradlew buildHealth
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

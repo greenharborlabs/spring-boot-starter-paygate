@@ -19,7 +19,6 @@ dependencies {
     // kept as compileOnly for any hand-written code that may use Jakarta annotations
     compileOnly("jakarta.annotation:jakarta.annotation-api")
 
-    testImplementation("io.grpc:grpc-testing:$grpcVersion")
     testImplementation("io.grpc:grpc-inprocess:$grpcVersion")
 }
 

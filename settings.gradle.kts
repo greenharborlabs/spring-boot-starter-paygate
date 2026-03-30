@@ -1,3 +1,14 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+plugins {
+    id("com.autonomousapps.build-health") version "3.6.1"
+}
+
 rootProject.name = "spring-boot-starter-paygate"
 
 include(
