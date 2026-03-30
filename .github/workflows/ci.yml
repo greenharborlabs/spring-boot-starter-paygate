@@ -52,8 +52,47 @@ jobs:
       - name: Validate AGENTS.md commands
         run: ./scripts/validate-agents-md.sh
 
+  large-file-detection:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect large files (>500KB) and long source files (>1000 lines)
+        run: |
+          EXIT_CODE=0
+
+          echo "=== Checking for files larger than 500KB ==="
+          while IFS= read -r -d '' file; do
+            size=$(wc -c < "$file")
+            if [ "$size" -gt 512000 ]; then
+              echo "::error file=${file}::File exceeds 500KB limit ($(( size / 1024 ))KB): ${file}"
+              EXIT_CODE=1
+            fi
+          done < <(git ls-files -z)
+
+          echo ""
+          echo "=== Checking for source files exceeding 1000 lines ==="
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.java|*.kt|*.kts|*.xml|*.yml|*.yaml|*.properties|*.json|*.gradle|*.gradle.kts)
+                lines=$(wc -l < "$file")
+                if [ "$lines" -gt 1000 ]; then
+                  echo "::error file=${file}::Source file exceeds 1000-line limit (${lines} lines): ${file}"
+                  EXIT_CODE=1
+                fi
+                ;;
+            esac
+          done < <(git ls-files -z)
+
+          if [ "$EXIT_CODE" -eq 0 ]; then
+            echo "All files within size limits."
+          fi
+          exit $EXIT_CODE
+
   build:
-    needs: agents-md-validation
+    needs: [agents-md-validation, large-file-detection]
     runs-on: ubuntu-latest
 
     steps:
