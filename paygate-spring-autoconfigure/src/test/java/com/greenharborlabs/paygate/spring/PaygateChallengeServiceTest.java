@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -701,86 +700,6 @@ class PaygateChallengeServiceTest {
       ChallengeContext ctx = service.createChallenge(request, configWithCapability);
       assertThat(ctx).isNotNull();
       assertThat(ctx.capability()).isEqualTo("search");
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // sanitizeBolt11ForHeader
-  // -----------------------------------------------------------------------
-
-  @Nested
-  @DisplayName("sanitizeBolt11ForHeader")
-  class SanitizeBolt11 {
-
-    @Test
-    @DisplayName("returns empty string for null input")
-    void returnsEmptyForNull() {
-      assertThat(PaygateChallengeService.sanitizeBolt11ForHeader(null)).isEqualTo("");
-    }
-
-    @Test
-    @DisplayName("returns empty string for empty input")
-    void returnsEmptyForEmpty() {
-      assertThat(PaygateChallengeService.sanitizeBolt11ForHeader("")).isEqualTo("");
-    }
-
-    @Test
-    @DisplayName("rejects double quote with IllegalArgumentException")
-    void rejectsDoubleQuote() {
-      assertThatIllegalArgumentException()
-          .isThrownBy(() -> PaygateChallengeService.sanitizeBolt11ForHeader("lnbc\"test"))
-          .withMessageContaining("illegal character at index 4");
-    }
-
-    @Test
-    @DisplayName("rejects CR and LF with IllegalArgumentException")
-    void rejectsCrLf() {
-      assertThatIllegalArgumentException()
-          .isThrownBy(() -> PaygateChallengeService.sanitizeBolt11ForHeader("lnbc\r\ntest"))
-          .withMessageContaining("illegal character at index 4");
-    }
-
-    @Test
-    @DisplayName("rejects null byte (0x00)")
-    void rejectsNullByte() {
-      assertThatIllegalArgumentException()
-          .isThrownBy(() -> PaygateChallengeService.sanitizeBolt11ForHeader("lnbc\0test"))
-          .withMessageContaining("illegal character at index 4")
-          .withMessageContaining("0x0");
-    }
-
-    @Test
-    @DisplayName("rejects tab character (0x09)")
-    void rejectsTab() {
-      assertThatIllegalArgumentException()
-          .isThrownBy(() -> PaygateChallengeService.sanitizeBolt11ForHeader("lnbc\ttest"))
-          .withMessageContaining("illegal character at index 4")
-          .withMessageContaining("0x9");
-    }
-
-    @Test
-    @DisplayName("rejects DEL character (0x7F)")
-    void rejectsDel() {
-      assertThatIllegalArgumentException()
-          .isThrownBy(() -> PaygateChallengeService.sanitizeBolt11ForHeader("lnbc\u007Ftest"))
-          .withMessageContaining("illegal character at index 4")
-          .withMessageContaining("0x7f");
-    }
-
-    @Test
-    @DisplayName("rejects mid-range control character (0x1A SUB)")
-    void rejectsMidRangeControl() {
-      assertThatIllegalArgumentException()
-          .isThrownBy(() -> PaygateChallengeService.sanitizeBolt11ForHeader("abc\u001Adef"))
-          .withMessageContaining("illegal character at index 3")
-          .withMessageContaining("0x1a");
-    }
-
-    @Test
-    @DisplayName("passes clean input through unchanged")
-    void passesCleanInputUnchanged() {
-      String clean = "lnbc500n1p0testinvoice";
-      assertThat(PaygateChallengeService.sanitizeBolt11ForHeader(clean)).isEqualTo(clean);
     }
   }
 

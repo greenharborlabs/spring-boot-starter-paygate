@@ -62,7 +62,10 @@ public record L402Challenge(
    *
    * <p>Throws rather than silently stripping, because a modified bolt11 invoice is unpayable.
    */
-  private static String sanitizeBolt11ForHeader(String bolt11) {
+  public static String sanitizeBolt11ForHeader(String bolt11) {
+    if (bolt11 == null) {
+      return "";
+    }
     for (int i = 0; i < bolt11.length(); i++) {
       char c = bolt11.charAt(i);
       if (c <= 0x1F || c == 0x7F || c == '"') {

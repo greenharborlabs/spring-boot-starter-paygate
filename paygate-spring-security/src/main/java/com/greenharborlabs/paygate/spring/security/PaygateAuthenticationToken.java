@@ -4,7 +4,6 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -182,8 +181,7 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
 
   /**
    * Creates an authenticated token from a validated L402 credential, extracting attributes from
-   * caveats, and adding {@code PAYGATE_CAPABILITY_*} authorities from both caveat-extracted and
-   * explicit capabilities.
+   * caveats, and adding capability authorities from the resolved capabilities set.
    *
    * @param credential validated L402 credential, must not be null
    * @param serviceName service name, may be null
@@ -210,38 +208,11 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     authorities.add(new SimpleGrantedAuthority("ROLE_PAYMENT"));
     authorities.add(new SimpleGrantedAuthority("ROLE_L402"));
 
-    // Collect caveat-extracted capabilities for dual-emit (L402_CAPABILITY_ + PAYGATE_CAPABILITY_)
-    Set<String> caveatCapabilities = new LinkedHashSet<>();
-    if (serviceName != null) {
-      String capabilitiesKey = serviceName + "_capabilities";
-      for (Caveat caveat : credential.macaroon().caveats()) {
-        if (capabilitiesKey.equals(caveat.key())) {
-          Arrays.stream(caveat.value().split(","))
-              .map(String::trim)
-              .filter(s -> !s.isEmpty())
-              .forEach(caveatCapabilities::add);
-        }
-      }
-    }
-
-    // L402_CAPABILITY_* from caveats
-    for (String cap : caveatCapabilities) {
-      authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + cap));
-    }
-
-    // PAYGATE_CAPABILITY_* from caveat-extracted + explicit set (merged, deduplicated by
-    // LinkedHashSet).
-    // Caveats are the authoritative source: always emit PAYGATE_CAPABILITY_* from caveat
-    // capabilities,
-    // plus any explicit capabilities provided by the cache.
-    Set<String> allPaygateCapabilities = new LinkedHashSet<>(caveatCapabilities);
     for (String cap : capabilities) {
       if (cap != null) {
-        allPaygateCapabilities.add(cap);
+        authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + cap));
+        authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + cap));
       }
-    }
-    for (String cap : allPaygateCapabilities) {
-      authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + cap));
     }
 
     return new PaygateAuthenticationToken(credential, serviceName, authorities, attrs);

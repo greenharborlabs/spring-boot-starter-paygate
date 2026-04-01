@@ -100,7 +100,7 @@ public class PaygateSecurityFilter implements Filter {
       log.log(
           System.Logger.Level.WARNING,
           "Rejected request with malformed URI: {0}",
-          sanitizeForLog(httpRequest.getRequestURI()));
+          LogSanitizer.sanitize(httpRequest.getRequestURI()));
       httpResponse.setStatus(HttpServletResponse.SC_BAD_REQUEST);
       httpResponse.setContentType("application/json");
       httpResponse
@@ -111,7 +111,7 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
 
-    String safePath = sanitizeForLog(path);
+    String safePath = LogSanitizer.sanitize(path);
 
     // 1. Check if this endpoint is protected
     PaygateEndpointConfig config = registry.findConfig(method, path);
@@ -274,10 +274,10 @@ public class PaygateSecurityFilter implements Filter {
       HttpServletResponse httpResponse,
       PaygateEndpointConfig config)
       throws IOException {
-    recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
+    recordCaveatRejected(LogSanitizer.sanitize(e.getMessage() != null ? e.getMessage() : ""));
     consumeRateLimitPenalty(httpRequest);
 
-    String tokenDetail = sanitizeForLog(e.getTokenId() != null ? e.getTokenId() : "");
+    String tokenDetail = LogSanitizer.sanitize(e.getTokenId() != null ? e.getTokenId() : "");
     int tokenCorrelationId = Objects.hash(protocol.scheme(), tokenDetail);
     log.log(
         System.Logger.Level.WARNING,
@@ -330,10 +330,10 @@ public class PaygateSecurityFilter implements Filter {
       String safePath)
       throws IOException {
     if (e instanceof MacaroonVerificationException) {
-      recordCaveatRejected(sanitizeForLog(e.getMessage() != null ? e.getMessage() : ""));
+      recordCaveatRejected(LogSanitizer.sanitize(e.getMessage() != null ? e.getMessage() : ""));
     }
     consumeRateLimitPenalty(httpRequest);
-    String safeMessage = sanitizeForLog(e.getMessage());
+    String safeMessage = LogSanitizer.sanitize(e.getMessage());
     log.log(
         System.Logger.Level.WARNING,
         "Unexpected error during {0} validation for {1} {2}: {3}",
@@ -589,16 +589,5 @@ public class PaygateSecurityFilter implements Filter {
   /** Delegates to {@link PathNormalizer#normalize(String)}. */
   static String normalizePath(String rawPath) {
     return PathNormalizer.normalize(rawPath);
-  }
-
-  static String sanitizeForLog(String value) {
-    if (value == null) {
-      return "null";
-    }
-    return value
-        .codePoints()
-        .filter(cp -> cp >= 0x20 && cp != 0x7F)
-        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
-        .toString();
   }
 }

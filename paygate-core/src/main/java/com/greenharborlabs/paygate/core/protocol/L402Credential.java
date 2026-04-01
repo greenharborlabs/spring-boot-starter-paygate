@@ -6,7 +6,6 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -101,7 +100,6 @@ public record L402Credential(
       for (int i = 1; i < tokenParts.length; i++) {
         additionalMacaroons.add(decodeMacaroon(tokenParts[i]));
       }
-      additionalMacaroons = Collections.unmodifiableList(additionalMacaroons);
     } else {
       additionalMacaroons = List.of();
     }

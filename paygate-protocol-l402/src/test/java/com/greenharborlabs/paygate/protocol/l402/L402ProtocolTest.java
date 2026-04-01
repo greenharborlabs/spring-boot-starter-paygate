@@ -19,6 +19,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
+import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.security.MessageDigest;
@@ -652,44 +653,44 @@ class L402ProtocolTest {
 
     @Test
     void returnsEmptyStringForNull() {
-      assertThat(L402Protocol.sanitizeBolt11ForHeader(null)).isEqualTo("");
+      assertThat(L402Challenge.sanitizeBolt11ForHeader(null)).isEqualTo("");
     }
 
     @Test
     void returnsEmptyStringForEmpty() {
-      assertThat(L402Protocol.sanitizeBolt11ForHeader("")).isEqualTo("");
+      assertThat(L402Challenge.sanitizeBolt11ForHeader("")).isEqualTo("");
     }
 
     @Test
     void passesThroughValidBolt11() {
-      assertThat(L402Protocol.sanitizeBolt11ForHeader("lnbc10n1p0valid"))
+      assertThat(L402Challenge.sanitizeBolt11ForHeader("lnbc10n1p0valid"))
           .isEqualTo("lnbc10n1p0valid");
     }
 
     @Test
     void rejectsDelCharacter() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\u007F"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\u007F"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }
 
     @Test
     void rejectsDoubleQuote() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\"injection"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\"injection"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }
 
     @Test
     void rejectsNullByte() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("\u0000evil"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("\u0000evil"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }
 
     @Test
     void rejectsTabCharacter() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\tinjection"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\tinjection"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }

@@ -8,6 +8,7 @@ import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
+import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
@@ -194,7 +195,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
           System.Logger.Level.WARNING,
           "Failed to resolve endpoint config for {0} {1}; denying request",
           request.getMethod(),
-          sanitizeForLog(request.getRequestURI()),
+          LogSanitizer.sanitize(request.getRequestURI()),
           e);
       throw e;
     }
@@ -262,16 +263,5 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         return;
       }
     }
-  }
-
-  static String sanitizeForLog(String value) {
-    if (value == null) {
-      return "null";
-    }
-    return value
-        .codePoints()
-        .filter(cp -> cp >= 0x20 && cp != 0x7F)
-        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
-        .toString();
   }
 }
