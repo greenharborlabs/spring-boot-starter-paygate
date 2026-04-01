@@ -1,13 +1,13 @@
 package com.greenharborlabs.paygate.spring;
 
+import static com.greenharborlabs.paygate.spring.PaygateTestSupport.createStubInvoice;
+import static com.greenharborlabs.paygate.spring.PaygateTestSupport.sha256;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
-import com.greenharborlabs.paygate.core.lightning.Invoice;
-import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
@@ -15,22 +15,18 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
-import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -209,7 +205,7 @@ class PaygateMetricsTest {
   void resetStubs() {
     ((StubLightningBackend) lightningBackend).setHealthy(true);
     ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(false);
-    ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+    ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
   }
 
   // -----------------------------------------------------------------------
@@ -492,7 +488,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge reports 1.0 when Lightning is healthy")
     void lightningHealthyGaugeReportsOne() throws Exception {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      paygateMetrics.refreshHealth();
 
       // Trigger a request so gauges are registered
       mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isPaymentRequired());
@@ -506,7 +501,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge reports 0.0 when Lightning is unhealthy")
     void lightningHealthyGaugeReportsZero() throws Exception {
       ((StubLightningBackend) lightningBackend).setHealthy(false);
-      paygateMetrics.refreshHealth();
 
       // Trigger a request — will get 503 but gauge should still be set
       mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isServiceUnavailable());
@@ -520,7 +514,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge reports 0.0 when isHealthy() throws exception")
     void lightningHealthyGaugeReportsZeroOnException() {
       ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(true);
-      paygateMetrics.refreshHealth();
 
       Double gaugeValue = gaugeValue("paygate.lightning.healthy");
       assertThat(gaugeValue).isNotNull();
@@ -531,7 +524,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge recovers to 1.0 after exception clears")
     void lightningHealthyGaugeRecoversAfterException() {
       ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(true);
-      paygateMetrics.refreshHealth();
 
       Double duringException = gaugeValue("paygate.lightning.healthy");
       assertThat(duringException).isNotNull();
@@ -540,7 +532,6 @@ class PaygateMetricsTest {
       // Backend recovers
       ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(false);
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      paygateMetrics.refreshHealth();
 
       Double afterRecovery = gaugeValue("paygate.lightning.healthy");
       assertThat(afterRecovery).isNotNull();
@@ -548,21 +539,20 @@ class PaygateMetricsTest {
     }
 
     @Test
-    @DisplayName("gauge supplier never calls isHealthy() — reads from cached field only")
-    void lightningHealthyGaugeNeverCallsIsHealthyDuringGaugeScrape() {
+    @DisplayName("gauge supplier calls isHealthy() during scrape for non-cached backend")
+    void lightningHealthyGaugeCallsIsHealthyDuringGaugeScrape() {
       // Ensure known state and reset call count after any prior calls
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      paygateMetrics.refreshHealth();
       ((StubLightningBackend) lightningBackend).resetIsHealthyCallCount();
 
-      // Read the gauge multiple times — should NOT trigger isHealthy()
+      // Read the gauge multiple times — each read evaluates the supplier
       for (int i = 0; i < 10; i++) {
         gaugeValue("paygate.lightning.healthy");
       }
 
       assertThat(((StubLightningBackend) lightningBackend).getIsHealthyCallCount())
-          .as("Gauge reads must not call isHealthy() on the backend")
-          .isZero();
+          .as("Gauge reads should call isHealthy() when backend is not cached")
+          .isGreaterThanOrEqualTo(10);
     }
   }
 
@@ -684,262 +674,6 @@ class PaygateMetricsTest {
 
       long after = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
       assertThat(after).isEqualTo(before);
-    }
-
-    @Test
-    @DisplayName("recordCaveatRejected increments counter with caveat_type=path and protocol=l402")
-    void recordCaveatRejectedPathType() {
-      double before =
-          counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402");
-
-      paygateMetrics.recordCaveatRejected("path");
-
-      double after =
-          counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402");
-      assertThat(after).isEqualTo(before + 1.0);
-    }
-
-    @Test
-    @DisplayName(
-        "recordCaveatRejected increments counter with caveat_type=method and protocol=l402")
-    void recordCaveatRejectedMethodType() {
-      double before =
-          counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402");
-
-      paygateMetrics.recordCaveatRejected("method");
-
-      double after =
-          counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402");
-      assertThat(after).isEqualTo(before + 1.0);
-    }
-
-    @Test
-    @DisplayName(
-        "recordCaveatRejected increments counter with caveat_type=client_ip and protocol=l402")
-    void recordCaveatRejectedClientIpType() {
-      double before =
-          counterValue("paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402");
-
-      paygateMetrics.recordCaveatRejected("client_ip");
-
-      double after =
-          counterValue("paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402");
-      assertThat(after).isEqualTo(before + 1.0);
-    }
-
-    @Test
-    @DisplayName(
-        "recordCaveatRejected increments counter with caveat_type=escalation and protocol=l402")
-    void recordCaveatRejectedEscalationType() {
-      double before =
-          counterValue("paygate.caveats.rejected", "caveat_type", "escalation", "protocol", "l402");
-
-      paygateMetrics.recordCaveatRejected("escalation");
-
-      double after =
-          counterValue("paygate.caveats.rejected", "caveat_type", "escalation", "protocol", "l402");
-      assertThat(after).isEqualTo(before + 1.0);
-    }
-
-    @Test
-    @DisplayName("each caveat_type tag is independent — incrementing one does not affect others")
-    void caveatTypeTagsAreIndependent() {
-      double pathBefore =
-          counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402");
-      double methodBefore =
-          counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402");
-      double clientIpBefore =
-          counterValue("paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402");
-
-      paygateMetrics.recordCaveatRejected("path");
-      paygateMetrics.recordCaveatRejected("path");
-      paygateMetrics.recordCaveatRejected("method");
-
-      assertThat(
-              counterValue("paygate.caveats.rejected", "caveat_type", "path", "protocol", "l402"))
-          .isEqualTo(pathBefore + 2.0);
-      assertThat(
-              counterValue("paygate.caveats.rejected", "caveat_type", "method", "protocol", "l402"))
-          .isEqualTo(methodBefore + 1.0);
-      assertThat(
-              counterValue(
-                  "paygate.caveats.rejected", "caveat_type", "client_ip", "protocol", "l402"))
-          .isEqualTo(clientIpBefore);
-    }
-
-    @Test
-    @DisplayName("recordCaveatVerifyDuration records timer with protocol=l402")
-    void recordCaveatVerifyDuration() {
-      long before = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
-
-      paygateMetrics.recordCaveatVerifyDuration(1_000_000L);
-
-      long after = timerCount("paygate.caveats.verify.duration", "protocol", "l402");
-      assertThat(after).isEqualTo(before + 1);
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // classifyCaveatType — unit tests for caveat type classification
-  // -----------------------------------------------------------------------
-
-  @Nested
-  @DisplayName("classifyCaveatType")
-  class ClassifyCaveatTypeTests {
-
-    @Test
-    @DisplayName("classifies path rejection messages correctly")
-    void classifiesPathRejection() {
-      assertThat(
-              PaygateSecurityFilter.classifyCaveatType(
-                  "Request path does not match any allowed path pattern"))
-          .isEqualTo("path");
-      assertThat(PaygateSecurityFilter.classifyCaveatType("Invalid path pattern: bad glob"))
-          .isEqualTo("path");
-      assertThat(PaygateSecurityFilter.classifyCaveatType("Request path contains encoded slash"))
-          .isEqualTo("path");
-    }
-
-    @Test
-    @DisplayName("classifies method rejection messages correctly")
-    void classifiesMethodRejection() {
-      assertThat(
-              PaygateSecurityFilter.classifyCaveatType(
-                  "Request method does not match any allowed method"))
-          .isEqualTo("method");
-      assertThat(PaygateSecurityFilter.classifyCaveatType("Empty method in caveat value"))
-          .isEqualTo("method");
-    }
-
-    @Test
-    @DisplayName("classifies client_ip rejection messages correctly")
-    void classifiesClientIpRejection() {
-      assertThat(
-              PaygateSecurityFilter.classifyCaveatType(
-                  "Request client IP does not match any allowed IP"))
-          .isEqualTo("client_ip");
-      assertThat(
-              PaygateSecurityFilter.classifyCaveatType(
-                  "Client IP missing from verification context"))
-          .isEqualTo("client_ip");
-    }
-
-    @Test
-    @DisplayName("classifies escalation messages correctly")
-    void classifiesEscalation() {
-      assertThat(
-              PaygateSecurityFilter.classifyCaveatType("caveat escalation detected for key: path"))
-          .isEqualTo("escalation");
-    }
-
-    @Test
-    @DisplayName("escalation takes priority over other keywords")
-    void escalationTakesPriority() {
-      // escalation message may contain "key: path" but should classify as escalation
-      assertThat(
-              PaygateSecurityFilter.classifyCaveatType("caveat escalation detected for key: path"))
-          .isEqualTo("escalation");
-    }
-
-    @Test
-    @DisplayName("returns unknown for null message")
-    void returnsUnknownForNull() {
-      assertThat(PaygateSecurityFilter.classifyCaveatType(null)).isEqualTo("unknown");
-    }
-
-    @Test
-    @DisplayName("returns unknown for unrecognized message")
-    void returnsUnknownForUnrecognized() {
-      assertThat(PaygateSecurityFilter.classifyCaveatType("some other error")).isEqualTo("unknown");
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Rate limiter metrics — unit tests using direct PaygateMetrics construction
-  // -----------------------------------------------------------------------
-
-  @Nested
-  @DisplayName("rate limiter metrics")
-  class RateLimiterMetrics {
-
-    private SimpleMeterRegistry unitRegistry;
-    private PaygateMetrics unitMetrics;
-
-    @BeforeEach
-    void setUp() {
-      unitRegistry = new SimpleMeterRegistry();
-      var stubBackend = new StubLightningBackend();
-      stubBackend.setHealthy(true);
-      var stubStore = new InMemoryTestCredentialStore();
-      unitMetrics = new PaygateMetrics(unitRegistry, stubStore, stubBackend);
-    }
-
-    @Test
-    @DisplayName("registerRateLimiterMetrics registers gauge with supplier value")
-    void gaugeRegistered() {
-      unitMetrics.registerRateLimiterMetrics(() -> 42L);
-
-      double value = unitRegistry.get("paygate.ratelimiter.buckets.active").gauge().value();
-      assertThat(value).isEqualTo(42.0);
-    }
-
-    @Test
-    @DisplayName("recordRateLimiterEviction increments counter tagged with reason")
-    void evictionCounter() {
-      unitMetrics.recordRateLimiterEviction("size");
-      unitMetrics.recordRateLimiterEviction("size");
-
-      double count =
-          unitRegistry.get("paygate.ratelimiter.evictions").tag("reason", "size").counter().count();
-      assertThat(count).isEqualTo(2.0);
-    }
-
-    @Test
-    @DisplayName("recordRateLimiterEviction tracks different reasons independently")
-    void evictionReasonsIndependent() {
-      unitMetrics.recordRateLimiterEviction("size");
-      unitMetrics.recordRateLimiterEviction("expired");
-      unitMetrics.recordRateLimiterEviction("expired");
-
-      assertThat(
-              unitRegistry
-                  .get("paygate.ratelimiter.evictions")
-                  .tag("reason", "size")
-                  .counter()
-                  .count())
-          .isEqualTo(1.0);
-      assertThat(
-              unitRegistry
-                  .get("paygate.ratelimiter.evictions")
-                  .tag("reason", "expired")
-                  .counter()
-                  .count())
-          .isEqualTo(2.0);
-    }
-
-    @Test
-    @DisplayName("recordRateLimitRejection increments counter tagged with endpoint")
-    void rejectionCounter() {
-      unitMetrics.recordRateLimitRejection("/api/data");
-      unitMetrics.recordRateLimitRejection("/api/data");
-      unitMetrics.recordRateLimitRejection("/api/data");
-
-      double count =
-          unitRegistry
-              .get("paygate.ratelimiter.rejections")
-              .tag("endpoint", "/api/data")
-              .counter()
-              .count();
-      assertThat(count).isEqualTo(3.0);
-    }
-
-    @Test
-    @DisplayName("no rate limiter meters registered when registerRateLimiterMetrics not called")
-    void notRegistered() {
-      // Do NOT call registerRateLimiterMetrics — verify no meters exist and no NPE
-      assertThat(unitRegistry.find("paygate.ratelimiter.buckets.active").gauge()).isNull();
-      assertThat(unitRegistry.find("paygate.ratelimiter.evictions").counter()).isNull();
-      assertThat(unitRegistry.find("paygate.ratelimiter.rejections").counter()).isNull();
     }
   }
 
@@ -1154,151 +888,5 @@ class PaygateMetricsTest {
     String wrongPreimageHex = HEX.formatHex(wrongPreimage);
 
     return "L402 " + macaroonBase64 + ":" + wrongPreimageHex;
-  }
-
-  private static Invoice createStubInvoice() {
-    byte[] paymentHash = new byte[32];
-    new SecureRandom().nextBytes(paymentHash);
-    Instant now = Instant.now();
-    return new Invoice(
-        paymentHash,
-        "lnbc210n1p0testmetricsinvoice",
-        PRICE_SATS,
-        "Test invoice",
-        InvoiceStatus.PENDING,
-        null,
-        now,
-        now.plus(1, ChronoUnit.HOURS));
-  }
-
-  private static byte[] sha256(byte[] input) {
-    try {
-      return MessageDigest.getInstance("SHA-256").digest(input);
-    } catch (Exception e) {
-      throw new AssertionError("SHA-256 not available", e);
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Stub / in-memory implementations for test isolation
-  // -----------------------------------------------------------------------
-
-  static class StubLightningBackend implements LightningBackend {
-
-    private volatile boolean healthy = true;
-    private volatile boolean throwOnHealthCheck = false;
-    private volatile Invoice nextInvoice;
-    private final AtomicInteger isHealthyCallCount = new AtomicInteger(0);
-
-    void setHealthy(boolean healthy) {
-      this.healthy = healthy;
-    }
-
-    void setThrowOnHealthCheck(boolean throwOnHealthCheck) {
-      this.throwOnHealthCheck = throwOnHealthCheck;
-    }
-
-    void setNextInvoice(Invoice invoice) {
-      this.nextInvoice = invoice;
-    }
-
-    @Override
-    public Invoice createInvoice(long amountSats, String memo) {
-      if (!healthy) {
-        throw new RuntimeException("Lightning backend is not available");
-      }
-      if (nextInvoice != null) {
-        return nextInvoice;
-      }
-      byte[] paymentHash = new byte[32];
-      new SecureRandom().nextBytes(paymentHash);
-      Instant now = Instant.now();
-      return new Invoice(
-          paymentHash,
-          "lnbc" + amountSats + "n1pstub",
-          amountSats,
-          memo,
-          InvoiceStatus.PENDING,
-          null,
-          now,
-          now.plus(1, ChronoUnit.HOURS));
-    }
-
-    @Override
-    public Invoice lookupInvoice(byte[] paymentHash) {
-      if (!healthy) {
-        throw new RuntimeException("Lightning backend is not available");
-      }
-      return null;
-    }
-
-    int getIsHealthyCallCount() {
-      return isHealthyCallCount.get();
-    }
-
-    void resetIsHealthyCallCount() {
-      isHealthyCallCount.set(0);
-    }
-
-    @Override
-    public boolean isHealthy() {
-      isHealthyCallCount.incrementAndGet();
-      if (throwOnHealthCheck) {
-        throw new RuntimeException("Lightning backend health check failed");
-      }
-      return healthy;
-    }
-  }
-
-  static class InMemoryTestRootKeyStore implements RootKeyStore {
-
-    private final byte[] rootKey;
-
-    InMemoryTestRootKeyStore(byte[] rootKey) {
-      this.rootKey = rootKey.clone();
-    }
-
-    @Override
-    public GenerationResult generateRootKey() {
-      byte[] tokenId = new byte[32];
-      new SecureRandom().nextBytes(tokenId);
-      return new GenerationResult(
-          new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone()), tokenId);
-    }
-
-    @Override
-    public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
-      return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone());
-    }
-
-    @Override
-    public void revokeRootKey(byte[] keyId) {
-      // no-op for tests
-    }
-  }
-
-  static class InMemoryTestCredentialStore implements CredentialStore {
-
-    private final Map<String, L402Credential> store = new ConcurrentHashMap<>();
-
-    @Override
-    public void store(String tokenId, L402Credential credential, long ttlSeconds) {
-      store.put(tokenId, credential);
-    }
-
-    @Override
-    public L402Credential get(String tokenId) {
-      return store.get(tokenId);
-    }
-
-    @Override
-    public void revoke(String tokenId) {
-      store.remove(tokenId);
-    }
-
-    @Override
-    public long activeCount() {
-      return store.size();
-    }
   }
 }

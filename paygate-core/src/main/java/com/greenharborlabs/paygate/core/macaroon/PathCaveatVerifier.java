@@ -11,6 +11,9 @@ public class PathCaveatVerifier implements CaveatVerifier {
   private final int maxValuesPerCaveat;
 
   public PathCaveatVerifier(int maxValuesPerCaveat) {
+    if (maxValuesPerCaveat < 1) {
+      throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
+    }
     this.maxValuesPerCaveat = maxValuesPerCaveat;
   }
 
@@ -143,6 +146,10 @@ public class PathCaveatVerifier implements CaveatVerifier {
    * Checks for {@code /..} at any position and {@code ../} at the start of the path.
    */
   private static boolean containsDotDotSegment(String path) {
+    // Check for bare ".." (no slashes) — after normalization this resolves to root
+    if ("..".equals(path)) {
+      return true;
+    }
     // Check for "../" at the very start (relative path traversal)
     if (path.startsWith("../")) {
       return true;

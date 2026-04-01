@@ -28,6 +28,17 @@ class PathCaveatVerifierTest {
     assertThat(verifier.getKey()).isEqualTo("path");
   }
 
+  @Test
+  @DisplayName("constructor rejects maxValuesPerCaveat < 1")
+  void constructorRejectsInvalidMaxValues() {
+    assertThatThrownBy(() -> new PathCaveatVerifier(0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+    assertThatThrownBy(() -> new PathCaveatVerifier(-1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+  }
+
   // ---------------------------------------------------------------
   // Acceptance scenarios 1-21
   // ---------------------------------------------------------------
@@ -503,6 +514,18 @@ class PathCaveatVerifierTest {
       L402VerificationContext context = contextWithPath("/api/./data");
 
       assertThatCode(() -> verifier.verify(caveat, context)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("rejects bare .. (dot-dot with no slashes)")
+    void rejectsBareDotDotNoSlashes() {
+      Caveat caveat = new Caveat("path", "/api/**");
+      L402VerificationContext context = contextWithPath("..");
+
+      assertThatThrownBy(() -> verifier.verify(caveat, context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .extracting(e -> ((MacaroonVerificationException) e).getReason())
+          .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
     }
 
     @Test

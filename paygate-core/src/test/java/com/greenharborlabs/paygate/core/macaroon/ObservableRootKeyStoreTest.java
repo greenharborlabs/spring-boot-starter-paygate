@@ -99,6 +99,25 @@ class ObservableRootKeyStoreTest {
     }
 
     @Test
+    @DisplayName("each listener receives an independent keyId copy")
+    void listenersReceiveIndependentCopies() {
+      byte[] keyId = {1, 2, 3};
+      List<byte[]> received = new ArrayList<>();
+      store.addRevocationListener(
+          id -> {
+            id[0] = (byte) 0x7F; // mutate first listener's array
+            received.add(id);
+          });
+      store.addRevocationListener(received::add);
+
+      store.revokeRootKey(keyId);
+
+      assertThat(received).hasSize(2);
+      assertThat(received.get(0)).isNotSameAs(received.get(1));
+      assertThat(received.get(1)).isEqualTo(new byte[] {1, 2, 3});
+    }
+
+    @Test
     @DisplayName("listener exception does not prevent other listeners from firing")
     void listenerExceptionDoesNotPreventOthers() {
       byte[] keyId = {7, 8, 9};

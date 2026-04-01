@@ -163,37 +163,40 @@ public class PaygateChallengeService {
 
         // Clone rootKey so ChallengeContext has its own copy before we zeroize
         byte[] rootKeyClone = rootKey.clone();
+        try {
+          var challengeContext =
+              new ChallengeContext(
+                  invoice.paymentHash(),
+                  tokenIdHex,
+                  invoice.bolt11(),
+                  effectivePrice,
+                  config.description(),
+                  serviceName,
+                  config.timeoutSeconds(),
+                  config.capability(),
+                  rootKeyClone,
+                  opaque,
+                  null);
 
-        var challengeContext =
-            new ChallengeContext(
-                invoice.paymentHash(),
-                tokenIdHex,
-                invoice.bolt11(),
-                effectivePrice,
-                config.description(),
-                serviceName,
-                config.timeoutSeconds(),
-                config.capability(),
-                rootKeyClone,
-                opaque,
-                null);
-
-        // Populate capability cache after successful invoice creation
-        if (capabilityCache != null
-            && config.capability() != null
-            && !config.capability().isEmpty()) {
-          try {
-            capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
-          } catch (RuntimeException e) {
-            log.log(
-                System.Logger.Level.WARNING,
-                "Failed to store capability in cache for token {0}: {1}",
-                tokenIdHex,
-                e.getMessage());
+          // Populate capability cache after successful invoice creation
+          if (capabilityCache != null
+              && config.capability() != null
+              && !config.capability().isEmpty()) {
+            try {
+              capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
+            } catch (RuntimeException e) {
+              log.log(
+                  System.Logger.Level.WARNING,
+                  "Failed to store capability in cache for token {0}: {1}",
+                  tokenIdHex,
+                  e.getMessage());
+            }
           }
-        }
 
-        return challengeContext;
+          return challengeContext;
+        } finally {
+          KeyMaterial.zeroize(rootKeyClone);
+        }
       } finally {
         KeyMaterial.zeroize(rootKey);
       }
@@ -231,35 +234,5 @@ public class PaygateChallengeService {
       }
     }
     return strategy.calculatePrice(request, config.priceSats());
-  }
-
-  /**
-   * Validates that a bolt11 invoice string contains no characters that could enable HTTP header
-   * injection or break the {@code WWW-Authenticate} header format per RFC 7230. Rejects all C0
-   * control characters (0x00-0x1F), DEL (0x7F), and double-quote ({@code "}) with {@link
-   * IllegalArgumentException} -- a modified bolt11 invoice is unpayable, so silent stripping would
-   * mask upstream bugs.
-   *
-   * <p>Aligned with {@code L402Challenge.sanitizeBolt11ForHeader()} in paygate-core.
-   *
-   * @param bolt11 the bolt11 invoice string, or {@code null}
-   * @return the validated bolt11 string unchanged, or {@code ""} if input is null
-   * @throws IllegalArgumentException if the input contains a control character or double-quote
-   */
-  static String sanitizeBolt11ForHeader(String bolt11) {
-    if (bolt11 == null) {
-      return "";
-    }
-    for (int i = 0; i < bolt11.length(); i++) {
-      char c = bolt11.charAt(i);
-      if (c <= 0x1F || c == 0x7F || c == '"') {
-        throw new IllegalArgumentException(
-            "bolt11 invoice contains illegal character at index "
-                + i
-                + ": 0x"
-                + Integer.toHexString(c));
-      }
-    }
-    return bolt11;
   }
 }

@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.api;
 
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
@@ -55,25 +56,18 @@ public record ChallengeContext(
     if (!(o instanceof ChallengeContext that)) return false;
     return priceSats == that.priceSats
         && timeoutSeconds == that.timeoutSeconds
-        && constantTimeEquals(paymentHash, that.paymentHash)
+        && CryptoUtils.constantTimeEquals(paymentHash, that.paymentHash)
         && Objects.equals(tokenId, that.tokenId)
         && Objects.equals(bolt11Invoice, that.bolt11Invoice)
         && Objects.equals(description, that.description)
         && Objects.equals(serviceName, that.serviceName)
         && Objects.equals(capability, that.capability)
-        && constantTimeEquals(rootKeyBytes, that.rootKeyBytes)
+        && ((rootKeyBytes == null && that.rootKeyBytes == null)
+            || (rootKeyBytes != null
+                && that.rootKeyBytes != null
+                && CryptoUtils.constantTimeEquals(rootKeyBytes, that.rootKeyBytes)))
         && Objects.equals(opaque, that.opaque)
         && Objects.equals(digest, that.digest);
-  }
-
-  private static boolean constantTimeEquals(byte[] a, byte[] b) {
-    if (a == b) return true;
-    if (a == null || b == null || a.length != b.length) return false;
-    int result = 0;
-    for (int i = 0; i < a.length; i++) {
-      result |= a[i] ^ b[i];
-    }
-    return result == 0;
   }
 
   @Override

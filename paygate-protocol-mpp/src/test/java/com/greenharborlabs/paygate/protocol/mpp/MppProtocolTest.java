@@ -370,6 +370,15 @@ class MppProtocolTest {
     }
 
     @Test
+    void rejectsBackslashInDescription() {
+      ChallengeContext ctx = challengeContext("value with \\ backslash", null);
+
+      assertThatThrownBy(() -> protocol.formatChallenge(ctx))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("illegal character");
+    }
+
+    @Test
     void bodyDataOmitsDescriptionWhenNull() {
       ChallengeContext ctx = challengeContext(null, null);
 

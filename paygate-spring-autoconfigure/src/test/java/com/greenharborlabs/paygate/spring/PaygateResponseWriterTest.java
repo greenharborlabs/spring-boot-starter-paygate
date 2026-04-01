@@ -2,7 +2,11 @@ package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,34 +28,53 @@ class PaygateResponseWriterTest {
   @Test
   @DisplayName("writePaymentRequired sets 402 status, WWW-Authenticate header, and JSON body")
   void writePaymentRequired_setsStatusHeadersAndBody() throws Exception {
-    var result =
-        new PaygateChallengeResult(
-            "bWFjYXJvb24=",
+    var context =
+        new ChallengeContext(
+            new byte[32],
+            "a".repeat(64),
             "lnbc100n1...",
-            "L402 macaroon=\"bWFjYXJvb24=\", invoice=\"lnbc100n1...\"",
             100L,
             "Test endpoint",
+            "svc",
+            60L,
+            null,
+            null,
+            null,
             null);
+    var challenges =
+        List.of(
+            new ChallengeResponse(
+                "L402 macaroon=\"bWFjYXJvb24=\", invoice=\"lnbc100n1...\"", "L402", null));
 
-    PaygateResponseWriter.writePaymentRequired(response, result);
+    PaygateResponseWriter.writePaymentRequired(response, context, challenges);
 
     assertThat(response.getStatus()).isEqualTo(402);
-    assertThat(response.getHeader("WWW-Authenticate"))
-        .isEqualTo("L402 macaroon=\"bWFjYXJvb24=\", invoice=\"lnbc100n1...\"");
+    assertThat(response.getHeaders("WWW-Authenticate"))
+        .containsExactly("L402 macaroon=\"bWFjYXJvb24=\", invoice=\"lnbc100n1...\"");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
-            "{\"code\": 402, \"message\": \"Payment required\", \"price_sats\": 100, \"description\": \"Test endpoint\", \"invoice\": \"lnbc100n1...\"}");
+            "{\"code\": 402, \"message\": \"Payment required\", \"price_sats\": 100, \"description\": \"Test endpoint\", \"invoice\": \"lnbc100n1...\", \"protocols\": {}}");
   }
 
   @Test
   @DisplayName("writePaymentRequired includes test_preimage when non-null")
   void writePaymentRequired_includesTestPreimage() throws Exception {
-    var result =
-        new PaygateChallengeResult(
-            "bWFjYXJvb24=", "lnbc100n1...", "L402 token", 50L, "desc", "abc123preimage");
+    var context =
+        new ChallengeContext(
+            new byte[32],
+            "b".repeat(64),
+            "lnbc100n1...",
+            50L,
+            "desc",
+            "svc",
+            60L,
+            null,
+            null,
+            Map.of("test_preimage", "abc123preimage"),
+            null);
 
-    PaygateResponseWriter.writePaymentRequired(response, result);
+    PaygateResponseWriter.writePaymentRequired(response, context, List.of());
 
     assertThat(response.getContentAsString()).contains("\"test_preimage\": \"abc123preimage\"");
   }
@@ -59,10 +82,21 @@ class PaygateResponseWriterTest {
   @Test
   @DisplayName("writePaymentRequired omits test_preimage when null")
   void writePaymentRequired_omitsTestPreimageWhenNull() throws Exception {
-    var result =
-        new PaygateChallengeResult("bWFjYXJvb24=", "lnbc100n1...", "L402 token", 50L, "desc", null);
+    var context =
+        new ChallengeContext(
+            new byte[32],
+            "c".repeat(64),
+            "lnbc100n1...",
+            50L,
+            "desc",
+            "svc",
+            60L,
+            null,
+            null,
+            null,
+            null);
 
-    PaygateResponseWriter.writePaymentRequired(response, result);
+    PaygateResponseWriter.writePaymentRequired(response, context, List.of());
 
     assertThat(response.getContentAsString()).doesNotContain("test_preimage");
   }
@@ -70,16 +104,21 @@ class PaygateResponseWriterTest {
   @Test
   @DisplayName("writePaymentRequired escapes special characters in description and invoice")
   void writePaymentRequired_escapesSpecialChars() throws Exception {
-    var result =
-        new PaygateChallengeResult(
-            "bWFjYXJvb24=",
+    var context =
+        new ChallengeContext(
+            new byte[32],
+            "d".repeat(64),
             "lnbc\"escape",
-            "L402 token",
             10L,
             "desc with \"quotes\" and \\backslash",
+            "svc",
+            60L,
+            null,
+            null,
+            null,
             null);
 
-    PaygateResponseWriter.writePaymentRequired(response, result);
+    PaygateResponseWriter.writePaymentRequired(response, context, List.of());
 
     String body = response.getContentAsString();
     assertThat(body).contains("desc with \\\"quotes\\\" and \\\\backslash");

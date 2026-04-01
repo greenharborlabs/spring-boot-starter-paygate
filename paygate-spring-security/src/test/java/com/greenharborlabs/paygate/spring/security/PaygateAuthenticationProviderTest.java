@@ -263,7 +263,7 @@ class PaygateAuthenticationProviderTest {
     }
 
     @Test
-    void l402WithEmptyResolverResultStillEmitsPaygateCapabilityFromCaveats() {
+    void l402WithEmptyResolverResultDoesNotEmitCapabilityAuthorities() {
       L402Credential credential =
           createTestCredential(List.of(new Caveat(SERVICE_NAME + "_capabilities", "read")));
       when(l402Validator.validate(
@@ -284,7 +284,7 @@ class PaygateAuthenticationProviderTest {
       var authToken = (PaygateAuthenticationToken) result;
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
-          .contains("ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_read", "PAYGATE_CAPABILITY_read");
+          .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
     }
 
     @Test

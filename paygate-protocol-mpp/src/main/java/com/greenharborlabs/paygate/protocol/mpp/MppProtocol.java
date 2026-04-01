@@ -284,8 +284,9 @@ public final class MppProtocol implements PaymentProtocol {
   }
 
   /**
-   * Sanitizes a string for use in an HTTP header quoted-string value. Rejects control characters
-   * and double-quotes to prevent header injection.
+   * Sanitizes a string for use in an HTTP header quoted-string value. Rejects control characters,
+   * double-quotes, and backslashes to prevent header injection via quoted-string escape sequences
+   * (RFC 9110 Section 5.6.4).
    */
   private static String sanitizeHeaderValue(String value) {
     if (value == null) {
@@ -293,7 +294,7 @@ public final class MppProtocol implements PaymentProtocol {
     }
     for (int i = 0; i < value.length(); i++) {
       char c = value.charAt(i);
-      if (c <= 0x1F || c == 0x7F || c == '"') {
+      if (c <= 0x1F || c == 0x7F || c == '"' || c == '\\') {
         throw new IllegalArgumentException(
             "Header value contains illegal character at index "
                 + i

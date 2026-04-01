@@ -7,9 +7,8 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -22,14 +21,14 @@ import java.util.function.Supplier;
  * credential store size and Lightning health are registered eagerly during construction so they are
  * available before any requests.
  */
-public class PaygateMetrics implements AutoCloseable {
-
-  private static final long HEALTH_REFRESH_SECONDS = 5;
+public class PaygateMetrics {
+  private static final String CAVEAT_TYPE_OTHER = "_other";
+  private static final Set<String> KNOWN_CAVEAT_TYPES =
+      Set.of(
+          "path", "method", "client_ip", "services", "capabilities", "valid_until", "escalation");
 
   private final MeterRegistry registry;
-  private final LightningBackend lightningBackend;
-  private final ScheduledExecutorService healthRefreshExecutor;
-  private volatile boolean lastKnownHealthy;
+  private final Supplier<Boolean> lightningHealthySupplier;
 
   // Cache key for paygate.requests: "endpoint\0result"
   private final ConcurrentHashMap<String, Counter> requestCounters = new ConcurrentHashMap<>();
@@ -50,33 +49,31 @@ public class PaygateMetrics implements AutoCloseable {
 
   public PaygateMetrics(
       MeterRegistry registry, CredentialStore credentialStore, LightningBackend lightningBackend) {
+    this(registry, credentialStore, healthSupplierFor(lightningBackend));
+  }
+
+  public PaygateMetrics(
+      MeterRegistry registry,
+      CredentialStore credentialStore,
+      Supplier<Boolean> lightningHealthySupplier) {
     this.registry = registry;
-    this.lightningBackend = lightningBackend;
-
-    // Populate initial health state synchronously (best-effort)
-    try {
-      this.lastKnownHealthy = lightningBackend.isHealthy();
-    } catch (Exception e) {
-      this.lastKnownHealthy = false;
-    }
-
-    // Schedule periodic background health refresh so the gauge never blocks
-    this.healthRefreshExecutor =
-        Executors.newSingleThreadScheduledExecutor(
-            r -> {
-              Thread t = new Thread(r, "paygate-health-refresh");
-              t.setDaemon(true);
-              return t;
-            });
-    healthRefreshExecutor.scheduleWithFixedDelay(
-        this::refreshHealth, HEALTH_REFRESH_SECONDS, HEALTH_REFRESH_SECONDS, TimeUnit.SECONDS);
+    this.lightningHealthySupplier = lightningHealthySupplier;
 
     // Register gauges eagerly
     Gauge.builder("paygate.credentials.active", credentialStore, CredentialStore::activeCount)
         .description("Currently cached credentials")
         .register(registry);
 
-    Gauge.builder("paygate.lightning.healthy", this, self -> self.lastKnownHealthy ? 1.0 : 0.0)
+    Gauge.builder(
+            "paygate.lightning.healthy",
+            lightningHealthySupplier,
+            supplier -> {
+              try {
+                return safeBooleanToGaugeValue(supplier.get());
+              } catch (Exception e) {
+                return 0.0;
+              }
+            })
         .description("1=healthy, 0=unhealthy")
         .register(registry);
 
@@ -85,19 +82,6 @@ public class PaygateMetrics implements AutoCloseable {
             .tag("protocol", "l402")
             .description("Duration of caveat verification per request")
             .register(registry);
-  }
-
-  void refreshHealth() {
-    try {
-      lastKnownHealthy = lightningBackend.isHealthy();
-    } catch (Exception e) {
-      lastKnownHealthy = false;
-    }
-  }
-
-  @Override
-  public void close() {
-    healthRefreshExecutor.shutdownNow();
   }
 
   /**
@@ -164,9 +148,10 @@ public class PaygateMetrics implements AutoCloseable {
    * caveat type (e.g. path, method, client_ip, escalation).
    */
   public void recordCaveatRejected(String caveatType) {
+    String normalizedType = normalizeCaveatType(caveatType);
     caveatRejectedCounters
         .computeIfAbsent(
-            caveatType,
+            normalizedType,
             ct ->
                 Counter.builder("paygate.caveats.rejected")
                     .tag("caveat_type", ct)
@@ -174,6 +159,24 @@ public class PaygateMetrics implements AutoCloseable {
                     .description("Caveat verification rejections by type")
                     .register(registry))
         .increment();
+  }
+
+  private static Supplier<Boolean> healthSupplierFor(LightningBackend lightningBackend) {
+    if (lightningBackend instanceof CachingLightningBackendWrapper wrapper) {
+      return wrapper::lastKnownHealthy;
+    }
+    return lightningBackend::isHealthy;
+  }
+
+  private static double safeBooleanToGaugeValue(Boolean healthy) {
+    return Boolean.TRUE.equals(healthy) ? 1.0 : 0.0;
+  }
+
+  private static String normalizeCaveatType(String caveatType) {
+    if (caveatType == null) {
+      return CAVEAT_TYPE_OTHER;
+    }
+    return KNOWN_CAVEAT_TYPES.contains(caveatType) ? caveatType : CAVEAT_TYPE_OTHER;
   }
 
   /**

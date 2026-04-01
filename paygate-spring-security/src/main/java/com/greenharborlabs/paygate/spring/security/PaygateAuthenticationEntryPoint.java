@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring.security;
 import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
+import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -60,7 +61,7 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
         log.log(
             System.Logger.Level.WARNING,
             "Rejected request with malformed URI: {0}",
-            sanitizeForLog(request.getRequestURI()));
+            LogSanitizer.sanitize(request.getRequestURI()));
         PaygateResponseWriter.writeLightningUnavailable(response);
         return;
       }
@@ -100,17 +101,5 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
   /** Delegates to {@link PathNormalizer#normalize(String)}. */
   static String normalizePath(String rawPath) {
     return PathNormalizer.normalize(rawPath);
-  }
-
-  /** Strips newlines and control characters from user input to prevent log injection. */
-  static String sanitizeForLog(String value) {
-    if (value == null) {
-      return "null";
-    }
-    return value
-        .codePoints()
-        .filter(cp -> cp >= 0x20 && cp != 0x7F)
-        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
-        .toString();
   }
 }

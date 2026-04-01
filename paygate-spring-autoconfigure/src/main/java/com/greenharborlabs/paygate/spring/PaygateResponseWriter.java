@@ -21,28 +21,6 @@ public final class PaygateResponseWriter {
 
   private PaygateResponseWriter() {}
 
-  /** Writes a 402 Payment Required response with the L402 challenge. */
-  public static void writePaymentRequired(
-      HttpServletResponse response, PaygateChallengeResult result) throws IOException {
-    response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-    response.setHeader("WWW-Authenticate", result.wwwAuthenticateHeader());
-    response.setContentType("application/json");
-    String testPreimageField = "";
-    if (result.testPreimage() != null) {
-      testPreimageField = ", \"test_preimage\": \"" + result.testPreimage() + "\"";
-    }
-    response
-        .getWriter()
-        .write(
-            """
-                {"code": 402, "message": "Payment required", "price_sats": %d, "description": "%s", "invoice": "%s"%s}"""
-                .formatted(
-                    result.priceSats(),
-                    JsonEscaper.escape(result.description()),
-                    JsonEscaper.escape(result.bolt11()),
-                    testPreimageField));
-  }
-
   /**
    * Writes a 400 Bad Request response for a malformed L402 Authorization header.
    *

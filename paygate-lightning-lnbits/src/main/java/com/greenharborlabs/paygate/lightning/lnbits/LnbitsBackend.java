@@ -88,9 +88,9 @@ public class LnbitsBackend implements LightningBackend {
       log.log(
           System.Logger.Level.WARNING,
           "LNbits createInvoice timed out after {0}s",
-          config.requestTimeoutSeconds());
+          requestTimeout.toSeconds());
       throw new LnbitsTimeoutException(
-          "LNbits createInvoice timed out after " + config.requestTimeoutSeconds() + "s", e);
+          "LNbits createInvoice timed out after " + requestTimeout.toSeconds() + "s", e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new LnbitsException("Interrupted while creating invoice", e);
@@ -131,9 +131,9 @@ public class LnbitsBackend implements LightningBackend {
       log.log(
           System.Logger.Level.WARNING,
           "LNbits lookupInvoice timed out after {0}s",
-          config.requestTimeoutSeconds());
+          requestTimeout.toSeconds());
       throw new LnbitsTimeoutException(
-          "LNbits lookupInvoice timed out after " + config.requestTimeoutSeconds() + "s", e);
+          "LNbits lookupInvoice timed out after " + requestTimeout.toSeconds() + "s", e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new LnbitsException("Interrupted while looking up invoice", e);

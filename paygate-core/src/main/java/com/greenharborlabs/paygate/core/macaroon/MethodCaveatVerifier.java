@@ -15,6 +15,9 @@ public class MethodCaveatVerifier implements CaveatVerifier {
   private final int maxValuesPerCaveat;
 
   public MethodCaveatVerifier(int maxValuesPerCaveat) {
+    if (maxValuesPerCaveat < 1) {
+      throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
+    }
     this.maxValuesPerCaveat = maxValuesPerCaveat;
   }
 

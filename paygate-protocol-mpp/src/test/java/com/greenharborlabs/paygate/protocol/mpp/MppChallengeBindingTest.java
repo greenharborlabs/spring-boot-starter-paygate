@@ -446,6 +446,70 @@ class MppChallengeBindingTest {
   }
 
   @Test
+  void createId_pipeInRequestB64_throwsIllegalArgument() {
+    assertThatThrownBy(
+            () ->
+                MppChallengeBinding.createId(
+                    REALM, METHOD, INTENT, "req|uest", EXPIRES, DIGEST, OPAQUE_B64, secret()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("requestB64");
+  }
+
+  @Test
+  void createId_pipeInOpaqueB64_throwsIllegalArgument() {
+    assertThatThrownBy(
+            () ->
+                MppChallengeBinding.createId(
+                    REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, "opaq|ue", secret()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("opaqueB64");
+  }
+
+  @Test
+  void verify_pipeInRequestB64_throwsIllegalArgument() {
+    String validId =
+        MppChallengeBinding.createId(
+            REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
+
+    assertThatThrownBy(
+            () ->
+                MppChallengeBinding.verify(
+                    validId,
+                    REALM,
+                    METHOD,
+                    INTENT,
+                    "req|uest",
+                    EXPIRES,
+                    DIGEST,
+                    OPAQUE_B64,
+                    secret()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("requestB64");
+  }
+
+  @Test
+  void verify_pipeInOpaqueB64_throwsIllegalArgument() {
+    String validId =
+        MppChallengeBinding.createId(
+            REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
+
+    assertThatThrownBy(
+            () ->
+                MppChallengeBinding.verify(
+                    validId,
+                    REALM,
+                    METHOD,
+                    INTENT,
+                    REQUEST_B64,
+                    EXPIRES,
+                    DIGEST,
+                    "opaq|ue",
+                    secret()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("opaqueB64");
+  }
+
+  @Test
   void verify_pipeInRealm_throwsIllegalArgument() {
     // Use a valid base64url ID so the decode step succeeds before computeHmac is reached
     String validId =

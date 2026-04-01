@@ -134,10 +134,11 @@ class PaygateAuthenticationTokenTest {
 
   @Test
   void authenticatedTokenMapsCapabilitiesToAuthorities() {
-    L402Credential credential =
-        createTestCredential(List.of(new Caveat("test-service_capabilities", "search,analyze")));
+    L402Credential credential = createTestCredential(List.of());
 
-    var token = PaygateAuthenticationToken.authenticated(credential, "test-service");
+    var token =
+        PaygateAuthenticationToken.authenticated(
+            credential, "test-service", Set.of("search", "analyze"));
 
     assertThat(token.getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
@@ -169,11 +170,10 @@ class PaygateAuthenticationTokenTest {
   }
 
   @Test
-  void authenticatedTokenDeduplicatesCapabilities() {
-    L402Credential credential =
-        createTestCredential(List.of(new Caveat("svc_capabilities", "search,search")));
+  void authenticatedTokenAddsSingleCapabilityOnce() {
+    L402Credential credential = createTestCredential(List.of());
 
-    var token = PaygateAuthenticationToken.authenticated(credential, "svc");
+    var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("search"));
 
     assertThat(token.getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
@@ -182,56 +182,14 @@ class PaygateAuthenticationTokenTest {
   }
 
   @Test
-  void authenticatedTokenHandlesMalformedCapabilitiesValue() {
-    L402Credential credential =
-        createTestCredential(List.of(new Caveat("svc_capabilities", "search,,analyze,")));
-
-    var token = PaygateAuthenticationToken.authenticated(credential, "svc");
+  void authenticatedTokenWithNullServiceNameStillUsesExplicitCapabilities() {
+    L402Credential credential = createTestCredential(List.of());
+    var token = PaygateAuthenticationToken.authenticated(credential, null, Set.of("search"));
 
     assertThat(token.getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
         .containsExactlyInAnyOrder(
-            "ROLE_PAYMENT",
-            "ROLE_L402",
-            "L402_CAPABILITY_search",
-            "L402_CAPABILITY_analyze",
-            "PAYGATE_CAPABILITY_search",
-            "PAYGATE_CAPABILITY_analyze");
-  }
-
-  @Test
-  void authenticatedTokenWithNullServiceNameSkipsCapabilityExtraction() {
-    L402Credential credential =
-        createTestCredential(List.of(new Caveat("null_capabilities", "search")));
-
-    var token = PaygateAuthenticationToken.authenticated(credential, null);
-
-    assertThat(token.getAuthorities())
-        .extracting(GrantedAuthority::getAuthority)
-        .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
-  }
-
-  @Test
-  void authenticatedTokenDeduplicatesAcrossMultipleCapabilityCaveats() {
-    L402Credential credential =
-        createTestCredential(
-            List.of(
-                new Caveat("svc_capabilities", "search,read"),
-                new Caveat("svc_capabilities", "read,write")));
-
-    var token = PaygateAuthenticationToken.authenticated(credential, "svc");
-
-    assertThat(token.getAuthorities())
-        .extracting(GrantedAuthority::getAuthority)
-        .containsExactlyInAnyOrder(
-            "ROLE_PAYMENT",
-            "ROLE_L402",
-            "L402_CAPABILITY_search",
-            "L402_CAPABILITY_read",
-            "L402_CAPABILITY_write",
-            "PAYGATE_CAPABILITY_search",
-            "PAYGATE_CAPABILITY_read",
-            "PAYGATE_CAPABILITY_write");
+            "ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search", "PAYGATE_CAPABILITY_search");
   }
 
   // ========== Protocol-agnostic unauthenticated token tests ==========
@@ -517,13 +475,13 @@ class PaygateAuthenticationTokenTest {
 
     assertThat(token.getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
-        .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402", "PAYGATE_CAPABILITY_search");
+        .containsExactlyInAnyOrder(
+            "ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search", "PAYGATE_CAPABILITY_search");
   }
 
   @Test
   void l402DualEmitCaveatAndExplicitCapabilityProducesBothPrefixes() {
-    L402Credential credential =
-        createTestCredential(List.of(new Caveat("svc_capabilities", "search")));
+    L402Credential credential = createTestCredential(List.of());
     var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("search"));
 
     assertThat(token.getAuthorities())
@@ -535,9 +493,10 @@ class PaygateAuthenticationTokenTest {
 
   @Test
   void l402ThreeArgWithCaveatCapabilitiesEmitsBothPrefixes() {
-    L402Credential credential =
-        createTestCredential(List.of(new Caveat("svc_capabilities", "search,analyze")));
-    var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("extra"));
+    L402Credential credential = createTestCredential(List.of());
+    var token =
+        PaygateAuthenticationToken.authenticated(
+            credential, "svc", Set.of("search", "analyze", "extra"));
 
     assertThat(token.getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
@@ -546,21 +505,21 @@ class PaygateAuthenticationTokenTest {
             "ROLE_L402",
             "L402_CAPABILITY_search",
             "L402_CAPABILITY_analyze",
+            "L402_CAPABILITY_extra",
             "PAYGATE_CAPABILITY_search",
             "PAYGATE_CAPABILITY_analyze",
             "PAYGATE_CAPABILITY_extra");
   }
 
   @Test
-  void l402TwoArgAlwaysEmitsPaygateCapabilitiesFromCaveats() {
+  void l402TwoArgDoesNotEmitCapabilityAuthoritiesWithoutResolvedCapabilities() {
     L402Credential credential =
         createTestCredential(List.of(new Caveat("svc_capabilities", "search")));
     var token = PaygateAuthenticationToken.authenticated(credential, "svc");
 
     assertThat(token.getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
-        .containsExactlyInAnyOrder(
-            "ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search", "PAYGATE_CAPABILITY_search");
+        .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
   }
 
   @Test
@@ -640,9 +599,8 @@ class PaygateAuthenticationTokenTest {
 
   @Test
   void l402AuthorityOrdering() {
-    L402Credential credential =
-        createTestCredential(List.of(new Caveat("svc_capabilities", "search")));
-    var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("extra"));
+    L402Credential credential = createTestCredential(List.of());
+    var token = PaygateAuthenticationToken.authenticated(credential, "svc", Set.of("search"));
 
     var authorityStrings =
         token.getAuthorities().stream().map(GrantedAuthority::getAuthority).toList();

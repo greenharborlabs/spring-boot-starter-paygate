@@ -39,7 +39,7 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
           "cleanupIntervalSeconds must be non-negative, got: " + cleanupIntervalSeconds);
     }
     this.maxSize = maxSize;
-    this.entries = new LinkedHashMap<>(maxSize, 0.75f, true);
+    this.entries = new LinkedHashMap<>(Math.min(maxSize, 256), 0.75f, true);
 
     if (cleanupIntervalSeconds > 0) {
       this.cleanupExecutor =

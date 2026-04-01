@@ -302,17 +302,18 @@ class CachingLightningBackendWrapperTest {
           }
         };
 
-    // Construct PaygateMetrics — this registers the gauge and does one initial health check
-    var metrics = new PaygateMetrics(registry, stubStore, wrapper);
+    // Prime wrapper health snapshot once; metrics should read this cached value only.
+    assertThat(wrapper.isHealthy()).isTrue();
+    int callsAfterPrime = callCount.get();
+
+    // Construct PaygateMetrics — this registers a gauge backed by wrapper.lastKnownHealthy()
+    new PaygateMetrics(registry, stubStore, wrapper);
 
     var gauge = registry.find("paygate.lightning.healthy").gauge();
     assertThat(gauge).isNotNull();
-    // Initial sync call in constructor populated the cached state as healthy
     assertThat(gauge.value()).isEqualTo(1.0);
     int callsAfterConstruction = callCount.get();
-    assertThat(callsAfterConstruction)
-        .as("constructor performs initial health check")
-        .isGreaterThanOrEqualTo(1);
+    assertThat(callsAfterConstruction).isEqualTo(callsAfterPrime);
 
     // Reading the gauge multiple times must NOT trigger additional delegate calls
     for (int i = 0; i < 10; i++) {
@@ -321,8 +322,6 @@ class CachingLightningBackendWrapperTest {
     assertThat(callCount.get())
         .as("gauge reads must not trigger additional delegate calls")
         .isEqualTo(callsAfterConstruction);
-
-    metrics.close();
   }
 
   // --- Auto-configuration integration tests ---

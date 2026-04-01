@@ -28,6 +28,17 @@ class ClientIpCaveatVerifierTest {
     assertThat(verifier.getKey()).isEqualTo("client_ip");
   }
 
+  @Test
+  @DisplayName("constructor rejects maxValuesPerCaveat < 1")
+  void constructorRejectsInvalidMaxValues() {
+    assertThatThrownBy(() -> new ClientIpCaveatVerifier(0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+    assertThatThrownBy(() -> new ClientIpCaveatVerifier(-1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+  }
+
   // ---------------------------------------------------------------
   // Acceptance scenario 1 & 2: single IP matching
   // ---------------------------------------------------------------

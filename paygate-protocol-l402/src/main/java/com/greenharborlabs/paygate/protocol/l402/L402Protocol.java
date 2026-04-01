@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
+import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
@@ -53,8 +54,8 @@ public class L402Protocol implements PaymentProtocol {
     if (authorizationHeader == null || authorizationHeader.length() < 5) {
       return false;
     }
-    return authorizationHeader.regionMatches(true, 0, L402_PREFIX, 0, L402_PREFIX.length())
-        || authorizationHeader.regionMatches(true, 0, LSAT_PREFIX, 0, LSAT_PREFIX.length());
+    return authorizationHeader.startsWith(L402_PREFIX)
+        || authorizationHeader.startsWith(LSAT_PREFIX);
   }
 
   @Override
@@ -98,7 +99,7 @@ public class L402Protocol implements PaymentProtocol {
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
 
-    String safeBolt11 = sanitizeBolt11ForHeader(context.bolt11Invoice());
+    String safeBolt11 = L402Challenge.sanitizeBolt11ForHeader(context.bolt11Invoice());
     String wwwAuth =
         "L402 version=\"0\", token=\""
             + macaroonBase64
@@ -150,29 +151,8 @@ public class L402Protocol implements PaymentProtocol {
           case EXPIRED_CREDENTIAL -> PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL;
           case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
               PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
-          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL;
+          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
         };
     return new PaymentValidationException(mapped, e.getMessage(), e.getTokenId());
-  }
-
-  /**
-   * Validates that a bolt11 invoice string contains no characters that could enable HTTP header
-   * injection. Rejects C0 control characters (0x00-0x1F), DEL (0x7F), and double-quote.
-   */
-  static String sanitizeBolt11ForHeader(String bolt11) {
-    if (bolt11 == null) {
-      return "";
-    }
-    for (int i = 0; i < bolt11.length(); i++) {
-      char c = bolt11.charAt(i);
-      if (c <= 0x1F || c == 0x7F || c == '"') {
-        throw new IllegalArgumentException(
-            "bolt11 invoice contains illegal character at index "
-                + i
-                + ": 0x"
-                + Integer.toHexString(c));
-      }
-    }
-    return bolt11;
   }
 }

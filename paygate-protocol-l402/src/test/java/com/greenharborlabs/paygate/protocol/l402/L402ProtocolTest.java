@@ -19,6 +19,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
+import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.security.MessageDigest;
@@ -77,27 +78,12 @@ class L402ProtocolTest {
         strings = {
           "L402 abc123:def456",
           "LSAT abc123:def456",
-          "l402 abc123:def456",
-          "lsat abc123:def456",
           "L402 x",
           "LSAT x",
-          "l402 x",
-          "lsat x",
-          "L4O2 something" // only first 5 chars checked, uppercased — this is "L4O2 " which is NOT
-          // "L402 "
+          "L402 ",
+          "LSAT "
         })
     void trueForL402OrLsatPrefix(String header) {
-      // "L4O2 something" has 'O' not '0', so canHandle should return false for it
-      // We test it separately below
-      if (header.startsWith("L4O2")) {
-        return; // skip — tested in false cases
-      }
-      assertThat(protocol.canHandle(header)).isTrue();
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"L402 abc:def", "lsat something", "L402 ", "LSAT "})
-    void trueForVariousCaseVariations(String header) {
       assertThat(protocol.canHandle(header)).isTrue();
     }
 
@@ -115,7 +101,16 @@ class L402ProtocolTest {
 
     @ParameterizedTest
     @ValueSource(
-        strings = {"Payment proof=abc", "Bearer token123", "Basic dXNlcjpwYXNz", "L4O2 something"})
+        strings = {
+          "Payment proof=abc",
+          "Bearer token123",
+          "Basic dXNlcjpwYXNz",
+          "L4O2 something",
+          "l402 abc123:def456",
+          "lsat abc123:def456",
+          "l402 x",
+          "lsat x"
+        })
     void falseForNonL402Schemes(String header) {
       assertThat(protocol.canHandle(header)).isFalse();
     }
@@ -609,10 +604,10 @@ class L402ProtocolTest {
     }
 
     @Test
-    void lightningUnavailableMapsTOMalformedCredential() {
+    void lightningUnavailableMapsToServiceUnavailable() {
       verifyErrorMapping(
           ErrorCode.LIGHTNING_UNAVAILABLE,
-          PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+          PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE);
     }
 
     @Test
@@ -658,44 +653,44 @@ class L402ProtocolTest {
 
     @Test
     void returnsEmptyStringForNull() {
-      assertThat(L402Protocol.sanitizeBolt11ForHeader(null)).isEqualTo("");
+      assertThat(L402Challenge.sanitizeBolt11ForHeader(null)).isEqualTo("");
     }
 
     @Test
     void returnsEmptyStringForEmpty() {
-      assertThat(L402Protocol.sanitizeBolt11ForHeader("")).isEqualTo("");
+      assertThat(L402Challenge.sanitizeBolt11ForHeader("")).isEqualTo("");
     }
 
     @Test
     void passesThroughValidBolt11() {
-      assertThat(L402Protocol.sanitizeBolt11ForHeader("lnbc10n1p0valid"))
+      assertThat(L402Challenge.sanitizeBolt11ForHeader("lnbc10n1p0valid"))
           .isEqualTo("lnbc10n1p0valid");
     }
 
     @Test
     void rejectsDelCharacter() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\u007F"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\u007F"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }
 
     @Test
     void rejectsDoubleQuote() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\"injection"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\"injection"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }
 
     @Test
     void rejectsNullByte() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("\u0000evil"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("\u0000evil"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }
 
     @Test
     void rejectsTabCharacter() {
-      assertThatThrownBy(() -> L402Protocol.sanitizeBolt11ForHeader("lnbc\tinjection"))
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\tinjection"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("illegal character");
     }

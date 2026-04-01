@@ -1,5 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
+import static com.greenharborlabs.paygate.spring.PaygateTestSupport.createStubInvoice;
+import static com.greenharborlabs.paygate.spring.PaygateTestSupport.sha256;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
@@ -25,19 +27,18 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
-import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.l402.L402Metadata;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
-import java.security.MessageDigest;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestRootKeyStore;
+import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -229,7 +230,7 @@ class PaygateSecurityFilterTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
     }
 
     @Test
@@ -267,7 +268,7 @@ class PaygateSecurityFilterTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
     }
 
     @Test
@@ -590,7 +591,7 @@ class PaygateSecurityFilterTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
     }
 
     @Test
@@ -639,7 +640,7 @@ class PaygateSecurityFilterTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
     }
 
     @Test
@@ -735,7 +736,7 @@ class PaygateSecurityFilterTest {
       // The test app uses the backward-compatible constructor (no properties),
       // so XFF should be ignored. Requests with XFF should still work normally.
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
 
       mockMvc
           .perform(get(PROTECTED_PATH).header("X-Forwarded-For", "10.0.0.1"))
@@ -782,7 +783,7 @@ class PaygateSecurityFilterTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
     }
 
     @Test
@@ -855,7 +856,7 @@ class PaygateSecurityFilterTest {
     @BeforeEach
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice());
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
     }
 
     @Test
@@ -910,21 +911,6 @@ class PaygateSecurityFilterTest {
   // Test helpers
   // -----------------------------------------------------------------------
 
-  private static Invoice createStubInvoice() {
-    byte[] paymentHash = new byte[32];
-    new SecureRandom().nextBytes(paymentHash);
-    Instant now = Instant.now();
-    return new Invoice(
-        paymentHash,
-        "lnbc100n1p0testinvoice",
-        PRICE_SATS,
-        "Test invoice",
-        InvoiceStatus.PENDING,
-        null,
-        now,
-        now.plus(1, ChronoUnit.HOURS));
-  }
-
   private static List<Caveat> validCaveats() {
     Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
     return List.of(
@@ -967,127 +953,5 @@ class PaygateSecurityFilterTest {
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
     String preimageHex = HEX.formatHex(preimage);
     return "L402 " + macaroonBase64 + ":" + preimageHex;
-  }
-
-  private static byte[] sha256(byte[] input) {
-    try {
-      return MessageDigest.getInstance("SHA-256").digest(input);
-    } catch (Exception e) {
-      throw new AssertionError("SHA-256 not available", e);
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Stub / in-memory implementations for test isolation
-  // -----------------------------------------------------------------------
-
-  /**
-   * Controllable stub for LightningBackend that allows tests to set health status and pre-configure
-   * the next invoice to be returned.
-   */
-  static class StubLightningBackend implements LightningBackend {
-
-    private volatile boolean healthy = true;
-    private volatile Invoice nextInvoice;
-
-    void setHealthy(boolean healthy) {
-      this.healthy = healthy;
-    }
-
-    void setNextInvoice(Invoice invoice) {
-      this.nextInvoice = invoice;
-    }
-
-    @Override
-    public Invoice createInvoice(long amountSats, String memo) {
-      if (!healthy) {
-        throw new RuntimeException("Lightning backend is not available");
-      }
-      if (nextInvoice != null) {
-        return nextInvoice;
-      }
-      byte[] paymentHash = new byte[32];
-      new SecureRandom().nextBytes(paymentHash);
-      Instant now = Instant.now();
-      return new Invoice(
-          paymentHash,
-          "lnbc" + amountSats + "n1pstub",
-          amountSats,
-          memo,
-          InvoiceStatus.PENDING,
-          null,
-          now,
-          now.plus(1, ChronoUnit.HOURS));
-    }
-
-    @Override
-    public Invoice lookupInvoice(byte[] paymentHash) {
-      if (!healthy) {
-        throw new RuntimeException("Lightning backend is not available");
-      }
-      return null;
-    }
-
-    @Override
-    public boolean isHealthy() {
-      return healthy;
-    }
-  }
-
-  /**
-   * In-memory RootKeyStore backed by a single fixed root key. All calls to {@code
-   * generateRootKey()} and {@code getRootKey()} return the same key.
-   */
-  static class InMemoryTestRootKeyStore implements RootKeyStore {
-
-    private final byte[] rootKey;
-
-    InMemoryTestRootKeyStore(byte[] rootKey) {
-      this.rootKey = rootKey.clone();
-    }
-
-    @Override
-    public GenerationResult generateRootKey() {
-      byte[] tokenId = new byte[32];
-      new SecureRandom().nextBytes(tokenId);
-      return new GenerationResult(
-          new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone()), tokenId);
-    }
-
-    @Override
-    public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(byte[] keyId) {
-      return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(rootKey.clone());
-    }
-
-    @Override
-    public void revokeRootKey(byte[] keyId) {
-      // no-op for tests
-    }
-  }
-
-  /** In-memory CredentialStore for test isolation. */
-  static class InMemoryTestCredentialStore implements CredentialStore {
-
-    private final Map<String, L402Credential> store = new ConcurrentHashMap<>();
-
-    @Override
-    public void store(String tokenId, L402Credential credential, long ttlSeconds) {
-      store.put(tokenId, credential);
-    }
-
-    @Override
-    public L402Credential get(String tokenId) {
-      return store.get(tokenId);
-    }
-
-    @Override
-    public void revoke(String tokenId) {
-      store.remove(tokenId);
-    }
-
-    @Override
-    public long activeCount() {
-      return store.size();
-    }
   }
 }

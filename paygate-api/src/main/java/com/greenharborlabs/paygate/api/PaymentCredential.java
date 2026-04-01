@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.api;
 
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -46,8 +47,8 @@ public record PaymentCredential(
   public boolean equals(Object o) {
     if (this == o) return true;
     if (!(o instanceof PaymentCredential that)) return false;
-    return constantTimeEquals(paymentHash, that.paymentHash)
-        && constantTimeEquals(preimage, that.preimage)
+    return CryptoUtils.constantTimeEquals(paymentHash, that.paymentHash)
+        && CryptoUtils.constantTimeEquals(preimage, that.preimage)
         && Objects.equals(tokenId, that.tokenId)
         && Objects.equals(sourceProtocolScheme, that.sourceProtocolScheme)
         && Objects.equals(source, that.source)
@@ -71,15 +72,5 @@ public record PaymentCredential(
         + ", source="
         + source
         + "]";
-  }
-
-  private static boolean constantTimeEquals(byte[] a, byte[] b) {
-    if (a == b) return true;
-    if (a == null || b == null || a.length != b.length) return false;
-    int result = 0;
-    for (int i = 0; i < a.length; i++) {
-      result |= a[i] ^ b[i];
-    }
-    return result == 0;
   }
 }
