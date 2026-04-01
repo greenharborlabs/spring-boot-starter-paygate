@@ -361,6 +361,38 @@ class PaygateChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("rootKeyClone passed to ChallengeContext is zeroized after construction")
+    void rootKeyCloneIsZeroizedAfterChallengeCreation() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+
+      ZeroizationTrackingRootKeyStore trackingStore = new ZeroizationTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+      ChallengeContext ctx = service.createChallenge(request, config);
+
+      // ChallengeContext made its own defensive copy, so rootKeyBytes() is still valid
+      byte[] ctxKey = ctx.rootKeyBytes();
+      assertThat(ctxKey)
+          .as("ChallengeContext must retain a valid (non-zero) defensive copy of the root key")
+          .isNotNull();
+      boolean allZero = true;
+      for (byte b : ctxKey) {
+        if (b != 0) {
+          allZero = false;
+          break;
+        }
+      }
+      assertThat(allZero).as("ChallengeContext.rootKeyBytes() should not be all zeros").isFalse();
+
+      // The original raw key array (from SensitiveBytes.value()) should be zeroized
+      // by the existing finally block
+      assertThat(trackingStore.lastRawKeyArray)
+          .as("Original raw key array must be zeroized")
+          .containsOnly((byte) 0);
+    }
+
+    @Test
     @DisplayName("SensitiveBytes is destroyed even when createInvoice throws")
     void sensitiveBytesDestroyedOnFailure() {
       when(lightningBackend.isHealthy()).thenReturn(true);
@@ -828,6 +860,7 @@ class PaygateChallengeServiceTest {
   static class ZeroizationTrackingRootKeyStore implements RootKeyStore {
 
     volatile SensitiveBytes lastSensitiveBytes;
+    volatile byte[] lastRawKeyArray;
 
     @Override
     public GenerationResult generateRootKey() {
@@ -836,6 +869,7 @@ class PaygateChallengeServiceTest {
 
       SensitiveBytes sensitiveBytes = new SensitiveBytes(rawKey);
       this.lastSensitiveBytes = sensitiveBytes;
+      this.lastRawKeyArray = rawKey;
 
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);

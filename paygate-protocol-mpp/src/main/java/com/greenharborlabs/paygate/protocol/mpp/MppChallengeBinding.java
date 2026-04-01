@@ -124,8 +124,10 @@ public final class MppChallengeBinding {
     rejectPipe(realm, "realm");
     rejectPipe(method, "method");
     rejectPipe(intent, "intent");
+    rejectPipe(requestB64, "requestB64");
     rejectPipe(expires, "expires");
     rejectPipe(digest, "digest");
+    rejectPipe(opaqueB64, "opaqueB64");
 
     String input =
         new StringBuilder()

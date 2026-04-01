@@ -357,7 +357,7 @@ public class PaygateSecurityFilter implements Filter {
   /**
    * Attempts to acquire a rate limiter token for the requesting client. Returns {@code true} if the
    * request is allowed (or no rate limiter is configured). Rate limiter exceptions are logged and
-   * treated as allowed (defense-in-depth, not fail-closed).
+   * treated as denied (fail-closed).
    */
   private boolean tryAcquireRateLimit(HttpServletRequest request) {
     PaygateRateLimiter limiter = this.rateLimiter;
@@ -369,9 +369,9 @@ public class PaygateSecurityFilter implements Filter {
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
-          "Rate limiter threw exception, allowing request: {0}",
+          "Rate limiter threw exception, denying request: {0}",
           e.getMessage());
-      return true;
+      return false;
     }
   }
 

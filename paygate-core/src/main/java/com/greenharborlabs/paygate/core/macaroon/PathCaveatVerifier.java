@@ -143,6 +143,10 @@ public class PathCaveatVerifier implements CaveatVerifier {
    * Checks for {@code /..} at any position and {@code ../} at the start of the path.
    */
   private static boolean containsDotDotSegment(String path) {
+    // Check for bare ".." (no slashes) — after normalization this resolves to root
+    if ("..".equals(path)) {
+      return true;
+    }
     // Check for "../" at the very start (relative path traversal)
     if (path.startsWith("../")) {
       return true;

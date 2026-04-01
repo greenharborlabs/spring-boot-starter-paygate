@@ -184,7 +184,7 @@ class PaygateAuthFailureRateLimitFilterTest {
   }
 
   @Test
-  void rateLimiterThrows_continuesProcessing() throws ServletException, IOException {
+  void rateLimiterThrows_failsClosed429() throws ServletException, IOException {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolve(any())).thenReturn("192.168.1.1");
     when(rateLimiter.tryAcquire("192.168.1.1")).thenThrow(new RuntimeException("limiter error"));
@@ -197,7 +197,8 @@ class PaygateAuthFailureRateLimitFilterTest {
             rateLimiter, clientIpResolver, endpointRegistry, protocols);
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    assertThat(response.getStatus()).isEqualTo(429);
+    verify(filterChain, never()).doFilter(any(), any());
   }
 
   @Test

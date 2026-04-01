@@ -77,27 +77,12 @@ class L402ProtocolTest {
         strings = {
           "L402 abc123:def456",
           "LSAT abc123:def456",
-          "l402 abc123:def456",
-          "lsat abc123:def456",
           "L402 x",
           "LSAT x",
-          "l402 x",
-          "lsat x",
-          "L4O2 something" // only first 5 chars checked, uppercased — this is "L4O2 " which is NOT
-          // "L402 "
+          "L402 ",
+          "LSAT "
         })
     void trueForL402OrLsatPrefix(String header) {
-      // "L4O2 something" has 'O' not '0', so canHandle should return false for it
-      // We test it separately below
-      if (header.startsWith("L4O2")) {
-        return; // skip — tested in false cases
-      }
-      assertThat(protocol.canHandle(header)).isTrue();
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"L402 abc:def", "lsat something", "L402 ", "LSAT "})
-    void trueForVariousCaseVariations(String header) {
       assertThat(protocol.canHandle(header)).isTrue();
     }
 
@@ -115,7 +100,16 @@ class L402ProtocolTest {
 
     @ParameterizedTest
     @ValueSource(
-        strings = {"Payment proof=abc", "Bearer token123", "Basic dXNlcjpwYXNz", "L4O2 something"})
+        strings = {
+          "Payment proof=abc",
+          "Bearer token123",
+          "Basic dXNlcjpwYXNz",
+          "L4O2 something",
+          "l402 abc123:def456",
+          "lsat abc123:def456",
+          "l402 x",
+          "lsat x"
+        })
     void falseForNonL402Schemes(String header) {
       assertThat(protocol.canHandle(header)).isFalse();
     }

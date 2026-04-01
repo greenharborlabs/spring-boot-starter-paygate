@@ -120,15 +120,19 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
     return status == HTTP_UNAUTHORIZED || status == HTTP_SERVICE_UNAVAILABLE;
   }
 
+  /**
+   * Attempts to acquire a rate limiter token for the requesting client. Rate limiter exceptions are
+   * treated as denied (fail-closed).
+   */
   private boolean tryAcquireRateLimit(HttpServletRequest request) {
     try {
       return rateLimiter.tryAcquire(resolveClientIp(request));
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
-          "Rate limiter threw exception, allowing request: {0}",
+          "Rate limiter threw exception, denying request: {0}",
           e.getMessage());
-      return true;
+      return false;
     }
   }
 

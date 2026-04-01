@@ -163,37 +163,40 @@ public class PaygateChallengeService {
 
         // Clone rootKey so ChallengeContext has its own copy before we zeroize
         byte[] rootKeyClone = rootKey.clone();
+        try {
+          var challengeContext =
+              new ChallengeContext(
+                  invoice.paymentHash(),
+                  tokenIdHex,
+                  invoice.bolt11(),
+                  effectivePrice,
+                  config.description(),
+                  serviceName,
+                  config.timeoutSeconds(),
+                  config.capability(),
+                  rootKeyClone,
+                  opaque,
+                  null);
 
-        var challengeContext =
-            new ChallengeContext(
-                invoice.paymentHash(),
-                tokenIdHex,
-                invoice.bolt11(),
-                effectivePrice,
-                config.description(),
-                serviceName,
-                config.timeoutSeconds(),
-                config.capability(),
-                rootKeyClone,
-                opaque,
-                null);
-
-        // Populate capability cache after successful invoice creation
-        if (capabilityCache != null
-            && config.capability() != null
-            && !config.capability().isEmpty()) {
-          try {
-            capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
-          } catch (RuntimeException e) {
-            log.log(
-                System.Logger.Level.WARNING,
-                "Failed to store capability in cache for token {0}: {1}",
-                tokenIdHex,
-                e.getMessage());
+          // Populate capability cache after successful invoice creation
+          if (capabilityCache != null
+              && config.capability() != null
+              && !config.capability().isEmpty()) {
+            try {
+              capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
+            } catch (RuntimeException e) {
+              log.log(
+                  System.Logger.Level.WARNING,
+                  "Failed to store capability in cache for token {0}: {1}",
+                  tokenIdHex,
+                  e.getMessage());
+            }
           }
-        }
 
-        return challengeContext;
+          return challengeContext;
+        } finally {
+          KeyMaterial.zeroize(rootKeyClone);
+        }
       } finally {
         KeyMaterial.zeroize(rootKey);
       }

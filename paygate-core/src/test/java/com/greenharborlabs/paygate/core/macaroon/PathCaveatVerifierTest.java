@@ -506,6 +506,18 @@ class PathCaveatVerifierTest {
     }
 
     @Test
+    @DisplayName("rejects bare .. (dot-dot with no slashes)")
+    void rejectsBareDotDotNoSlashes() {
+      Caveat caveat = new Caveat("path", "/api/**");
+      L402VerificationContext context = contextWithPath("..");
+
+      assertThatThrownBy(() -> verifier.verify(caveat, context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .extracting(e -> ((MacaroonVerificationException) e).getReason())
+          .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+    }
+
+    @Test
     @DisplayName("rejects bare ../path (dot-dot without leading slash)")
     void rejectsBareDotDot() {
       Caveat caveat = new Caveat("path", "/api/**");
