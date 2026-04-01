@@ -4,7 +4,7 @@ plugins {
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.2.2" apply false
-    id("com.diffplug.spotless") version "7.0.4" apply false
+    id("com.diffplug.spotless") version "8.4.0" apply false
 }
 
 val springBootVersion = "4.0.4"
