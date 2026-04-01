@@ -54,8 +54,8 @@ public class L402Protocol implements PaymentProtocol {
     if (authorizationHeader == null || authorizationHeader.length() < 5) {
       return false;
     }
-    return authorizationHeader.startsWith(L402_PREFIX)
-        || authorizationHeader.startsWith(LSAT_PREFIX);
+    return authorizationHeader.regionMatches(true, 0, L402_PREFIX, 0, L402_PREFIX.length())
+        || authorizationHeader.regionMatches(true, 0, LSAT_PREFIX, 0, LSAT_PREFIX.length());
   }
 
   @Override

@@ -78,10 +78,17 @@ class L402ProtocolTest {
         strings = {
           "L402 abc123:def456",
           "LSAT abc123:def456",
+          "l402 abc123:def456",
+          "lsat abc123:def456",
+          "LsAt abc123:def456",
           "L402 x",
           "LSAT x",
+          "l402 x",
+          "lsat x",
           "L402 ",
-          "LSAT "
+          "LSAT ",
+          "l402 ",
+          "lsat "
         })
     void trueForL402OrLsatPrefix(String header) {
       assertThat(protocol.canHandle(header)).isTrue();
@@ -101,16 +108,7 @@ class L402ProtocolTest {
 
     @ParameterizedTest
     @ValueSource(
-        strings = {
-          "Payment proof=abc",
-          "Bearer token123",
-          "Basic dXNlcjpwYXNz",
-          "L4O2 something",
-          "l402 abc123:def456",
-          "lsat abc123:def456",
-          "l402 x",
-          "lsat x"
-        })
+        strings = {"Payment proof=abc", "Bearer token123", "Basic dXNlcjpwYXNz", "L4O2 something"})
     void falseForNonL402Schemes(String header) {
       assertThat(protocol.canHandle(header)).isFalse();
     }
