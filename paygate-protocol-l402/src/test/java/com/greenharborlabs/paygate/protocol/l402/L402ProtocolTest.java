@@ -603,10 +603,10 @@ class L402ProtocolTest {
     }
 
     @Test
-    void lightningUnavailableMapsTOMalformedCredential() {
+    void lightningUnavailableMapsToServiceUnavailable() {
       verifyErrorMapping(
           ErrorCode.LIGHTNING_UNAVAILABLE,
-          PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+          PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE);
     }
 
     @Test

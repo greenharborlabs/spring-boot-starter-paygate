@@ -17,7 +17,8 @@ public class PaymentValidationException extends RuntimeException {
     INVALID_PREIMAGE(402, "https://paymentauth.org/problems/verification-failed"),
     INVALID_CHALLENGE_BINDING(402, "https://paymentauth.org/problems/verification-failed"),
     EXPIRED_CREDENTIAL(402, "https://paymentauth.org/problems/verification-failed"),
-    METHOD_UNSUPPORTED(400, "https://paymentauth.org/problems/method-unsupported");
+    METHOD_UNSUPPORTED(400, "https://paymentauth.org/problems/method-unsupported"),
+    SERVICE_UNAVAILABLE(503, "https://paymentauth.org/problems/service-unavailable");
 
     private final int httpStatus;
     private final String problemTypeUri;

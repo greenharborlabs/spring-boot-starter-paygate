@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.core.macaroon;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -30,8 +31,10 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public final class FileBasedRootKeyStore implements RootKeyStore {
 
   private static final int KEY_LENGTH = 32;
+  private static final int HEX_KEY_LENGTH = KEY_LENGTH * 2;
   private static final int DEFAULT_MAX_CACHE_SIZE = 10_000;
   private static final HexFormat HEX = HexFormat.of();
+  private static final byte[] HEX_DIGITS = "0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
 
   private final Path directory;
   private final SecureRandom secureRandom = new SecureRandom();
@@ -122,13 +125,14 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
       if (!Files.exists(keyFile)) {
         return null;
       }
-      String hexContent = Files.readString(keyFile).strip();
-      byte[] rootKey = HEX.parseHex(hexContent);
+      byte[] hexContentBytes = Files.readAllBytes(keyFile);
+      byte[] rootKey = decodeHexKeyFileContent(hexContentBytes);
       try {
         cache.put(hexKeyId, rootKey.clone());
         return new SensitiveBytes(rootKey.clone());
       } finally {
         KeyMaterial.zeroize(rootKey);
+        KeyMaterial.zeroize(hexContentBytes);
       }
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to read root key: " + hexKeyId, e);
@@ -211,8 +215,8 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
   }
 
   private void writeKeyFile(String hexKeyId, byte[] rootKey) {
+    byte[] hexContentBytes = encodeHex(rootKey);
     try {
-      String hexContent = HEX.formatHex(rootKey);
       Path targetFile = resolveKeyFile(hexKeyId);
       Path tmpFile = resolveKeyFile(hexKeyId + ".tmp");
 
@@ -223,14 +227,14 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
             tmpFile,
             PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
         try {
-          Files.writeString(tmpFile, hexContent);
+          Files.write(tmpFile, hexContentBytes);
         } catch (IOException e) {
           Files.deleteIfExists(tmpFile);
           throw e;
         }
       } else {
         try {
-          Files.writeString(tmpFile, hexContent);
+          Files.write(tmpFile, hexContentBytes);
         } catch (IOException e) {
           Files.deleteIfExists(tmpFile);
           throw e;
@@ -240,6 +244,58 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
           tmpFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to write root key: " + hexKeyId, e);
+    } finally {
+      KeyMaterial.zeroize(hexContentBytes);
     }
+  }
+
+  private static byte[] decodeHexKeyFileContent(byte[] fileBytes) {
+    int start = 0;
+    int end = fileBytes.length;
+    while (start < end && isAsciiWhitespace(fileBytes[start])) {
+      start++;
+    }
+    while (end > start && isAsciiWhitespace(fileBytes[end - 1])) {
+      end--;
+    }
+
+    int length = end - start;
+    if (length != HEX_KEY_LENGTH) {
+      throw new IllegalArgumentException("Invalid root key length in key file");
+    }
+    byte[] out = new byte[KEY_LENGTH];
+    for (int i = 0; i < KEY_LENGTH; i++) {
+      int hi = hexNibble(fileBytes[start + (i * 2)]);
+      int lo = hexNibble(fileBytes[start + (i * 2) + 1]);
+      out[i] = (byte) ((hi << 4) | lo);
+    }
+    return out;
+  }
+
+  private static byte[] encodeHex(byte[] raw) {
+    byte[] out = new byte[raw.length * 2];
+    for (int i = 0; i < raw.length; i++) {
+      int v = raw[i] & 0xFF;
+      out[i * 2] = HEX_DIGITS[v >>> 4];
+      out[(i * 2) + 1] = HEX_DIGITS[v & 0x0F];
+    }
+    return out;
+  }
+
+  private static int hexNibble(byte b) {
+    if (b >= '0' && b <= '9') {
+      return b - '0';
+    }
+    if (b >= 'a' && b <= 'f') {
+      return 10 + (b - 'a');
+    }
+    if (b >= 'A' && b <= 'F') {
+      return 10 + (b - 'A');
+    }
+    throw new IllegalArgumentException("Invalid hex character in key file");
+  }
+
+  private static boolean isAsciiWhitespace(byte b) {
+    return b == ' ' || b == '\n' || b == '\r' || b == '\t';
   }
 }

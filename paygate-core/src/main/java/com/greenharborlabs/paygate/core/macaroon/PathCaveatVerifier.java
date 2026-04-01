@@ -11,6 +11,9 @@ public class PathCaveatVerifier implements CaveatVerifier {
   private final int maxValuesPerCaveat;
 
   public PathCaveatVerifier(int maxValuesPerCaveat) {
+    if (maxValuesPerCaveat < 1) {
+      throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
+    }
     this.maxValuesPerCaveat = maxValuesPerCaveat;
   }
 

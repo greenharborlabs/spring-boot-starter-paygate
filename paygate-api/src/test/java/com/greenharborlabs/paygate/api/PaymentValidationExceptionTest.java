@@ -51,6 +51,14 @@ class PaymentValidationExceptionTest {
         .isEqualTo("https://paymentauth.org/problems/method-unsupported");
   }
 
+  @Test
+  void serviceUnavailableMapsToCorrectStatusAndUri() {
+    var code = PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
+    assertThat(code.httpStatus()).isEqualTo(503);
+    assertThat(code.problemTypeUri())
+        .isEqualTo("https://paymentauth.org/problems/service-unavailable");
+  }
+
   @ParameterizedTest
   @EnumSource(PaymentValidationException.ErrorCode.class)
   void allErrorCodesHaveNonNullProblemTypeUri(PaymentValidationException.ErrorCode code) {
@@ -66,8 +74,8 @@ class PaymentValidationExceptionTest {
   }
 
   @Test
-  void allFiveErrorCodesExist() {
-    assertThat(PaymentValidationException.ErrorCode.values()).hasSize(5);
+  void allSixErrorCodesExist() {
+    assertThat(PaymentValidationException.ErrorCode.values()).hasSize(6);
   }
 
   // --- Constructor: (ErrorCode, String) ---

@@ -35,10 +35,9 @@ public final class ObservableRootKeyStore implements RootKeyStore {
   @Override
   public void revokeRootKey(byte[] keyId) {
     delegate.revokeRootKey(keyId);
-    byte[] copy = Arrays.copyOf(keyId, keyId.length);
     for (RootKeyRevocationListener listener : listeners) {
       try {
-        listener.onRootKeyRevoked(copy);
+        listener.onRootKeyRevoked(Arrays.copyOf(keyId, keyId.length));
       } catch (RuntimeException e) {
         log.log(System.Logger.Level.WARNING, "Revocation listener threw exception", e);
       }

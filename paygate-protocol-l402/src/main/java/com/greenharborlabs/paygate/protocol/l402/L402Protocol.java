@@ -150,7 +150,7 @@ public class L402Protocol implements PaymentProtocol {
           case EXPIRED_CREDENTIAL -> PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL;
           case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
               PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
-          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL;
+          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
         };
     return new PaymentValidationException(mapped, e.getMessage(), e.getTokenId());
   }

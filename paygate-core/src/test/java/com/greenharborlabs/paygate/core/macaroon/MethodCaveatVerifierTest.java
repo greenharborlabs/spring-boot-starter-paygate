@@ -28,6 +28,17 @@ class MethodCaveatVerifierTest {
     assertThat(verifier.getKey()).isEqualTo("method");
   }
 
+  @Test
+  @DisplayName("constructor rejects maxValuesPerCaveat < 1")
+  void constructorRejectsInvalidMaxValues() {
+    assertThatThrownBy(() -> new MethodCaveatVerifier(0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+    assertThatThrownBy(() -> new MethodCaveatVerifier(-1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+  }
+
   // ---------------------------------------------------------------
   // Acceptance scenarios 1-6
   // ---------------------------------------------------------------

@@ -488,7 +488,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge reports 1.0 when Lightning is healthy")
     void lightningHealthyGaugeReportsOne() throws Exception {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      paygateMetrics.refreshHealth();
 
       // Trigger a request so gauges are registered
       mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isPaymentRequired());
@@ -502,7 +501,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge reports 0.0 when Lightning is unhealthy")
     void lightningHealthyGaugeReportsZero() throws Exception {
       ((StubLightningBackend) lightningBackend).setHealthy(false);
-      paygateMetrics.refreshHealth();
 
       // Trigger a request — will get 503 but gauge should still be set
       mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isServiceUnavailable());
@@ -516,7 +514,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge reports 0.0 when isHealthy() throws exception")
     void lightningHealthyGaugeReportsZeroOnException() {
       ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(true);
-      paygateMetrics.refreshHealth();
 
       Double gaugeValue = gaugeValue("paygate.lightning.healthy");
       assertThat(gaugeValue).isNotNull();
@@ -527,7 +524,6 @@ class PaygateMetricsTest {
     @DisplayName("paygate.lightning.healthy gauge recovers to 1.0 after exception clears")
     void lightningHealthyGaugeRecoversAfterException() {
       ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(true);
-      paygateMetrics.refreshHealth();
 
       Double duringException = gaugeValue("paygate.lightning.healthy");
       assertThat(duringException).isNotNull();
@@ -536,7 +532,6 @@ class PaygateMetricsTest {
       // Backend recovers
       ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(false);
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      paygateMetrics.refreshHealth();
 
       Double afterRecovery = gaugeValue("paygate.lightning.healthy");
       assertThat(afterRecovery).isNotNull();
@@ -544,21 +539,20 @@ class PaygateMetricsTest {
     }
 
     @Test
-    @DisplayName("gauge supplier never calls isHealthy() — reads from cached field only")
-    void lightningHealthyGaugeNeverCallsIsHealthyDuringGaugeScrape() {
+    @DisplayName("gauge supplier calls isHealthy() during scrape for non-cached backend")
+    void lightningHealthyGaugeCallsIsHealthyDuringGaugeScrape() {
       // Ensure known state and reset call count after any prior calls
       ((StubLightningBackend) lightningBackend).setHealthy(true);
-      paygateMetrics.refreshHealth();
       ((StubLightningBackend) lightningBackend).resetIsHealthyCallCount();
 
-      // Read the gauge multiple times — should NOT trigger isHealthy()
+      // Read the gauge multiple times — each read evaluates the supplier
       for (int i = 0; i < 10; i++) {
         gaugeValue("paygate.lightning.healthy");
       }
 
       assertThat(((StubLightningBackend) lightningBackend).getIsHealthyCallCount())
-          .as("Gauge reads must not call isHealthy() on the backend")
-          .isZero();
+          .as("Gauge reads should call isHealthy() when backend is not cached")
+          .isGreaterThanOrEqualTo(10);
     }
   }
 

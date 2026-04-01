@@ -122,6 +122,9 @@ public final class MppCredentialParser {
     for (int i = 0; i < preimageHex.length(); i++) {
       char c = preimageHex.charAt(i);
       if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+        if (c >= 'A' && c <= 'F') {
+          throw malformed("preimage must be lowercase hex");
+        }
         throw malformed("Invalid preimage hex");
       }
     }

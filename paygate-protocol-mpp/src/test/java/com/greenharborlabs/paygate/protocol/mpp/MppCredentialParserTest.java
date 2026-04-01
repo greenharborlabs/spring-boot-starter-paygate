@@ -348,8 +348,6 @@ class MppCredentialParserTest {
         "0001020304050607",
         // Too long (66 chars)
         "000102030405060708091011121314151617181920212223242526272829303132",
-        // Uppercase hex
-        "000102030405060708091011121314151617181920212223242526272829AABB",
         // Non-hex characters
         "gg01020304050607080910111213141516171819202122232425262728293031",
         // Empty
@@ -372,6 +370,28 @@ class MppCredentialParserTest {
               PaymentValidationException pve = (PaymentValidationException) e;
               assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
               assertThat(pve.getMessage()).contains("Invalid preimage hex");
+            });
+  }
+
+  @Test
+  void rejectsUppercasePreimageWithClearMessage() {
+    String uppercaseHex = "000102030405060708091011121314151617181920212223242526272829AABB";
+    String json =
+        """
+                {
+                  "challenge": { "id": "abc" },
+                  "payload": { "preimage": "%s" }
+                }"""
+            .formatted(uppercaseHex);
+    String blob = toBlob(json);
+
+    assertThatThrownBy(() -> MppCredentialParser.parse(blob))
+        .isInstanceOf(PaymentValidationException.class)
+        .satisfies(
+            e -> {
+              PaymentValidationException pve = (PaymentValidationException) e;
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+              assertThat(pve.getMessage()).contains("lowercase hex");
             });
   }
 

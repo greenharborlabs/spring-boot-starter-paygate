@@ -86,6 +86,19 @@ class PaygateMetricsUnitTest {
     }
 
     @Test
+    @DisplayName("recordCaveatRejected maps unknown caveat type to _other")
+    void recordCaveatRejectedUnknownMappedToOther() {
+      double before =
+          counterValue("paygate.caveats.rejected", "caveat_type", "_other", "protocol", "l402");
+
+      paygateMetrics.recordCaveatRejected("totally_new_caveat");
+
+      double after =
+          counterValue("paygate.caveats.rejected", "caveat_type", "_other", "protocol", "l402");
+      assertThat(after).isEqualTo(before + 1.0);
+    }
+
+    @Test
     @DisplayName("each caveat_type tag is independent — incrementing one does not affect others")
     void caveatTypeTagsAreIndependent() {
       double pathBefore =

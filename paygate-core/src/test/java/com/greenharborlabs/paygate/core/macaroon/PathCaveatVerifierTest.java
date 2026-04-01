@@ -28,6 +28,17 @@ class PathCaveatVerifierTest {
     assertThat(verifier.getKey()).isEqualTo("path");
   }
 
+  @Test
+  @DisplayName("constructor rejects maxValuesPerCaveat < 1")
+  void constructorRejectsInvalidMaxValues() {
+    assertThatThrownBy(() -> new PathCaveatVerifier(0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+    assertThatThrownBy(() -> new PathCaveatVerifier(-1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxValuesPerCaveat must be >= 1");
+  }
+
   // ---------------------------------------------------------------
   // Acceptance scenarios 1-21
   // ---------------------------------------------------------------
