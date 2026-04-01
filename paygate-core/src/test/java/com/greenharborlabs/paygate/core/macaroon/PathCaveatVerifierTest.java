@@ -436,6 +436,42 @@ class PathCaveatVerifierTest {
     }
 
     @Test
+    @DisplayName("rejects %2e%2e (encoded dot-dot lowercase)")
+    void rejectsEncodedDotDotLowercase() {
+      Caveat caveat = new Caveat("path", "/secret/**");
+      L402VerificationContext context = contextWithPath("/public/%2e%2e/secret/data");
+
+      assertThatThrownBy(() -> verifier.verify(caveat, context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .extracting(e -> ((MacaroonVerificationException) e).getReason())
+          .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+    }
+
+    @Test
+    @DisplayName("rejects %2E%2E (encoded dot-dot uppercase)")
+    void rejectsEncodedDotDotUppercase() {
+      Caveat caveat = new Caveat("path", "/secret/**");
+      L402VerificationContext context = contextWithPath("/public/%2E%2E/secret/data");
+
+      assertThatThrownBy(() -> verifier.verify(caveat, context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .extracting(e -> ((MacaroonVerificationException) e).getReason())
+          .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+    }
+
+    @Test
+    @DisplayName("rejects %2e%2E (encoded dot-dot mixed case)")
+    void rejectsEncodedDotDotMixedCase() {
+      Caveat caveat = new Caveat("path", "/secret/**");
+      L402VerificationContext context = contextWithPath("/public/%2e%2E/secret/data");
+
+      assertThatThrownBy(() -> verifier.verify(caveat, context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .extracting(e -> ((MacaroonVerificationException) e).getReason())
+          .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+    }
+
+    @Test
     @DisplayName("allows normal path (no regression)")
     void allowsNormalPath() {
       Caveat caveat = new Caveat("path", "/api/**");

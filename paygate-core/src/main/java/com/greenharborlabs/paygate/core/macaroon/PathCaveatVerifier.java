@@ -56,12 +56,12 @@ public class PathCaveatVerifier implements CaveatVerifier {
           "Request path contains dot-dot traversal segment");
     }
 
-    // 6. Reject encoded path separators and double-encoding — prevents
-    //    traversal attacks via %2F, %5C, and %25 sequences.
-    if (containsEncodedPathSeparatorOrDoubleEncoding(requestPath)) {
+    // 6. Reject encoded path separators, encoded dot-dot traversal, and double-encoding —
+    //    prevents traversal attacks via %2F, %5C, %2E%2E, and %25 sequences.
+    if (containsEncodedPathTraversalOrDoubleEncoding(requestPath)) {
       throw new MacaroonVerificationException(
           VerificationFailureReason.CAVEAT_NOT_MET,
-          "Request path contains encoded path separator or double-encoding");
+          "Request path contains encoded traversal marker or double-encoding");
     }
 
     // 7. Normalize request path once
@@ -116,9 +116,10 @@ public class PathCaveatVerifier implements CaveatVerifier {
 
   /**
    * Returns true if the path contains a percent-encoded path separator (%2F/%2f for forward slash,
-   * %5C/%5c for backslash) or a double-encoding indicator (%25). Case-insensitive on hex digits.
+   * %5C/%5c for backslash), encoded dot-dot traversal marker (%2E%2E in any case), or a
+   * double-encoding indicator (%25). Case-insensitive on hex digits.
    */
-  private static boolean containsEncodedPathSeparatorOrDoubleEncoding(String path) {
+  private static boolean containsEncodedPathTraversalOrDoubleEncoding(String path) {
     int len = path.length();
     for (int i = 0; i <= len - 3; i++) {
       if (path.charAt(i) == '%') {
@@ -135,6 +136,15 @@ public class PathCaveatVerifier implements CaveatVerifier {
         // %25 — double-encoding indicator (percent-encoded percent sign)
         if (h1 == '2' && h2 == '5') {
           return true;
+        }
+
+        // %2E%2E / %2e%2e / mixed-case — encoded dot-dot traversal marker
+        if (h1 == '2' && (h2 == 'E' || h2 == 'e') && i <= len - 6 && path.charAt(i + 3) == '%') {
+          char h3 = path.charAt(i + 4);
+          char h4 = path.charAt(i + 5);
+          if (h3 == '2' && (h4 == 'E' || h4 == 'e')) {
+            return true;
+          }
         }
       }
     }

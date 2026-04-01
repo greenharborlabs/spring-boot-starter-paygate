@@ -24,6 +24,8 @@ bin/
 .project
 .classpath
 .settings/
+**/src/main/java/**/*.class
+**/src/test/java/**/*.class
 
 # OS files
 .DS_Store
