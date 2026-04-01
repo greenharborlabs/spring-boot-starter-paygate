@@ -15,6 +15,7 @@ import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -192,6 +193,21 @@ class PaygateAuthenticationEntryPointTest {
     assertThat(response.getContentAsString())
         .isEqualTo(
             "{\"code\": 503, \"error\": \"LIGHTNING_UNAVAILABLE\", \"message\": \"Lightning backend is not available. Please try again later.\"}");
+  }
+
+  @Test
+  void writes400WhenRequestUriIsMalformed() throws Exception {
+    HttpServletRequest malformedRequest = mock(HttpServletRequest.class);
+    when(malformedRequest.getMethod()).thenReturn("GET");
+    when(malformedRequest.getRequestURI()).thenThrow(new IllegalArgumentException("malformed"));
+
+    entryPoint.commence(malformedRequest, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
   }
 
   @Test

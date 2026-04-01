@@ -30,6 +30,8 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
 
   private static final System.Logger log =
       System.getLogger(PaygateAuthenticationEntryPoint.class.getName());
+  private static final String MALFORMED_URI_BODY =
+      "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}";
 
   private final PaygateChallengeService challengeService;
   private final PaygateEndpointRegistry endpointRegistry;
@@ -54,15 +56,24 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       throws IOException {
     try {
       String method = request.getMethod();
+      String rawRequestUri;
+      try {
+        rawRequestUri = request.getRequestURI();
+      } catch (RuntimeException e) {
+        log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: <unavailable>");
+        writeMalformedUri(response);
+        return;
+      }
+
       String path;
       try {
-        path = normalizePath(request.getRequestURI());
+        path = normalizePath(rawRequestUri);
       } catch (Exception e) {
         log.log(
             System.Logger.Level.WARNING,
             "Rejected request with malformed URI: {0}",
-            LogSanitizer.sanitize(request.getRequestURI()));
-        PaygateResponseWriter.writeLightningUnavailable(response);
+            LogSanitizer.sanitize(rawRequestUri));
+        writeMalformedUri(response);
         return;
       }
 
@@ -101,5 +112,11 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
   /** Delegates to {@link PathNormalizer#normalize(String)}. */
   static String normalizePath(String rawPath) {
     return PathNormalizer.normalize(rawPath);
+  }
+
+  private static void writeMalformedUri(HttpServletResponse response) throws IOException {
+    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    response.setContentType("application/json");
+    response.getWriter().write(MALFORMED_URI_BODY);
   }
 }
