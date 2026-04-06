@@ -111,8 +111,8 @@ subprojects {
             mavenBom("org.springframework.boot:spring-boot-dependencies:$springBootVersion")
         }
         dependencies {
-            dependency("net.bytebuddy:byte-buddy:1.18.7")
-            dependency("net.bytebuddy:byte-buddy-agent:1.18.7")
+            dependency("net.bytebuddy:byte-buddy:1.18.8")
+            dependency("net.bytebuddy:byte-buddy-agent:1.18.8")
         }
     }
 
