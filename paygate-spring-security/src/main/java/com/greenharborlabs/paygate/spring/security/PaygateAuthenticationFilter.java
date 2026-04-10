@@ -12,6 +12,8 @@ import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
+import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
+import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -98,7 +100,27 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       throws ServletException, IOException {
 
     String authHeader = request.getHeader(AUTHORIZATION_HEADER);
-    String normalizedPath = PathNormalizer.normalize(request.getRequestURI());
+    String normalizedPath;
+    try {
+      normalizedPath = PathNormalizer.normalize(request.getRequestURI());
+    } catch (RuntimeException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeMalformedUri(response);
+      return;
+    }
+
+    HttpServletRequest authRequest = request;
+    boolean includeDigest =
+        !L402HeaderComponents.extract(authHeader).isPresent() && matchesAnyProtocol(authHeader);
+    if (includeDigest) {
+      try {
+        authRequest = RequestDigestSupport.wrapForDigest(request);
+      } catch (RequestBodyTooLargeException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeRequestBodyTooLarge(response);
+        return;
+      }
+    }
 
     PaygateEndpointConfig endpointConfig;
     String capability;
@@ -115,8 +137,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       return;
     }
 
-    Map<String, String> requestMetadata =
-        extractRequestMetadata(request, normalizedPath, capability);
+    Map<String, String> requestMetadata;
+    try {
+      requestMetadata =
+          extractRequestMetadata(authRequest, normalizedPath, capability, includeDigest);
+    } catch (RequestBodyTooLargeException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeRequestBodyTooLarge(response);
+      return;
+    }
 
     PaygateAuthenticationToken unauthenticatedToken =
         Objects.requireNonNull(
@@ -143,7 +172,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
     generateReceipt(authenticated, endpointConfig, response);
 
-    filterChain.doFilter(request, response);
+    filterChain.doFilter(authRequest, response);
   }
 
   private PaygateAuthenticationToken createAuthToken(
@@ -168,13 +197,19 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   }
 
   private Map<String, String> extractRequestMetadata(
-      HttpServletRequest request, String normalizedPath, String capability) {
+      HttpServletRequest request, String normalizedPath, String capability, boolean includeDigest)
+      throws IOException {
     Map<String, String> metadata = new HashMap<>(4);
     metadata.put(VerificationContextKeys.REQUEST_PATH, normalizedPath);
     metadata.put(VerificationContextKeys.REQUEST_METHOD, request.getMethod());
     String clientIp =
         clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
     metadata.put(VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
+    if (includeDigest) {
+      metadata.put(
+          VerificationContextKeys.REQUEST_DIGEST,
+          RequestDigestSupport.computeDigest(request, normalizedPath));
+    }
     if (capability != null && !capability.isBlank()) {
       metadata.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }

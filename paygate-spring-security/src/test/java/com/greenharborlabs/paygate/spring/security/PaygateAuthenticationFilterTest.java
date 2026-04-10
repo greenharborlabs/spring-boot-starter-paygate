@@ -18,8 +18,10 @@ import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -93,7 +95,8 @@ class PaygateAuthenticationFilterTest {
   void skipsWhenNoAuthorizationHeader() throws ServletException, IOException {
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
   }
@@ -104,7 +107,8 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
   }
 
@@ -114,7 +118,8 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
   }
 
@@ -138,7 +143,8 @@ class PaygateAuthenticationFilterTest {
 
     assertThat(SecurityContextHolder.getContext().getAuthentication())
         .isEqualTo(authenticatedResult);
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
   }
 
   @Test
@@ -151,7 +157,43 @@ class PaygateAuthenticationFilterTest {
     verify(authenticationManager).authenticate(any(PaygateAuthenticationToken.class));
     assertThat(SecurityContextHolder.getContext().getAuthentication())
         .isEqualTo(authenticatedResult);
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
+  }
+
+  @Test
+  void l402OnlyFlowDoesNotWrapOrBoundRequestBody() throws ServletException, IOException {
+    request.setMethod("POST");
+    request.setRequestURI("/api/protected");
+    request.setContent(new byte[RequestDigestSupport.MAX_CACHED_BODY_BYTES + 1]);
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(200);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
+  }
+
+  @Test
+  void l402OnlyFlowPreservesBodyForDownstreamRead() throws ServletException, IOException {
+    String payload =
+        "streaming-payload-" + "x".repeat(RequestDigestSupport.MAX_CACHED_BODY_BYTES + 1);
+    request.setMethod("POST");
+    request.setRequestURI("/api/protected");
+    request.setContent(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+    FilterChain readingChain =
+        (req, res) ->
+            assertThat(((HttpServletRequest) req).getInputStream().readAllBytes())
+                .isEqualTo(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+    filter.doFilter(request, response, readingChain);
+
+    assertThat(response.getStatus()).isEqualTo(200);
   }
 
   @Test
@@ -178,7 +220,8 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
   }
 
@@ -198,7 +241,8 @@ class PaygateAuthenticationFilterTest {
     assertThat(unauthToken.getComponents().preimageHex()).isEqualTo(uppercasePreimage);
     assertThat(SecurityContextHolder.getContext().getAuthentication())
         .isEqualTo(authenticatedResult);
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
   }
 
   @Test
@@ -212,7 +256,8 @@ class PaygateAuthenticationFilterTest {
     verify(authenticationManager).authenticate(any(PaygateAuthenticationToken.class));
     assertThat(SecurityContextHolder.getContext().getAuthentication())
         .isEqualTo(authenticatedResult);
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
   }
 
   @Test
@@ -393,6 +438,22 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
+  void returns400WhenRequestUriIsMalformed() throws ServletException, IOException {
+    HttpServletRequest malformedRequest = mock(HttpServletRequest.class);
+    when(malformedRequest.getHeader("Authorization"))
+        .thenReturn("L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(malformedRequest.getRequestURI()).thenThrow(new IllegalArgumentException("bad uri"));
+
+    filter.doFilter(malformedRequest, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
+    verify(authenticationManager, never()).authenticate(any());
+  }
+
+  @Test
   void normalizesPathTraversalBeforeRegistryLookup() throws ServletException, IOException {
     request.setMethod("GET");
     request.setRequestURI("/api/admin/../protected");
@@ -495,7 +556,8 @@ class PaygateAuthenticationFilterTest {
     assertThat(token.getComponents()).isNull();
     assertThat(SecurityContextHolder.getContext().getAuthentication())
         .isEqualTo(authenticatedResult);
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
   }
 
   @Test
@@ -519,6 +581,7 @@ class PaygateAuthenticationFilterTest {
     assertThat(metadata).containsEntry("request.path", "/api/resource");
     assertThat(metadata).containsEntry("request.method", "POST");
     assertThat(metadata).containsKey("request.client_ip");
+    assertThat(metadata).containsKey(VerificationContextKeys.REQUEST_DIGEST);
   }
 
   @Test
@@ -557,7 +620,8 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
   }
@@ -634,7 +698,8 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     assertThat(response.getStatus()).isEqualTo(200);
@@ -655,7 +720,8 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     assertThat(response.getStatus()).isEqualTo(200);
@@ -746,7 +812,8 @@ class PaygateAuthenticationFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getHeader("Payment-Receipt")).isNotNull();
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
   }
 
   @Test
@@ -797,7 +864,8 @@ class PaygateAuthenticationFilterTest {
 
     assertThat(response.getHeader("Payment-Receipt")).isNull();
     assertThat(response.getStatus()).isEqualTo(200);
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
   }
 
   @Test
@@ -845,7 +913,8 @@ class PaygateAuthenticationFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getHeader("Payment-Receipt")).isNull();
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(mppProtocol, never()).createReceipt(any(), any());
   }
 

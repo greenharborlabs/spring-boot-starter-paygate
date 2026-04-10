@@ -16,6 +16,7 @@ import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -213,6 +214,24 @@ class PaygateAuthFailureRateLimitFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(503);
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void malformedRequestUri_returns400MalformedUri() throws ServletException, IOException {
+    HttpServletRequest malformedRequest = mock(HttpServletRequest.class);
+    when(malformedRequest.getHeader("Authorization")).thenReturn(VALID_L402_HEADER);
+    when(malformedRequest.getRequestURI()).thenThrow(new IllegalArgumentException("bad uri"));
+
+    var filter =
+        new PaygateAuthFailureRateLimitFilter(
+            rateLimiter, clientIpResolver, endpointRegistry, protocols);
+    filter.doFilter(malformedRequest, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
     verify(filterChain, never()).doFilter(any(), any());
   }
 

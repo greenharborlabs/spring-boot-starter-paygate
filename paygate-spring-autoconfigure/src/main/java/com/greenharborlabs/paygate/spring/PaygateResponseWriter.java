@@ -19,6 +19,9 @@ import java.util.Map;
  */
 public final class PaygateResponseWriter {
 
+  private static final String MALFORMED_URI_BODY =
+      "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}";
+
   private PaygateResponseWriter() {}
 
   /**
@@ -89,6 +92,24 @@ public final class PaygateResponseWriter {
         .write(
             """
                 {"code": 503, "error": "LIGHTNING_UNAVAILABLE", "message": "Lightning backend is not available. Please try again later."}""");
+  }
+
+  /** Writes a 400 response for malformed/invalid request URI input. */
+  public static void writeMalformedUri(HttpServletResponse response) throws IOException {
+    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    response.setContentType("application/json");
+    response.getWriter().write(MALFORMED_URI_BODY);
+  }
+
+  /** Writes a 400 response when request-body digest binding input exceeds configured bounds. */
+  public static void writeRequestBodyTooLarge(HttpServletResponse response) throws IOException {
+    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    response.setContentType("application/json");
+    response
+        .getWriter()
+        .write(
+            """
+                {"code": 400, "error": "REQUEST_BODY_TOO_LARGE", "message": "Request body exceeds 8192 bytes for digest binding"}""");
   }
 
   /** Writes a 401 Unauthorized response requiring a valid L402 credential. */

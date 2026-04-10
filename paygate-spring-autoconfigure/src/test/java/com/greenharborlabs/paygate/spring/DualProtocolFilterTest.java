@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -18,6 +19,7 @@ import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -162,7 +164,7 @@ class DualProtocolFilterTest {
     var filter = createFilter(List.of(l402Protocol, mppProtocol));
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
   }
 
   // --- Test 4: Payment-Receipt on MPP success ---
@@ -197,7 +199,7 @@ class DualProtocolFilterTest {
 
     assertThat(response.getHeader("Payment-Receipt")).isNotNull();
     assertThat(response.getHeader("Payment-Receipt")).isNotEmpty();
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
   }
 
   // --- Test 5: Cache-Control no-store on 402 ---
@@ -245,7 +247,7 @@ class DualProtocolFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getHeader("Cache-Control")).isEqualTo("private");
-    verify(filterChain).doFilter(request, response);
+    verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
   }
 
   // --- Test 7: 400 for METHOD_UNSUPPORTED ---

@@ -1,17 +1,16 @@
 plugins {
-    id("org.springframework.boot") version "4.0.4" apply false
+    id("org.springframework.boot") version "4.0.5" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.2.2" apply false
-    id("com.diffplug.spotless") version "7.0.4" apply false
+    id("com.diffplug.spotless") version "7.2.1" apply false
 }
 
-val springBootVersion = "4.0.4"
-val caffeineVersion = "3.1.8"
+val springBootVersion = "4.0.5"
+val caffeineVersion = "3.2.3"
 val grpcVersion = "1.80.0"
 val protobufVersion = "4.29.3"
-val jacksonVersion = "2.18.2"
 val assertjVersion = "3.27.3"
 val mockWebServerVersion = "4.12.0"
 
@@ -90,7 +89,7 @@ subprojects {
     apply(plugin = "com.diffplug.spotless")
 
     configure<PmdExtension> {
-        toolVersion = "7.14.0"
+        toolVersion = "7.23.0"
         ruleSets = emptyList()
         ruleSetFiles = files(rootProject.file("config/pmd/cyclomatic-complexity.xml"))
         isConsoleOutput = true
@@ -111,8 +110,8 @@ subprojects {
             mavenBom("org.springframework.boot:spring-boot-dependencies:$springBootVersion")
         }
         dependencies {
-            dependency("net.bytebuddy:byte-buddy:1.18.7")
-            dependency("net.bytebuddy:byte-buddy-agent:1.18.7")
+            dependency("net.bytebuddy:byte-buddy:1.18.8")
+            dependency("net.bytebuddy:byte-buddy-agent:1.18.8")
         }
     }
 
@@ -190,7 +189,6 @@ subprojects {
     extra["caffeineVersion"] = caffeineVersion
     extra["grpcVersion"] = grpcVersion
     extra["protobufVersion"] = protobufVersion
-    extra["jacksonVersion"] = jacksonVersion
     extra["assertjVersion"] = assertjVersion
     extra["mockWebServerVersion"] = mockWebServerVersion
 

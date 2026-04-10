@@ -33,6 +33,7 @@ public final class MppProtocol implements PaymentProtocol {
 
   private static final String SCHEME = "Payment";
   private static final String SCHEME_PREFIX = "payment ";
+  private static final String REQUEST_DIGEST_KEY = "request.digest";
   private static final int MIN_SECRET_LENGTH = 32;
   private static final HexFormat HEX = HexFormat.of();
 
@@ -171,6 +172,9 @@ public final class MppProtocol implements PaymentProtocol {
     header.append("intent=\"charge\", ");
     header.append("request=\"").append(requestB64).append("\", ");
     header.append("expires=\"").append(expires).append("\"");
+    if (context.digest() != null && !context.digest().isBlank()) {
+      header.append(", digest=\"").append(sanitizeHeaderValue(context.digest())).append("\"");
+    }
 
     if (context.description() != null && !context.description().isEmpty()) {
       header
@@ -191,6 +195,9 @@ public final class MppProtocol implements PaymentProtocol {
     bodyData.put("intent", "charge");
     bodyData.put("request", requestB64);
     bodyData.put("expires", expires);
+    if (context.digest() != null && !context.digest().isBlank()) {
+      bodyData.put("digest", context.digest());
+    }
     if (context.description() != null && !context.description().isEmpty()) {
       bodyData.put("description", context.description());
     }
@@ -226,6 +233,7 @@ public final class MppProtocol implements PaymentProtocol {
     String expires = challenge.get("expires");
     String digest = challenge.get("digest");
     String opaque = challenge.get("opaque");
+    String requestDigest = requestContext.get(REQUEST_DIGEST_KEY);
 
     // ---- Security-critical validation order ----
 
@@ -242,6 +250,22 @@ public final class MppProtocol implements PaymentProtocol {
           ErrorCode.INVALID_CHALLENGE_BINDING,
           "Echoed challenge is missing required fields",
           credential.tokenId());
+    }
+    if (digest == null || digest.isBlank()) {
+      throw new PaymentValidationException(
+          ErrorCode.INVALID_CHALLENGE_BINDING,
+          "Echoed challenge is missing digest binding",
+          credential.tokenId());
+    }
+    if (requestDigest == null || requestDigest.isBlank()) {
+      throw new PaymentValidationException(
+          ErrorCode.INVALID_CHALLENGE_BINDING,
+          "Request context is missing digest binding",
+          credential.tokenId());
+    }
+    if (!requestDigest.equals(digest)) {
+      throw new PaymentValidationException(
+          ErrorCode.INVALID_CHALLENGE_BINDING, "Request digest mismatch", credential.tokenId());
     }
     boolean hmacValid =
         MppChallengeBinding.verify(

@@ -15,6 +15,7 @@ import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
+import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
@@ -205,9 +206,10 @@ class PaygateAuthenticationEntryPointTest {
 
     assertThat(response.getStatus()).isEqualTo(400);
     assertThat(response.getContentType()).isEqualTo("application/json");
-    assertThat(response.getContentAsString())
-        .isEqualTo(
-            "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
+    MockHttpServletResponse expected = new MockHttpServletResponse();
+    PaygateResponseWriter.writeMalformedUri(expected);
+
+    assertThat(response.getContentAsString()).isEqualTo(expected.getContentAsString());
   }
 
   @Test

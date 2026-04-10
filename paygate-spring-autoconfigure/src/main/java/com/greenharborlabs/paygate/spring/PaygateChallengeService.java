@@ -160,6 +160,7 @@ public class PaygateChallengeService {
         }
 
         String tokenIdHex = HexFormat.of().formatHex(tokenId);
+        String requestDigest = RequestDigestSupport.digestAttribute(request);
 
         // Clone rootKey so ChallengeContext has its own copy before we zeroize
         byte[] rootKeyClone = rootKey.clone();
@@ -176,7 +177,7 @@ public class PaygateChallengeService {
                   config.capability(),
                   rootKeyClone,
                   opaque,
-                  null);
+                  requestDigest);
 
           // Populate capability cache after successful invoice creation
           if (capabilityCache != null

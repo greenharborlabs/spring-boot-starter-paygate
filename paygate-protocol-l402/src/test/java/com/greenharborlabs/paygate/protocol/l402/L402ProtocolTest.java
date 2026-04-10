@@ -142,6 +142,16 @@ class L402ProtocolTest {
     }
 
     @Test
+    void parsesLowercaseL402Header() {
+      String authHeader = buildValidAuthHeader("l402");
+
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+
+      assertThat(credential.sourceProtocolScheme()).isEqualTo("L402");
+      assertThat(credential.tokenId()).isNotEmpty();
+    }
+
+    @Test
     void metadataContainsMacaroonAndRawHeader() {
       String authHeader = buildValidAuthHeader("L402");
 

@@ -58,6 +58,7 @@ class MppProtocolTest {
 
   private static final byte[] PAYMENT_HASH = sha256(PREIMAGE);
   private static final String PREIMAGE_HEX = HEX.formatHex(PREIMAGE);
+  private static final String REQUEST_DIGEST = "sha-256=:dGVzdC1kaWdlc3Q=:";
 
   private MppProtocol protocol;
 
@@ -216,6 +217,17 @@ class MppProtocolTest {
       assertThat(header).contains("intent=\"charge\"");
       assertThat(header).contains("request=\"");
       assertThat(header).contains("expires=\"");
+    }
+
+    @Test
+    void includesDigestWhenPresent() {
+      ChallengeContext ctx = challengeContextWithDigest("Access to API", null, REQUEST_DIGEST);
+
+      ChallengeResponse response = protocol.formatChallenge(ctx);
+
+      String header = response.wwwAuthenticateHeader();
+      assertThat(header).contains("digest=\"" + REQUEST_DIGEST + "\"");
+      assertThat(response.bodyData()).containsEntry("digest", REQUEST_DIGEST);
     }
 
     @Test
@@ -446,7 +458,7 @@ class MppProtocolTest {
           buildValidCredentialForValidation(PREIMAGE, Instant.now().plusSeconds(3600));
 
       // Should not throw
-      protocol.validate(credential, Map.of());
+      protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST));
     }
 
     @Test
@@ -489,12 +501,14 @@ class MppProtocolTest {
       echoedChallenge.put("intent", "charge");
       echoedChallenge.put("request", requestB64);
       echoedChallenge.put("expires", expires);
+      echoedChallenge.put("digest", REQUEST_DIGEST);
 
       MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
       PaymentCredential credential =
           new PaymentCredential(PAYMENT_HASH, PREIMAGE, tamperedId, "Payment", null, metadata);
 
-      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+      assertThatThrownBy(
+              () -> protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST)))
           .isInstanceOf(PaymentValidationException.class)
           .satisfies(
               e -> {
@@ -510,7 +524,8 @@ class MppProtocolTest {
       PaymentCredential credential =
           buildValidCredentialForValidation(PREIMAGE, Instant.now().minusSeconds(60));
 
-      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+      assertThatThrownBy(
+              () -> protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST)))
           .isInstanceOf(PaymentValidationException.class)
           .satisfies(
               e -> {
@@ -551,7 +566,8 @@ class MppProtocolTest {
           buildCredentialWithMismatchedPreimage(
               fabricatedPreimage, PAYMENT_HASH, Instant.now().plusSeconds(3600));
 
-      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+      assertThatThrownBy(
+              () -> protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST)))
           .isInstanceOf(PaymentValidationException.class)
           .satisfies(
               e -> {
@@ -577,18 +593,50 @@ class MppProtocolTest {
       echoedChallenge.put("intent", "charge");
       echoedChallenge.put("request", requestB64);
       echoedChallenge.put("expires", expires);
+      echoedChallenge.put("digest", REQUEST_DIGEST);
 
       MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
       PaymentCredential credential =
           new PaymentCredential(PAYMENT_HASH, wrongPreimage, tamperedId, "Payment", null, metadata);
 
-      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+      assertThatThrownBy(
+              () -> protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST)))
           .isInstanceOf(PaymentValidationException.class)
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
                 // Must be INVALID_PREIMAGE, not INVALID_CHALLENGE_BINDING
                 assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_PREIMAGE);
+              });
+    }
+
+    @Test
+    void rejectsWhenRequestContextDigestMissing() {
+      PaymentCredential credential =
+          buildValidCredentialForValidation(PREIMAGE, Instant.now().plusSeconds(3600));
+
+      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              e -> {
+                PaymentValidationException pve = (PaymentValidationException) e;
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
+              });
+    }
+
+    @Test
+    void rejectsWhenRequestContextDigestMismatchesChallengeDigest() {
+      PaymentCredential credential =
+          buildValidCredentialForValidation(PREIMAGE, Instant.now().plusSeconds(3600));
+
+      assertThatThrownBy(
+              () ->
+                  protocol.validate(credential, requestContextWithDigest("sha-256=:bWlzbWF0Y2g=:")))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              e -> {
+                PaymentValidationException pve = (PaymentValidationException) e;
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
               });
     }
   }
@@ -631,6 +679,11 @@ class MppProtocolTest {
   // ---- Helper methods ----
 
   private ChallengeContext challengeContext(String description, Map<String, String> opaque) {
+    return challengeContextWithDigest(description, opaque, null);
+  }
+
+  private ChallengeContext challengeContextWithDigest(
+      String description, Map<String, String> opaque, String digest) {
     return new ChallengeContext(
         PAYMENT_HASH,
         "token-id-123",
@@ -642,8 +695,12 @@ class MppProtocolTest {
         null, // capability
         null, // rootKeyBytes
         opaque,
-        null // digest
+        digest // digest
         );
+  }
+
+  private static Map<String, String> requestContextWithDigest(String digest) {
+    return Map.of("request.digest", digest);
   }
 
   /** Builds a complete "Payment <base64url>" authorization header with the given method. */
@@ -683,7 +740,7 @@ class MppProtocolTest {
 
     String id =
         MppChallengeBinding.createId(
-            REALM, "lightning", "charge", requestB64, expires, null, null, secret());
+            REALM, "lightning", "charge", requestB64, expires, REQUEST_DIGEST, null, secret());
 
     Map<String, String> echoedChallenge = new LinkedHashMap<>();
     echoedChallenge.put("id", id);
@@ -692,6 +749,7 @@ class MppProtocolTest {
     echoedChallenge.put("intent", "charge");
     echoedChallenge.put("request", requestB64);
     echoedChallenge.put("expires", expires);
+    echoedChallenge.put("digest", REQUEST_DIGEST);
 
     MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
     return new PaymentCredential(paymentHash, preimage, id, "Payment", null, metadata);
@@ -708,7 +766,7 @@ class MppProtocolTest {
 
     String id =
         MppChallengeBinding.createId(
-            REALM, "lightning", "charge", requestB64, expires, null, null, secret());
+            REALM, "lightning", "charge", requestB64, expires, REQUEST_DIGEST, null, secret());
 
     Map<String, String> echoedChallenge = new LinkedHashMap<>();
     echoedChallenge.put("id", id);
@@ -717,6 +775,7 @@ class MppProtocolTest {
     echoedChallenge.put("intent", "charge");
     echoedChallenge.put("request", requestB64);
     echoedChallenge.put("expires", expires);
+    echoedChallenge.put("digest", REQUEST_DIGEST);
 
     MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
     return new PaymentCredential(paymentHash, wrongPreimage, id, "Payment", null, metadata);

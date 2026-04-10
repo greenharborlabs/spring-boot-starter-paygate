@@ -10,6 +10,8 @@ import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
+import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
+import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -30,12 +32,10 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
 
   private static final System.Logger log =
       System.getLogger(PaygateAuthenticationEntryPoint.class.getName());
-  private static final String MALFORMED_URI_BODY =
-      "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}";
-
   private final PaygateChallengeService challengeService;
   private final PaygateEndpointRegistry endpointRegistry;
   private final List<PaymentProtocol> protocols;
+  private final boolean mppEnabled;
 
   public PaygateAuthenticationEntryPoint(
       PaygateChallengeService challengeService,
@@ -46,6 +46,7 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
     this.endpointRegistry =
         Objects.requireNonNull(endpointRegistry, "endpointRegistry must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
+    this.mppEnabled = this.protocols.stream().anyMatch(RequestDigestSupport::isMppProtocol);
   }
 
   @Override
@@ -61,7 +62,7 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
         rawRequestUri = request.getRequestURI();
       } catch (RuntimeException e) {
         log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: <unavailable>");
-        writeMalformedUri(response);
+        PaygateResponseWriter.writeMalformedUri(response);
         return;
       }
 
@@ -73,7 +74,7 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
             System.Logger.Level.WARNING,
             "Rejected request with malformed URI: {0}",
             LogSanitizer.sanitize(rawRequestUri));
-        writeMalformedUri(response);
+        PaygateResponseWriter.writeMalformedUri(response);
         return;
       }
 
@@ -83,13 +84,22 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
         return;
       }
 
-      var challengeContext = challengeService.createChallenge(request, config);
+      HttpServletRequest challengeRequest = request;
+      if (mppEnabled) {
+        challengeRequest = RequestDigestSupport.wrapForDigest(request);
+        RequestDigestSupport.ensureDigestAttribute(challengeRequest, path);
+      }
+
+      var challengeContext = challengeService.createChallenge(challengeRequest, config);
       List<ChallengeResponse> challenges = new ArrayList<>();
       for (PaymentProtocol protocol : protocols) {
         challenges.add(protocol.formatChallenge(challengeContext));
       }
       PaygateResponseWriter.writePaymentRequired(response, challengeContext, challenges);
 
+    } catch (RequestBodyTooLargeException e) {
+      log.log(System.Logger.Level.WARNING, "Rejected request: {0}", e.getMessage());
+      PaygateResponseWriter.writeRequestBodyTooLarge(response);
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(response);
     } catch (PaygateLightningUnavailableException e) {
@@ -112,11 +122,5 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
   /** Delegates to {@link PathNormalizer#normalize(String)}. */
   static String normalizePath(String rawPath) {
     return PathNormalizer.normalize(rawPath);
-  }
-
-  private static void writeMalformedUri(HttpServletResponse response) throws IOException {
-    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setContentType("application/json");
-    response.getWriter().write(MALFORMED_URI_BODY);
   }
 }

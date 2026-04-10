@@ -44,6 +44,26 @@ class L402HeaderComponentsTest {
     }
 
     @Test
+    @DisplayName("accepts lowercase l402 scheme and normalizes to uppercase")
+    void lowercaseL402Scheme() {
+      Optional<L402HeaderComponents> result =
+          L402HeaderComponents.extract("l402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE_HEX);
+
+      assertThat(result).isPresent();
+      assertThat(result.get().scheme()).isEqualTo("L402");
+    }
+
+    @Test
+    @DisplayName("accepts mixed-case lsat scheme and normalizes to uppercase")
+    void mixedCaseLsatScheme() {
+      Optional<L402HeaderComponents> result =
+          L402HeaderComponents.extract("LsAt " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE_HEX);
+
+      assertThat(result).isPresent();
+      assertThat(result.get().scheme()).isEqualTo("LSAT");
+    }
+
+    @Test
     @DisplayName("returns empty for null header")
     void nullHeader() {
       assertThat(L402HeaderComponents.extract(null)).isEmpty();
@@ -231,6 +251,12 @@ class L402HeaderComponentsTest {
     @DisplayName("returns true for LSAT prefix")
     void lsatPrefix() {
       assertThat(L402HeaderComponents.isL402Header("LSAT something")).isTrue();
+    }
+
+    @Test
+    @DisplayName("returns true for lowercase l402 prefix")
+    void lowercaseL402Prefix() {
+      assertThat(L402HeaderComponents.isL402Header("l402 something")).isTrue();
     }
 
     @Test

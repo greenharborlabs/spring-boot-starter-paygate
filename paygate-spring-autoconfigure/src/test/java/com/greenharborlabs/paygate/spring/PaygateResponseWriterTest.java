@@ -220,6 +220,30 @@ class PaygateResponseWriterTest {
             "{\"code\": 503, \"error\": \"LIGHTNING_UNAVAILABLE\", \"message\": \"Lightning backend is not available. Please try again later.\"}");
   }
 
+  @Test
+  @DisplayName("writeMalformedUri sets 400 status and MALFORMED_URI body")
+  void writeMalformedUri_setsStatusAndBody() throws Exception {
+    PaygateResponseWriter.writeMalformedUri(response);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
+  }
+
+  @Test
+  @DisplayName("writeRequestBodyTooLarge sets 400 status and bounded-body error")
+  void writeRequestBodyTooLarge_setsStatusAndBody() throws Exception {
+    PaygateResponseWriter.writeRequestBodyTooLarge(response);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 400, \"error\": \"REQUEST_BODY_TOO_LARGE\", \"message\": \"Request body exceeds 8192 bytes for digest binding\"}");
+  }
+
   // --- writeUnauthorized ---
 
   @Test

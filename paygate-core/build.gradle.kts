@@ -5,11 +5,9 @@ plugins {
     id("me.champeau.jmh") version "0.7.2"
 }
 
-val jacksonVersion: String by extra
-
 dependencies {
     api(project(":paygate-api"))
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:$jacksonVersion")
+    testImplementation("com.fasterxml.jackson.core:jackson-databind")
 }
 
 // JMH configuration — run with: ./gradlew :paygate-core:jmh

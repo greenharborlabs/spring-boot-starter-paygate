@@ -1,6 +1,5 @@
 val caffeineVersion: String by extra
 val grpcVersion: String by extra
-val jacksonVersion: String by extra
 
 dependencies {
     api(project(":paygate-core"))
@@ -25,7 +24,7 @@ dependencies {
     compileOnly(project(":paygate-lightning-lnd"))
     compileOnly("io.grpc:grpc-netty-shaded:$grpcVersion")
     compileOnly("io.grpc:grpc-stub:$grpcVersion")
-    compileOnly("com.fasterxml.jackson.core:jackson-databind:$jacksonVersion")
+    compileOnly("com.fasterxml.jackson.core:jackson-databind")
 
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 

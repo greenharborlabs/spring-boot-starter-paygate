@@ -84,6 +84,9 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
     PaygateEndpointConfig endpointConfig;
     try {
       endpointConfig = lookupEndpointConfig(request);
+    } catch (MalformedRequestUriException e) {
+      PaygateResponseWriter.writeMalformedUri(response);
+      return;
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -112,8 +115,26 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
   }
 
   private @Nullable PaygateEndpointConfig lookupEndpointConfig(HttpServletRequest request) {
-    String normalizedPath = PathNormalizer.normalize(request.getRequestURI());
+    String rawPath;
+    try {
+      rawPath = request.getRequestURI();
+    } catch (RuntimeException e) {
+      throw new MalformedRequestUriException(e);
+    }
+
+    String normalizedPath;
+    try {
+      normalizedPath = PathNormalizer.normalize(rawPath);
+    } catch (RuntimeException e) {
+      throw new MalformedRequestUriException(e);
+    }
     return endpointRegistry.findConfig(request.getMethod(), normalizedPath);
+  }
+
+  private static final class MalformedRequestUriException extends RuntimeException {
+    MalformedRequestUriException(RuntimeException cause) {
+      super(cause);
+    }
   }
 
   private static boolean isAuthFailureStatus(int status) {

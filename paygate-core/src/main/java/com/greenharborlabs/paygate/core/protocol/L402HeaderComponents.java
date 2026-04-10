@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 public record L402HeaderComponents(String scheme, String macaroonBase64, String preimageHex) {
 
   private static final Pattern HEADER_PATTERN =
-      Pattern.compile("(LSAT|L402) ([A-Za-z0-9+/=,]{1,8192}):([a-fA-F0-9]{64})");
+      Pattern.compile("(?i)(LSAT|L402) ([A-Za-z0-9+/=,]{1,8192}):([a-fA-F0-9]{64})");
 
   public L402HeaderComponents {
     Objects.requireNonNull(scheme, "scheme must not be null");
@@ -38,7 +38,8 @@ public record L402HeaderComponents(String scheme, String macaroonBase64, String 
     }
 
     return Optional.of(
-        new L402HeaderComponents(matcher.group(1), matcher.group(2), matcher.group(3)));
+        new L402HeaderComponents(
+            matcher.group(1).toUpperCase(), matcher.group(2), matcher.group(3)));
   }
 
   /**
@@ -61,7 +62,8 @@ public record L402HeaderComponents(String scheme, String macaroonBase64, String 
           ErrorCode.MALFORMED_HEADER, "Authorization header does not match L402/LSAT format", null);
     }
 
-    return new L402HeaderComponents(matcher.group(1), matcher.group(2), matcher.group(3));
+    return new L402HeaderComponents(
+        matcher.group(1).toUpperCase(), matcher.group(2), matcher.group(3));
   }
 
   /**
@@ -74,7 +76,8 @@ public record L402HeaderComponents(String scheme, String macaroonBase64, String 
     if (header == null || header.isEmpty()) {
       return false;
     }
-    return header.startsWith("L402 ") || header.startsWith("LSAT ");
+    return header.regionMatches(true, 0, "L402 ", 0, "L402 ".length())
+        || header.regionMatches(true, 0, "LSAT ", 0, "LSAT ".length());
   }
 
   /**

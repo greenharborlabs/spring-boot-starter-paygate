@@ -26,6 +26,7 @@ import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.HttpServletRequest;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
@@ -163,7 +164,7 @@ class DualProtocolSecurityTest {
           .extracting(GrantedAuthority::getAuthority)
           .doesNotContain("ROLE_L402");
 
-      verify(filterChain).doFilter(request, response);
+      verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
     }
   }
 

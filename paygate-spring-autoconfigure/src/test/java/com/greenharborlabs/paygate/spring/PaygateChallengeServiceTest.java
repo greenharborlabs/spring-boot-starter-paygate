@@ -111,6 +111,20 @@ class PaygateChallengeServiceTest {
 
       assertThat(ctx.capability()).isEqualTo("search");
     }
+
+    @Test
+    @DisplayName("createChallenge copies precomputed request digest into ChallengeContext")
+    void copiesRequestDigestFromAttribute() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      request.setAttribute(RequestDigestSupport.REQUEST_DIGEST_ATTRIBUTE, "sha-256=:dGVzdA==:");
+
+      PaygateChallengeService service = createService(createTrackingRootKeyStore());
+      ChallengeContext ctx = service.createChallenge(request, config);
+
+      assertThat(ctx.digest()).isEqualTo("sha-256=:dGVzdA==:");
+    }
   }
 
   // -----------------------------------------------------------------------
