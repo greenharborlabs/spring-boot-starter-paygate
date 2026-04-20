@@ -6,7 +6,7 @@ pluginManagement {
 }
 
 plugins {
-    id("com.autonomousapps.build-health") version "3.6.1"
+    id("com.autonomousapps.build-health") version "3.8.0"
 }
 
 rootProject.name = "spring-boot-starter-paygate"
