@@ -7,7 +7,7 @@ plugins {
     id("com.diffplug.spotless") version "7.2.1" apply false
 }
 
-val springBootVersion = "4.0.5"
+val springBootVersion = "4.0.6"
 val caffeineVersion = "3.2.3"
 val grpcVersion = "1.80.0"
 val protobufVersion = "4.29.3"
