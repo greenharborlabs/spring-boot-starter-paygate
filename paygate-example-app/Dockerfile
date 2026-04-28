@@ -9,13 +9,17 @@ COPY gradle/wrapper/ gradle/wrapper/
 COPY build.gradle.kts settings.gradle.kts gradle.properties ./
 
 # Copy all module build files (needed for dependency resolution)
+COPY paygate-api/build.gradle.kts paygate-api/
 COPY paygate-core/build.gradle.kts paygate-core/
 COPY paygate-lightning-lnd/build.gradle.kts paygate-lightning-lnd/
 COPY paygate-lightning-lnbits/build.gradle.kts paygate-lightning-lnbits/
+COPY paygate-protocol-l402/build.gradle.kts paygate-protocol-l402/
+COPY paygate-protocol-mpp/build.gradle.kts paygate-protocol-mpp/
 COPY paygate-spring-autoconfigure/build.gradle.kts paygate-spring-autoconfigure/
 COPY paygate-spring-security/build.gradle.kts paygate-spring-security/
 COPY paygate-spring-boot-starter/build.gradle.kts paygate-spring-boot-starter/
 COPY paygate-example-app/build.gradle.kts paygate-example-app/
+COPY paygate-example-app-spring-security/build.gradle.kts paygate-example-app-spring-security/
 
 # Copy proto files required by paygate-lightning-lnd build
 COPY paygate-lightning-lnd/src/main/proto/ paygate-lightning-lnd/src/main/proto/
@@ -24,12 +28,16 @@ COPY paygate-lightning-lnd/src/main/proto/ paygate-lightning-lnd/src/main/proto/
 RUN ./gradlew dependencies --no-daemon || true
 
 # Copy all source code
+COPY paygate-api/src/ paygate-api/src/
 COPY paygate-core/src/ paygate-core/src/
 COPY paygate-lightning-lnd/src/ paygate-lightning-lnd/src/
 COPY paygate-lightning-lnbits/src/ paygate-lightning-lnbits/src/
+COPY paygate-protocol-l402/src/ paygate-protocol-l402/src/
+COPY paygate-protocol-mpp/src/ paygate-protocol-mpp/src/
 COPY paygate-spring-autoconfigure/src/ paygate-spring-autoconfigure/src/
 COPY paygate-spring-security/src/ paygate-spring-security/src/
 COPY paygate-example-app/src/ paygate-example-app/src/
+COPY paygate-example-app-spring-security/src/ paygate-example-app-spring-security/src/
 
 # Build the example app bootJar, skipping tests for faster image builds
 RUN ./gradlew :paygate-example-app:bootJar --no-daemon -x test

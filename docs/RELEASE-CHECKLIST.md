@@ -11,7 +11,7 @@ Step-by-step process for publishing a new release of `spring-boot-starter-paygat
   - `SONATYPE_PASSWORD` -- Sonatype OSSRH password
   - `GPG_SIGNING_KEY` -- ASCII-armored GPG private key
   - `GPG_SIGNING_PASSWORD` -- Passphrase for the GPG key
-- [ ] Access to an LND node and LNbits instance for smoke testing
+- [ ] Docker available for the local regtest LND and LND-backed LNbits smoke stacks, or access to equivalent external LND/LNbits instances
 
 ## Release Steps
 
@@ -34,14 +34,28 @@ Step-by-step process for publishing a new release of `spring-boot-starter-paygat
 ### 3. Smoke test with Docker (manual)
 
 ```bash
-docker-compose up -d
-# Exercise the example app: confirm 402 challenge/payment/access flow
-# Verify health endpoint reports healthy for LND and LNbits backends
-docker-compose down
+cd integration-tests
+
+# Direct LND backend
+docker compose -f docker-compose-lnd.yml up -d
+COMPOSE_FILE=docker-compose-lnd.yml bash scripts/setup-lnd.sh
+curl -sf "http://localhost:${APP_PORT:-18080}/api/v1/health"
+docker compose -f docker-compose-lnd.yml down -v
+
+# LNbits backend backed by a payee LND node, paid by a separate payer LND node
+docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
+docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
+docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
+PAYER_BACKEND=lnd-cli bash scripts/run-smoke-test.sh
+PAYER_BACKEND=lnd-cli bash scripts/run-mpp-smoke-test.sh
+docker compose -f docker-compose-lnbits-lnd.yml down -v
 ```
 
 - [ ] End-to-end flow works against LND backend
-- [ ] End-to-end flow works against LNbits backend
+- [ ] L402 smoke flow works against two-node LNbits-over-LND and verifies `sha256(preimage) == payment_hash`
+- [ ] MPP smoke flow works against two-node LNbits-over-LND and verifies `sha256(preimage) == payment_hash`
 
 ### 4. Update CHANGELOG.md
 

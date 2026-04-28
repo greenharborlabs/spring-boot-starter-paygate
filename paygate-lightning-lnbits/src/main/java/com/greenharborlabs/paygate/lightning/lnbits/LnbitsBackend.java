@@ -1,8 +1,5 @@
 package com.greenharborlabs.paygate.lightning.lnbits;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -14,6 +11,9 @@ import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * LNbits implementation of {@link LightningBackend}. Uses {@link java.net.http.HttpClient} for HTTP
@@ -26,7 +26,7 @@ public class LnbitsBackend implements LightningBackend {
   private static final Duration DEFAULT_INVOICE_EXPIRY = Duration.ofHours(1);
 
   private final LnbitsConfig config;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final HttpClient httpClient;
   private final String baseUrl;
   private static final int MAX_BODY_LENGTH = 200;
@@ -36,7 +36,7 @@ public class LnbitsBackend implements LightningBackend {
 
   private final Duration requestTimeout;
 
-  public LnbitsBackend(LnbitsConfig config, ObjectMapper objectMapper, HttpClient httpClient) {
+  public LnbitsBackend(LnbitsConfig config, JsonMapper objectMapper, HttpClient httpClient) {
     this.config = config;
     this.objectMapper = objectMapper;
     this.httpClient = httpClient;

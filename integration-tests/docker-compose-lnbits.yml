@@ -9,7 +9,7 @@ services:
       FAKE_WALLET_SECRET: "ToTheMoon1"
       LNBITS_ADMIN_UI: "true"
     ports:
-      - "${LNBITS_PORT:-5000}:5000"
+      - "${LNBITS_PORT:-15000}:5000"
     volumes:
       - lnbits-data:/data
     healthcheck:
@@ -28,7 +28,7 @@ services:
       lnbits:
         condition: service_healthy
     ports:
-      - "${APP_PORT:-8080}:8080"
+      - "${APP_PORT:-18080}:8080"
     environment:
       SPRING_PROFILES_ACTIVE: "dev"
       PAYGATE_ENABLED: "true"
@@ -37,7 +37,8 @@ services:
       PAYGATE_BACKEND: "lnbits"
       PAYGATE_ROOT_KEY_STORE: "memory"
       PAYGATE_LNBITS_URL: "http://lnbits:5000"
-      # PAYGATE_LNBITS_API_KEY is auto-created by docker-entrypoint.sh
+      PAYGATE_LNBITS_API_KEY: "${LNBITS_API_KEY:-}"
+      # Set LNBITS_API_KEY in .env or the shell before starting this service.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 10s

@@ -544,7 +544,7 @@ public class PaygateAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(LightningBackend.class)
     LightningBackend lightningBackend(
-        PaygateProperties properties, com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+        PaygateProperties properties, tools.jackson.databind.json.JsonMapper objectMapper) {
       var lnbits = properties.getLnbits();
       int timeout =
           lnbits.getRequestTimeoutSeconds() != null

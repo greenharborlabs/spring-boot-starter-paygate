@@ -20,6 +20,7 @@ A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-li
 - [JVM Requirements](#jvm-requirements)
 - [Configuration Reference](#configuration-reference)
 - [Lightning Backend Setup](#lightning-backend-setup)
+- [Integration Smoke Tests](#integration-smoke-tests)
 - [Dynamic Pricing](#dynamic-pricing)
 - [Delegation Caveats](#delegation-caveats)
 - [Spring Security Integration](#spring-security-integration)
@@ -479,6 +480,31 @@ public class MyCustomBackend implements LightningBackend {
 ```
 
 When a custom `LightningBackend` bean is present, auto-configuration will not create its own.
+
+---
+
+## Integration Smoke Tests
+
+The `integration-tests/` directory contains Docker Compose stacks and scripts for local Lightning smoke testing.
+
+For full L402 and MPP proof verification through the LNbits backend, use LNbits backed by a local payee LND node and pay invoices through a distinct payer LND node:
+
+```bash
+cd integration-tests
+docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
+docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
+docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
+PAYER_BACKEND=lnd-cli bash scripts/run-smoke-test.sh
+PAYER_BACKEND=lnd-cli bash scripts/run-mpp-smoke-test.sh
+```
+
+Default host ports are intentionally uncommon: app `18080`, LNbits `15000`, LND REST `18081`, and payer LND REST `18082`. The fast `docker-compose-lnbits.yml` stack still uses LNbits `FakeWallet` for setup and invoice checks, but full credential proof validation requires `PAYER_BACKEND=lnd-cli` with the distinct payer node because the smoke scripts verify `sha256(preimage) == payment_hash`.
+
+For detailed manual L402 and MPP test flows, including where each command runs,
+what it does, why it is required, and how to verify each step, see
+[`integration-tests/PLAYBOOK.md`](integration-tests/PLAYBOOK.md#manual-local-walkthrough).
 
 ---
 

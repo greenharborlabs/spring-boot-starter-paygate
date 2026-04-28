@@ -7,7 +7,7 @@ plugins {
 
 dependencies {
     api(project(":paygate-api"))
-    testImplementation("com.fasterxml.jackson.core:jackson-databind")
+    testImplementation("tools.jackson.core:jackson-databind")
 }
 
 // JMH configuration — run with: ./gradlew :paygate-core:jmh

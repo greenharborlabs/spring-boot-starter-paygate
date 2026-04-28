@@ -2,8 +2,6 @@ package com.greenharborlabs.paygate.core.macaroon;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -16,6 +14,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Reads go-macaroon-vectors.json and verifies that:
@@ -51,7 +51,7 @@ class GoVectorVerificationTest {
 
   @BeforeAll
   void loadVectors() throws Exception {
-    ObjectMapper mapper = new ObjectMapper();
+    JsonMapper mapper = JsonMapper.builder().build();
     InputStream is = getClass().getResourceAsStream("/test-vectors/go-macaroon-vectors.json");
     assertThat(is).as("test vectors JSON resource").isNotNull();
     JsonNode root = mapper.readTree(is);

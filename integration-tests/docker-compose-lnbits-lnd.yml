@@ -44,6 +44,7 @@ services:
       - --tlsextraip=0.0.0.0
       - --rpclisten=0.0.0.0:10009
       - --restlisten=0.0.0.0:8080
+      - --listen=0.0.0.0:9735
     ports:
       - "${LND_GRPC_PORT:-10009}:10009"
       - "${LND_REST_PORT:-18081}:8080"
@@ -56,13 +57,71 @@ services:
       retries: 60
       start_period: 10s
 
+  lnd-payer:
+    image: lightninglabs/lnd:v0.18.4-beta
+    restart: unless-stopped
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    command:
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=bitcoind:18443
+      - --bitcoind.rpcuser=devuser
+      - --bitcoind.rpcpass=devpass
+      - --bitcoind.zmqpubrawblock=tcp://bitcoind:28332
+      - --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
+      - --noseedbackup
+      - --tlsextradomain=lnd-payer
+      - --tlsextraip=0.0.0.0
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --listen=0.0.0.0:9735
+    ports:
+      - "${LND_PAYER_GRPC_PORT:-11009}:10009"
+      - "${LND_PAYER_REST_PORT:-18082}:8080"
+    volumes:
+      - lnd-payer-data:/root/.lnd
+    healthcheck:
+      test: ["CMD", "lncli", "--network=regtest", "getinfo"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  lnbits:
+    image: lnbits/lnbits:0.12.11
+    restart: unless-stopped
+    depends_on:
+      lnd:
+        condition: service_healthy
+    environment:
+      LNBITS_BACKEND_WALLET_CLASS: "LndRestWallet"
+      LNBITS_DATA_FOLDER: "/data"
+      LNBITS_ADMIN_UI: "true"
+      LND_REST_ENDPOINT: "https://lnd:8080/"
+      LND_REST_CERT: "/lnd/tls.cert"
+      LND_REST_MACAROON: "/lnd/data/chain/bitcoin/regtest/admin.macaroon"
+    ports:
+      - "${LNBITS_PORT:-15000}:5000"
+    volumes:
+      - lnbits-data:/data
+      - lnd-data:/lnd:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
   paygate-example-app:
     build:
       context: ..
       dockerfile: paygate-example-app/Dockerfile
     restart: unless-stopped
     depends_on:
-      lnd:
+      lnbits:
         condition: service_healthy
     ports:
       - "${APP_PORT:-18080}:8080"
@@ -71,14 +130,10 @@ services:
       PAYGATE_ENABLED: "true"
       PAYGATE_TEST_MODE: "false"
       PAYGATE_SERVICE_NAME: "example-api"
-      PAYGATE_BACKEND: "lnd"
+      PAYGATE_BACKEND: "lnbits"
       PAYGATE_ROOT_KEY_STORE: "memory"
-      PAYGATE_LND_HOST: "lnd"
-      PAYGATE_LND_PORT: "10009"
-      PAYGATE_LND_TLS_CERT_PATH: "/lnd/tls.cert"
-      PAYGATE_LND_MACAROON_PATH: "/lnd/data/chain/bitcoin/regtest/admin.macaroon"
-    volumes:
-      - lnd-data:/lnd:ro
+      PAYGATE_LNBITS_URL: "http://lnbits:5000"
+      PAYGATE_LNBITS_API_KEY: "${LNBITS_API_KEY:-}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 10s
@@ -89,3 +144,5 @@ services:
 volumes:
   bitcoind-data:
   lnd-data:
+  lnd-payer-data:
+  lnbits-data:

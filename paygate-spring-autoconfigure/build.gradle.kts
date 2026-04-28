@@ -24,7 +24,7 @@ dependencies {
     compileOnly(project(":paygate-lightning-lnd"))
     compileOnly("io.grpc:grpc-netty-shaded:$grpcVersion")
     compileOnly("io.grpc:grpc-stub:$grpcVersion")
-    compileOnly("com.fasterxml.jackson.core:jackson-databind")
+    compileOnly("tools.jackson.core:jackson-databind")
 
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 

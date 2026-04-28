@@ -3,7 +3,6 @@ package com.greenharborlabs.paygate.lightning.lnbits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -19,6 +18,7 @@ import okhttp3.mockwebserver.SocketPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 class LnbitsBackendTest {
 
@@ -34,14 +34,14 @@ class LnbitsBackendTest {
 
   private MockWebServer server;
   private LnbitsBackend backend;
-  private ObjectMapper objectMapper;
+  private JsonMapper objectMapper;
 
   @BeforeEach
   void setUp() throws Exception {
     server = new MockWebServer();
     server.start();
 
-    objectMapper = new ObjectMapper();
+    objectMapper = JsonMapper.builder().build();
     var config = new LnbitsConfig(server.url("/").toString(), API_KEY);
     backend = new LnbitsBackend(config, objectMapper, HttpClient.newHttpClient());
   }

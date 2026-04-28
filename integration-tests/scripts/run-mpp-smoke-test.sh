@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# run-smoke-test.sh — Automated L402 smoke test for the Paygate starter.
+# run-mpp-smoke-test.sh — Automated MPP (Modern Payment Protocol) smoke test
+# for the Paygate starter.
 #
 # Works in two modes:
 #   1. Docker Compose local testing — run against the two-node LNbits-over-LND
@@ -8,17 +9,22 @@
 #   2. Live endpoint testing — point APP_URL and LNBITS_URL at a running
 #      instance (e.g., a testnet deployment with SPRING_PROFILES_ACTIVE=lnbits-testnet)
 #
-# Exercises the full 402 -> pay -> 200 flow:
+# Exercises the full 402 -> extract Payment challenge -> pay invoice ->
+# build MPP credential -> retry -> assert 200 + Payment-Receipt flow:
 #   1. Request a protected endpoint (expect 402)
-#   2. Extract the L402 challenge from WWW-Authenticate headers
-#   3. Enforce a spend cap (MAX_INVOICE_SATS) before paying
-#   4. Pay the invoice via the configured payer backend
-#   5. Retrieve the preimage
-#   6. Access the endpoint with the L402 credential (expect 200)
+#   2. Assert WWW-Authenticate contains a Payment scheme challenge
+#   3. Parse the challenge object from protocols.Payment in the 402 JSON body
+#   4. Assert the challenge contains a non-empty digest field
+#   5. Enforce a spend cap (MAX_INVOICE_SATS) before paying
+#   6. Decode the request field and extract the BOLT11 invoice
+#   7. Pay the invoice via the configured payer backend
+#   8. Retrieve the preimage
+#   9. Build the MPP credential and retry the endpoint (expect 200)
+#  10. Validate the Payment-Receipt response header
 #
-# Prerequisites: curl, jq, python3
+# Prerequisites: curl, jq, base64, python3
 # When dual-protocol headers are present (L402 + MPP), this script selects
-# the L402 challenge. Use run-mpp-smoke-test.sh for MPP testing.
+# the Payment challenge. Use run-smoke-test.sh for L402 testing.
 #
 set -euo pipefail
 
@@ -64,6 +70,44 @@ lnd_text_preimage() {
 FAILURES=0
 
 # ---------------------------------------------------------------------------
+# Portable base64url helpers
+# ---------------------------------------------------------------------------
+# Detect which base64 decode flag works (GNU: -d, BSD/macOS: -D)
+B64_DECODE_FLAG=""
+_detect_base64_flag() {
+  if printf 'dGVzdA==' | base64 -d >/dev/null 2>&1; then
+    B64_DECODE_FLAG="-d"
+  elif printf 'dGVzdA==' | base64 -D >/dev/null 2>&1; then
+    B64_DECODE_FLAG="-D"
+  else
+    echo "FATAL: Neither 'base64 -d' nor 'base64 -D' works on this system" >&2
+    exit 1
+  fi
+}
+_detect_base64_flag
+
+# Decode base64url (no-pad) to raw bytes on stdout
+b64url_decode() {
+  local input="$1"
+  # Translate base64url characters to standard base64 (hyphen last for macOS tr)
+  local std
+  std=$(printf '%s' "$input" | tr '_-' '/+')
+  # Re-add padding
+  local mod=$((${#std} % 4))
+  if [ "$mod" -eq 2 ]; then
+    std="${std}=="
+  elif [ "$mod" -eq 3 ]; then
+    std="${std}="
+  fi
+  printf '%s' "$std" | base64 "$B64_DECODE_FLAG"
+}
+
+# Encode raw bytes (stdin) to base64url (no-pad) on stdout
+b64url_encode() {
+  base64 | tr -d '\n' | tr '+/' '-_' | tr -d '='
+}
+
+# ---------------------------------------------------------------------------
 # Source .env if it exists (for LNBITS_API_KEY, ports, etc.)
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,7 +141,7 @@ PAYER_LND_SERVICE="${PAYER_LND_SERVICE:-lnd-payer}"
 info "Checking prerequisites"
 
 MISSING=""
-for cmd in curl jq python3; do
+for cmd in curl jq base64 python3; do
   if ! command -v "$cmd" > /dev/null 2>&1; then
     MISSING="$MISSING $cmd"
   fi
@@ -153,25 +197,23 @@ pass "App is healthy (waited ${ELAPSED}s)"
 # ---------------------------------------------------------------------------
 info "Requesting protected endpoint (expect 402)"
 
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
+HEADER_FILE=$(mktemp)
+BODY_402=$(curl -s -D "$HEADER_FILE" "$PROTECTED_ENDPOINT")
+HTTP_STATUS=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^HTTP/" | tail -1 | awk '{print $2}')
 
 if [ "$HTTP_STATUS" = "402" ]; then
   pass "Got HTTP 402 Payment Required"
 else
+  rm -f "$HEADER_FILE"
   fail "Expected HTTP 402, got $HTTP_STATUS"
   exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Extract L402 challenge from WWW-Authenticate headers
+# Step 3: Assert WWW-Authenticate contains a Payment scheme challenge
 # ---------------------------------------------------------------------------
-info "Extracting L402 challenge from WWW-Authenticate headers"
+info "Checking for Payment scheme in WWW-Authenticate headers"
 
-# Capture both headers and body in a single request using -D for headers
-HEADER_FILE=$(mktemp)
-BODY_402=$(curl -s -D "$HEADER_FILE" "$PROTECTED_ENDPOINT")
-
-# Extract all WWW-Authenticate headers, then filter for L402 scheme
 ALL_WWW_AUTH=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^www-authenticate:" | sed 's/^[^:]*: //')
 rm -f "$HEADER_FILE"
 
@@ -180,37 +222,45 @@ if [ -z "$ALL_WWW_AUTH" ]; then
   exit 1
 fi
 
-# Select the header value starting with L402 (may coexist with Payment/MPP)
-WWW_AUTH=$(printf '%s\n' "$ALL_WWW_AUTH" | grep "^L402 " | head -1)
+# Select the header value starting with Payment (may coexist with L402)
+PAYMENT_WWW_AUTH=$(printf '%s\n' "$ALL_WWW_AUTH" | grep "^Payment " | head -1)
 
-if [ -z "$WWW_AUTH" ]; then
-  fail "No L402 challenge found in WWW-Authenticate headers"
+if [ -z "$PAYMENT_WWW_AUTH" ]; then
+  fail "No MPP challenge found in WWW-Authenticate headers"
   echo "Headers present: $ALL_WWW_AUTH"
   exit 1
 fi
-pass "L402 challenge selected from WWW-Authenticate headers"
-
-MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
-INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
-
-if [ -n "$MACAROON" ]; then
-  pass "Macaroon extracted (${#MACAROON} chars)"
-else
-  fail "Could not extract macaroon from L402 challenge"
-  echo "Header value: $WWW_AUTH"
-  exit 1
-fi
-
-if [ -n "$INVOICE" ]; then
-  pass "Invoice extracted (${#INVOICE} chars)"
-else
-  fail "Could not extract invoice from L402 challenge"
-  echo "Header value: $WWW_AUTH"
-  exit 1
-fi
+pass "Payment scheme found in WWW-Authenticate headers"
 
 # ---------------------------------------------------------------------------
-# Step 3b: Enforce spend cap before paying
+# Step 4: Parse the challenge object from protocols.Payment in 402 JSON body
+# ---------------------------------------------------------------------------
+info "Extracting Payment challenge from 402 response body"
+
+CHALLENGE_JSON=$(printf '%s' "$BODY_402" | jq -c '.protocols.Payment // empty' 2>/dev/null)
+
+if [ -z "$CHALLENGE_JSON" ]; then
+  fail "No Payment protocol object in 402 response body"
+  echo "Response body: $BODY_402"
+  exit 1
+fi
+pass "Payment challenge extracted from response body"
+
+# ---------------------------------------------------------------------------
+# Step 4b: Assert the challenge contains a non-empty digest field
+# ---------------------------------------------------------------------------
+info "Checking for required digest field in challenge"
+
+DIGEST=$(printf '%s' "$CHALLENGE_JSON" | jq -r '.digest // empty' 2>/dev/null)
+
+if [ -z "$DIGEST" ]; then
+  fail "MPP challenge missing required digest field — aborting before payment"
+  exit 1
+fi
+pass "Challenge contains digest field"
+
+# ---------------------------------------------------------------------------
+# Step 4c: Enforce spend cap before paying
 # ---------------------------------------------------------------------------
 info "Checking invoice amount against spend cap (MAX_INVOICE_SATS=${MAX_INVOICE_SATS})"
 
@@ -227,10 +277,41 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 4: Pay the invoice via payer backend
+# Step 5: Decode the request field and extract the BOLT11 invoice
+# ---------------------------------------------------------------------------
+info "Decoding request field from challenge"
+
+REQUEST_B64URL=$(printf '%s' "$CHALLENGE_JSON" | jq -r '.request // empty' 2>/dev/null)
+
+if [ -z "$REQUEST_B64URL" ]; then
+  fail "No request field in MPP challenge"
+  exit 1
+fi
+
+REQUEST_JSON=$(b64url_decode "$REQUEST_B64URL" 2>/dev/null) || true
+
+if [ -z "$REQUEST_JSON" ]; then
+  fail "Invalid request field encoding"
+  exit 1
+fi
+pass "Request field decoded"
+
+INVOICE=$(printf '%s' "$REQUEST_JSON" | jq -r '.methodDetails.invoice // empty' 2>/dev/null)
+
+if [ -z "$INVOICE" ]; then
+  fail "No invoice in MPP challenge"
+  echo "Decoded request: $REQUEST_JSON"
+  exit 1
+fi
+pass "Invoice extracted (${#INVOICE} chars)"
+
+# ---------------------------------------------------------------------------
+# Step 6: Pay the invoice via payer backend
 # ---------------------------------------------------------------------------
 PREIMAGE=""
 PAYMENT_DETAILS=""
+
+PAYMENT_START_MS=$(($(date +%s) * 1000))
 
 if [ "$PAYER_BACKEND" = "lnd-cli" ]; then
   info "Paying invoice via ${PAYER_LND_SERVICE} lncli"
@@ -271,9 +352,6 @@ if ! printf '%s' "$PAYMENT_HASH" | grep -qE '^[0-9a-f]{64}$'; then
   exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# Step 5: Retrieve the preimage from payment details
-# ---------------------------------------------------------------------------
 if [ -z "$PREIMAGE" ]; then
   if [ "$PAYER_BACKEND" != "lnbits" ]; then
     fail "Could not retrieve preimage from ${PAYER_BACKEND} payment response"
@@ -281,7 +359,11 @@ if [ -z "$PREIMAGE" ]; then
     exit 1
   fi
 
+  # ---------------------------------------------------------------------------
+  # Step 7: Retrieve the preimage from payment details
+  # ---------------------------------------------------------------------------
   info "Retrieving preimage from LNbits"
+
   PAYMENT_DETAILS=$(curl -s "${LNBITS_URL}/api/v1/payments/${PAYMENT_HASH}" \
     -H "X-Api-Key: ${LNBITS_KEY}")
 
@@ -301,6 +383,7 @@ else
   exit 1
 fi
 
+# Normalize preimage to lowercase hex, exactly 64 characters
 PREIMAGE=$(printf '%s' "$PREIMAGE" | tr '[:upper:]' '[:lower:]')
 
 if ! printf '%s' "$PREIMAGE" | grep -qE '^[0-9a-f]{64}$'; then
@@ -316,13 +399,26 @@ if [ "$PREIMAGE_HASH" != "$PAYMENT_HASH" ]; then
 fi
 pass "Preimage hash matches payment_hash"
 
-# ---------------------------------------------------------------------------
-# Step 6: Access the protected endpoint with L402 credential — expect HTTP 200
-# ---------------------------------------------------------------------------
-info "Accessing protected endpoint with L402 credential (expect 200)"
+PAYMENT_END_MS=$(($(date +%s) * 1000))
+SETTLEMENT_MS=$((PAYMENT_END_MS - PAYMENT_START_MS))
 
+# ---------------------------------------------------------------------------
+# Step 8: Build MPP credential and retry with GET — expect HTTP 200
+# ---------------------------------------------------------------------------
+info "Building MPP credential and accessing protected endpoint (expect 200)"
+
+# Build credential JSON: {"challenge":<verbatim>,"payload":{"preimage":"<hex>"}}
+CREDENTIAL_JSON=$(printf '%s' "$CHALLENGE_JSON" | jq -c \
+  --arg preimage "$PREIMAGE" \
+  '{"challenge": ., "payload": {"preimage": $preimage}}')
+
+# Base64url encode (no padding, no line wrapping)
+CREDENTIAL_B64URL=$(printf '%s' "$CREDENTIAL_JSON" | b64url_encode)
+
+RESPONSE_HEADER_FILE=$(mktemp)
 RESPONSE=$(curl -s -w "\n%{http_code}" \
-  -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
+  -D "$RESPONSE_HEADER_FILE" \
+  -H "Authorization: Payment ${CREDENTIAL_B64URL}" \
   "$PROTECTED_ENDPOINT")
 
 HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -1)
@@ -331,24 +427,69 @@ BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 if [ "$HTTP_STATUS" = "200" ]; then
   pass "Got HTTP 200 OK"
 else
+  rm -f "$RESPONSE_HEADER_FILE"
   fail "Expected HTTP 200, got $HTTP_STATUS"
   echo "Response body: $BODY"
   exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Step 7: Repeat with same credential (cache hit) — expect HTTP 200
+# Step 9: Validate Payment-Receipt response header
 # ---------------------------------------------------------------------------
-info "Repeating request with same credential (cache hit, expect 200)"
+info "Validating Payment-Receipt response header"
 
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
-  "$PROTECTED_ENDPOINT")
+RECEIPT_HEADER=$(tr -d '\r' < "$RESPONSE_HEADER_FILE" | grep -i "^payment-receipt:" | sed 's/^[^:]*: //' | head -1)
+rm -f "$RESPONSE_HEADER_FILE"
 
-if [ "$HTTP_STATUS" = "200" ]; then
-  pass "Cache hit — got HTTP 200 OK"
+if [ -z "$RECEIPT_HEADER" ]; then
+  fail "No Payment-Receipt header in response"
+  exit 1
+fi
+pass "Payment-Receipt header present"
+
+# Base64url-decode and parse as JSON
+RECEIPT_JSON=$(b64url_decode "$RECEIPT_HEADER" 2>/dev/null) || true
+
+if [ -z "$RECEIPT_JSON" ]; then
+  fail "Payment-Receipt header is not parseable"
+  exit 1
+fi
+
+# Validate it is valid JSON
+if ! printf '%s' "$RECEIPT_JSON" | jq . >/dev/null 2>&1; then
+  fail "Payment-Receipt header is not parseable"
+  exit 1
+fi
+pass "Payment-Receipt header decoded as valid JSON"
+
+# Verify required wire-format fields
+RECEIPT_REQUIRED_FIELDS="status challenge_id method amount_sats timestamp protocol_scheme"
+for field in $RECEIPT_REQUIRED_FIELDS; do
+  FIELD_VALUE=$(printf '%s' "$RECEIPT_JSON" | jq -r ".$field // empty" 2>/dev/null)
+  if [ -z "$FIELD_VALUE" ]; then
+    fail "Payment-Receipt missing required field: $field"
+    echo "Receipt JSON: $RECEIPT_JSON"
+    exit 1
+  fi
+done
+pass "Payment-Receipt contains all required wire-format fields"
+
+# Assert status == "success" and protocol_scheme == "Payment"
+RECEIPT_STATUS=$(printf '%s' "$RECEIPT_JSON" | jq -r '.status')
+RECEIPT_SCHEME=$(printf '%s' "$RECEIPT_JSON" | jq -r '.protocol_scheme')
+
+if [ "$RECEIPT_STATUS" = "success" ]; then
+  pass "Payment-Receipt status is 'success'"
 else
-  fail "Expected HTTP 200 on cache hit, got $HTTP_STATUS"
+  fail "Payment-Receipt status is '$RECEIPT_STATUS', expected 'success'"
+  exit 1
+fi
+
+if [ "$RECEIPT_SCHEME" = "Payment" ]; then
+  pass "Payment-Receipt protocol_scheme is 'Payment'"
+else
+  fail "Payment-Receipt protocol_scheme is '$RECEIPT_SCHEME', expected 'Payment'"
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -357,6 +498,9 @@ fi
 echo ""
 if [ "$FAILURES" -eq 0 ]; then
   printf -- "${GREEN}${BOLD}ALL CHECKS PASSED${RESET}\n"
+  # Machine-readable JSON summary to stdout
+  printf '{"protocol":"mpp","endpoint":"%s","payment_hash":"%s","settlement_ms":%d,"status":200,"receipt_present":true}\n' \
+    "$PROTECTED_ENDPOINT" "$PAYMENT_HASH" "$SETTLEMENT_MS"
   exit 0
 else
   printf -- "${RED}${BOLD}${FAILURES} CHECK(S) FAILED${RESET}\n"
