@@ -11,6 +11,7 @@ All commands assume you are in the `integration-tests/` directory unless otherwi
 ## Table of Contents
 
 - [Quick Smoke Test](#quick-smoke-test) -- 5-command zero-to-verified flow
+- [Local Stack Diagrams](#local-stack-diagrams) -- service topology and protocol flow
 - [Manual Local Walkthrough](#manual-local-walkthrough) -- run infra locally and step through L402 and MPP by hand
 
 1. [Happy Path (LND)](#1-happy-path-lnd)
@@ -81,6 +82,98 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 
 ---
 
+## Local Stack Diagrams
+
+These diagrams describe the two-node LNbits-over-LND stack used by the quick smoke test and the manual walkthrough. The key detail is that LNbits creates invoices through the payee LND node, while `lnd-payer` pays those invoices over a real local Lightning channel so the client receives a usable payment preimage.
+
+### Service Topology
+
+```text
+Tester shell
+curl, jq, scripts
+      |
+      | HTTP request
+      v
+paygate-example-app ---------------> LNbits
+protected Spring Boot resource       wallet REST API
+      |                                  |
+      | create invoice                   | LND REST
+      |                                  v
+      |                              lnd payee
+      |                              node
+      |                                  ^
+      |                                  | Lightning channel
+      v                                  v
+lnd-payer ------------------------- bitcoind
+payer node       chain sync/funding  regtest chain
+
+The tester pays the invoice by running lncli against lnd-payer.
+```
+
+### L402 Challenge And Payment Proof
+
+```text
+Client / smoke script        paygate-example-app        LNbits        lnd payee        lnd-payer
+        |                            |                    |              |                |
+        | GET /api/v1/data           |                    |              |                |
+        |--------------------------->|                    |              |                |
+        |                            | Create invoice     |              |                |
+        |                            |------------------->|              |                |
+        |                            |                    | Add invoice  |                |
+        |                            |                    |------------->|                |
+        |                            |                    | invoice +    |                |
+        |                            |                    | payment_hash |                |
+        |                            |<-------------------|<-------------|                |
+        | 402 Payment Required       |                    |              |                |
+        | L402 macaroon + invoice    |                    |              |                |
+        |<---------------------------|                    |              |                |
+        | payinvoice invoice         |                    |              |                |
+        |--------------------------------------------------------------------------->|
+        |                            |                    |              | settle invoice|
+        |                            |                    |              |<---------------|
+        | payment_hash + preimage    |                    |              |                |
+        |<---------------------------------------------------------------------------|
+        | verify sha256(preimage) == payment_hash                                    |
+        |                            |                    |              |                |
+        | Authorization: L402 macaroon:preimage                                      |
+        |--------------------------->|                    |              |                |
+        |                            | verify macaroon, caveats, expiry, preimage hash|
+        | 200 protected data         |                    |              |                |
+        |<---------------------------|                    |              |                |
+```
+
+### Why The Separate Payer Node Matters
+
+```text
+Good local proof path:
+
+Invoice contains payment_hash
+        |
+        v
+Pay through lnd-payer over a real local Lightning channel
+        |
+        v
+Payment returns real preimage
+        |
+        v
+Client presents macaroon:preimage
+        |
+        v
+App checks sha256(preimage) == payment_hash
+
+Path to avoid for proof verification:
+
+Invoice contains payment_hash
+        |
+        v
+Same-wallet LNbits self-payment or FakeWallet
+        |
+        v
+No usable full-proof preimage, or hash mismatch
+```
+
+---
+
 ## Manual Local Walkthrough
 
 Use this when you want to run the local infrastructure, keep the example app up, and manually step through the payment-gated request flow. This walkthrough uses LNbits backed by the local payee LND node and pays invoices through `lnd-payer`, so the payment returns a real preimage and the proof can be checked end to end.
@@ -106,6 +199,36 @@ APP_URL="http://localhost:${APP_PORT:-18080}"
 LNBITS_URL="http://localhost:${LNBITS_PORT:-15000}"
 PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
 HEALTH_ENDPOINT="$APP_URL/api/v1/health"
+```
+
+The manual flow follows this shape:
+
+```text
+Start regtest Bitcoin and both LND nodes
+        |
+        v
+Open payer channel to payee LND
+        |
+        v
+Start LNbits and create wallet API key
+        |
+        v
+Start paygate-example-app
+        |
+        v
+Unauthenticated request returns 402 challenge
+        |
+        v
+Pay invoice through lnd-payer
+        |
+        v
+Check sha256(preimage) equals payment_hash
+        |
+        v
+Retry with L402 macaroon:preimage
+        |
+        v
+Protected endpoint returns 200
 ```
 
 ### 1. Start Bitcoin and Both LND Nodes
@@ -273,6 +396,30 @@ echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
 ### 7. Manually Test the MPP Flow
 
 MPP uses the same invoice payment proof, but the challenge and credential are encoded differently. The app returns a `Payment` challenge in the JSON body, and the client returns a base64url-encoded credential in `Authorization: Payment ...`.
+
+```text
+Client                    paygate-example-app          LNbits / LND          lnd-payer
+  |                              |                          |                    |
+  | GET protected endpoint       |                          |                    |
+  |----------------------------->|                          |                    |
+  |                              | Create invoice           |                    |
+  |                              |------------------------->|                    |
+  |                              | Invoice + payment_hash   |                    |
+  |                              |<-------------------------|                    |
+  | 402 with protocols.Payment   |                          |                    |
+  |<-----------------------------|                          |                    |
+  | Decode request and extract invoice                      |                    |
+  | payinvoice invoice           |                          |                    |
+  |--------------------------------------------------------------------------->|
+  | payment_hash + preimage      |                          |                    |
+  |<---------------------------------------------------------------------------|
+  | Build base64url Payment credential                                         |
+  | Authorization: Payment credential |                          |             |
+  |----------------------------->|                          |                    |
+  |                              | Verify challenge binding and preimage proof  |
+  | 200 + Payment-Receipt        |                          |                    |
+  |<-----------------------------|                          |                    |
+```
 
 **Where:** run from `integration-tests/` in a shell with `APP_URL`, `PROTECTED_ENDPOINT`, and `HEALTH_ENDPOINT` set.
 
