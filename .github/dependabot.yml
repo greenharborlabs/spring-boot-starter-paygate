@@ -7,7 +7,12 @@ updates:
       interval: weekly
       day: monday
     target-branch: main
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-and-patch:
+        update-types:
+          - minor
+          - patch
     labels:
       - dependencies
 
@@ -17,7 +22,12 @@ updates:
       interval: weekly
       day: monday
     target-branch: main
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      github-actions-minor-and-patch:
+        update-types:
+          - minor
+          - patch
     labels:
       - dependencies
       - github-actions
