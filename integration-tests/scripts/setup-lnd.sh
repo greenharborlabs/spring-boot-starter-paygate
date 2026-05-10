@@ -14,7 +14,15 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
-MAX_ATTEMPTS=60
+COMPOSE_WAIT_TIMEOUT_SECONDS="${COMPOSE_WAIT_TIMEOUT_SECONDS:-300}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-60}"
+
+echo "==> Starting bitcoind and LND with $COMPOSE_FILE..."
+if docker compose up --help | grep -q -- '--wait'; then
+  docker compose -f "$COMPOSE_FILE" up -d --wait --wait-timeout "$COMPOSE_WAIT_TIMEOUT_SECONDS" bitcoind lnd
+else
+  docker compose -f "$COMPOSE_FILE" up -d bitcoind lnd
+fi
 
 echo "==> Waiting for bitcoind to be healthy..."
 ATTEMPT=0
@@ -56,6 +64,12 @@ echo "    101 blocks mined."
 echo "==> Checking LND wallet balance..."
 docker compose -f "$COMPOSE_FILE" exec -T lnd \
   lncli --network=regtest walletbalance
+
+echo "==> Making LND TLS cert and admin macaroon readable by the example app..."
+docker compose -f "$COMPOSE_FILE" exec -T lnd sh -c '
+  chmod o+rx /root/.lnd /root/.lnd/data /root/.lnd/data/chain /root/.lnd/data/chain/bitcoin /root/.lnd/data/chain/bitcoin/regtest
+  chmod o+r /root/.lnd/tls.cert /root/.lnd/data/chain/bitcoin/regtest/admin.macaroon
+'
 
 echo ""
 echo "==> Setup complete."

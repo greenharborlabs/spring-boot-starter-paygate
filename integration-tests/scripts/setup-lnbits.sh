@@ -22,13 +22,24 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-lnbits.yml}"
+COMPOSE_WAIT_TIMEOUT_SECONDS="${COMPOSE_WAIT_TIMEOUT_SECONDS:-300}"
 LNBITS_PORT="${LNBITS_PORT:-15000}"
 LNBITS_URL="${LNBITS_URL:-http://localhost:${LNBITS_PORT}}"
 LNBITS_SETUP_USERNAME="${LNBITS_SETUP_USERNAME:-paygate-admin}"
 LNBITS_SETUP_PASSWORD="${LNBITS_SETUP_PASSWORD:-paygate-test-password}"
 
+echo "==> Ensuring LNbits service is started..."
+if docker compose up --help 2>/dev/null | grep -q -- "--wait"; then
+  docker compose -f "$COMPOSE_FILE" up -d --wait \
+    --wait-timeout "$COMPOSE_WAIT_TIMEOUT_SECONDS" \
+    lnbits
+else
+  docker compose -f "$COMPOSE_FILE" up -d lnbits
+  echo "    Docker Compose does not support --wait; falling back to HTTP health checks."
+fi
+
 echo "==> Waiting for LNbits to be healthy at $LNBITS_URL ..."
-MAX_ATTEMPTS=60
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-120}"
 ATTEMPT=0
 until curl -sf "${LNBITS_URL}/api/v1/health" > /dev/null 2>&1; do
   ATTEMPT=$((ATTEMPT + 1))
@@ -127,4 +138,4 @@ fi
 echo ""
 echo "==> Setup complete."
 echo "    Restart the example app to pick up the new API key:"
-echo "      docker compose -f $COMPOSE_FILE up -d paygate-example-app"
+echo "      COMPOSE_FILE=$COMPOSE_FILE bash scripts/start-example-app.sh"

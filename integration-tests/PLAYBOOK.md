@@ -13,6 +13,8 @@ All commands assume you are in the `integration-tests/` directory unless otherwi
 - [Quick Smoke Test](#quick-smoke-test) -- 5-command zero-to-verified flow
 - [Local Stack Diagrams](#local-stack-diagrams) -- service topology and protocol flow
 - [Manual Local Walkthrough](#manual-local-walkthrough) -- run infra locally and step through L402 and MPP by hand
+- [What setup-lnd-channel.sh Does](#what-setup-lnd-channelsh-does) -- line-by-line role of the two-node channel bootstrap
+- [What setup-lnbits.sh Does](#what-setup-lnbitssh-does) -- line-by-line role of the LNbits wallet bootstrap
 
 1. [Happy Path (LND)](#1-happy-path-lnd)
 2. [Happy Path (LNbits)](#2-happy-path-lnbits)
@@ -39,21 +41,19 @@ Docker Engine 24+, Docker Compose v2, `curl`, and `jq` must be installed.
 **1. Start bitcoind + both LND nodes, then open a payer channel:**
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 ```
 
 **2. Start LNbits, bootstrap a wallet, and write the API key to `.env`:**
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 ```
 
 This waits for LNbits to become healthy, creates a test wallet, and stores `LNBITS_API_KEY` in `.env`. After it finishes, restart the example app so it picks up the key:
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 ```
 
 **3. Run the automated smoke test:**
@@ -236,60 +236,139 @@ Protected endpoint returns 200
 **Where:** run from `integration-tests/`.
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 ```
 
 **What happens:**
-- Docker starts a private regtest Bitcoin node, a payee LND node, and a payer LND node.
-- `setup-lnd-channel.sh` waits for all services, mines spendable regtest coins to `lnd-payer`, connects it to `lnd`, opens a channel, and waits for the channel to become active.
+- `setup-lnd-channel.sh` starts `bitcoind`, `lnd`, and `lnd-payer`, waits for Docker health checks when supported by Docker Compose, then performs command-level readiness checks.
+- The script mines spendable regtest coins to `lnd-payer`, connects it to `lnd`, opens a channel, and waits for the channel to become active.
 - No real Bitcoin or Lightning funds are used.
 
 **Why this is required:** LNbits creates invoices on the payee LND node. A separate payer node must settle those invoices over a real Lightning channel so the payer receives the actual preimage for `sha256(preimage) == payment_hash`. Paying from a wallet in the same local LNbits instance can be treated as an internal payment and may not produce a usable proof preimage.
 
 **How to verify:** the setup script should end with `Setup complete`, print payer/payee channel balances, and show active channels on both nodes.
 
+### What `setup-lnd-channel.sh` Does
+
+`integration-tests/scripts/setup-lnd-channel.sh` bootstraps the regtest Lightning channel used by the LNbits-over-LND smoke tests. It starts the required Docker Compose services if needed, waits for them to become healthy when Docker Compose supports `--wait`, then prepares a real local payment path from `lnd-payer` to `lnd`.
+
+| Step | What the script does | Why it matters |
+| --- | --- | --- |
+| 1 | Uses `COMPOSE_FILE`, defaulting to `docker-compose-lnbits-lnd.yml`. | Targets the LNbits-over-LND stack rather than the FakeWallet or single-LND stacks. |
+| 2 | Checks that `jq` is installed. | The script parses `lncli` JSON output for block heights and channel state. |
+| 3 | Starts `bitcoind`, `lnd`, and `lnd-payer` with Docker Compose, using `up -d --wait` when available. | Prevents the setup from racing ahead before containers are healthy. |
+| 4 | Waits for `bitcoind`, `lnd`, and `lnd-payer` to answer commands. | Adds command-level readiness checks after Docker health checks. |
+| 5 | Waits for both LND nodes to catch up to the current regtest block height. | LND cannot reliably fund wallets or open channels until it has synced to `bitcoind`. |
+| 6 | Creates a new address on `lnd-payer` and mines 101 blocks to it. | Gives the payer spendable regtest coins; 101 blocks mature coinbase outputs. |
+| 7 | Reads the identity public keys for `lnd` and `lnd-payer`. | These pubkeys identify the Lightning peers and are needed for `connect`, `openchannel`, and channel checks. |
+| 8 | Connects `lnd-payer` to `lnd` at `${PAYEE_PUBKEY}@lnd:9735`. | Establishes the peer connection before opening a channel. |
+| 9 | Checks whether an active payer-to-payee channel already exists. | Makes the script safe to rerun without opening duplicate channels. |
+| 10 | Opens a channel from `lnd-payer` to `lnd` when needed. | Creates the Lightning route used to pay invoices created by LNbits on the payee node. |
+| 11 | Mines confirmation blocks and waits until the channel is active on both nodes. | Confirms the funding transaction and ensures both nodes can use the channel. |
+| 12 | Prints wallet and channel balances. | Gives a quick sanity check that the payer has funds and both nodes see the channel. |
+
+The default channel capacity is `1000000` sats, controlled by `CHANNEL_CAPACITY_SATS`. The default number of confirmation blocks is `6`, controlled by `CHANNEL_CONFIRMATION_BLOCKS`. The Docker health wait timeout defaults to `300` seconds via `COMPOSE_WAIT_TIMEOUT_SECONDS`, and command-level waits default to `180` attempts via `MAX_ATTEMPTS`. The service names can also be overridden with `PAYEE_LND_SERVICE` and `PAYER_LND_SERVICE`.
+
+If the script fails, read the last `ERROR:` message first. The most common causes are missing `jq`, Docker services not running, LND not catching up to `bitcoind`, or a channel that never becomes active. You can inspect the same state manually with:
+
+```bash
+docker compose -f docker-compose-lnbits-lnd.yml exec -T bitcoind \
+  bitcoin-cli -regtest -rpcuser=devuser -rpcpassword=devpass getblockcount
+
+docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
+  lncli --network=regtest getinfo
+
+docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
+  lncli --network=regtest listchannels
+```
+
 ### 2. Start LNbits and Create a Wallet Key
 
 **Where:** run from `integration-tests/`.
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 ```
 
 **What happens:**
-- LNbits starts with `LndRestWallet`, using LND's REST endpoint, TLS cert, and admin macaroon from the shared Docker volume.
-- `setup-lnbits.sh` initializes LNbits first-install state if needed, logs in, creates a wallet, and writes `LNBITS_API_KEY` to `.env`.
+- `setup-lnbits.sh` starts LNbits with `LndRestWallet`, using LND's REST endpoint, TLS cert, and admin macaroon from the shared Docker volume.
+- The script waits for Docker health checks when supported by Docker Compose, then waits for the LNbits HTTP health endpoint.
+- It initializes LNbits first-install state if needed, logs in, creates a wallet, and writes `LNBITS_API_KEY` to `.env`.
 - That API key is the wallet admin key used by the example app configuration. Local proof smoke tests pay via `lnd-payer`, not via this LNbits wallet.
 
 **Why this is required:** the example app talks to LNbits to create invoices. It needs a wallet admin key so invoice creation succeeds.
 
 **How to verify:** `.env` contains `LNBITS_API_KEY=...`, and `curl http://localhost:15000/api/v1/health` returns successfully.
 
+### What `setup-lnbits.sh` Does
+
+`integration-tests/scripts/setup-lnbits.sh` bootstraps LNbits for the local integration stack. It starts the LNbits Docker Compose service if needed, waits for LNbits, performs first-install setup when the instance is fresh, creates a wallet, extracts that wallet's Admin API key, and writes it to `integration-tests/.env` as `LNBITS_API_KEY`.
+
+| Step | What the script does | Why it matters |
+| --- | --- | --- |
+| 1 | Locates `integration-tests/.env` and sources it if it exists. | Reuses local overrides such as `LNBITS_PORT`, `LNBITS_URL`, or an existing API key. |
+| 2 | Defaults `COMPOSE_FILE` to `docker-compose-lnbits.yml`, `LNBITS_PORT` to `15000`, and `LNBITS_URL` to `http://localhost:15000`. | Lets the same script work for the fast FakeWallet stack and the LNbits-over-LND stack when `COMPOSE_FILE=docker-compose-lnbits-lnd.yml` is passed. |
+| 3 | Starts the `lnbits` service with Docker Compose, using `up -d --wait` when available. | Prevents the script from racing ahead before the container is healthy. |
+| 4 | Waits for `${LNBITS_URL}/api/v1/health` to return successfully. | Adds an HTTP-level readiness check before initialization. |
+| 5 | Calls `PUT /api/v1/auth/first_install` with a local setup username and password. | Initializes LNbits on a fresh volume so API login and wallet creation can work. |
+| 6 | Treats `200` as initialized, `401` as already initialized, and `404`/`405` as first-install endpoint unavailable. | Handles multiple LNbits versions and reruns without failing unnecessarily. |
+| 7 | Attempts to log in with `POST /api/v1/auth`. | Newer LNbits flows require a bearer token before creating an account wallet. |
+| 8 | Creates a wallet using `POST /api/v1/account` when login succeeded, otherwise falls back to `POST /api/v1/wallet`. | Supports both authenticated and older unauthenticated wallet creation APIs. |
+| 9 | Parses `adminkey` from the wallet response. | This key is what the example app uses to ask LNbits to create invoices. |
+| 10 | Updates or appends `LNBITS_API_KEY=<adminkey>` in `integration-tests/.env`. | Makes the key available to Docker Compose and the example app after restart. |
+| 11 | Prints a reminder to restart `paygate-example-app`. | The app reads `LNBITS_API_KEY` at startup, so it will not see the new key until restarted. |
+
+The default setup credentials are local-only test values: `LNBITS_SETUP_USERNAME=paygate-admin` and `LNBITS_SETUP_PASSWORD=paygate-test-password`. Override them only if your LNbits volume was initialized with different credentials. The Docker health wait timeout defaults to `300` seconds via `COMPOSE_WAIT_TIMEOUT_SECONDS`, and the HTTP health wait defaults to `120` attempts via `MAX_ATTEMPTS`.
+
+The script starts LNbits if needed and creates the wallet key, but it does **not** restart the example app after changing `.env`. Run:
+
+```bash
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
+```
+
+If the script fails, check the printed HTTP status and LNbits logs:
+
+```bash
+docker compose -f docker-compose-lnbits-lnd.yml logs --no-log-prefix lnbits
+curl -s http://localhost:15000/api/v1/health
+grep '^LNBITS_API_KEY=' .env
+```
+
 ### 3. Start the Example App
 
 **Where:** run from `integration-tests/`.
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 ```
 
 **What happens:**
 - The app starts with `PAYGATE_BACKEND=lnbits`.
+- `scripts/start-example-app.sh` removes any stale `paygate-example-app` container before starting it. The playbook uses several Compose files with the same project and service names; removing the old container prevents a previous LND-only run from keeping `PAYGATE_BACKEND=lnd`.
 - Inside Docker, the app reaches LNbits at `http://lnbits:5000`.
 - On your host, you reach the app at `http://localhost:18080` unless you changed `APP_PORT`.
 
 Wait for the app:
 
 ```bash
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
-echo "App is ready."
+# Load APP_PORT from .env if present, define URLs for this shell, then wait.
+set -a
+[ -f .env ] && . ./.env
+set +a
+
+APP_URL="http://localhost:${APP_PORT:-18080}"
+PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
+HEALTH_ENDPOINT="$APP_URL/api/v1/health"
+
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/wait-for-app.sh
 ```
 
 **Why this is required:** the app is the protected resource server. It issues payment challenges and validates the macaroon plus preimage credential after payment.
 
 **How to verify:** the wait loop prints `App is ready`, or a direct request to `http://localhost:18080/api/v1/health` returns `200`.
+
+Use `scripts/wait-for-app.sh` instead of an unbounded `until curl ...` loop. It defines the endpoint from `.env`, times out, and prints container status plus app logs if the app never becomes healthy.
 
 ### 4. Request the Protected Endpoint
 
@@ -299,10 +378,12 @@ echo "App is ready."
 HEADER_FILE=$(mktemp)
 BODY_402=$(curl -s -D "$HEADER_FILE" "$PROTECTED_ENDPOINT")
 HTTP_STATUS=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^HTTP/" | tail -1 | awk '{print $2}')
+HEADERS=$(tr -d '\r' < "$HEADER_FILE")
+rm -f "$HEADER_FILE"
 
 echo "HTTP status: $HTTP_STATUS"
 echo "$BODY_402" | jq .
-tr -d '\r' < "$HEADER_FILE" | grep -i "^www-authenticate:"
+printf '%s\n' "$HEADERS" | grep -i "^www-authenticate:"
 ```
 
 **What happens:**
@@ -317,8 +398,10 @@ tr -d '\r' < "$HEADER_FILE" | grep -i "^www-authenticate:"
 Extract the L402 values:
 
 ```bash
-WWW_AUTH=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^www-authenticate:" | sed 's/^[^:]*: //' | grep "^L402 " | head -1)
-rm -f "$HEADER_FILE"
+WWW_AUTH=$(printf '%s\n' "$HEADERS" \
+  | grep -i "^www-authenticate:[[:space:]]*L402 " \
+  | sed 's/^[^:]*:[[:space:]]*//' \
+  | head -1)
 
 MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
 INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
@@ -329,27 +412,33 @@ echo "Invoice chars: ${#INVOICE}"
 
 **How to verify:** both lengths are non-zero. The invoice should look like a regtest BOLT11 invoice beginning with `lnbcrt`.
 
+Do not run `rm -f "$HEADER_FILE"` before extracting the headers unless you have already saved them into `HEADERS`. If you see `no such file or directory: /var/folders/.../tmp...`, the temporary header file was already deleted or belongs to an earlier shell command. Re-run the full request block above to recreate `HEADERS`, then run the extraction block.
+
 ### 5. Pay the Invoice Through lnd-payer
 
-**Where:** run from `integration-tests/`.
+**Where:** run from `integration-tests/`, in the same shell where `INVOICE` and `MACAROON` were set by step 4.
+
+Pay the invoice with the helper script and import the resulting `PAYMENT_HASH` and `PREIMAGE` variables into your current shell:
 
 ```bash
-PAY_RESULT=$(docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
-  lncli --network=regtest payinvoice --force "$INVOICE")
+eval "$(COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/pay-lnd-payer-invoice.sh "$INVOICE")"
 
-printf '%s\n' "$PAY_RESULT"
-PAYMENT_HASH=$(printf '%s' "$PAY_RESULT" | grep -ioE 'Payment hash:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
-PREIMAGE=$(printf '%s' "$PAY_RESULT" | grep -ioE 'preimage:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
+echo "PAYMENT_HASH=$PAYMENT_HASH"
+echo "PREIMAGE=$PREIMAGE"
 ```
 
 **What happens:**
-- `lnd-payer` pays the invoice created by LNbits on the payee LND node.
-- LND settles the invoice and reveals the Lightning payment preimage.
-- The payment hash is `sha256(preimage)` and is also embedded in the Paygate macaroon identifier.
+- `scripts/pay-lnd-payer-invoice.sh` checks that `INVOICE` is non-empty.
+- It runs `lncli decodepayreq` inside `lnd-payer` to extract the payment hash before payment.
+- It pays the invoice through `lnd-payer`.
+- It runs `trackpayment` for the final payment status and preimage, even if `payinvoice` itself printed no parseable output.
+- It prints `PAYMENT_HASH=...` and `PREIMAGE=...` on stdout, and the `eval` imports them into your current shell.
 
 **Why this is required:** the preimage is the payment proof. Paygate does not trust LNbits payment status alone; it verifies that the preimage hashes to the payment hash committed into the macaroon.
 
-**How to verify:** the `lncli` output includes `Payment status: SUCCEEDED`, `PAYMENT_HASH` is 64 lowercase hex characters, and `PREIMAGE` is 64 lowercase hex characters.
+**How to verify:** the output includes `Payment status: SUCCEEDED`, `PAYMENT_HASH` is 64 lowercase hex characters, and `PREIMAGE` is 64 lowercase hex characters.
+
+If you see `rpc error: code = AlreadyExists desc = invoice is already paid`, that invoice was already settled. Lightning invoices are single-use for this walkthrough. Go back to [Request the Protected Endpoint](#4-request-the-protected-endpoint), get a fresh 402 challenge, extract the new `INVOICE`, and pay that new invoice once.
 
 Verify the proof before using it:
 
@@ -472,11 +561,8 @@ echo "Invoice chars: ${#INVOICE}"
 Pay the invoice through `lnd-payer` and verify the proof:
 
 ```bash
-PAY_RESULT=$(docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
-  lncli --network=regtest payinvoice --force "$INVOICE")
+eval "$(COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/pay-lnd-payer-invoice.sh "$INVOICE")"
 
-PAYMENT_HASH=$(printf '%s' "$PAY_RESULT" | grep -ioE 'Payment hash:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
-PREIMAGE=$(printf '%s' "$PAY_RESULT" | grep -ioE 'preimage:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
 PREIMAGE_HASH=$(python3 - "$PREIMAGE" <<'PY'
 import hashlib
 import sys
@@ -488,6 +574,8 @@ echo "payment_hash:     $PAYMENT_HASH"
 echo "sha256(preimage): $PREIMAGE_HASH"
 test "$PAYMENT_HASH" = "$PREIMAGE_HASH" && echo "Proof matches."
 ```
+
+The helper writes progress to stderr and prints only `PAYMENT_HASH=...` and `PREIMAGE=...` to stdout, so `eval` imports those variables into your current shell.
 
 Build the MPP credential and retry the protected endpoint:
 
@@ -532,8 +620,10 @@ echo "Payment-Receipt chars: ${#RECEIPT_HEADER}"
 The app and infrastructure are still running, so you can keep calling endpoints or inspect logs:
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml logs -f paygate-example-app
+docker compose -f docker-compose-lnbits-lnd.yml logs --no-log-prefix -f paygate-example-app
 ```
+
+Use `--no-log-prefix` for easier reading. Without it, Docker Compose prefixes every line with the service name, for example `paygate-example-app-1  |`, which pushes Spring's logger context to the right.
 
 When finished:
 
@@ -557,7 +647,7 @@ HEALTH_ENDPOINT="$APP_URL/api/v1/health"
 
 ### Reusable LNbits Proof Helper
 
-Use this helper in any scenario that needs a fresh valid L402 credential from the two-node LNbits-over-LND stack. It requests a protected resource, extracts the L402 macaroon and invoice, pays the invoice through `lnd-payer`, extracts the payment hash and preimage from `lncli`, and verifies `sha256(preimage) == payment_hash`.
+Use this helper in any scenario that needs a fresh valid L402 credential from the two-node LNbits-over-LND stack. It requests a protected resource, extracts the L402 macaroon and invoice, pays the invoice through `scripts/pay-lnd-payer-invoice.sh`, imports the payment hash and preimage, and verifies `sha256(preimage) == payment_hash`.
 
 **Where:** define this function in the same `integration-tests/` shell where `PROTECTED_ENDPOINT` is set.
 
@@ -566,7 +656,10 @@ get_lnbits_lnd_l402_credential() {
   HEADER_FILE=$(mktemp)
   BODY_402=$(curl -s -D "$HEADER_FILE" "$PROTECTED_ENDPOINT")
   HTTP_STATUS=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^HTTP/" | tail -1 | awk '{print $2}')
-  WWW_AUTH=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^www-authenticate:" | sed 's/^[^:]*: //' | grep "^L402 " | head -1)
+  WWW_AUTH=$(tr -d '\r' < "$HEADER_FILE" \
+    | grep -i "^www-authenticate:[[:space:]]*L402 " \
+    | sed 's/^[^:]*:[[:space:]]*//' \
+    | head -1)
   rm -f "$HEADER_FILE"
 
   if [ "$HTTP_STATUS" != "402" ] || [ -z "$WWW_AUTH" ]; then
@@ -578,11 +671,7 @@ get_lnbits_lnd_l402_credential() {
   MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
   INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
 
-  PAY_RESULT=$(docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
-    lncli --network=regtest payinvoice --force "$INVOICE")
-
-  PAYMENT_HASH=$(printf '%s' "$PAY_RESULT" | grep -ioE 'Payment hash:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
-  PREIMAGE=$(printf '%s' "$PAY_RESULT" | grep -ioE 'preimage:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
+  eval "$(COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/pay-lnd-payer-invoice.sh "$INVOICE")"
 
   PREIMAGE_HASH=$(python3 - "$PREIMAGE" <<'PY'
 import hashlib
@@ -600,7 +689,7 @@ PY
 }
 ```
 
-**What to remember:** the `lncli payinvoice` output format varies by LND version and image. The local image used here prints table/text output with `Payment hash:` and `preimage:` lines, so the helper parses those lines instead of assuming JSON.
+**What to remember:** the `lncli payinvoice` output format varies by LND version and image. Use `scripts/pay-lnd-payer-invoice.sh` instead of parsing `payinvoice` directly; it falls back to `trackpayment` and prints shell-safe assignments for `eval`.
 
 ---
 
@@ -611,27 +700,26 @@ Full payment flow: request protected resource, receive 402 challenge, pay the in
 ### 1.1 Start the environment
 
 ```bash
-docker compose -f docker-compose-lnd.yml up -d
-bash scripts/setup-lnd.sh
+COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/setup-lnd-channel.sh
+COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/start-example-app.sh
 ```
 
-Wait for the example app to become healthy:
-
-```bash
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
-echo "App is ready."
-```
+`scripts/setup-lnd-channel.sh` starts `bitcoind`, the payee `lnd`, and `lnd-payer`, opens a real regtest channel, and makes the payee LND TLS cert plus admin macaroon readable through the app mount. The separate `lnd-payer` node is required because LND rejects self-payments; the app-created invoice cannot be paid by the same `lnd` node that created it. Start the app after that with `scripts/start-example-app.sh`; it removes any stale app container before starting the LND-backed app.
 
 ### 1.2 Request the protected endpoint (expect 402)
 
 ```bash
-RESPONSE=$(curl -s -w "\n%{http_code}" "$PROTECTED_ENDPOINT")
-HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
-HEADERS=$(curl -sI "$PROTECTED_ENDPOINT")
+HEADER_FILE=$(mktemp)
+BODY_402=$(curl -s -D "$HEADER_FILE" "$PROTECTED_ENDPOINT")
+HTTP_STATUS=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^HTTP/" | tail -1 | awk '{print $2}')
+HEADERS=$(tr -d '\r' < "$HEADER_FILE")
+rm -f "$HEADER_FILE"
 
 echo "HTTP Status: $HTTP_STATUS"
-echo "$HEADERS" | grep -i "www-authenticate"
+printf '%s\n' "$HEADERS" | grep -i "^www-authenticate:"
 ```
+
+Use `curl -D` on the `GET` request instead of `curl -I`. In this app, `HEAD` can return a `200` response without payment challenge headers, while the protected `GET` response contains the `WWW-Authenticate` challenges.
 
 **Expected:**
 - HTTP status: `402`
@@ -643,10 +731,13 @@ echo "$HEADERS" | grep -i "www-authenticate"
 ### 1.3 Extract the macaroon and invoice
 
 ```bash
-WWW_AUTH=$(curl -sI "$PROTECTED_ENDPOINT" | grep -i "www-authenticate" | sed 's/^[^:]*: //')
+WWW_AUTH=$(printf '%s\n' "$HEADERS" \
+  | grep -i "^www-authenticate:[[:space:]]*L402 " \
+  | sed 's/^[^:]*:[[:space:]]*//' \
+  | head -1)
 
-MACAROON=$(echo "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
-INVOICE=$(echo "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
+MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
+INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
 
 echo "Macaroon: ${MACAROON:0:40}..."
 echo "Invoice:  ${INVOICE:0:40}..."
@@ -659,27 +750,30 @@ Verify both values are non-empty:
 [ -n "$INVOICE" ] && echo "OK: invoice captured" || echo "FAIL: invoice is empty"
 ```
 
-### 1.4 Pay the invoice via lncli
+### 1.4 Pay the invoice via lnd-payer
 
 ```bash
-PAY_RESULT=$(docker compose -f docker-compose-lnd.yml exec -T lnd \
-  lncli --network=regtest payinvoice --force "$INVOICE" 2>&1)
+eval "$(COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/pay-lnd-payer-invoice.sh "$INVOICE")"
 
-echo "$PAY_RESULT"
+echo "PAYMENT_HASH=$PAYMENT_HASH"
+echo "PREIMAGE=$PREIMAGE"
 ```
 
-**Expected:** Output indicates the payment succeeded. Depending on the LND image, this may be JSON with a `payment_preimage` field or table/text output with a `Payment status: SUCCEEDED, preimage: ...` line.
+**Expected:** the helper prints `Payment status: SUCCEEDED` in its progress output, then imports `PAYMENT_HASH` and `PREIMAGE` into your shell.
 
-### 1.5 Extract the preimage
+Do not pay this invoice with `docker compose -f docker-compose-lnd.yml exec lnd lncli ...`. The payee `lnd` created the invoice, and LND returns `self-payments not allowed` when the same node tries to pay it.
+
+### 1.5 Verify the preimage
 
 ```bash
-PREIMAGE=$(printf '%s' "$PAY_RESULT" | jq -r '.payment_preimage // .preimage // empty' 2>/dev/null || true)
-if [ -z "$PREIMAGE" ]; then
-  PREIMAGE=$(printf '%s' "$PAY_RESULT" | grep -ioE 'preimage:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
-fi
+PREIMAGE_HASH=$(python3 - "$PREIMAGE" <<'PY'
+import hashlib
+import sys
+print(hashlib.sha256(bytes.fromhex(sys.argv[1])).hexdigest())
+PY
+)
 
-echo "Preimage: $PREIMAGE"
-[ -n "$PREIMAGE" ] && echo "OK: preimage captured" || echo "FAIL: preimage is empty"
+[ "$PREIMAGE_HASH" = "$PAYMENT_HASH" ] && echo "OK: preimage matches payment hash" || echo "FAIL: preimage mismatch"
 ```
 
 ### 1.6 Access the protected endpoint with L402 credential (expect 200)
@@ -689,8 +783,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
   "$PROTECTED_ENDPOINT")
 
-HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -n 1)
+BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
 echo "HTTP Status: $HTTP_STATUS"
 echo "Body: $BODY"
@@ -707,7 +801,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
   "$PROTECTED_ENDPOINT")
 
-HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
+HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -n 1)
 echo "HTTP Status (cache hit): $HTTP_STATUS"
 ```
 
@@ -716,7 +810,7 @@ echo "HTTP Status (cache hit): $HTTP_STATUS"
 ### 1.8 Tear down
 
 ```bash
-docker compose -f docker-compose-lnd.yml down -v
+docker compose -f docker-compose-lnd-two-node.yml down -v
 ```
 
 ### Troubleshooting
@@ -724,9 +818,9 @@ docker compose -f docker-compose-lnd.yml down -v
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | 402 but empty `WWW-Authenticate` | App misconfigured | Check `PAYGATE_ENABLED=true` in container env |
-| `payinvoice` hangs | LND has no funds | Re-run `scripts/setup-lnd.sh` to mine blocks |
-| `payinvoice` returns `FAILED` | Invoice expired or already paid | Get a fresh 402 challenge and retry |
-| `payinvoice` output is not JSON | LND image prints table/text output | Parse `Payment hash:` and `preimage:` lines, as shown above |
+| `payinvoice` hangs | Payer LND has no funds or no route | Re-run `COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/setup-lnd-channel.sh` |
+| `payinvoice` returns `FAILED` or `self-payments not allowed` | Wrong payer, expired invoice, or already-paid invoice | Pay through `scripts/pay-lnd-payer-invoice.sh`; get a fresh 402 challenge if needed |
+| `payinvoice` output is not JSON | LND image prints table/text output | Use `scripts/pay-lnd-payer-invoice.sh`; it falls back to `trackpayment` |
 | 401 with valid credential | Preimage/macaroon mismatch | Ensure you extracted both from the same 402 response |
 
 ---
@@ -738,27 +832,35 @@ Same flow as scenario 1, but the app creates invoices through LNbits. Use `docke
 ### 2.1 Start the environment
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
-echo "App is ready."
+APP_URL="http://localhost:${APP_PORT:-18080}"
+PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
+HEALTH_ENDPOINT="$APP_URL/api/v1/health"
 ```
+
+`scripts/start-example-app.sh` already waits for the health endpoint. Keep `PROTECTED_ENDPOINT` defined in the same shell for the remaining steps.
 
 ### 2.2 Request the protected endpoint (expect 402)
 
 ```bash
-WWW_AUTH=$(curl -sI "$PROTECTED_ENDPOINT" | grep -i "www-authenticate" | sed 's/^[^:]*: //')
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
+HEADER_FILE=$(mktemp)
+BODY_402=$(curl -s -D "$HEADER_FILE" "$PROTECTED_ENDPOINT")
+HTTP_STATUS=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^HTTP/" | tail -1 | awk '{print $2}')
+HEADERS=$(tr -d '\r' < "$HEADER_FILE")
+rm -f "$HEADER_FILE"
+
+WWW_AUTH=$(printf '%s\n' "$HEADERS" \
+  | grep -i "^www-authenticate:[[:space:]]*L402 " \
+  | sed 's/^[^:]*:[[:space:]]*//' \
+  | head -1)
+
+MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
+INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
 
 echo "HTTP Status: $HTTP_STATUS"
-
-MACAROON=$(echo "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
-INVOICE=$(echo "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
-
 echo "Macaroon: ${MACAROON:0:40}..."
 echo "Invoice:  ${INVOICE:0:40}..."
 ```
@@ -768,15 +870,13 @@ echo "Invoice:  ${INVOICE:0:40}..."
 ### 2.3 Pay the invoice via lnd-payer
 
 ```bash
-PAY_RESULT=$(docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
-  lncli --network=regtest payinvoice --force "$INVOICE")
+eval "$(COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/pay-lnd-payer-invoice.sh "$INVOICE")"
 
-printf '%s\n' "$PAY_RESULT"
-PAYMENT_HASH=$(printf '%s' "$PAY_RESULT" | grep -ioE 'Payment hash:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
-PREIMAGE=$(printf '%s' "$PAY_RESULT" | grep -ioE 'preimage:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
+echo "PAYMENT_HASH=$PAYMENT_HASH"
+echo "PREIMAGE=$PREIMAGE"
 ```
 
-**Expected:** `lncli` prints `Payment status: SUCCEEDED` plus `Payment hash:` and `preimage:` lines.
+**Expected:** the helper prints `Payment status: SUCCEEDED` in its progress output, then imports `PAYMENT_HASH` and `PREIMAGE` into your shell.
 
 ### 2.4 Verify the preimage
 
@@ -802,8 +902,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
   "$PROTECTED_ENDPOINT")
 
-HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -n 1)
+BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
 echo "HTTP Status: $HTTP_STATUS"
 echo "Body: $BODY"
@@ -851,19 +951,16 @@ This test uses LNbits backed by a payee LND node and pays through `lnd-payer` so
 
 ```bash
 # Start bitcoind + both LND nodes, then open a payer channel
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 
 # Start LNbits and create an API key
-docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 
 # Start the app with a 30-second credential timeout
 PAYGATE_DEFAULT_TIMEOUT_SECONDS=30 \
-  docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
+  COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
-echo "App is ready."
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/wait-for-app.sh
 ```
 
 **Alternative:** If the timeout is not configurable via environment variable at the container level, modify the `@L402Protected` annotation or set it in `application.yml` and rebuild:
@@ -931,12 +1028,9 @@ Verify that the server rejects tampered macaroons and mismatched preimages.
 
 ```bash
 # Quick setup (if not already running)
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 
 # Get a valid credential. Define get_lnbits_lnd_l402_credential from
 # "Reusable LNbits Proof Helper" first if this is a new shell.
@@ -1058,10 +1152,8 @@ Verify that the server returns `503 Service Unavailable` when the Lightning back
 ### 5.1 Start the LND environment
 
 ```bash
-docker compose -f docker-compose-lnd.yml up -d
-bash scripts/setup-lnd.sh
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
-echo "App is ready."
+COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/setup-lnd-channel.sh
+COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/start-example-app.sh
 ```
 
 ### 5.2 Confirm normal operation
@@ -1087,8 +1179,8 @@ sleep 10
 
 ```bash
 RESPONSE=$(curl -s -w "\n%{http_code}" "$PROTECTED_ENDPOINT")
-HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -n 1)
+BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
 echo "HTTP Status: $HTTP_STATUS"
 echo "Body: $BODY"
@@ -1126,7 +1218,7 @@ echo "After LND recovery: $HTTP_STATUS"
 ### 5.7 Tear down
 
 ```bash
-docker compose -f docker-compose-lnd.yml down -v
+docker compose -f docker-compose-lnd-two-node.yml down -v
 ```
 
 ### Troubleshooting
@@ -1150,8 +1242,7 @@ Use the fast LNbits FakeWallet stack because this scenario only exercises unauth
 ```bash
 docker compose -f docker-compose-lnbits.yml up -d
 bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits.yml up -d paygate-example-app
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
+COMPOSE_FILE=docker-compose-lnbits.yml bash scripts/start-example-app.sh
 ```
 
 ### 6.2 Send a burst of unauthenticated requests
@@ -1222,12 +1313,9 @@ spring.security.enabled: true
 Use either LND or two-node LNbits-over-LND. This example uses LNbits backed by the payee LND node and pays through `lnd-payer` so the credential flow has a real proof preimage:
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 ```
 
 ### 7.3 Verify unauthenticated request returns 402
@@ -1249,8 +1337,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
   "$PROTECTED_ENDPOINT")
 
-HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -n 1)
+BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
 echo "HTTP Status: $HTTP_STATUS"
 echo "Body: $BODY"
@@ -1275,7 +1363,7 @@ echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
 **Expected:** If available, the response should show an `L402AuthenticationToken` with the token ID as the principal. If no such endpoint exists, verify via application logs:
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml logs paygate-example-app | grep -i "L402Auth"
+docker compose -f docker-compose-lnbits-lnd.yml logs --no-log-prefix paygate-example-app | grep -i "L402Auth"
 ```
 
 ### 7.6 Verify that non-L402 auth headers are handled correctly
@@ -1320,12 +1408,9 @@ Verify that the server accepts the legacy `LSAT` scheme in the `Authorization` h
 Use two-node LNbits-over-LND so the LSAT credential carries a real proof preimage:
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
-until curl -sf "$HEALTH_ENDPOINT" > /dev/null 2>&1; do sleep 2; done
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 
 # Obtain a credential. Define get_lnbits_lnd_l402_credential from
 # "Reusable LNbits Proof Helper" first if this is a new shell.
@@ -1558,7 +1643,7 @@ eval $(curl -sI "$PROTECTED_ENDPOINT" | grep -i "www-authenticate" | \
 
 ```bash
 PAY=$(docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
-  lncli --network=regtest payinvoice --force "$INVOICE") && \
+  lncli --network=regtest payinvoice --force "$INVOICE" 2>&1) && \
 PAYMENT_HASH=$(printf '%s' "$PAY" | grep -ioE 'Payment hash:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]') && \
 PREIMAGE=$(printf '%s' "$PAY" | grep -ioE 'preimage:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]') && \
 echo "PAYMENT_HASH=$PAYMENT_HASH" && \
@@ -1575,19 +1660,21 @@ curl -v -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" "$PROTECTED_ENDPOINT"
 
 ```bash
 # LND stack
-docker compose -f docker-compose-lnd.yml logs -f paygate-example-app
+docker compose -f docker-compose-lnd.yml logs --no-log-prefix -f paygate-example-app
 
 # LNbits FakeWallet stack
-docker compose -f docker-compose-lnbits.yml logs -f paygate-example-app
+docker compose -f docker-compose-lnbits.yml logs --no-log-prefix -f paygate-example-app
 
 # LNbits-over-LND stack
-docker compose -f docker-compose-lnbits-lnd.yml logs -f paygate-example-app
+docker compose -f docker-compose-lnbits-lnd.yml logs --no-log-prefix -f paygate-example-app
 ```
+
+If your Docker Compose version does not support `--no-log-prefix`, omit that flag. The logs still work, but each line will include the service prefix.
 
 ### Reset everything
 
 ```bash
-docker compose -f docker-compose-lnd.yml down -v
+docker compose -f docker-compose-lnd-two-node.yml down -v
 docker compose -f docker-compose-lnbits.yml down -v
 docker compose -f docker-compose-lnbits-lnd.yml down -v
 docker volume prune -f
