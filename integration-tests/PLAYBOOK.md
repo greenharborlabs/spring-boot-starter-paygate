@@ -1490,109 +1490,36 @@ Verify byte-level compatibility between the Java macaroon implementation and the
 
 ### 9.1 Setup
 
-Clone or use the Go interop test utility. A minimal Go program is needed:
+Start the full local LNbits-over-LND stack, build the Go helper, and verify a Java-minted macaroon with Go:
 
 ```bash
-mkdir -p /tmp/paygate-go-interop
-cat > /tmp/paygate-go-interop/main.go << 'GOEOF'
-package main
-
-import (
-	"encoding/base64"
-	"fmt"
-	"os"
-
-	"gopkg.in/macaroon.v2"
-)
-
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <command> [args...]\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Commands:\n")
-		fmt.Fprintf(os.Stderr, "  verify <base64-macaroon>   Deserialize and print macaroon fields\n")
-		fmt.Fprintf(os.Stderr, "  mint <hex-root-key> <id>   Mint a macaroon and print base64\n")
-		os.Exit(1)
-	}
-
-	switch os.Args[1] {
-	case "verify":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Missing macaroon argument")
-			os.Exit(1)
-		}
-		raw, err := base64.StdEncoding.DecodeString(os.Args[2])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Base64 decode error: %v\n", err)
-			os.Exit(1)
-		}
-		var m macaroon.Macaroon
-		if err := m.UnmarshalBinary(raw); err != nil {
-			fmt.Fprintf(os.Stderr, "Macaroon unmarshal error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Location: %s\n", m.Location())
-		fmt.Printf("ID (hex): %x\n", m.Id())
-		fmt.Printf("ID (len): %d\n", len(m.Id()))
-		fmt.Printf("Signature (hex): %x\n", m.Signature())
-		fmt.Printf("Caveats: %d\n", len(m.Caveats()))
-		for i, c := range m.Caveats() {
-			fmt.Printf("  Caveat[%d]: %s\n", i, string(c.Id))
-		}
-		fmt.Println("OK: Go successfully deserialized Java macaroon")
-
-	case "mint":
-		if len(os.Args) < 4 {
-			fmt.Fprintln(os.Stderr, "Usage: mint <hex-root-key> <identifier>")
-			os.Exit(1)
-		}
-		// Simplified: use raw bytes for root key
-		rootKey := []byte(os.Args[2])
-		id := []byte(os.Args[3])
-		m, err := macaroon.New(rootKey, id, "l402", macaroon.V2)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Mint error: %v\n", err)
-			os.Exit(1)
-		}
-		raw, err := m.MarshalBinary()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Marshal error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Print(base64.StdEncoding.EncodeToString(raw))
-
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
-		os.Exit(1)
-	}
-}
-GOEOF
-
-cat > /tmp/paygate-go-interop/go.mod << 'MODEOF'
-module paygate-go-interop
-
-go 1.21
-
-require gopkg.in/macaroon.v2 v2.1.0
-MODEOF
-
-cd /tmp/paygate-go-interop && go mod tidy && go build -o paygate-go-interop .
+bash scripts/run-go-interop-test.sh
 ```
+
+This starts `bitcoind`, `lnd-payee`, `lnd-payer`, LNbits, and `paygate-example-app`, writes the helper source to `/tmp/paygate-go-interop`, builds `/tmp/paygate-go-interop/paygate-go-interop`, requests a fresh 402 challenge, and verifies the Java macaroon with Go.
+By default it resets Docker volumes so stale regtest chain state cannot break setup. To reuse an existing clean stack, run `RESET_STACK=false bash scripts/run-go-interop-test.sh`.
+If an earlier failed paste left your terminal at a `heredoc>` prompt, press `Ctrl-C` to return to the normal shell prompt before running the script.
 
 ### 9.2 Java-to-Go: Mint in Java, verify in Go
 
-Start the environment and obtain a macaroon from a 402 challenge:
+If the stack is already running and you only want to rerun the Java-to-Go check manually, obtain a macaroon from a 402 challenge:
 
 ```bash
-# Ensure the app is running (LNbits or LND)
+APP_PORT="${APP_PORT:-18080}"
+APP_URL="${APP_URL:-http://localhost:${APP_PORT}}"
+PROTECTED_ENDPOINT="${PROTECTED_ENDPOINT:-${APP_URL}/api/v1/data}"
+
 MACAROON=$(curl -sI "$PROTECTED_ENDPOINT" | \
   grep -i "www-authenticate" | \
   sed 's/^[^:]*: //' | \
   sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
 
-echo "Java macaroon: ${MACAROON:0:40}..."
-
-# Verify with Go
-/tmp/paygate-go-interop/paygate-go-interop verify "$MACAROON"
+if [ -z "$MACAROON" ]; then
+  echo "No macaroon found. Make sure the example app is running and $PROTECTED_ENDPOINT returns a 402 challenge."
+else
+  echo "Java macaroon: ${MACAROON:0:40}..."
+  /tmp/paygate-go-interop/paygate-go-interop verify "$MACAROON"
+fi
 ```
 
 **Expected:**
@@ -1602,23 +1529,19 @@ echo "Java macaroon: ${MACAROON:0:40}..."
 
 ### 9.3 Go-to-Java: Mint in Go, verify in Java
 
-This test requires access to the app's root key, which is only practical in test mode. The unit-level cross-language tests in `paygate-core` (see `src/test/resources/go-macaroon-fixtures/`) provide more rigorous coverage of this direction.
+This test requires access to the app's root key, which is only practical in test mode. The unit-level cross-language tests in `paygate-core` (see `src/test/resources/test-vectors/go-macaroon-vectors.json`) provide more rigorous coverage of this direction.
 
 For a manual smoke test:
 
 ```bash
-# Mint a simple macaroon with Go
 GO_MACAROON=$(/tmp/paygate-go-interop/paygate-go-interop mint "test-root-key" "test-identifier")
 echo "Go macaroon: ${GO_MACAROON:0:40}..."
 
-# The Java app cannot verify this directly (different root key),
-# but we can test deserialization via a dedicated test endpoint if available,
-# or via the unit test suite:
 cd /Users/mark/code/greenharborlabs/spring-boot-starter-l402
-./gradlew :paygate-core:test --tests "*MacaroonInterop*" --tests "*GoMacaroon*"
+./gradlew :paygate-core:test --tests "*GoVectorVerificationTest"
 ```
 
-**Expected:** The unit tests that cover Go fixture files pass, confirming byte-level compatibility.
+The Java app cannot verify the ad hoc Go-minted macaroon directly because it uses a different root key. `GoVectorVerificationTest` verifies the checked-in Go-generated fixture file under `paygate-core/src/test/resources/test-vectors/`, including Java deserialization of Go V2 bytes, signature chain compatibility, base64 compatibility, and 66-byte L402 identifiers.
 
 ### 9.4 Cleanup
 
@@ -1639,41 +1562,71 @@ rm -rf /tmp/paygate-go-interop
 
 ## Appendix: Quick Reference
 
-### Credential extraction one-liner
+### Credential extraction snippet
 
 ```bash
-# Get macaroon and invoice from a 402 response
-eval $(curl -sI "$PROTECTED_ENDPOINT" | grep -i "www-authenticate" | \
-  sed 's/.*macaroon="\([^"]*\)".*invoice="\([^"]*\)".*/MACAROON="\1"\nINVOICE="\2"/')
+APP_PORT="${APP_PORT:-18080}"
+APP_URL="${APP_URL:-http://localhost:${APP_PORT}}"
+PROTECTED_ENDPOINT="${PROTECTED_ENDPOINT:-${APP_URL}/api/v1/data}"
+
+WWW_AUTH=$(curl -sI "$PROTECTED_ENDPOINT" | tr -d '\r' | \
+  grep -i "^www-authenticate:[[:space:]]*L402 " | \
+  sed 's/^[^:]*:[[:space:]]*//' | \
+  head -1)
+MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
+INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
+
+if [ -z "$MACAROON" ] || [ -z "$INVOICE" ]; then
+  echo "Failed to extract macaroon or invoice from $PROTECTED_ENDPOINT"
+else
+  echo "MACAROON=${MACAROON:0:40}..."
+  echo "INVOICE=${INVOICE:0:40}..."
+fi
 ```
 
 ### Pay via lnd-payer and extract preimage
 
 ```bash
-PAY=$(docker compose -f docker-compose-lnbits-lnd.yml exec -T lnd-payer \
-  lncli --network=regtest payinvoice --force "$INVOICE" 2>&1) && \
-PAYMENT_HASH=$(printf '%s' "$PAY" | grep -ioE 'Payment hash:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]') && \
-PREIMAGE=$(printf '%s' "$PAY" | grep -ioE 'preimage:[[:space:]]*[0-9a-fA-F]{64}' | tail -1 | sed 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]') && \
-echo "PAYMENT_HASH=$PAYMENT_HASH" && \
-echo "PREIMAGE=$PREIMAGE"
+if [ -z "${INVOICE:-}" ]; then
+  echo "INVOICE is empty. Run the credential extraction snippet first."
+else
+  eval "$(COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/pay-lnd-payer-invoice.sh "$INVOICE")"
+  echo "PAYMENT_HASH=$PAYMENT_HASH"
+  echo "PREIMAGE=$PREIMAGE"
+fi
 ```
 
 ### Full L402 request
 
 ```bash
-curl -v -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" "$PROTECTED_ENDPOINT"
+APP_PORT="${APP_PORT:-18080}"
+APP_URL="${APP_URL:-http://localhost:${APP_PORT}}"
+PROTECTED_ENDPOINT="${PROTECTED_ENDPOINT:-${APP_URL}/api/v1/data}"
+
+if [ -z "${MACAROON:-}" ] || [ -z "${PREIMAGE:-}" ]; then
+  echo "MACAROON or PREIMAGE is empty. Extract the challenge and pay the invoice first."
+else
+  curl -v -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" "$PROTECTED_ENDPOINT"
+fi
 ```
 
 ### Docker log inspection
 
+LND stack:
+
 ```bash
-# LND stack
 docker compose -f docker-compose-lnd.yml logs --no-log-prefix -f paygate-example-app
+```
 
-# LNbits FakeWallet stack
+LNbits FakeWallet stack:
+
+```bash
 docker compose -f docker-compose-lnbits.yml logs --no-log-prefix -f paygate-example-app
+```
 
-# LNbits-over-LND stack
+LNbits-over-LND stack:
+
+```bash
 docker compose -f docker-compose-lnbits-lnd.yml logs --no-log-prefix -f paygate-example-app
 ```
 
@@ -1682,8 +1635,8 @@ If your Docker Compose version does not support `--no-log-prefix`, omit that fla
 ### Reset everything
 
 ```bash
-docker compose -f docker-compose-lnd-two-node.yml down -v
-docker compose -f docker-compose-lnbits.yml down -v
-docker compose -f docker-compose-lnbits-lnd.yml down -v
+docker compose -f docker-compose-lnd-two-node.yml down -v --remove-orphans
+docker compose -f docker-compose-lnbits.yml down -v --remove-orphans
+docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans
 docker volume prune -f
 ```
