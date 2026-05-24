@@ -6,11 +6,15 @@
 #   . scripts/proof-helper.sh
 #   get_lnbits_lnd_l402_credential
 
+proof_helper_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 get_lnbits_lnd_l402_credential() {
   local compose_file="${COMPOSE_FILE:-docker-compose-lnbits-lnd.yml}"
   local app_url="${APP_URL:-http://localhost:${APP_PORT:-18080}}"
   local protected_endpoint="${PROTECTED_ENDPOINT:-${app_url}/api/v1/data}"
-  local header_file body_402 http_status www_auth preimage_hash
+  local header_file body_402 http_status www_auth preimage_hash script_dir project_dir credential_env
 
   HEADER_FILE=$(mktemp)
   header_file="$HEADER_FILE"
@@ -65,5 +69,20 @@ PY
   HEALTH_ENDPOINT="${HEALTH_ENDPOINT:-${app_url}/api/v1/health}"
   export APP_URL PROTECTED_ENDPOINT HEALTH_ENDPOINT MACAROON INVOICE PAYMENT_HASH PREIMAGE
 
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  project_dir="$(dirname "$script_dir")"
+  credential_env="$project_dir/.l402-credential.env"
+  {
+    printf 'export APP_URL=%s\n' "$(proof_helper_quote "$APP_URL")"
+    printf 'export PROTECTED_ENDPOINT=%s\n' "$(proof_helper_quote "$PROTECTED_ENDPOINT")"
+    printf 'export HEALTH_ENDPOINT=%s\n' "$(proof_helper_quote "$HEALTH_ENDPOINT")"
+    printf 'export MACAROON=%s\n' "$(proof_helper_quote "$MACAROON")"
+    printf 'export INVOICE=%s\n' "$(proof_helper_quote "$INVOICE")"
+    printf 'export PAYMENT_HASH=%s\n' "$(proof_helper_quote "$PAYMENT_HASH")"
+    printf 'export PREIMAGE=%s\n' "$(proof_helper_quote "$PREIMAGE")"
+  } > "$credential_env"
+  chmod 600 "$credential_env"
+
   echo "Credential ready: macaroon=${#MACAROON} chars payment_hash=${PAYMENT_HASH:0:16}..."
+  echo "Saved credential variables to $credential_env"
 }

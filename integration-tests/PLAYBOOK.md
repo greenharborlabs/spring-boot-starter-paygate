@@ -1429,65 +1429,47 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 
 Verify that the server accepts the legacy `LSAT` scheme in the `Authorization` header, maintaining backward compatibility with older clients.
 
-### 8.1 Start any environment and obtain a valid credential
+### 8.1 Start the environment and obtain a valid credential
 
-Use two-node LNbits-over-LND so the LSAT credential carries a real proof preimage:
+Use the one-command LNbits-over-LND helper so the LSAT credential carries a real proof preimage. Run this from `integration-tests/`:
 
 ```bash
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
-
-. scripts/proof-helper.sh
-get_lnbits_lnd_l402_credential
+GENERATE_CREDENTIAL=true COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits-lnd-stack.sh
 ```
+
+With `GENERATE_CREDENTIAL=true`, the helper pays a fresh invoice and writes `MACAROON`, `PREIMAGE`, and endpoint variables to `.l402-credential.env`. The `scripts/check-l402-scheme.sh` commands below load that file automatically.
+
+The helper resets Docker volumes by default so stale regtest chain state cannot break LND channel setup. To reuse an existing clean stack, run `RESET_STACK=false GENERATE_CREDENTIAL=true COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits-lnd-stack.sh`.
 
 ### 8.2 Use the `L402` scheme (baseline)
 
 ```bash
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
-  "$PROTECTED_ENDPOINT")
-
-echo "L402 scheme: $HTTP_STATUS"
+scripts/check-l402-scheme.sh L402 "L402 baseline"
 ```
 
-**Expected:** HTTP status `200`.
+**Expected:** `PASS L402 baseline: HTTP 200`.
 
 ### 8.3 Use the legacy `LSAT` scheme
 
 ```bash
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "Authorization: LSAT ${MACAROON}:${PREIMAGE}" \
-  "$PROTECTED_ENDPOINT")
-
-echo "LSAT scheme: $HTTP_STATUS"
+scripts/check-l402-scheme.sh LSAT "LSAT legacy"
 ```
 
-**Expected:** HTTP status `200`. The server must accept both `L402` and `LSAT` prefixes.
+**Expected:** `PASS LSAT legacy: HTTP 200`. The server must accept both `L402` and `LSAT` prefixes.
 
-### 8.4 Verify case insensitivity (optional)
+### 8.4 Verify case insensitivity
 
 ```bash
-# Lowercase
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "Authorization: l402 ${MACAROON}:${PREIMAGE}" \
-  "$PROTECTED_ENDPOINT")
-echo "Lowercase l402: $HTTP_STATUS"
-
-# Mixed case
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "Authorization: Lsat ${MACAROON}:${PREIMAGE}" \
-  "$PROTECTED_ENDPOINT")
-echo "Mixed case Lsat: $HTTP_STATUS"
+scripts/check-l402-scheme.sh l402 "lowercase l402"
+scripts/check-l402-scheme.sh Lsat "mixed-case Lsat"
 ```
 
-**Expected:** Both should return `200` if the server does case-insensitive scheme matching. If the server is case-sensitive, these may return `402` -- document the actual behavior.
+**Expected:** both commands print `PASS ... HTTP 200`. Header parsing uses case-insensitive matching for both `L402` and `LSAT`.
 
 ### 8.5 Tear down
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml down -v
+docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans
 ```
 
 ### Troubleshooting
@@ -1496,6 +1478,7 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 |---------|-------------|-----|
 | 401/402 with LSAT scheme | Backward compatibility not implemented | Check header parsing logic for `LSAT` prefix support |
 | 200 with L402 but 401 with LSAT | Scheme comparison is case-sensitive and only matches `L402` | Add `LSAT` to accepted schemes |
+| `peer ... disconnected` while opening the channel | Stale LND/bitcoind volumes from an earlier regtest chain | Run `docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans`, then rerun 8.1 |
 
 ---
 
