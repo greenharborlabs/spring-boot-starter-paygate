@@ -255,7 +255,7 @@ class L402ValidatorTest {
     }
 
     @Test
-    @DisplayName("throws INVALID_MACAROON when presented macaroon signature does not match cached")
+    @DisplayName("throws INVALID_MACAROON when presented macaroon does not match cached")
     void rejectsCachedCredentialWithTamperedSignature() {
       // Pre-populate the credential store with the legitimate credential
       PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes));
@@ -282,7 +282,7 @@ class L402ValidatorTest {
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
-                assertThat(l402Ex.getMessage()).contains("signature");
+                assertThat(l402Ex.getMessage()).contains("macaroon");
                 assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
               });
     }

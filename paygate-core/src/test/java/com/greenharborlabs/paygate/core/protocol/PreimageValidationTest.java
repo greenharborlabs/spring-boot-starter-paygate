@@ -144,4 +144,36 @@ class PreimageValidationTest {
               });
     }
   }
+
+  @Nested
+  @DisplayName("cached credential")
+  class CachedCredential {
+
+    @Test
+    @DisplayName("tampered macaroon with same token and preimage returns INVALID_MACAROON")
+    void tamperedMacaroonOnCachedPathReturnsInvalidMacaroon() {
+      String validHeader = buildAuthHeader(macaroon, HEX.formatHex(preimageBytes));
+      Macaroon tamperedMacaroon =
+          new Macaroon(
+              macaroon.identifier(),
+              "https://attacker.example.com",
+              macaroon.caveats(),
+              macaroon.signature());
+      String tamperedHeader = buildAuthHeader(tamperedMacaroon, HEX.formatHex(preimageBytes));
+
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+
+      validator.validate(validHeader);
+
+      assertThatThrownBy(() -> validator.validate(tamperedHeader))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              e -> {
+                L402Exception ex = (L402Exception) e;
+                assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
+                assertThat(ex.getTokenId()).isEqualTo(tokenIdHex);
+              });
+    }
+  }
 }

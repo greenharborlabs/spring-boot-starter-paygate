@@ -10,6 +10,16 @@ proof_helper_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+proof_helper_source_path() {
+  if [ -n "${BASH_VERSION:-}" ]; then
+    printf '%s\n' "${BASH_SOURCE[0]}"
+  elif [ -n "${ZSH_VERSION:-}" ]; then
+    printf '%s\n' "${(%):-%x}"
+  else
+    printf '%s\n' "$0"
+  fi
+}
+
 get_lnbits_lnd_l402_credential() {
   local compose_file="${COMPOSE_FILE:-docker-compose-lnbits-lnd.yml}"
   local app_url="${APP_URL:-http://localhost:${APP_PORT:-18080}}"
@@ -69,7 +79,7 @@ PY
   HEALTH_ENDPOINT="${HEALTH_ENDPOINT:-${app_url}/api/v1/health}"
   export APP_URL PROTECTED_ENDPOINT HEALTH_ENDPOINT MACAROON INVOICE PAYMENT_HASH PREIMAGE
 
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  script_dir="$(cd "$(dirname "$(proof_helper_source_path)")" && pwd)"
   project_dir="$(dirname "$script_dir")"
   credential_env="$project_dir/.l402-credential.env"
   {

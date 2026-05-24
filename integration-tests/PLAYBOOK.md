@@ -673,6 +673,10 @@ Full payment flow: request protected resource, receive 402 challenge, pay the in
 ```bash
 COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/setup-lnd-channel.sh
 COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/start-example-app.sh
+
+APP_URL="http://localhost:${APP_PORT:-18080}"
+PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
+HEALTH_ENDPOINT="$APP_URL/api/v1/health"
 ```
 
 `scripts/setup-lnd-channel.sh` starts `bitcoind`, `lnd-payee`, and `lnd-payer`, opens a real regtest channel, and makes the payee LND TLS cert plus admin macaroon readable through the app mount. The separate `lnd-payer` node is required because LND rejects self-payments; the app-created invoice cannot be paid by the same payee node that created it. Start the app after that with `scripts/start-example-app.sh`; it removes any stale app container before starting the LND-backed app.
@@ -730,7 +734,7 @@ echo "PAYMENT_HASH=$PAYMENT_HASH"
 echo "PREIMAGE=$PREIMAGE"
 ```
 
-**Expected:** the helper prints `Payment status: SUCCEEDED` in its progress output, then imports `PAYMENT_HASH` and `PREIMAGE` into your shell.
+**Expected:** the helper reports a succeeded payment in its progress output, then imports `PAYMENT_HASH` and `PREIMAGE` into your shell.
 
 Do not pay this invoice with `docker compose -f docker-compose-lnd-two-node.yml exec lnd-payee lncli ...`. The payee node created the invoice, and LND returns `self-payments not allowed` when the same node tries to pay it.
 
@@ -1025,7 +1029,7 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
 echo "Tampered macaroon: $HTTP_STATUS"
 ```
 
-**Expected:** HTTP status `401` or `402`, but never `200` or `500`. The tampered credential must not grant access; depending on the servlet error path, the app may either reject it as unauthorized or return a fresh payment challenge.
+**Expected:** HTTP status `400`, `401`, or `402`, but never `200` or `500`. The tampered credential must not grant access; depending on how the tampering changes the token, the app may reject it as malformed, reject it as unauthorized, or return a fresh payment challenge.
 
 ### 4.2 Wrong preimage
 
@@ -1248,12 +1252,23 @@ for i in $(seq 1 10); do
   HEADER_FILE=$(mktemp)
   HTTP_STATUS=$(curl -s -D "$HEADER_FILE" -o /dev/null -w "%{http_code}" "${PROTECTED_ENDPOINT:-http://localhost:18080/api/v1/data}")
   if [ "$HTTP_STATUS" = "429" ]; then
-    tr -d '\r' < "$HEADER_FILE" | grep -i "^retry-after:"
+    RETRY_AFTER=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^retry-after:" || true)
     rm -f "$HEADER_FILE"
+    if [ -n "$RETRY_AFTER" ]; then
+      echo "$RETRY_AFTER"
+    else
+      echo "FAIL: 429 response did not include Retry-After"
+      return 1 2>/dev/null || exit 1
+    fi
     break
   fi
   rm -f "$HEADER_FILE"
 done
+
+if [ "${HTTP_STATUS:-}" != "429" ]; then
+  echo "FAIL: no 429 response observed"
+  return 1 2>/dev/null || exit 1
+fi
 ```
 
 **Expected:** A rate-limited response includes `Retry-After: 1`.
@@ -1371,11 +1386,15 @@ echo "Body: $BODY"
 Call the Spring Security example app's protocol info endpoint. It reads the current `PaygateAuthenticationToken` from `SecurityContextHolder`:
 
 ```bash
-RESPONSE=$(curl -s \
+RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
   "$APP_URL/api/v1/protocol-info")
 
-echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -n 1)
+BODY=$(printf '%s' "$RESPONSE" | sed '$d')
+
+echo "HTTP Status: $HTTP_STATUS"
+echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
 ```
 
 **Expected:** HTTP status `200`, `protocol` is `L402`, and `tokenId` is present:
@@ -1409,6 +1428,7 @@ echo "No auth header: $HTTP_STATUS"
 ### 7.7 Tear down
 
 ```bash
+# Press Ctrl-C in the first shell to stop the local bootRun process.
 docker compose -f docker-compose-lnbits-lnd.yml stop lnbits lnd-payee lnd-payer bitcoind
 docker compose -f docker-compose-lnbits-lnd.yml down -v
 ```
@@ -1509,10 +1529,14 @@ APP_PORT="${APP_PORT:-18080}"
 APP_URL="${APP_URL:-http://localhost:${APP_PORT}}"
 PROTECTED_ENDPOINT="${PROTECTED_ENDPOINT:-${APP_URL}/api/v1/data}"
 
-MACAROON=$(curl -sI "$PROTECTED_ENDPOINT" | \
-  grep -i "www-authenticate" | \
-  sed 's/^[^:]*: //' | \
-  sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
+HEADER_FILE=$(mktemp)
+curl -s -D "$HEADER_FILE" -o /dev/null "$PROTECTED_ENDPOINT"
+MACAROON=$(tr -d '\r' < "$HEADER_FILE" | \
+  grep -i "^www-authenticate:[[:space:]]*L402 " | \
+  sed 's/^[^:]*:[[:space:]]*//' | \
+  sed -n 's/.*macaroon="\([^"]*\)".*/\1/p' | \
+  head -1)
+rm -f "$HEADER_FILE"
 
 if [ -z "$MACAROON" ]; then
   echo "No macaroon found. Make sure the example app is running and $PROTECTED_ENDPOINT returns a 402 challenge."
@@ -1527,16 +1551,13 @@ fi
 - ID length is 66 bytes (2 version + 32 payment_hash + 32 token_id)
 - Output ends with `OK: Go successfully deserialized Java macaroon`
 
-### 9.3 Go-to-Java: Mint in Go, verify in Java
+### 9.3 Go-to-Java: Verify Go Vectors in Java
 
 This test requires access to the app's root key, which is only practical in test mode. The unit-level cross-language tests in `paygate-core` (see `src/test/resources/test-vectors/go-macaroon-vectors.json`) provide more rigorous coverage of this direction.
 
-For a manual smoke test:
+For a manual smoke test of Java's Go-vector compatibility:
 
 ```bash
-GO_MACAROON=$(/tmp/paygate-go-interop/paygate-go-interop mint "test-root-key" "test-identifier")
-echo "Go macaroon: ${GO_MACAROON:0:40}..."
-
 cd /Users/mark/code/greenharborlabs/spring-boot-starter-l402
 ./gradlew :paygate-core:test --tests "*GoVectorVerificationTest"
 ```
@@ -1569,10 +1590,13 @@ APP_PORT="${APP_PORT:-18080}"
 APP_URL="${APP_URL:-http://localhost:${APP_PORT}}"
 PROTECTED_ENDPOINT="${PROTECTED_ENDPOINT:-${APP_URL}/api/v1/data}"
 
-WWW_AUTH=$(curl -sI "$PROTECTED_ENDPOINT" | tr -d '\r' | \
+HEADER_FILE=$(mktemp)
+curl -s -D "$HEADER_FILE" -o /dev/null "$PROTECTED_ENDPOINT"
+WWW_AUTH=$(tr -d '\r' < "$HEADER_FILE" | \
   grep -i "^www-authenticate:[[:space:]]*L402 " | \
   sed 's/^[^:]*:[[:space:]]*//' | \
   head -1)
+rm -f "$HEADER_FILE"
 MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
 INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
 

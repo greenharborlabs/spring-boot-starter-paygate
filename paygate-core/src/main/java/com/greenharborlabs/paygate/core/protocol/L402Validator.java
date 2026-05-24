@@ -7,7 +7,6 @@ import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
-import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
@@ -153,7 +152,7 @@ public final class L402Validator {
    * @param cached the previously validated and cached credential
    * @param context the verification context for caveat re-evaluation
    * @return a {@link ValidationResult} with the cached credential and freshValidation=false
-   * @throws L402Exception if preimage, signature, or caveat verification fails
+   * @throws L402Exception if preimage, macaroon, or caveat verification fails
    */
   private ValidationResult verifyCachedCredential(
       L402Credential credential, L402Credential cached, L402VerificationContext context) {
@@ -167,12 +166,14 @@ public final class L402Validator {
           tokenId);
     }
 
-    // Verify the presented macaroon signature matches the cached one
-    if (!MacaroonCrypto.constantTimeEquals(
-        credential.macaroon().signature(), cached.macaroon().signature())) {
+    // Verify the presented macaroon matches the cached one. Signature-only comparison is
+    // insufficient because unsigned fields such as location can be altered without changing the
+    // signature bytes.
+    if (!credential.macaroon().equals(cached.macaroon())
+        || !credential.additionalMacaroons().equals(cached.additionalMacaroons())) {
       throw new L402Exception(
           ErrorCode.INVALID_MACAROON,
-          "Presented macaroon signature does not match cached credential",
+          "Presented macaroon does not match cached credential",
           tokenId);
     }
 
