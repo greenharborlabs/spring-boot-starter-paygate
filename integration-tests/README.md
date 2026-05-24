@@ -43,7 +43,7 @@ protected endpoint.
 cd integration-tests
 
 # Start bitcoind + both LND nodes, then fund the payer and open a channel
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
+docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd-payee lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 
 # Start LNbits (example app needs an API key)

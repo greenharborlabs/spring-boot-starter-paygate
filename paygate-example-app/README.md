@@ -147,7 +147,7 @@ See [Docker Setup Details](#docker-setup-details) for more information on the Do
 Endpoints are protected by annotating the controller method with `@PaymentRequired`:
 
 ```java
-@PaymentRequired(priceSats = 10, timeoutSeconds = 3600)
+@PaymentRequired(priceSats = 10)
 @GetMapping("/data")
 public DataResponse data() { ... }
 

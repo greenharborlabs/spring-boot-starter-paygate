@@ -37,7 +37,7 @@ public class ExampleController {
         Instant.now().toString());
   }
 
-  @PaymentRequired(priceSats = 10, timeoutSeconds = 3600)
+  @PaymentRequired(priceSats = 10)
   @GetMapping(value = "/data", produces = MediaType.APPLICATION_JSON_VALUE)
   public DataResponse data() {
     return new DataResponse("premium content", Instant.now().toString());

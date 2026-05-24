@@ -14,6 +14,10 @@ ENV_FILE="$PROJECT_DIR/.env"
 
 cd "$PROJECT_DIR"
 
+# shellcheck source=lib/docker.sh
+. "$SCRIPT_DIR/lib/docker.sh"
+require_docker_daemon
+
 if [ -f "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
   set -a

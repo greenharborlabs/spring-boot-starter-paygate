@@ -2,14 +2,14 @@
 #
 # setup-lnd-channel.sh — Bootstrap a two-node LND regtest channel.
 #
-# The payee node is named "lnd" and backs LNbits. The payer node is named
+# The payee node is named "lnd-payee" and backs LNbits. The payer node is named
 # "lnd-payer" and is used by smoke tests to pay app-created invoices with a
 # real preimage proof.
 #
 set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-lnbits-lnd.yml}"
-PAYEE_LND_SERVICE="${PAYEE_LND_SERVICE:-lnd}"
+PAYEE_LND_SERVICE="${PAYEE_LND_SERVICE:-lnd-payee}"
 PAYER_LND_SERVICE="${PAYER_LND_SERVICE:-lnd-payer}"
 CHANNEL_CAPACITY_SATS="${CHANNEL_CAPACITY_SATS:-1000000}"
 CHANNEL_CONFIRMATION_BLOCKS="${CHANNEL_CONFIRMATION_BLOCKS:-6}"
@@ -19,6 +19,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
+
+# shellcheck source=lib/docker.sh
+. "$SCRIPT_DIR/lib/docker.sh"
+require_docker_daemon
 
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-180}"
 
@@ -108,6 +112,28 @@ has_peer() {
       '.peers[]? | select(.pub_key == $remote_pubkey)' > /dev/null
 }
 
+ensure_peer_connected() {
+  local service="$1"
+  local remote_pubkey="$2"
+  local remote_host="$3"
+  local label="$4"
+
+  echo "==> Ensuring ${service} is connected to ${label}..."
+  local attempt=0
+  until has_peer "$service" "$remote_pubkey"; do
+    attempt=$((attempt + 1))
+    compose_exec "$service" lncli --network=regtest connect \
+      "${remote_pubkey}@${remote_host}:9735" --timeout 5s > /dev/null 2>&1 || true
+    if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+      echo "ERROR: Could not connect ${service} to ${label} after ${MAX_ATTEMPTS} attempts."
+      compose_exec "$service" lncli --network=regtest listpeers || true
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "    ${service} is connected to ${label}."
+}
+
 wait_for_active_channel() {
   local service="$1"
   local label="$2"
@@ -168,41 +194,25 @@ fi
 if has_active_channel "$PAYER_LND_SERVICE" "$PAYEE_PUBKEY"; then
   echo "==> Active channel already exists."
 else
-  echo "==> Connecting ${PAYER_LND_SERVICE} to ${PAYEE_LND_SERVICE}..."
-  if has_peer "$PAYER_LND_SERVICE" "$PAYEE_PUBKEY"; then
-    echo "    Peer already connected."
-  else
-    ATTEMPT=0
-    until compose_exec "$PAYER_LND_SERVICE" lncli --network=regtest connect "${PAYEE_PUBKEY}@${PAYEE_LND_SERVICE}:9735" --timeout 5s > /dev/null 2>&1; do
-      ATTEMPT=$((ATTEMPT + 1))
-      if has_peer "$PAYER_LND_SERVICE" "$PAYEE_PUBKEY"; then
-        echo "    Peer connected."
-        break
-      fi
-      if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
-        echo "ERROR: Could not connect ${PAYER_LND_SERVICE} to ${PAYEE_LND_SERVICE} after ${MAX_ATTEMPTS} attempts."
-        compose_exec "$PAYER_LND_SERVICE" lncli --network=regtest listpeers || true
-        exit 1
-      fi
-      sleep 2
-    done
-    if has_peer "$PAYER_LND_SERVICE" "$PAYEE_PUBKEY"; then
-      echo "    Connected."
-    fi
-  fi
+  ensure_peer_connected "$PAYER_LND_SERVICE" "$PAYEE_PUBKEY" "$PAYEE_LND_SERVICE" "$PAYEE_LND_SERVICE"
 
   echo "==> Opening ${CHANNEL_CAPACITY_SATS} sat channel from ${PAYER_LND_SERVICE} to ${PAYEE_LND_SERVICE}..."
   ATTEMPT=0
   until compose_exec "$PAYER_LND_SERVICE" lncli --network=regtest openchannel \
       --node_key="$PAYEE_PUBKEY" \
-      --local_amt="$CHANNEL_CAPACITY_SATS"; do
+      --local_amt="$CHANNEL_CAPACITY_SATS" \
+      --conf_target=6; do
     ATTEMPT=$((ATTEMPT + 1))
     if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
       echo "ERROR: Could not open channel after ${MAX_ATTEMPTS} attempts."
+      echo "       If the error mentions a disconnected peer and ${PAYEE_LND_SERVICE} logs show"
+      echo "       'Block height out of range', reset this regtest stack with:"
+      echo "       docker compose -f ${COMPOSE_FILE} down -v --remove-orphans"
       compose_exec "$PAYER_LND_SERVICE" lncli --network=regtest walletbalance || true
       compose_exec "$PAYER_LND_SERVICE" lncli --network=regtest listpeers || true
       exit 1
     fi
+    ensure_peer_connected "$PAYER_LND_SERVICE" "$PAYEE_PUBKEY" "$PAYEE_LND_SERVICE" "$PAYEE_LND_SERVICE"
     sleep 2
   done
 

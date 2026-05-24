@@ -14,6 +14,10 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
+# shellcheck source=lib/docker.sh
+. "$SCRIPT_DIR/lib/docker.sh"
+require_docker_daemon
+
 COMPOSE_WAIT_TIMEOUT_SECONDS="${COMPOSE_WAIT_TIMEOUT_SECONDS:-300}"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-60}"
 

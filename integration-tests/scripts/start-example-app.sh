@@ -16,6 +16,10 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
+# shellcheck source=lib/docker.sh
+. "$SCRIPT_DIR/lib/docker.sh"
+require_docker_daemon
+
 echo "==> Removing any stale paygate-example-app container..."
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 STALE_CONTAINERS=$(docker ps -aq \

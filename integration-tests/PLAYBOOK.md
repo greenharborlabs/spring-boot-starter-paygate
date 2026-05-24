@@ -4,7 +4,11 @@ Step-by-step manual test scenarios for the L402 Spring Boot Starter. Each scenar
 
 **Prerequisites:** Docker Engine 24+, Docker Compose v2, `curl`, `jq`, `python3`, and a POSIX shell (bash/zsh). For the Go interop test, a Go 1.21+ toolchain is also required.
 
+On macOS, Docker Desktop must be running before any setup script is started. If Docker is stopped, commands fail with an error like `failed to connect to the docker API at unix:///Users/.../.docker/run/docker.sock`; start Docker Desktop, wait for it to report that the engine is running, then rerun the setup command.
+
 All commands assume you are in the `integration-tests/` directory unless otherwise noted.
+
+If you paste snippets into an interactive `zsh` session, enable comment handling first with `setopt interactivecomments`, or omit lines that start with `#`.
 
 ---
 
@@ -99,7 +103,7 @@ protected Spring Boot resource       wallet REST API
       |                                  |
       | create invoice                   | LND REST
       |                                  v
-      |                              lnd payee
+      |                              lnd-payee
       |                              node
       |                                  ^
       |                                  | Lightning channel
@@ -113,7 +117,7 @@ The tester pays the invoice by running lncli against lnd-payer.
 ### L402 Challenge And Payment Proof
 
 ```text
-Client / smoke script        paygate-example-app        LNbits        lnd payee        lnd-payer
+Client / smoke script        paygate-example-app        LNbits        lnd-payee        lnd-payer
         |                            |                    |              |                |
         | GET /api/v1/data           |                    |              |                |
         |--------------------------->|                    |              |                |
@@ -187,8 +191,8 @@ Each step below calls out:
 ### What You Will Run
 
 - `bitcoind`: local Bitcoin regtest chain used only inside Docker.
-- `lnd`: local payee Lightning node connected to that regtest chain.
-- `lnd-payer`: local payer Lightning node with a channel to `lnd`.
+- `lnd-payee`: local payee Lightning node connected to that regtest chain.
+- `lnd-payer`: local payer Lightning node with a channel to `lnd-payee`.
 - `lnbits`: REST wallet API backed by the local LND node.
 - `paygate-example-app`: Spring Boot example app protected by Paygate.
 
@@ -240,8 +244,8 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 ```
 
 **What happens:**
-- `setup-lnd-channel.sh` starts `bitcoind`, `lnd`, and `lnd-payer`, waits for Docker health checks when supported by Docker Compose, then performs command-level readiness checks.
-- The script mines spendable regtest coins to `lnd-payer`, connects it to `lnd`, opens a channel, and waits for the channel to become active.
+- `setup-lnd-channel.sh` starts `bitcoind`, `lnd-payee`, and `lnd-payer`, waits for Docker health checks when supported by Docker Compose, then performs command-level readiness checks.
+- The script mines spendable regtest coins to `lnd-payer`, connects it to `lnd-payee`, opens a channel, and waits for the channel to become active.
 - No real Bitcoin or Lightning funds are used.
 
 **Why this is required:** LNbits creates invoices on the payee LND node. A separate payer node must settle those invoices over a real Lightning channel so the payer receives the actual preimage for `sha256(preimage) == payment_hash`. Paying from a wallet in the same local LNbits instance can be treated as an internal payment and may not produce a usable proof preimage.
@@ -250,24 +254,24 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 
 ### What `setup-lnd-channel.sh` Does
 
-`integration-tests/scripts/setup-lnd-channel.sh` bootstraps the regtest Lightning channel used by the LNbits-over-LND smoke tests. It starts the required Docker Compose services if needed, waits for them to become healthy when Docker Compose supports `--wait`, then prepares a real local payment path from `lnd-payer` to `lnd`.
+`integration-tests/scripts/setup-lnd-channel.sh` bootstraps the regtest Lightning channel used by the LNbits-over-LND smoke tests. It starts the required Docker Compose services if needed, waits for them to become healthy when Docker Compose supports `--wait`, then prepares a real local payment path from `lnd-payer` to `lnd-payee`.
 
 | Step | What the script does | Why it matters |
 | --- | --- | --- |
 | 1 | Uses `COMPOSE_FILE`, defaulting to `docker-compose-lnbits-lnd.yml`. | Targets the LNbits-over-LND stack rather than the FakeWallet or single-LND stacks. |
 | 2 | Checks that `jq` is installed. | The script parses `lncli` JSON output for block heights and channel state. |
-| 3 | Starts `bitcoind`, `lnd`, and `lnd-payer` with Docker Compose, using `up -d --wait` when available. | Prevents the setup from racing ahead before containers are healthy. |
-| 4 | Waits for `bitcoind`, `lnd`, and `lnd-payer` to answer commands. | Adds command-level readiness checks after Docker health checks. |
+| 3 | Starts `bitcoind`, `lnd-payee`, and `lnd-payer` with Docker Compose, using `up -d --wait` when available. | Prevents the setup from racing ahead before containers are healthy. |
+| 4 | Waits for `bitcoind`, `lnd-payee`, and `lnd-payer` to answer commands. | Adds command-level readiness checks after Docker health checks. |
 | 5 | Waits for both LND nodes to catch up to the current regtest block height. | LND cannot reliably fund wallets or open channels until it has synced to `bitcoind`. |
 | 6 | Creates a new address on `lnd-payer` and mines 101 blocks to it. | Gives the payer spendable regtest coins; 101 blocks mature coinbase outputs. |
-| 7 | Reads the identity public keys for `lnd` and `lnd-payer`. | These pubkeys identify the Lightning peers and are needed for `connect`, `openchannel`, and channel checks. |
-| 8 | Connects `lnd-payer` to `lnd` at `${PAYEE_PUBKEY}@lnd:9735`. | Establishes the peer connection before opening a channel. |
+| 7 | Reads the identity public keys for `lnd-payee` and `lnd-payer`. | These pubkeys identify the Lightning peers and are needed for `connect`, `openchannel`, and channel checks. |
+| 8 | Connects `lnd-payer` to `lnd-payee` at `${PAYEE_PUBKEY}@lnd-payee:9735`. | Establishes the peer connection before opening a channel. |
 | 9 | Checks whether an active payer-to-payee channel already exists. | Makes the script safe to rerun without opening duplicate channels. |
-| 10 | Opens a channel from `lnd-payer` to `lnd` when needed. | Creates the Lightning route used to pay invoices created by LNbits on the payee node. |
+| 10 | Opens a channel from `lnd-payer` to `lnd-payee` when needed. | Creates the Lightning route used to pay invoices created by LNbits on the payee node. |
 | 11 | Mines confirmation blocks and waits until the channel is active on both nodes. | Confirms the funding transaction and ensures both nodes can use the channel. |
 | 12 | Prints wallet and channel balances. | Gives a quick sanity check that the payer has funds and both nodes see the channel. |
 
-The default channel capacity is `1000000` sats, controlled by `CHANNEL_CAPACITY_SATS`. The default number of confirmation blocks is `6`, controlled by `CHANNEL_CONFIRMATION_BLOCKS`. The Docker health wait timeout defaults to `300` seconds via `COMPOSE_WAIT_TIMEOUT_SECONDS`, and command-level waits default to `180` attempts via `MAX_ATTEMPTS`. The service names can also be overridden with `PAYEE_LND_SERVICE` and `PAYER_LND_SERVICE`.
+The default channel capacity is `1000000` sats, controlled by `CHANNEL_CAPACITY_SATS`. The default number of confirmation blocks is `6`, controlled by `CHANNEL_CONFIRMATION_BLOCKS`. The Docker health wait timeout defaults to `300` seconds via `COMPOSE_WAIT_TIMEOUT_SECONDS`, and command-level waits default to `180` attempts via `MAX_ATTEMPTS`. The default service names are `lnd-payee` and `lnd-payer`; they can also be overridden with `PAYEE_LND_SERVICE` and `PAYER_LND_SERVICE`.
 
 If the script fails, read the last `ERROR:` message first. The most common causes are missing `jq`, Docker services not running, LND not catching up to `bitcoind`, or a channel that never becomes active. You can inspect the same state manually with:
 
@@ -649,44 +653,11 @@ HEALTH_ENDPOINT="$APP_URL/api/v1/health"
 
 Use this helper in any scenario that needs a fresh valid L402 credential from the two-node LNbits-over-LND stack. It requests a protected resource, extracts the L402 macaroon and invoice, pays the invoice through `scripts/pay-lnd-payer-invoice.sh`, imports the payment hash and preimage, and verifies `sha256(preimage) == payment_hash`.
 
-**Where:** define this function in the same `integration-tests/` shell where `PROTECTED_ENDPOINT` is set.
+**Where:** source this function in the same `integration-tests/` shell where you run the scenario.
 
 ```bash
-get_lnbits_lnd_l402_credential() {
-  HEADER_FILE=$(mktemp)
-  BODY_402=$(curl -s -D "$HEADER_FILE" "$PROTECTED_ENDPOINT")
-  HTTP_STATUS=$(tr -d '\r' < "$HEADER_FILE" | grep -i "^HTTP/" | tail -1 | awk '{print $2}')
-  WWW_AUTH=$(tr -d '\r' < "$HEADER_FILE" \
-    | grep -i "^www-authenticate:[[:space:]]*L402 " \
-    | sed 's/^[^:]*:[[:space:]]*//' \
-    | head -1)
-  rm -f "$HEADER_FILE"
-
-  if [ "$HTTP_STATUS" != "402" ] || [ -z "$WWW_AUTH" ]; then
-    echo "Failed to obtain L402 challenge"
-    echo "$BODY_402"
-    return 1
-  fi
-
-  MACAROON=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*macaroon="\([^"]*\)".*/\1/p')
-  INVOICE=$(printf '%s' "$WWW_AUTH" | sed -n 's/.*invoice="\([^"]*\)".*/\1/p')
-
-  eval "$(COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/pay-lnd-payer-invoice.sh "$INVOICE")"
-
-  PREIMAGE_HASH=$(python3 - "$PREIMAGE" <<'PY'
-import hashlib
-import sys
-print(hashlib.sha256(bytes.fromhex(sys.argv[1])).hexdigest())
-PY
-)
-
-  if [ "$PREIMAGE_HASH" != "$PAYMENT_HASH" ]; then
-    echo "Payment proof mismatch: sha256(preimage)=$PREIMAGE_HASH payment_hash=$PAYMENT_HASH"
-    return 1
-  fi
-
-  echo "Credential ready: macaroon=${#MACAROON} chars payment_hash=${PAYMENT_HASH:0:16}..."
-}
+. scripts/proof-helper.sh
+get_lnbits_lnd_l402_credential
 ```
 
 **What to remember:** the `lncli payinvoice` output format varies by LND version and image. Use `scripts/pay-lnd-payer-invoice.sh` instead of parsing `payinvoice` directly; it falls back to `trackpayment` and prints shell-safe assignments for `eval`.
@@ -704,7 +675,7 @@ COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/setup-lnd-channel.sh
 COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/start-example-app.sh
 ```
 
-`scripts/setup-lnd-channel.sh` starts `bitcoind`, the payee `lnd`, and `lnd-payer`, opens a real regtest channel, and makes the payee LND TLS cert plus admin macaroon readable through the app mount. The separate `lnd-payer` node is required because LND rejects self-payments; the app-created invoice cannot be paid by the same `lnd` node that created it. Start the app after that with `scripts/start-example-app.sh`; it removes any stale app container before starting the LND-backed app.
+`scripts/setup-lnd-channel.sh` starts `bitcoind`, `lnd-payee`, and `lnd-payer`, opens a real regtest channel, and makes the payee LND TLS cert plus admin macaroon readable through the app mount. The separate `lnd-payer` node is required because LND rejects self-payments; the app-created invoice cannot be paid by the same payee node that created it. Start the app after that with `scripts/start-example-app.sh`; it removes any stale app container before starting the LND-backed app.
 
 ### 1.2 Request the protected endpoint (expect 402)
 
@@ -761,7 +732,7 @@ echo "PREIMAGE=$PREIMAGE"
 
 **Expected:** the helper prints `Payment status: SUCCEEDED` in its progress output, then imports `PAYMENT_HASH` and `PREIMAGE` into your shell.
 
-Do not pay this invoice with `docker compose -f docker-compose-lnd.yml exec lnd lncli ...`. The payee `lnd` created the invoice, and LND returns `self-payments not allowed` when the same node tries to pay it.
+Do not pay this invoice with `docker compose -f docker-compose-lnd-two-node.yml exec lnd-payee lncli ...`. The payee node created the invoice, and LND returns `self-payments not allowed` when the same node tries to pay it.
 
 ### 1.5 Verify the preimage
 
@@ -950,18 +921,11 @@ Verify that L402 credentials expire after the configured timeout.
 This test uses LNbits backed by a payee LND node and pays through `lnd-payer` so the credential has a real proof preimage. Override the timeout to 30 seconds:
 
 ```bash
-# Start bitcoind + both LND nodes, then open a payer channel
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-
-# Start LNbits and create an API key
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-
-# Start the app with a 30-second credential timeout
 PAYGATE_DEFAULT_TIMEOUT_SECONDS=30 \
-  COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
-
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/wait-for-app.sh
+  COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits-lnd-stack.sh
 ```
+
+This starts bitcoind, both LND nodes, the payer channel, LNbits, and the example app. It also rebuilds the example app image by default so local source changes are included. Set `BUILD_APP=false` to skip the Docker image rebuild when you only need to restart existing containers.
 
 **Alternative:** If the timeout is not configurable via environment variable at the container level, modify the `@L402Protected` annotation or set it in `application.yml` and rebuild:
 
@@ -973,8 +937,7 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/wait-for-app.sh
 ### 3.2 Obtain and pay for a credential
 
 ```bash
-# Define get_lnbits_lnd_l402_credential from "Reusable LNbits Proof Helper"
-# first if this is a new shell.
+. scripts/proof-helper.sh
 get_lnbits_lnd_l402_credential
 ```
 
@@ -1003,7 +966,7 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
 echo "After expiry: $HTTP_STATUS"
 ```
 
-**Expected:** HTTP status `401`. The response body should indicate the credential has expired.
+**Expected:** HTTP status `402`. The expired credential is rejected and the app returns a fresh payment challenge.
 
 ### 3.5 Tear down
 
@@ -1015,8 +978,9 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| Still 200 after timeout | Timeout override not applied | Verify with `docker compose exec paygate-example-app env \| grep TIMEOUT` |
-| 401 immediately | Credential validation failed | Check preimage extraction in step 3.2 |
+| `failed to connect to the docker API` | Docker Desktop / Docker Engine is not running, or `DOCKER_HOST` points at a stale socket | Start Docker, wait for `docker info` to succeed, then rerun the setup command |
+| Still 200 after timeout | Timeout override not applied, or app image was not rebuilt after changing endpoint timeout behavior | Verify with `docker compose exec paygate-example-app env \| grep TIMEOUT`, rebuild the image, then restart the app |
+| 401 immediately | Credential validation failed before the servlet challenge handler could issue a new payment challenge | Check preimage extraction in step 3.2 |
 
 ---
 
@@ -1027,13 +991,10 @@ Verify that the server rejects tampered macaroons and mismatched preimages.
 **Prerequisite:** Complete scenario 1 or 2 first to obtain a valid `$MACAROON` and `$PREIMAGE`. Or run the following to get a valid credential using LNbits backed by a payee LND node and paid by `lnd-payer`:
 
 ```bash
-# Quick setup (if not already running)
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
+# Quick full-stack setup (if not already running)
+COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits-lnd-stack.sh
 
-# Get a valid credential. Define get_lnbits_lnd_l402_credential from
-# "Reusable LNbits Proof Helper" first if this is a new shell.
+. scripts/proof-helper.sh
 get_lnbits_lnd_l402_credential
 
 # Confirm valid credential works
@@ -1064,7 +1025,7 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
 echo "Tampered macaroon: $HTTP_STATUS"
 ```
 
-**Expected:** HTTP status `401`.
+**Expected:** HTTP status `401` or `402`, but never `200` or `500`. The tampered credential must not grant access; depending on the servlet error path, the app may either reject it as unauthorized or return a fresh payment challenge.
 
 ### 4.2 Wrong preimage
 
@@ -1079,7 +1040,7 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
 echo "Wrong preimage: $HTTP_STATUS"
 ```
 
-**Expected:** HTTP status `401`.
+**Expected:** HTTP status `401` or `402`, but never `200` or `500`. The preimage must hash to the payment hash embedded in the macaroon identifier.
 
 ### 4.3 Macaroon from one token with preimage from another
 
@@ -1089,19 +1050,16 @@ Get a second credential and cross them:
 MACAROON_1="$MACAROON"
 PREIMAGE_1="$PREIMAGE"
 
-# Get a second credential and preserve it separately.
 get_lnbits_lnd_l402_credential
 MACAROON_2="$MACAROON"
 PREIMAGE_2="$PREIMAGE"
 
-# Cross them: first macaroon with second preimage
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Authorization: L402 ${MACAROON_1}:${PREIMAGE_2}" \
   "$PROTECTED_ENDPOINT")
 
 echo "Cross-token (mac1 + preimage2): $HTTP_STATUS"
 
-# And the reverse: second macaroon with first preimage
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Authorization: L402 ${MACAROON_2}:${PREIMAGE_1}" \
   "$PROTECTED_ENDPOINT")
@@ -1109,7 +1067,7 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
 echo "Cross-token (mac2 + preimage1): $HTTP_STATUS"
 ```
 
-**Expected:** Both should return HTTP status `401`. The payment hash embedded in the macaroon identifier must match `SHA256(preimage)`.
+**Expected:** Both should return HTTP status `401` or `402`, but never `200` or `500`. The payment hash embedded in the macaroon identifier must match `SHA256(preimage)`.
 
 ### 4.4 Malformed Authorization header
 
@@ -1133,7 +1091,7 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
 echo "Garbage value: $HTTP_STATUS"
 ```
 
-**Expected:** All should return `401` or `402` (not `500`). The server must never crash on malformed input.
+**Expected:** All should return `400` with `MALFORMED_HEADER`. The server must never return `200` or `500` for malformed input.
 
 ### Troubleshooting
 
@@ -1149,36 +1107,45 @@ echo "Garbage value: $HTTP_STATUS"
 
 Verify that the server returns `503 Service Unavailable` when the Lightning backend is unreachable, rather than silently allowing access.
 
-### 5.1 Start the LND environment
+### 5.1 Start the LND environment and confirm normal operation
 
 ```bash
 COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/setup-lnd-channel.sh
 COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/start-example-app.sh
-```
 
-### 5.2 Confirm normal operation
+APP_URL="http://localhost:${APP_PORT:-18080}"
+PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
+HEALTH_ENDPOINT="$APP_URL/api/v1/health"
 
-```bash
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
+COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/wait-for-app.sh
+
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${PROTECTED_ENDPOINT:-http://localhost:18080/api/v1/data}")
 echo "Before stopping LND: $HTTP_STATUS"
 ```
 
 **Expected:** HTTP status `402` (normal challenge response).
 
-### 5.3 Stop the Lightning container
+### 5.2 Pause the Lightning container
 
 ```bash
-docker compose -f docker-compose-lnd.yml stop lnd
-echo "LND container stopped."
+docker compose -f docker-compose-lnd-two-node.yml unpause lnd-payee 2>/dev/null || true
+COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/start-example-app.sh
 
-# Wait a moment for the app's health cache to expire
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
+echo "Before pausing LND: $HTTP_STATUS"
+
+docker compose -f docker-compose-lnd-two-node.yml pause lnd-payee
 sleep 10
+
+docker compose -f docker-compose-lnd-two-node.yml ps paygate-example-app lnd-payee
 ```
 
-### 5.4 Request the protected endpoint (expect 503)
+Pause `lnd-payee` instead of stopping it. Stopping the dependency can also stop `paygate-example-app`; pausing only the payee LND container keeps the app running while making the Lightning backend unavailable.
+
+### 5.3 Request the protected endpoint (expect 503)
 
 ```bash
-RESPONSE=$(curl -s -w "\n%{http_code}" "$PROTECTED_ENDPOINT")
+RESPONSE=$(curl -s --max-time 30 -w "\n%{http_code}" "${PROTECTED_ENDPOINT:-http://localhost:18080/api/v1/data}")
 HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -n 1)
 BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
@@ -1188,26 +1155,28 @@ echo "Body: $BODY"
 
 **Expected:**
 - HTTP status: `503`
+- If the status is `000`, confirm `paygate-example-app` is still `Up` in the `docker compose ps` output before debugging the application response.
 - The server must NOT return `200` (that would mean fail-open, a security vulnerability)
 - The server should NOT return `500` (unhandled exception)
 
-### 5.5 Verify the health endpoint also reflects the issue
+### 5.4 Optional liveness check
 
 ```bash
-HEALTH_RESPONSE=$(curl -s "$APP_URL/actuator/health" 2>/dev/null || curl -s "$HEALTH_ENDPOINT")
+HEALTH_RESPONSE=$(curl -sf "$APP_URL/actuator/health" 2>/dev/null || curl -s "$HEALTH_ENDPOINT")
 echo "$HEALTH_RESPONSE" | jq . 2>/dev/null || echo "$HEALTH_RESPONSE"
 ```
 
-**Expected:** Health status should indicate the Lightning backend is down.
+**Expected:** `{"status":"ok"}` is normal here. This endpoint only confirms the example app is still reachable; it does not check the Lightning backend. The fail-closed assertion for this scenario is step 5.3 returning `503`.
 
-### 5.6 Restart LND and confirm recovery
+### 5.5 Restart LND and confirm recovery
 
 ```bash
-docker compose -f docker-compose-lnd.yml start lnd
+docker compose -f docker-compose-lnd-two-node.yml unpause lnd-payee
 
-# Wait for LND to become healthy again
 echo "Waiting for LND recovery..."
 sleep 15
+
+COMPOSE_FILE=docker-compose-lnd-two-node.yml bash scripts/start-example-app.sh
 
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
 echo "After LND recovery: $HTTP_STATUS"
@@ -1215,7 +1184,7 @@ echo "After LND recovery: $HTTP_STATUS"
 
 **Expected:** HTTP status `402` (normal operation resumed).
 
-### 5.7 Tear down
+### 5.6 Tear down
 
 ```bash
 docker compose -f docker-compose-lnd-two-node.yml down -v
@@ -1240,40 +1209,62 @@ Verify that rapid unauthenticated requests trigger rate limiting (HTTP 429).
 Use the fast LNbits FakeWallet stack because this scenario only exercises unauthenticated challenge rate limits and does not need to pay an invoice:
 
 ```bash
-docker compose -f docker-compose-lnbits.yml up -d
-bash scripts/setup-lnbits.sh
+docker compose -f docker-compose-lnbits.yml down -v
+COMPOSE_FILE=docker-compose-lnbits.yml bash scripts/setup-lnbits.sh
+
+APP_URL="http://localhost:${APP_PORT:-18080}"
+PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
+HEALTH_ENDPOINT="$APP_URL/api/v1/health"
+
+PAYGATE_RATE_LIMIT_BURST_SIZE=3 \
+PAYGATE_RATE_LIMIT_REQUESTS_PER_SECOND=0.1 \
 COMPOSE_FILE=docker-compose-lnbits.yml bash scripts/start-example-app.sh
+
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
+echo "Before burst: $HTTP_STATUS"
+
+if [ "$HTTP_STATUS" != "402" ]; then
+  echo "Expected 402 before rate-limit burst; check LNbits/app logs before continuing."
+  return 1 2>/dev/null || exit 1
+fi
 ```
 
 ### 6.2 Send a burst of unauthenticated requests
 
 ```bash
-echo "Sending 50 rapid requests..."
-for i in $(seq 1 50); do
-  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
+echo "Sending 10 rapid requests..."
+for i in $(seq 1 10); do
+  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${PROTECTED_ENDPOINT:-http://localhost:18080/api/v1/data}")
   echo "Request $i: $HTTP_STATUS"
-  # No sleep -- fire as fast as possible
 done
 ```
 
-**Expected:** The first several requests return `402`. After the burst limit is exceeded, subsequent requests return `429 Too Many Requests`.
+**Expected:** The first few requests return `402`. After the burst limit is exceeded, subsequent requests return `429 Too Many Requests`.
 
 ### 6.3 Verify 429 response includes Retry-After header
 
 ```bash
-HEADERS=$(curl -sI "$PROTECTED_ENDPOINT")
-echo "$HEADERS" | grep -i "retry-after"
+for i in $(seq 1 10); do
+  HEADER_FILE=$(mktemp)
+  HTTP_STATUS=$(curl -s -D "$HEADER_FILE" -o /dev/null -w "%{http_code}" "${PROTECTED_ENDPOINT:-http://localhost:18080/api/v1/data}")
+  if [ "$HTTP_STATUS" = "429" ]; then
+    tr -d '\r' < "$HEADER_FILE" | grep -i "^retry-after:"
+    rm -f "$HEADER_FILE"
+    break
+  fi
+  rm -f "$HEADER_FILE"
+done
 ```
 
-**Expected:** If rate-limited, the response should include a `Retry-After` header indicating when the client can retry.
+**Expected:** A rate-limited response includes `Retry-After: 1`.
 
 ### 6.4 Wait and verify recovery
 
 ```bash
-echo "Waiting 10 seconds for rate limit to reset..."
-sleep 10
+echo "Waiting 12 seconds for rate limit to reset..."
+sleep 12
 
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROTECTED_ENDPOINT")
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${PROTECTED_ENDPOINT:-http://localhost:18080/api/v1/data}")
 echo "After cooldown: $HTTP_STATUS"
 ```
 
@@ -1297,25 +1288,50 @@ docker compose -f docker-compose-lnbits.yml down -v
 
 ## 7. Spring Security Integration Test
 
-Verify the L402 flow works with the `paygate-spring-security` module, confirming that the `SecurityContext` is populated with an `L402AuthenticationToken`.
+Verify the L402 flow works with the `paygate-spring-security` module, confirming that the `SecurityContext` is populated with a `PaygateAuthenticationToken`.
 
 ### 7.1 Prerequisites
 
-The example app must include the `paygate-spring-security` dependency and have Spring Security enabled. Verify the app configuration includes:
+The example app must include the `paygate-spring-security` dependency and explicitly select the Spring Security integration mode. Verify the Spring Security example app's main `application.yml` includes:
 
 ```yaml
-# In the example app's application.yml or via environment variables
-spring.security.enabled: true
+paygate:
+  enabled: true
+  security-mode: spring-security
 ```
+
+`paygate.security-mode` belongs in the main `application.yml` because it is part of the app's security architecture. Keep dev-only settings such as `paygate.test-mode: true` and local MPP secrets in `application-dev.yml`.
 
 ### 7.2 Start the environment
 
-Use either LND or two-node LNbits-over-LND. This example uses LNbits backed by the payee LND node and pays through `lnd-payer` so the credential flow has a real proof preimage:
+Use the Spring Security stack helper to start everything needed for this scenario in one go: clean LNbits-over-LND regtest state, payer/payee LND channel, LNbits wallet/API key, and the local Spring Security example app. Do not use `scripts/start-example-app.sh` for this scenario; that script starts the servlet example Docker service (`paygate-example-app`), not `paygate-example-app-spring-security`.
+
+In the first shell, run this from `integration-tests/`:
 
 ```bash
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
-COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
+bash scripts/start-spring-security-stack.sh
+```
+
+Leave that first shell running; `bootRun` owns the terminal while the app is up. The helper resets Docker volumes by default so stale regtest chain state cannot break channel setup. To reuse an existing clean stack, run `RESET_STACK=false bash scripts/start-spring-security-stack.sh`.
+
+In a second shell, define the Spring Security app endpoints and wait for the app. Run this from `integration-tests/`; if your prompt already ends in `integration-tests`, do not run `cd integration-tests` again.
+
+```bash
+APP_URL="http://localhost:${SPRING_SECURITY_APP_PORT:-8081}"
+PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
+HEALTH_ENDPOINT="$APP_URL/api/v1/health"
+export APP_URL PROTECTED_ENDPOINT HEALTH_ENDPOINT
+
+for _ in $(seq 1 60); do
+  curl -sf "$HEALTH_ENDPOINT" > /dev/null && break
+  sleep 2
+done
+
+curl -sf "$HEALTH_ENDPOINT" > /dev/null || {
+  echo "Spring Security app is not reachable at $HEALTH_ENDPOINT"
+  echo "Check the first shell for bootRun errors."
+  exit 1
+}
 ```
 
 ### 7.3 Verify unauthenticated request returns 402
@@ -1329,10 +1345,12 @@ echo "Unauthenticated: $HTTP_STATUS"
 
 ### 7.4 Obtain and use a valid L402 credential
 
-Follow the same steps as scenario 2 (LNbits happy path) to obtain `$MACAROON` and `$PREIMAGE`, then:
+Use the proof helper to obtain `$MACAROON` and `$PREIMAGE` from the Spring Security app's challenge, then present the credential:
 
 ```bash
-# (Assuming MACAROON and PREIMAGE are set from the LNbits payment flow)
+. scripts/proof-helper.sh
+get_lnbits_lnd_l402_credential
+
 RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
   "$PROTECTED_ENDPOINT")
@@ -1348,22 +1366,27 @@ echo "Body: $BODY"
 - HTTP status: `200`
 - The response confirms access was granted through Spring Security's authentication chain
 
-### 7.5 Verify SecurityContext population (via debug endpoint)
+### 7.5 Verify SecurityContext population
 
-If the example app exposes a debug/whoami endpoint that shows the current authentication principal:
+Call the Spring Security example app's protocol info endpoint. It reads the current `PaygateAuthenticationToken` from `SecurityContextHolder`:
 
 ```bash
 RESPONSE=$(curl -s \
   -H "Authorization: L402 ${MACAROON}:${PREIMAGE}" \
-  "$APP_URL/api/v1/whoami" 2>/dev/null)
+  "$APP_URL/api/v1/protocol-info")
 
 echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
 ```
 
-**Expected:** If available, the response should show an `L402AuthenticationToken` with the token ID as the principal. If no such endpoint exists, verify via application logs:
+**Expected:** HTTP status `200`, `protocol` is `L402`, and `tokenId` is present:
 
-```bash
-docker compose -f docker-compose-lnbits-lnd.yml logs --no-log-prefix paygate-example-app | grep -i "L402Auth"
+```json
+{
+  "tokenId": "...",
+  "protocol": "L402",
+  "attributes": {},
+  "timestamp": "..."
+}
 ```
 
 ### 7.6 Verify that non-L402 auth headers are handled correctly
@@ -1381,11 +1404,12 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
 echo "No auth header: $HTTP_STATUS"
 ```
 
-**Expected:** Both should return `402` (challenge) or `401` (unauthorized), not `200`.
+**Expected:** Both should return `402` (challenge) or `401` (unauthorized), not `200`. If you test `/api/v1/l402-only` with an authenticated non-L402 `Payment` credential, expect `403`.
 
 ### 7.7 Tear down
 
 ```bash
+docker compose -f docker-compose-lnbits-lnd.yml stop lnbits lnd-payee lnd-payer bitcoind
 docker compose -f docker-compose-lnbits-lnd.yml down -v
 ```
 
@@ -1393,9 +1417,11 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| 403 instead of 402 | Spring Security rejecting before L402 filter | Check filter order -- L402 filter must run before default auth |
-| 401 with valid L402 | `L402AuthenticationProvider` not registered | Verify `paygate-spring-security` is on the classpath |
-| 200 without auth | Security not enabled | Check `spring.security.enabled` and `@EnableWebSecurity` |
+| 403 instead of 402 | Authorization rule was reached with an authenticated credential that lacks the required role | Confirm which endpoint you called; `/api/v1/l402-only` requires `ROLE_L402` |
+| 401 with valid L402 | `PaygateAuthenticationProvider` not registered | Verify `paygate-spring-security` is on the classpath and `paygate.security-mode=spring-security` is active |
+| 200 without auth | Security not enabled or the endpoint is public | Check `paygate.security-mode=spring-security`, `@EnableWebSecurity`, and that you are not calling `/api/v1/health` |
+| App starts on port 18080 | You are running the servlet Docker example | Stop `paygate-example-app` or use port 8081 for `paygate-example-app-spring-security` |
+| `peer ... disconnected` while opening the channel | Stale LND/bitcoind volumes from an earlier regtest chain | Run `docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans`, then rerun section 7.2 |
 
 ---
 
@@ -1412,8 +1438,7 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 
-# Obtain a credential. Define get_lnbits_lnd_l402_credential from
-# "Reusable LNbits Proof Helper" first if this is a new shell.
+. scripts/proof-helper.sh
 get_lnbits_lnd_l402_credential
 ```
 

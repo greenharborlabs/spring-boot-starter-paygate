@@ -24,7 +24,7 @@ services:
       timeout: 5s
       retries: 30
 
-  lnd:
+  lnd-payee:
     image: lightninglabs/lnd:v0.18.4-beta
     restart: unless-stopped
     depends_on:
@@ -41,6 +41,7 @@ services:
       - --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
       - --noseedbackup
       - --tlsextradomain=lnd
+      - --tlsextradomain=lnd-payee
       - --tlsextraip=0.0.0.0
       - --rpclisten=0.0.0.0:10009
       - --restlisten=0.0.0.0:8080
@@ -50,6 +51,10 @@ services:
       - "${LND_REST_PORT:-18081}:8080"
     volumes:
       - lnd-data:/root/.lnd
+    networks:
+      default:
+        aliases:
+          - lnd
     healthcheck:
       test: ["CMD", "lncli", "--network=regtest", "getinfo"]
       interval: 5s
@@ -96,7 +101,7 @@ services:
       dockerfile: paygate-example-app/Dockerfile
     restart: unless-stopped
     depends_on:
-      lnd:
+      lnd-payee:
         condition: service_healthy
     ports:
       - "${APP_PORT:-18080}:8080"
@@ -107,6 +112,7 @@ services:
       PAYGATE_SERVICE_NAME: "example-api"
       PAYGATE_BACKEND: "lnd"
       PAYGATE_ROOT_KEY_STORE: "memory"
+      PAYGATE_DEFAULT_TIMEOUT_SECONDS: "${PAYGATE_DEFAULT_TIMEOUT_SECONDS:-3600}"
       PAYGATE_LND_HOST: "lnd"
       PAYGATE_LND_PORT: "10009"
       PAYGATE_LND_TLS_CERT_PATH: "/lnd/tls.cert"
