@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -254,11 +255,31 @@ public class PaygateAutoConfiguration {
       return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(secretBytes);
     }
 
+    @Bean(destroyMethod = "destroy")
+    @ConditionalOnMissingBean(name = "mppPreviousChallengeBindingSecret")
+    @ConditionalOnProperty(name = "paygate.protocols.mpp.previous-challenge-binding-secret")
+    com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppPreviousChallengeBindingSecret(
+        PaygateProperties properties, ProtocolStartupValidator _validator) {
+      String previousSecret =
+          properties.getProtocols().getMpp().getPreviousChallengeBindingSecret();
+      if (previousSecret == null || previousSecret.isBlank()) {
+        throw new IllegalStateException(
+            "paygate.protocols.mpp.previous-challenge-binding-secret is configured but blank. "
+                + "Set a non-blank value with at least 32 UTF-8 bytes.");
+      }
+      byte[] previousSecretBytes = previousSecret.getBytes(StandardCharsets.UTF_8);
+      return new com.greenharborlabs.paygate.api.crypto.SensitiveBytes(previousSecretBytes);
+    }
+
     @Bean
     @ConditionalOnMissingBean(name = "mppProtocol")
     @Order(2)
     PaymentProtocol mppProtocol(
-        com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret,
+        @Qualifier("mppChallengeBindingSecret")
+            com.greenharborlabs.paygate.api.crypto.SensitiveBytes mppChallengeBindingSecret,
+        @Qualifier("mppPreviousChallengeBindingSecret")
+            ObjectProvider<com.greenharborlabs.paygate.api.crypto.SensitiveBytes>
+                mppPreviousChallengeBindingSecretProvider,
         PaygateProperties properties,
         ProtocolStartupValidator _validator) {
       var mpp = properties.getProtocols().getMpp();
@@ -268,8 +289,9 @@ public class PaygateAutoConfiguration {
               mpp.getMaxStringLength(),
               mpp.getMaxKeysPerObject(),
               mpp.getMaxCredentialBytes());
+      var previousSecret = mppPreviousChallengeBindingSecretProvider.getIfAvailable();
       return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(
-          mppChallengeBindingSecret, limits);
+          mppChallengeBindingSecret, limits, previousSecret);
     }
   }
 
@@ -309,26 +331,10 @@ public class PaygateAutoConfiguration {
     var mppConfig = properties.getProtocols().getMpp();
     String mppEnabled = mppConfig.getEnabled();
     String secret = mppConfig.getChallengeBindingSecret();
-    boolean secretPresent = secret != null && !secret.isBlank();
+    String previousSecret = mppConfig.getPreviousChallengeBindingSecret();
+    boolean secretPresent = hasText(secret);
 
-    // Fail if mpp.enabled=true but no secret provided
-    if ("true".equalsIgnoreCase(mppEnabled) && !secretPresent) {
-      throw new IllegalStateException(
-          "paygate.protocols.mpp.enabled=true but paygate.protocols.mpp.challenge-binding-secret "
-              + "is not set. Provide a secret of at least 32 UTF-8 bytes.");
-    }
-
-    // Fail if secret is provided but too short
-    if (secretPresent) {
-      int byteLength = secret.getBytes(StandardCharsets.UTF_8).length;
-      if (byteLength < 32) {
-        throw new IllegalStateException(
-            "paygate.protocols.mpp.challenge-binding-secret must be at least 32 UTF-8 bytes, "
-                + "got "
-                + byteLength
-                + " bytes.");
-      }
-    }
+    validateMppSecrets(mppEnabled, secret, previousSecret);
 
     // Determine which protocols will be active based on configuration + classpath
     boolean l402OnClasspath =
@@ -348,6 +354,43 @@ public class PaygateAutoConfiguration {
 
     int count = (l402Active ? 1 : 0) + (mppActive ? 1 : 0);
     return new ProtocolStartupValidator(count);
+  }
+
+  private static void validateMppSecrets(String mppEnabled, String secret, String previousSecret) {
+    boolean secretPresent = hasText(secret);
+    boolean previousSecretPresent = hasText(previousSecret);
+
+    if ("true".equalsIgnoreCase(mppEnabled) && !secretPresent) {
+      throw new IllegalStateException(
+          "paygate.protocols.mpp.enabled=true but paygate.protocols.mpp.challenge-binding-secret "
+              + "is not set. Provide a secret of at least 32 UTF-8 bytes.");
+    }
+
+    validateSecretMinBytes("paygate.protocols.mpp.challenge-binding-secret", secret);
+
+    if (previousSecretPresent && !secretPresent) {
+      throw new IllegalStateException(
+          "paygate.protocols.mpp.previous-challenge-binding-secret requires "
+              + "paygate.protocols.mpp.challenge-binding-secret to also be set.");
+    }
+
+    validateSecretMinBytes(
+        "paygate.protocols.mpp.previous-challenge-binding-secret", previousSecret);
+  }
+
+  private static void validateSecretMinBytes(String propertyName, String secret) {
+    if (!hasText(secret)) {
+      return;
+    }
+    int byteLength = secret.getBytes(StandardCharsets.UTF_8).length;
+    if (byteLength < 32) {
+      throw new IllegalStateException(
+          propertyName + " must be at least 32 UTF-8 bytes, got " + byteLength + " bytes.");
+    }
+  }
+
+  private static boolean hasText(String value) {
+    return value != null && !value.isBlank();
   }
 
   private static boolean isMppEffectivelyEnabled(String mppEnabled, boolean secretPresent) {

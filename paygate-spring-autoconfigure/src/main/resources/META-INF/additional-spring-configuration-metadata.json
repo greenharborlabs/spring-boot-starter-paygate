@@ -184,6 +184,11 @@
       "description": "HMAC secret used to bind MPP payment challenges to specific requests. Must be at least 32 bytes. Required when MPP is enabled. Keep this value secret."
     },
     {
+      "name": "paygate.protocols.mpp.previous-challenge-binding-secret",
+      "type": "java.lang.String",
+      "description": "Optional previous HMAC secret accepted for MPP challenge verification during key rotation. Must be at least 32 bytes when set. New challenges are still signed with challenge-binding-secret."
+    },
+    {
       "name": "paygate.protocols.mpp.max-credential-bytes",
       "type": "java.lang.Integer",
       "description": "Maximum raw MPP credential length in bytes. Credentials exceeding this limit are rejected before parsing to prevent resource exhaustion.",

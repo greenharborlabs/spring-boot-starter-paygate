@@ -15,23 +15,15 @@ Step-by-step process for publishing a new release of `spring-boot-starter-paygat
 
 ## Release Steps
 
-### 1. Run the full build
+### 1. Run the full release readiness gate
 
 ```bash
-./gradlew build
+./gradlew releaseReadiness -Pintegration
 ```
 
-- [ ] All modules compile and unit tests pass
+- [ ] Build, dependency health, integration tests, and aggregate Javadocs all pass
 
-### 2. Run integration tests
-
-```bash
-./gradlew :paygate-integration-tests:test -Pintegration
-```
-
-- [ ] Integration tests pass against Lightning backends
-
-### 3. Smoke test with Docker (manual)
+### 2. Smoke test with Docker (manual)
 
 ```bash
 cd integration-tests
@@ -56,13 +48,14 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 - [ ] End-to-end flow works against LND backend
 - [ ] L402 smoke flow works against two-node LNbits-over-LND and verifies `sha256(preimage) == payment_hash`
 - [ ] MPP smoke flow works against two-node LNbits-over-LND and verifies `sha256(preimage) == payment_hash`
+- [ ] MPP key rotation verified: current secret signs new challenges, previous secret still validates in-flight credentials
 
-### 4. Update CHANGELOG.md
+### 3. Update CHANGELOG.md
 
 - [ ] Move items from `[Unreleased]` into a new version section: `[X.Y.Z] - YYYY-MM-DD`
 - [ ] Add comparison link at the bottom of the file
 
-### 5. Bump version in gradle.properties
+### 4. Bump version in gradle.properties
 
 Remove the `-SNAPSHOT` suffix:
 
@@ -75,7 +68,7 @@ version=0.1.0
 
 - [ ] Version updated
 
-### 6. Commit and tag
+### 5. Commit and tag
 
 ```bash
 git add gradle.properties CHANGELOG.md
@@ -83,7 +76,7 @@ git commit -m "Release v0.1.0"
 git tag -a v0.1.0 -m "Release v0.1.0"
 ```
 
-### 7. Push to trigger the release workflow
+### 6. Push to trigger the release workflow
 
 ```bash
 git push origin main
@@ -97,7 +90,7 @@ The `release.yml` GitHub Actions workflow will automatically:
 
 - [ ] Workflow completes successfully in GitHub Actions
 
-### 8. Verify artifacts on Maven Central
+### 7. Verify artifacts on Maven Central
 
 - [ ] All modules are present on [Maven Central](https://central.sonatype.com/):
   - `com.greenharborlabs:paygate-core`
@@ -110,7 +103,7 @@ The `release.yml` GitHub Actions workflow will automatically:
 
 Note: Maven Central indexing can take up to 30 minutes.
 
-### 9. Bump to next SNAPSHOT
+### 8. Bump to next SNAPSHOT
 
 ```bash
 # Update gradle.properties
@@ -123,7 +116,7 @@ git push origin main
 
 - [ ] Next SNAPSHOT version pushed
 
-### 10. Announce
+### 9. Announce
 
 - [ ] Create a GitHub Release from the tag (copy notes from CHANGELOG.md)
 

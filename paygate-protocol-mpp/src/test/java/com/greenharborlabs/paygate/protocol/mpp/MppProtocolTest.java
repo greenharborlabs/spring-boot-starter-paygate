@@ -29,17 +29,23 @@ class MppProtocolTest {
 
   private static final HexFormat HEX = HexFormat.of();
   private static final byte[] SECRET_BYTES = new byte[32];
+  private static final byte[] PREVIOUS_SECRET_BYTES = new byte[32];
 
   static {
     // Fill with non-zero pattern for realistic HMAC
     for (int i = 0; i < SECRET_BYTES.length; i++) {
       SECRET_BYTES[i] = (byte) (i + 1);
+      PREVIOUS_SECRET_BYTES[i] = (byte) (i + 33);
     }
   }
 
   /** Creates a fresh SensitiveBytes wrapping a clone of SECRET_BYTES (safe for repeated use). */
   private static SensitiveBytes secret() {
     return new SensitiveBytes(SECRET_BYTES.clone());
+  }
+
+  private static SensitiveBytes previousSecret() {
+    return new SensitiveBytes(PREVIOUS_SECRET_BYTES.clone());
   }
 
   private static final String REALM = "test-service";
@@ -109,15 +115,29 @@ class MppProtocolTest {
 
     @Test
     void rejectsNullLimits() {
-      assertThatThrownBy(() -> new MppProtocol(secret(), null))
+      assertThatThrownBy(() -> new MppProtocol(secret(), (MppParserLimits) null))
           .isInstanceOf(NullPointerException.class)
           .hasMessageContaining("parserLimits must not be null");
+    }
+
+    @Test
+    void rejectsShortPreviousSecret() {
+      SensitiveBytes tooShort = new SensitiveBytes(new byte[31]);
+      assertThatThrownBy(() -> new MppProtocol(secret(), MppParserLimits.defaults(), tooShort))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("previousChallengeBindingSecret must be at least 32 bytes");
     }
 
     @Test
     void acceptsCustomLimits() {
       MppParserLimits limits = new MppParserLimits(10, 16384, 64, 131_072);
       MppProtocol p = new MppProtocol(secret(), limits);
+      assertThat(p.scheme()).isEqualTo("Payment");
+    }
+
+    @Test
+    void acceptsPreviousSecretForRotation() {
+      MppProtocol p = new MppProtocol(secret(), MppParserLimits.defaults(), previousSecret());
       assertThat(p.scheme()).isEqualTo("Payment");
     }
 
@@ -639,6 +659,17 @@ class MppProtocolTest {
                 assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
               });
     }
+
+    @Test
+    void acceptsChallengeSignedWithPreviousSecretDuringRotation() {
+      MppProtocol rotationAware =
+          new MppProtocol(secret(), MppParserLimits.defaults(), previousSecret());
+      PaymentCredential credential =
+          buildValidCredentialForValidation(
+              PREIMAGE, Instant.now().plusSeconds(3600), previousSecret());
+
+      rotationAware.validate(credential, requestContextWithDigest(REQUEST_DIGEST));
+    }
   }
 
   // --- createReceipt() ---
@@ -734,13 +765,18 @@ class MppProtocolTest {
    * MppChallengeBinding to create a correct ID.
    */
   private PaymentCredential buildValidCredentialForValidation(byte[] preimage, Instant expiresAt) {
+    return buildValidCredentialForValidation(preimage, expiresAt, secret());
+  }
+
+  private PaymentCredential buildValidCredentialForValidation(
+      byte[] preimage, Instant expiresAt, SensitiveBytes signingSecret) {
     byte[] paymentHash = sha256(preimage);
     String expires = DateTimeFormatter.ISO_INSTANT.format(expiresAt);
     String requestB64 = buildRequestB64();
 
     String id =
         MppChallengeBinding.createId(
-            REALM, "lightning", "charge", requestB64, expires, REQUEST_DIGEST, null, secret());
+            REALM, "lightning", "charge", requestB64, expires, REQUEST_DIGEST, null, signingSecret);
 
     Map<String, String> echoedChallenge = new LinkedHashMap<>();
     echoedChallenge.put("id", id);

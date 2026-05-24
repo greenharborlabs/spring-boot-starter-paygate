@@ -27,7 +27,7 @@ Adding this starter transitively pulls in:
 | `paygate-core` | Macaroon V2 minting and verification, `LightningBackend` interface, credential stores, root key management |
 | `paygate-api` | Protocol abstraction API (zero external dependencies) |
 | `paygate-protocol-l402` | L402 protocol implementation |
-| `paygate-protocol-mpp` | MPP (Modern Payment Protocol) implementation |
+| `paygate-protocol-mpp` | MPP (Message Payment Protocol) implementation |
 | `paygate-spring-autoconfigure` | Spring Boot auto-configuration: `PaygateSecurityFilter`, properties binding, health indicator, Caffeine caching, Micrometer metrics |
 
 This starter does **not** include a Lightning backend module. You must add one separately -- see [Choosing a Lightning Backend](#choosing-a-lightning-backend) below.
@@ -157,6 +157,7 @@ The starter supports dual-protocol operation (L402 + MPP). Protocol behavior is 
 | `paygate.protocols.l402.enabled` | `true` | Enable or disable the L402 protocol. |
 | `paygate.protocols.mpp.enabled` | `auto` | MPP activation mode: `auto` enables MPP when a challenge-binding secret is present, `true` requires the secret (fails if missing), `false` disables MPP entirely. |
 | `paygate.protocols.mpp.challenge-binding-secret` | -- | HMAC secret for MPP challenge binding. Must be at least 32 bytes. When set, MPP challenges appear alongside L402 in 402 responses. |
+| `paygate.protocols.mpp.previous-challenge-binding-secret` | -- | Optional previous HMAC secret for key rotation. Must be at least 32 bytes when set. New challenges are still signed with `challenge-binding-secret`. |
 
 For the full property reference and auto-configuration details, see the `paygate-spring-autoconfigure` module.
 

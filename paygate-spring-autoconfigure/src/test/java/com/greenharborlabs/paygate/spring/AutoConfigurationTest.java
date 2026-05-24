@@ -339,6 +339,19 @@ class AutoConfigurationTest {
     }
 
     @Test
+    @DisplayName(
+        "MppProtocol bean created when previous challenge-binding secret is configured for rotation")
+    void mppProtocolCreatedWithPreviousSecret() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.protocols.mpp.enabled=true",
+              "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET,
+              "paygate.protocols.mpp.previous-challenge-binding-secret="
+                  + "0123456789abcdefghijklmnopqrstuvwxyz")
+          .run(context -> assertThat(context).hasBean("mppProtocol"));
+    }
+
+    @Test
     @DisplayName("MppProtocol bean NOT created when mpp.enabled=false")
     void mppProtocolNotCreatedWhenDisabled() {
       contextRunner
@@ -441,6 +454,43 @@ class AutoConfigurationTest {
                 assertThat(context.getStartupFailure())
                     .rootCause()
                     .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("at least 32 UTF-8 bytes");
+              });
+    }
+
+    @Test
+    @DisplayName("startup fails when previous secret is provided but primary secret is missing")
+    void failsWhenPreviousSecretProvidedWithoutPrimarySecret() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.protocols.mpp.previous-challenge-binding-secret="
+                  + "0123456789abcdefghijklmnopqrstuvwxyz")
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("previous-challenge-binding-secret")
+                    .hasMessageContaining("challenge-binding-secret");
+              });
+    }
+
+    @Test
+    @DisplayName("startup fails when previous secret is present but < 32 UTF-8 bytes")
+    void failsWhenPreviousSecretTooShort() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.protocols.mpp.enabled=true",
+              "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET,
+              "paygate.protocols.mpp.previous-challenge-binding-secret=short_prev!")
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("previous-challenge-binding-secret")
                     .hasMessageContaining("at least 32 UTF-8 bytes");
               });
     }

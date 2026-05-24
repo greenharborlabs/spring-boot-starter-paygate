@@ -28,25 +28,15 @@ dependencies {
     testImplementation(project(":paygate-example-app"))
     testImplementation(project(":paygate-core"))
     testImplementation(project(":paygate-api"))
-    testImplementation(project(":paygate-protocol-l402"))
-    testImplementation(project(":paygate-protocol-mpp"))
-    testImplementation(project(":paygate-spring-boot-starter"))
     testImplementation(project(":paygate-spring-autoconfigure"))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-web")
-    testImplementation("com.squareup.okhttp3:mockwebserver:${project.extra["mockWebServerVersion"]}")
 
     securityTestImplementation(project(":paygate-example-app-spring-security"))
-    securityTestImplementation(project(":paygate-core"))
-    securityTestImplementation(project(":paygate-api"))
-    securityTestImplementation(project(":paygate-protocol-l402"))
-    securityTestImplementation(project(":paygate-protocol-mpp"))
-    securityTestImplementation(project(":paygate-spring-boot-starter"))
     securityTestImplementation(project(":paygate-spring-autoconfigure"))
     securityTestImplementation("org.springframework.boot:spring-boot-starter-test")
     securityTestImplementation("org.springframework.boot:spring-boot-starter-web")
     securityTestImplementation("org.springframework.boot:spring-boot-starter-security")
-    securityTestImplementation("com.github.ben-manes.caffeine:caffeine:${project.extra["caffeineVersion"]}")
 }
 
 tasks.test {

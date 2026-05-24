@@ -541,6 +541,7 @@ public class PaygateProperties {
       private String enabled = "auto";
 
       private String challengeBindingSecret;
+      private String previousChallengeBindingSecret;
 
       private int maxCredentialBytes = 65_536;
 
@@ -564,6 +565,14 @@ public class PaygateProperties {
 
       public void setChallengeBindingSecret(String challengeBindingSecret) {
         this.challengeBindingSecret = challengeBindingSecret;
+      }
+
+      public String getPreviousChallengeBindingSecret() {
+        return previousChallengeBindingSecret;
+      }
+
+      public void setPreviousChallengeBindingSecret(String previousChallengeBindingSecret) {
+        this.previousChallengeBindingSecret = previousChallengeBindingSecret;
       }
 
       public int getMaxCredentialBytes() {

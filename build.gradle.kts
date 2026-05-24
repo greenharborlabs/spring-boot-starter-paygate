@@ -307,3 +307,23 @@ tasks.register<Javadoc>("aggregateJavadoc") {
         charSet = "UTF-8"
     }
 }
+
+tasks.register("releaseReadiness") {
+    group = "verification"
+    description = "Runs the full local release gate: build, dependency health, integration tests, and aggregate Javadoc."
+
+    val moduleBuildTasks = subprojects.map { "${it.path}:build" }
+    dependsOn(moduleBuildTasks)
+    dependsOn("buildHealth")
+    dependsOn("aggregateJavadoc")
+    dependsOn(":paygate-integration-tests:test")
+    dependsOn(":paygate-integration-tests:securityTest")
+
+    doFirst {
+        if (!providers.gradleProperty("integration").isPresent) {
+            throw GradleException(
+                "releaseReadiness requires -Pintegration so integration test suites are explicitly enabled."
+            )
+        }
+    }
+}

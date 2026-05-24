@@ -1,6 +1,6 @@
 # paygate-protocol-mpp
 
-The MPP (Modern Payment Protocol) implementation for the `spring-boot-starter-paygate` project. This is a **pure Java module with zero external dependencies** -- it depends only on `paygate-api` (which is itself JDK-only) and uses only JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.time`).
+The MPP (Message Payment Protocol) implementation for the `spring-boot-starter-paygate` project. This is a **pure Java module with zero external dependencies** -- it depends only on `paygate-api` (which is itself JDK-only) and uses only JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.time`).
 
 **KEY CONSTRAINT:** This module has **NO dependency on `paygate-core`**. It is an entirely independent protocol implementation that shares only the `paygate-api` abstraction layer with the L402 protocol module. This architectural separation ensures that MPP can evolve independently and that applications can include one or both protocol modules without pulling in unnecessary dependencies.
 

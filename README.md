@@ -72,7 +72,9 @@ Client                              Server
 
 ## What is MPP?
 
-MPP (Modern Payment Protocol) is an alternative HTTP 402 authentication protocol that uses the `Payment` authentication scheme. Unlike L402, MPP is fully stateless on the server side -- it uses HMAC-SHA256 challenge binding instead of a credential cache, making it simpler to deploy in horizontally scaled environments.
+MPP (Message Payment Protocol) is an alternative HTTP 402 authentication protocol that uses the `Payment` authentication scheme. Unlike L402, MPP is fully stateless on the server side -- it uses HMAC-SHA256 challenge binding instead of a credential cache, making it simpler to deploy in horizontally scaled environments.
+
+This implementation tracks the IETF `Payment` authentication work (`draft-ryan-httpauth-payment`) and should be treated as draft-protocol compatible behavior until an RFC is finalized.
 
 When a client requests a protected resource:
 
@@ -177,11 +179,13 @@ paygate:
     mpp:
       enabled: auto                          # auto / true / false
       challenge-binding-secret: ${MPP_SECRET}  # min 32 bytes, required when enabled
+      previous-challenge-binding-secret: ${MPP_PREVIOUS_SECRET:}  # optional rotation window
 ```
 
 - **`auto`** (default): MPP is enabled when `challenge-binding-secret` is present, disabled otherwise.
 - **`true`**: MPP is required -- startup fails if `challenge-binding-secret` is missing.
 - **`false`**: MPP is disabled regardless of whether a secret is configured.
+- **Rotation**: set `previous-challenge-binding-secret` to accept credentials signed before key rotation while new challenges are signed with `challenge-binding-secret`.
 
 The `PaymentProtocol` SPI (`paygate-api`) is the extension point. Each protocol implements `PaymentProtocol` with methods for `scheme()`, `canHandle()`, `parseCredential()`, `formatChallenge()`, `validate()`, and optionally `createReceipt()`.
 

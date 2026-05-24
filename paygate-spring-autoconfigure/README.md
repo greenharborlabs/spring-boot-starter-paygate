@@ -50,7 +50,7 @@ All beans are guarded with `@ConditionalOnMissingBean`, so you can override any 
 
 ## Dual-Protocol Auto-Configuration
 
-The auto-configuration supports two payment protocols that can run simultaneously: L402 and MPP (Modern Payment Protocol). Protocol beans are created by nested `@Configuration` classes inside `PaygateAutoConfiguration`.
+The auto-configuration supports two payment protocols that can run simultaneously: L402 and MPP (Message Payment Protocol). Protocol beans are created by nested `@Configuration` classes inside `PaygateAutoConfiguration`.
 
 ### L402ProtocolConfiguration
 
@@ -62,6 +62,7 @@ The auto-configuration supports two payment protocols that can run simultaneousl
 
 - **Condition:** `MppProtocol` class on classpath + `MppEnabledCondition` matches
 - **Bean:** `mppProtocol` (`PaymentProtocol`) -- initialized with the challenge binding secret
+- **Optional Bean:** `mppPreviousChallengeBindingSecret` -- loaded when `previous-challenge-binding-secret` is configured for key rotation
 - MPP uses HMAC-SHA256 challenge binding with base64url encoding (no padding) and RFC 8785 JCS
 
 ### MppEnabledCondition
@@ -80,7 +81,9 @@ Created unconditionally by `PaygateAutoConfiguration`. Validates at startup that
 
 1. If `paygate.protocols.mpp.enabled=true`, the `challenge-binding-secret` must be present
 2. If a secret is present, it must be at least 32 UTF-8 bytes
-3. At least one protocol must be active (when protocol JARs are on the classpath)
+3. If `previous-challenge-binding-secret` is set, `challenge-binding-secret` must also be set
+4. If `previous-challenge-binding-secret` is set, it must be at least 32 UTF-8 bytes
+5. At least one protocol must be active (when protocol JARs are on the classpath)
 
 Startup fails with `IllegalStateException` if any validation fails.
 
@@ -91,6 +94,7 @@ Startup fails with `IllegalStateException` if any validation fails.
 | `paygate.protocols.l402.enabled` | `boolean` | `true` | Enable/disable the L402 protocol |
 | `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present; `true` requires secret; `false` disables |
 | `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 UTF-8 bytes. |
+| `paygate.protocols.mpp.previous-challenge-binding-secret` | `string` | -- | Optional previous HMAC secret for key rotation. Minimum 32 UTF-8 bytes when set. New challenges are still signed with `challenge-binding-secret`. |
 
 ### Delegation Caveat Properties
 
@@ -195,6 +199,7 @@ paygate:
     mpp:
       enabled: auto
       challenge-binding-secret: ${PAYGATE_MPP_SECRET:}
+      previous-challenge-binding-secret: ${PAYGATE_MPP_PREVIOUS_SECRET:}
   lnbits:
     url: https://lnbits.example.com
     api-key: ${LNBITS_API_KEY}

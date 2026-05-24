@@ -38,6 +38,7 @@ public final class MppProtocol implements PaymentProtocol {
   private static final HexFormat HEX = HexFormat.of();
 
   private final SensitiveBytes challengeBindingSecret;
+  private final SensitiveBytes previousChallengeBindingSecret;
   private final MppParserLimits parserLimits;
 
   /**
@@ -48,7 +49,7 @@ public final class MppProtocol implements PaymentProtocol {
    * @throws IllegalArgumentException if secret is shorter than 32 bytes
    */
   public MppProtocol(SensitiveBytes challengeBindingSecret) {
-    this(challengeBindingSecret, MppParserLimits.defaults());
+    this(challengeBindingSecret, MppParserLimits.defaults(), null);
   }
 
   /**
@@ -60,21 +61,45 @@ public final class MppProtocol implements PaymentProtocol {
    * @throws IllegalArgumentException if secret is shorter than 32 bytes
    */
   public MppProtocol(SensitiveBytes challengeBindingSecret, MppParserLimits parserLimits) {
+    this(challengeBindingSecret, parserLimits, null);
+  }
+
+  /**
+   * Creates a new MPP protocol instance with default parser limits and optional previous secret for
+   * key rotation.
+   *
+   * @param challengeBindingSecret current HMAC secret for challenge binding (minimum 32 bytes)
+   * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
+   *     bytes), or null
+   * @throws NullPointerException if challengeBindingSecret is null
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes
+   */
+  public MppProtocol(
+      SensitiveBytes challengeBindingSecret, SensitiveBytes previousChallengeBindingSecret) {
+    this(challengeBindingSecret, MppParserLimits.defaults(), previousChallengeBindingSecret);
+  }
+
+  /**
+   * Creates a new MPP protocol instance with custom parser limits and optional previous secret for
+   * key rotation.
+   *
+   * @param challengeBindingSecret current HMAC secret for challenge binding (minimum 32 bytes)
+   * @param parserLimits limits for JSON parser resource exhaustion protection
+   * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
+   *     bytes), or null
+   * @throws NullPointerException if challengeBindingSecret or parserLimits is null
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes
+   */
+  public MppProtocol(
+      SensitiveBytes challengeBindingSecret,
+      MppParserLimits parserLimits,
+      SensitiveBytes previousChallengeBindingSecret) {
     Objects.requireNonNull(challengeBindingSecret, "challengeBindingSecret must not be null");
     Objects.requireNonNull(parserLimits, "parserLimits must not be null");
-    byte[] temp = challengeBindingSecret.value();
-    try {
-      if (temp.length < MIN_SECRET_LENGTH) {
-        throw new IllegalArgumentException(
-            "challengeBindingSecret must be at least "
-                + MIN_SECRET_LENGTH
-                + " bytes, got "
-                + temp.length);
-      }
-    } finally {
-      CryptoUtils.zeroize(temp);
-    }
+    validateSecretLength("challengeBindingSecret", challengeBindingSecret);
+    validateSecretLength("previousChallengeBindingSecret", previousChallengeBindingSecret);
     this.challengeBindingSecret = challengeBindingSecret;
+    this.previousChallengeBindingSecret = previousChallengeBindingSecret;
     this.parserLimits = parserLimits;
   }
 
@@ -267,10 +292,24 @@ public final class MppProtocol implements PaymentProtocol {
       throw new PaymentValidationException(
           ErrorCode.INVALID_CHALLENGE_BINDING, "Request digest mismatch", credential.tokenId());
     }
-    boolean hmacValid =
+    boolean hmacCurrentSecretValid =
         MppChallengeBinding.verify(
             id, realm, method, intent, request, expires, digest, opaque, challengeBindingSecret);
-    if (!hmacValid) {
+    boolean hmacPreviousSecretValid = false;
+    if (previousChallengeBindingSecret != null) {
+      hmacPreviousSecretValid =
+          MppChallengeBinding.verify(
+              id,
+              realm,
+              method,
+              intent,
+              request,
+              expires,
+              digest,
+              opaque,
+              previousChallengeBindingSecret);
+    }
+    if (!(hmacCurrentSecretValid || hmacPreviousSecretValid)) {
       throw new PaymentValidationException(
           ErrorCode.INVALID_CHALLENGE_BINDING,
           "Challenge binding verification failed",
@@ -327,5 +366,20 @@ public final class MppProtocol implements PaymentProtocol {
       }
     }
     return value;
+  }
+
+  private static void validateSecretLength(String fieldName, SensitiveBytes secret) {
+    if (secret == null) {
+      return;
+    }
+    byte[] temp = secret.value();
+    try {
+      if (temp.length < MIN_SECRET_LENGTH) {
+        throw new IllegalArgumentException(
+            fieldName + " must be at least " + MIN_SECRET_LENGTH + " bytes, got " + temp.length);
+      }
+    } finally {
+      CryptoUtils.zeroize(temp);
+    }
   }
 }
