@@ -218,7 +218,7 @@ class PaygateChallengeServiceTest {
 
       assertThatThrownBy(() -> service.createChallenge(request, config))
           .isInstanceOf(PaygateLightningUnavailableException.class)
-          .hasCauseReference(cause);
+          .satisfies(throwable -> assertThat(throwable.getCause()).isSameAs(cause));
     }
   }
 

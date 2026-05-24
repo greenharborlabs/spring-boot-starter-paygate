@@ -82,7 +82,7 @@ class LnbitsBackendTest {
     var requestBody = objectMapper.readTree(request.getBody().readUtf8());
     assertThat(requestBody.get("out").asBoolean()).isFalse();
     assertThat(requestBody.get("amount").asLong()).isEqualTo(100L);
-    assertThat(requestBody.get("memo").asText()).isEqualTo("test memo");
+    assertThat(requestBody.get("memo").asString()).isEqualTo("test memo");
 
     // Then: correct X-Api-Key header
     assertThat(request.getHeader("X-Api-Key")).isEqualTo(API_KEY);

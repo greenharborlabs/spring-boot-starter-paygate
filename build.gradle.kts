@@ -82,11 +82,15 @@ nexusPublishing {
 val exampleModules = setOf("paygate-example-app", "paygate-example-app-spring-security")
 
 subprojects {
-    apply(plugin = "java-library")
-    apply(plugin = "io.spring.dependency-management")
-    apply(plugin = "jacoco")
-    apply(plugin = "pmd")
-    apply(plugin = "com.diffplug.spotless")
+    if (project.name in exampleModules) {
+        pluginManager.apply("java")
+    } else {
+        pluginManager.apply("java-library")
+    }
+    pluginManager.apply("io.spring.dependency-management")
+    pluginManager.apply("jacoco")
+    pluginManager.apply("pmd")
+    pluginManager.apply("com.diffplug.spotless")
 
     configure<PmdExtension> {
         toolVersion = "7.23.0"
@@ -194,13 +198,13 @@ subprojects {
 
     // CycloneDX SBOM generation (skip example app and starter aggregator)
     if (project.name !in exampleModules && project.name != "paygate-spring-boot-starter" && project.name != "paygate-integration-tests") {
-        apply(plugin = "org.cyclonedx.bom")
+        pluginManager.apply("org.cyclonedx.bom")
     }
 
     // Publishing configuration (skip example app)
     if (project.name !in exampleModules && project.name != "paygate-integration-tests") {
-        apply(plugin = "maven-publish")
-        apply(plugin = "signing")
+        pluginManager.apply("maven-publish")
+        pluginManager.apply("signing")
 
         val javaExt = the<JavaPluginExtension>()
         javaExt.withSourcesJar()

@@ -64,20 +64,20 @@ class GoVectorVerificationTest {
       JsonNode caveatsNode = v.get("caveats");
       if (caveatsNode != null && caveatsNode.isArray()) {
         for (JsonNode c : caveatsNode) {
-          caveatStrings.add(c.get("key").asText() + "=" + c.get("value").asText());
+          caveatStrings.add(c.get("key").asString() + "=" + c.get("value").asString());
         }
       }
 
       vectors.add(
           new VectorData(
-              v.get("description").asText(),
-              HEX.parseHex(v.get("rootKey").asText()),
-              HEX.parseHex(v.get("identifier").asText()),
-              v.get("location").isNull() ? null : v.get("location").asText(),
+              v.get("description").asString(),
+              HEX.parseHex(v.get("rootKey").asString()),
+              HEX.parseHex(v.get("identifier").asString()),
+              v.get("location").isNull() ? null : v.get("location").asString(),
               caveatStrings,
-              HEX.parseHex(v.get("expectedSignature").asText()),
-              HEX.parseHex(v.get("expectedSerializedV2").asText()),
-              v.get("expectedBase64").asText()));
+              HEX.parseHex(v.get("expectedSignature").asString()),
+              HEX.parseHex(v.get("expectedSerializedV2").asString()),
+              v.get("expectedBase64").asString()));
     }
     assertThat(vectors).as("number of test vectors").hasSizeGreaterThanOrEqualTo(4);
   }

@@ -69,8 +69,8 @@ public class LnbitsBackend implements LightningBackend {
       JsonNode json = objectMapper.readTree(response.body());
 
       String paymentHashHex =
-          requireField(json, "payment_hash", "create invoice response").asText();
-      String bolt11 = requireField(json, "payment_request", "create invoice response").asText();
+          requireField(json, "payment_hash", "create invoice response").asString();
+      String bolt11 = requireField(json, "payment_request", "create invoice response").asString();
       Instant now = Instant.now();
 
       log.log(System.Logger.Level.DEBUG, "LNbits invoice created, paymentHash={0}", paymentHashHex);
@@ -178,16 +178,16 @@ public class LnbitsBackend implements LightningBackend {
     boolean paid = requireField(json, "paid", "lookup response").asBoolean();
     JsonNode details = requireField(json, "details", "lookup response");
 
-    String bolt11 = requireField(details, "bolt11", "lookup response", "details.bolt11").asText();
+    String bolt11 = requireField(details, "bolt11", "lookup response", "details.bolt11").asString();
     long amount =
         requireField(details, "amount", "lookup response", "details.amount").asLong()
             / MSAT_PER_SAT;
-    String memo = details.has("memo") ? details.get("memo").asText() : null;
+    String memo = details.has("memo") ? details.get("memo").asString() : null;
 
     InvoiceStatus status = paid ? InvoiceStatus.SETTLED : InvoiceStatus.PENDING;
     byte[] preimage = null;
     if (paid && json.has("preimage") && !json.get("preimage").isNull()) {
-      preimage = HEX.parseHex(json.get("preimage").asText());
+      preimage = HEX.parseHex(json.get("preimage").asString());
     }
 
     Instant createdAt = parseEpochField(details, Instant.now());
