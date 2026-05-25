@@ -1,17 +1,17 @@
 plugins {
-    id("org.springframework.boot") version "4.0.5" apply false
+    id("org.springframework.boot") version "4.0.6" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
-    id("org.cyclonedx.bom") version "3.2.2" apply false
+    id("org.cyclonedx.bom") version "3.2.4" apply false
     id("com.diffplug.spotless") version "7.2.1" apply false
 }
 
-val springBootVersion = "4.0.5"
-val caffeineVersion = "3.2.3"
-val grpcVersion = "1.80.0"
-val protobufVersion = "4.29.3"
-val assertjVersion = "3.27.3"
+val springBootVersion = "4.0.6"
+val caffeineVersion = "3.2.4"
+val grpcVersion = "1.81.0"
+val protobufVersion = "4.35.0"
+val assertjVersion = "3.27.7"
 val mockWebServerVersion = "4.12.0"
 
 allprojects {
