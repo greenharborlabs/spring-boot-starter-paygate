@@ -507,17 +507,17 @@ services:
     ports:
       - "8080:8080"
     environment:
-      L402_ENABLED: "true"
-      L402_TEST_MODE: "true"
-      L402_SERVICE_NAME: "example-api"
-      L402_ROOT_KEY_STORE: "memory"
+      PAYGATE_ENABLED: "true"
+      PAYGATE_TEST_MODE: "true"
+      PAYGATE_SERVICE_NAME: "example-api"
+      PAYGATE_ROOT_KEY_STORE: "memory"
 ```
 
 Key details:
 
 - The build context is the **project root** (not `paygate-example-app/`) because the multi-module build needs access to all submodules.
-- Environment variables use Spring Boot's relaxed binding (e.g., `L402_TEST_MODE` maps to `paygate.test-mode`).
-- `L402_ROOT_KEY_STORE=memory` is used because file-based key storage would require a persistent volume. For production, mount a volume and use `file` instead.
+- Environment variables use Spring Boot's relaxed binding (e.g., `PAYGATE_TEST_MODE` maps to `paygate.test-mode`).
+- `PAYGATE_ROOT_KEY_STORE=memory` is used because file-based key storage would require a persistent volume. For production, mount a volume and use `file` instead.
 
 ### Building the Docker image manually
 
@@ -531,10 +531,10 @@ Run it:
 
 ```bash
 docker run -p 8080:8080 \
-  -e L402_ENABLED=true \
-  -e L402_TEST_MODE=true \
-  -e L402_SERVICE_NAME=example-api \
-  -e L402_ROOT_KEY_STORE=memory \
+  -e PAYGATE_ENABLED=true \
+  -e PAYGATE_TEST_MODE=true \
+  -e PAYGATE_SERVICE_NAME=example-api \
+  -e PAYGATE_ROOT_KEY_STORE=memory \
   paygate-example-app
 ```
 
@@ -582,12 +582,12 @@ Pass the backend configuration as environment variables:
 
 ```bash
 docker run -p 8080:8080 \
-  -e L402_ENABLED=true \
-  -e L402_TEST_MODE=false \
-  -e L402_BACKEND=lnbits \
-  -e L402_SERVICE_NAME=example-api \
-  -e L402_LNBITS_URL=https://your-lnbits-instance.com \
-  -e L402_LNBITS_API_KEY=your-api-key \
+  -e PAYGATE_ENABLED=true \
+  -e PAYGATE_TEST_MODE=false \
+  -e PAYGATE_BACKEND=lnbits \
+  -e PAYGATE_SERVICE_NAME=example-api \
+  -e PAYGATE_LNBITS_URL=https://your-lnbits-instance.com \
+  -e PAYGATE_LNBITS_API_KEY=your-api-key \
   paygate-example-app
 ```
 

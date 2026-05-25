@@ -253,7 +253,7 @@ When `L402Validator` throws an `L402Exception`, the `L402Protocol` maps the L402
 | `INVALID_MACAROON` | `INVALID_CHALLENGE_BINDING` | Macaroon signature verification failed |
 | `INVALID_SERVICE` | `INVALID_CHALLENGE_BINDING` | Service name not found in `services` caveat |
 | `REVOKED_CREDENTIAL` | `INVALID_CHALLENGE_BINDING` | Root key has been revoked |
-| `LIGHTNING_UNAVAILABLE` | `MALFORMED_CREDENTIAL` | Lightning backend is unreachable |
+| `LIGHTNING_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | Lightning backend is unreachable (503) |
 
 The original error message and token ID from the `L402Exception` are preserved in the mapped exception.
 
@@ -261,7 +261,7 @@ The original error message and token ID from the `L402Exception` are preserved i
 
 ## Header Injection Defense
 
-The `sanitizeBolt11ForHeader()` method validates that a BOLT11 invoice string contains no characters that could enable HTTP header injection. Before embedding the invoice in the `WWW-Authenticate` header, it scans every character and rejects:
+The `L402Challenge.sanitizeBolt11ForHeader()` method in paygate-core validates that a BOLT11 invoice string contains no characters that could enable HTTP header injection. Before embedding the invoice in the `WWW-Authenticate` header, it scans every character and rejects:
 
 - C0 control characters (`0x00`-`0x1F`) -- includes `\r` and `\n` which could split headers
 - DEL (`0x7F`)

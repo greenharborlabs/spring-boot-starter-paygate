@@ -68,7 +68,7 @@ implementation("com.greenharborlabs:paygate-core:0.1.0")
 | compile | *none* | Zero external compile dependencies -- JDK only |
 | test | JUnit 5 | Test framework |
 | test | AssertJ 3.27.3 | Fluent test assertions |
-| test | Jackson Databind 2.18.2 | Parsing Go interoperability test vectors (JSON) |
+| test | Jackson Databind (Spring Boot managed) | Parsing Go interoperability test vectors (JSON) |
 
 ---
 

@@ -15,6 +15,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 @DisplayName("L402Challenge")
@@ -215,9 +216,139 @@ class L402ChallengeTest {
     assertThat(json).contains("\"description\":null");
   }
 
+  @Test
+  @DisplayName("toJsonBody escapes special characters in bolt11 invoice")
+  void toJsonBodyEscapesBolt11() {
+    Macaroon macaroon = mintTestMacaroon();
+    L402Challenge challenge = new L402Challenge(macaroon, "lnbc1\"test", 1, "esc test");
+    String json = challenge.toJsonBody();
+
+    assertThat(json).contains("invoice\":\"lnbc1\\\"test\"");
+  }
+
   private Macaroon mintTestMacaroon() {
     MacaroonIdentifier id = new MacaroonIdentifier(0, paymentHash, tokenId);
     return MacaroonMinter.mint(rootKey, id, null, List.of());
+  }
+
+  @Nested
+  @DisplayName("Constructor validation")
+  class ConstructorValidation {
+
+    @Test
+    @DisplayName("rejects null macaroon")
+    void rejectsNullMacaroon() {
+      assertThatThrownBy(() -> new L402Challenge(null, "lnbc1test", 1, "test"))
+          .isInstanceOf(NullPointerException.class)
+          .hasMessageContaining("macaroon must not be null");
+    }
+
+    @Test
+    @DisplayName("rejects null bolt11Invoice")
+    void rejectsNullBolt11() {
+      assertThatThrownBy(() -> new L402Challenge(mintTestMacaroon(), null, 1, "test"))
+          .isInstanceOf(NullPointerException.class)
+          .hasMessageContaining("bolt11Invoice must not be null");
+    }
+
+    @Test
+    @DisplayName("rejects empty bolt11Invoice")
+    void rejectsEmptyBolt11() {
+      assertThatThrownBy(() -> new L402Challenge(mintTestMacaroon(), "", 1, "test"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("bolt11Invoice must not be empty");
+    }
+
+    @Test
+    @DisplayName("rejects priceSats of zero")
+    void rejectsZeroPrice() {
+      assertThatThrownBy(() -> new L402Challenge(mintTestMacaroon(), "lnbc1test", 0, "test"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("priceSats must be positive");
+    }
+
+    @Test
+    @DisplayName("rejects negative priceSats")
+    void rejectsNegativePrice() {
+      assertThatThrownBy(() -> new L402Challenge(mintTestMacaroon(), "lnbc1test", -5, "test"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("priceSats must be positive");
+    }
+
+    @Test
+    @DisplayName("accepts valid priceSats of one")
+    void acceptsMinimumPrice() {
+      L402Challenge challenge = new L402Challenge(mintTestMacaroon(), "lnbc1test", 1, "test");
+      assertThat(challenge.priceSats()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("accepts large priceSats")
+    void acceptsLargePrice() {
+      L402Challenge challenge =
+          new L402Challenge(mintTestMacaroon(), "lnbc1test", 99_999_999, "test");
+      assertThat(challenge.priceSats()).isEqualTo(99_999_999);
+    }
+
+    @Test
+    @DisplayName("toString includes price and description")
+    void toStringIncludesFields() {
+      L402Challenge challenge = new L402Challenge(mintTestMacaroon(), "lnbc1test", 42, "premium");
+      String s = challenge.toString();
+
+      assertThat(s).startsWith("L402Challenge[");
+      assertThat(s).contains("priceSats=42");
+      assertThat(s).contains("description=premium");
+    }
+
+    @Test
+    @DisplayName("toString uses null for description when null")
+    void toStringNullDescription() {
+      L402Challenge challenge = new L402Challenge(mintTestMacaroon(), "lnbc1test", 1, null);
+      assertThat(challenge.toString()).contains("description=null");
+    }
+  }
+
+  @Nested
+  @DisplayName("sanitizeBolt11ForHeader")
+  class SanitizeBolt11 {
+
+    @Test
+    @DisplayName("returns empty string for null input")
+    void returnsEmptyForNull() {
+      assertThat(L402Challenge.sanitizeBolt11ForHeader(null)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("returns valid bolt11 unchanged")
+    void returnsValidBolt11Unchanged() {
+      String invoice = "lnbc100n1p0validinvoice";
+      assertThat(L402Challenge.sanitizeBolt11ForHeader(invoice)).isEqualTo(invoice);
+    }
+
+    @Test
+    @DisplayName("rejects bolt11 with trailing newline")
+    void rejectsTrailingNewline() {
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc1\n"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("0xa");
+    }
+
+    @Test
+    @DisplayName("rejects bolt11 with embedded double quote")
+    void rejectsEmbeddedQuote() {
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\""))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("0x22");
+    }
+
+    @Test
+    @DisplayName("rejects bolt11 with DEL character")
+    void rejectsDel() {
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\u007F"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("0x7f");
+    }
   }
 
   @Test

@@ -86,9 +86,9 @@ This module depends on:
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | `paygate-core` | -- | `LightningBackend` interface, `Invoice` record, `InvoiceStatus` enum |
-| `io.grpc:grpc-netty-shaded` | 1.68.1 | gRPC transport with shaded Netty (no Netty version conflicts) |
-| `io.grpc:grpc-protobuf` | 1.68.1 | Protobuf message marshalling for gRPC |
-| `io.grpc:grpc-stub` | 1.68.1 | Generated gRPC stub classes |
+| `io.grpc:grpc-netty-shaded` | 1.80.0 | gRPC transport with shaded Netty (no Netty version conflicts) |
+| `io.grpc:grpc-protobuf` | 1.80.0 | Protobuf message marshalling for gRPC |
+| `io.grpc:grpc-stub` | 1.80.0 | Generated gRPC stub classes |
 | `com.google.protobuf:protobuf-java` | 4.29.3 | Protobuf runtime |
 
 ---
@@ -168,13 +168,12 @@ The macaroon file is read once at startup and held in memory as a hex string. Th
 
 ## Architecture
 
-The module contains three classes, all in the `com.greenharborlabs.paygate.lightning.lnd` package:
+The module's core classes are in the `com.greenharborlabs.paygate.lightning.lnd` package:
 
 ```
 paygate-lightning-lnd/
   src/main/java/com/greenharborlabs/paygate/lightning/lnd/
     LndBackend.java       LightningBackend implementation using gRPC
-    LndChannelFactory.java  Factory for building gRPC ManagedChannel instances
     LndConfig.java        Immutable configuration record
     LndException.java     Runtime exception for gRPC failures
     LndTimeoutException.java  Timeout-specific subclass of LndException
@@ -188,11 +187,7 @@ paygate-lightning-lnd/
 
 ### LndConfig
 
-A Java `record` holding the gRPC connection parameters: `host`, `port`, `tlsCertPath`, and `macaroonPath`. The `tlsCertPath` and `macaroonPath` fields are nullable -- `null` indicates that TLS or macaroon authentication is not configured (for plaintext/test channels).
-
-```java
-public record LndConfig(String host, int port, String tlsCertPath, String macaroonPath) { }
-```
+A Java `record` holding gRPC connection parameters and channel tuning options: host/port, TLS and macaroon paths, plaintext flag, keepalive settings, max inbound message size, and RPC deadline.
 
 ### LndBackend
 
@@ -212,7 +207,7 @@ This design decouples channel construction (TLS, macaroon, plaintext) from the b
 | `lookupInvoice(byte[] paymentHash)` | `LookupInvoice` | Looks up an invoice by its 32-byte payment hash. Maps the LND invoice state (`OPEN`, `SETTLED`, `CANCELED`, `ACCEPTED`) to the `InvoiceStatus` enum. Extracts the preimage when the invoice is settled. |
 | `isHealthy()` | `GetInfo` | Calls `GetInfo` and returns `true` only if the node reports `synced_to_chain=true`. Returns `false` on any gRPC error (including `UNAVAILABLE`, `DEADLINE_EXCEEDED`). Never throws. |
 
-All RPC calls use a **5-second deadline** (`withDeadlineAfter(5, TimeUnit.SECONDS)`).
+All RPC calls apply the configured deadline (`paygate.lnd.rpc-deadline-seconds`, default `5`).
 
 ### Invoice State Mapping
 
@@ -238,7 +233,7 @@ The channel is built in one of two modes:
 
 ### MacaroonClientInterceptor
 
-A gRPC `ClientInterceptor` (defined in `paygate-spring-autoconfigure`) that attaches the LND macaroon as gRPC metadata on every outgoing call. The macaroon is read from the file at startup, hex-encoded, and injected into the `macaroon` metadata key -- matching LND's expected authentication format.
+A gRPC `ClientInterceptor` (defined in this module) that attaches the LND macaroon as gRPC metadata on every outgoing call. The macaroon is read from the file at startup, hex-encoded, and injected into the `macaroon` metadata key -- matching LND's expected authentication format.
 
 ---
 
@@ -354,17 +349,17 @@ services:
   app:
     image: my-paygate-app:latest
     environment:
-      L402_ENABLED: "true"
-      L402_BACKEND: lnd
-      L402_LND_HOST: lnd
-      L402_LND_PORT: "10009"
-      L402_LND_TLS_CERT_PATH: /lnd/tls.cert
-      L402_LND_MACAROON_PATH: /lnd/invoice.macaroon
+      PAYGATE_ENABLED: "true"
+      PAYGATE_BACKEND: lnd
+      PAYGATE_LND_HOST: lnd
+      PAYGATE_LND_PORT: "10009"
+      PAYGATE_LND_TLS_CERT_PATH: /lnd/tls.cert
+      PAYGATE_LND_MACAROON_PATH: /lnd/invoice.macaroon
     volumes:
       - lnd-data:/lnd:ro
 
   lnd:
-    image: lightninglabs/lnd:v0.18.0-beta
+    image: lightninglabs/lnd:v0.18.4-beta
     volumes:
       - lnd-data:/root/.lnd
 
@@ -390,8 +385,8 @@ This ensures that infrastructure failures do not accidentally grant free access 
 
 | Method | Failure Behavior |
 |--------|-----------------|
-| `createInvoice()` | Throws `StatusRuntimeException` on any gRPC error (deadline exceeded, unavailable, permission denied). The filter translates this to HTTP 503. |
-| `lookupInvoice()` | Throws `StatusRuntimeException` on any gRPC error (including `NOT_FOUND` for unknown payment hashes). The filter treats this as an invalid credential. |
+| `createInvoice()` | Throws `LndException` on gRPC failures, or `LndTimeoutException` on deadline exceeded. The filter translates this to HTTP 503. |
+| `lookupInvoice()` | Throws `LndException` on gRPC failures (including `NOT_FOUND` for unknown payment hashes), or `LndTimeoutException` on deadline exceeded. |
 | `isHealthy()` | Returns `false` on any `StatusRuntimeException` (never throws). Also returns `false` when LND reports `synced_to_chain=false`, indicating the node is still syncing. |
 
 ### Common gRPC Error Scenarios
@@ -399,7 +394,7 @@ This ensures that infrastructure failures do not accidentally grant free access 
 | gRPC Status | Likely Cause | Effect |
 |-------------|--------------|--------|
 | `UNAVAILABLE` | LND node is down, network unreachable, or TLS handshake failed | `isHealthy()` returns `false`; other methods throw |
-| `DEADLINE_EXCEEDED` | RPC took longer than the 5-second deadline | Same as `UNAVAILABLE` |
+| `DEADLINE_EXCEEDED` | RPC took longer than the configured deadline (`paygate.lnd.rpc-deadline-seconds`, default `5`) | Same as `UNAVAILABLE` |
 | `UNAUTHENTICATED` | Macaroon is missing, invalid, or expired | All methods fail |
 | `PERMISSION_DENIED` | Macaroon lacks required permissions (e.g., using a read-only macaroon) | `createInvoice()` fails; `lookupInvoice()` and `getInfo` may succeed |
 | `NOT_FOUND` | Payment hash does not match any invoice on the LND node | `lookupInvoice()` throws |
@@ -543,10 +538,10 @@ The proto file uses `package lnrpc` and `option java_package = "lnrpc"` to match
 
 ### Protobuf Code Generation
 
-The `com.google.protobuf` Gradle plugin (v0.9.4) generates Java classes from the proto file at build time. The `protoc-gen-grpc-java` plugin generates the gRPC stubs. Both are configured in `build.gradle.kts`:
+The `com.google.protobuf` Gradle plugin (v0.9.6) generates Java classes from the proto file at build time. The `protoc-gen-grpc-java` plugin generates the gRPC stubs. Both are configured in `build.gradle.kts`:
 
 - `protoc` compiler: `com.google.protobuf:protoc:4.29.3`
-- gRPC Java plugin: `io.grpc:protoc-gen-grpc-java:1.68.1`
+- gRPC Java plugin: `io.grpc:protoc-gen-grpc-java:1.80.0`
 
 Generated sources are placed in `build/generated/source/proto/` and are automatically included in the source set. The generated `lnrpc/**` classes are excluded from JaCoCo code coverage reporting.
 

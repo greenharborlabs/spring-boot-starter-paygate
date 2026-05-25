@@ -6,7 +6,7 @@ A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-li
 [![Maven Central](https://img.shields.io/maven-central/v/com.greenharborlabs/paygate-spring-boot-starter)](https://central.sonatype.com/artifact/com.greenharborlabs/paygate-spring-boot-starter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java 25](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
-[![Spring Boot 4.0](https://img.shields.io/badge/Spring%20Boot-4.0.4-green.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot 4.0](https://img.shields.io/badge/Spring%20Boot-4.0.5-green.svg)](https://spring.io/projects/spring-boot)
 
 ---
 
@@ -198,7 +198,7 @@ The `PaymentProtocol` SPI (`paygate-api`) is the extension point. Each protocol 
 - **MPP challenge binding** -- HMAC-SHA256 stateless challenge verification (no credential cache needed for MPP)
 - **`Payment-Receipt` response header** -- MPP returns a receipt after successful validation as proof of payment
 - **Delegation caveat verifiers** -- `path`, `method`, `client_ip` caveats with glob matching (`*` and `**`) and IPv6 normalization
-- **Spring Security integration** -- optional `paygate-spring-security` module provides `AuthenticationProvider`, `AuthenticationFilter`, and `L402AuthenticationToken` for use in Spring Security filter chains
+- **Spring Security integration** -- optional `paygate-spring-security` module provides `AuthenticationProvider`, `AuthenticationFilter`, and `PaygateAuthenticationToken` for use in Spring Security filter chains
 - **Pluggable Lightning backends** -- LND (gRPC) and LNbits (REST) included; implement `LightningBackend` for others
 - **Dynamic pricing** -- implement `PaygatePricingStrategy` to price based on request content, user tier, or time of day
 - **Macaroon V2** -- binary-compatible with the Go [go-macaroon](https://github.com/go-macaroon/macaroon) library
@@ -618,10 +618,10 @@ implementation("com.greenharborlabs:paygate-spring-security:0.1.0")
 
 When both Spring Security and an `L402Validator` bean are present, the module auto-configures:
 
-- **`L402AuthenticationProvider`** -- validates L402 credentials via `L402Validator` and produces an authenticated `L402AuthenticationToken`
-- **`L402AuthenticationFilter`** -- extracts L402 credentials from the `Authorization` header and delegates to the `AuthenticationManager`
-- **`L402AuthenticationToken`** -- carries the validated credential, token ID, service name, and caveat-derived attributes accessible via SpEL in `@PreAuthorize` expressions
-- **`L402AuthenticationEntryPoint`** -- issues HTTP 402 Payment Required challenges with Lightning invoices when an unauthenticated request hits a protected endpoint, replacing the default 401 response
+- **`PaygateAuthenticationProvider`** -- validates L402 credentials via `L402Validator` and produces an authenticated `PaygateAuthenticationToken`
+- **`PaygateAuthenticationFilter`** -- extracts L402 credentials from the `Authorization` header and delegates to the `AuthenticationManager`
+- **`PaygateAuthenticationToken`** -- carries the validated credential, token ID, service name, and caveat-derived attributes accessible via SpEL in `@PreAuthorize` expressions
+- **`PaygateAuthenticationEntryPoint`** -- issues HTTP 402 Payment Required challenges with Lightning invoices when an unauthenticated request hits a protected endpoint, replacing the default 401 response
 
 ### Security Mode (`paygate.security-mode`)
 
@@ -643,7 +643,7 @@ paygate:
 
 ### Authentication Entry Point
 
-The `L402AuthenticationEntryPoint` bridges Spring Security's exception handling with the L402 payment flow. When an unauthenticated request reaches a protected endpoint, the entry point:
+The `PaygateAuthenticationEntryPoint` bridges Spring Security's exception handling with the L402 payment flow. When an unauthenticated request reaches a protected endpoint, the entry point:
 
 1. Looks up the endpoint's Paygate configuration (price, timeout, pricing strategy)
 2. Creates a Lightning invoice via the configured backend
@@ -654,9 +654,9 @@ Configure it in your `SecurityFilterChain`:
 ```java
 @Bean
 public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                 L402AuthenticationFilter l402Filter,
-                                                 L402AuthenticationProvider l402Provider,
-                                                 L402AuthenticationEntryPoint l402EntryPoint) throws Exception {
+                                                 PaygateAuthenticationFilter l402Filter,
+                                                 PaygateAuthenticationProvider l402Provider,
+                                                 PaygateAuthenticationEntryPoint l402EntryPoint) throws Exception {
     return http
             .authenticationProvider(l402Provider)
             .addFilterBefore(l402Filter, BasicAuthenticationFilter.class)
@@ -683,7 +683,7 @@ The authenticated token grants the `ROLE_L402` authority and exposes caveat valu
 @PreAuthorize("hasRole('L402')")
 @GetMapping("/api/v1/protected")
 public Response protectedEndpoint(Authentication auth) {
-    var l402Token = (L402AuthenticationToken) auth;
+    var l402Token = (PaygateAuthenticationToken) auth;
     String tokenId = l402Token.getTokenId();
     String service = l402Token.getServiceName();
     Map<String, String> attrs = l402Token.getAttributes();
@@ -793,11 +793,11 @@ The example app activates test mode via the `dev` profile (`application-dev.yml`
 |  paygate-core  |  |  paygate-spring-           |  |  paygate-spring-        |
 |                |  |    autoconfigure           |  |    security             |
 |  Macaroon V2   |  |                            |  |                         |
-|  HMAC-SHA256   |  |  PaygateAutoConfiguration  |  |  L402Authentication-    |
+|  HMAC-SHA256   |  |  PaygateAutoConfiguration  |  |  PaygateAuthentication-    |
 |  Credential    |  |  PaygateSecurityFilter     |  |    Provider             |
-|    Store       |  |  PaygateProperties         |  |  L402Authentication-    |
+|    Store       |  |  PaygateProperties         |  |  PaygateAuthentication-    |
 |  Lightning     |  |  @PaymentRequired          |  |    Filter               |
-|    Backend     |  |                            |  |  L402Authentication-    |
+|    Backend     |  |                            |  |  PaygateAuthentication-    |
 |    (interface) |  |  PaygatePricingStrategy    |  |    Token                |
 |  Delegation    |  |  PaygateMetrics            |  |                         |
 |    Caveats     |  |  PaygateActuatorEndpoint   |  |  Integrates with       |
@@ -870,7 +870,7 @@ paygate-spring-boot-starter
 | `paygate-lightning-lnbits` | `LightningBackend` implementation using the LNbits REST API | Jackson |
 | `paygate-lightning-lnd` | `LightningBackend` implementation using the LND gRPC API | gRPC, Protobuf, Netty |
 | `paygate-spring-autoconfigure` | Spring Boot auto-configuration, servlet filter, annotation scanning, metrics, actuator, health caching, rate limiting, dual-protocol bean wiring | Spring Boot, Spring MVC, Caffeine (optional), Micrometer (optional), Actuator (optional) |
-| `paygate-spring-security` | Spring Security integration: `L402AuthenticationProvider`, `L402AuthenticationFilter`, and `L402AuthenticationToken` for use in security filter chains | Spring Security |
+| `paygate-spring-security` | Spring Security integration: `PaygateAuthenticationProvider`, `PaygateAuthenticationFilter`, and `PaygateAuthenticationToken` for use in security filter chains | Spring Security |
 | `paygate-spring-boot-starter` | Dependency aggregator. No source code. | -- |
 | `paygate-example-app` | Runnable reference application with dynamic pricing and dual-protocol support | Spring Boot Web |
 | `paygate-integration-tests` | Cross-module integration tests verifying dual-protocol behavior, fail-closed semantics, Go interoperability, and tamper detection | Spring Boot Test |
@@ -924,15 +924,15 @@ This library handles payment credentials and cryptographic tokens. The following
 | Component | Version |
 |-----------|---------|
 | Java | 25 (LTS) |
-| Spring Boot | 4.0.3 |
+| Spring Boot | 4.0.5 |
 | Spring Framework | 7.x |
 | Jakarta EE | 11 (Servlet 6.1) |
 | Gradle | 8.12+ |
-| Caffeine | 3.1.8 |
-| gRPC | 1.68.1 |
+| Caffeine | 3.2.3 |
+| gRPC | 1.80.0 |
 | Protobuf | 4.29.3 |
-| Jackson | 2.18.2 |
-| Micrometer | (Spring Boot managed) |
+| Jackson | Spring Boot managed |
+| Micrometer | Spring Boot managed |
 
 ---
 
@@ -980,7 +980,7 @@ Contributions are welcome. Please follow these guidelines:
 2. **Fork and branch** from `main`
 3. **Follow existing code conventions** -- Java 25 idioms (records, sealed classes, pattern matching), Javadoc on public types
 4. **Maintain the zero-dependency constraint** on `paygate-core` and `paygate-api` -- no external libraries
-5. **Add tests** -- the project enforces code coverage via JaCoCo (80% for paygate-core, 60% for most modules, 40% for example app)
+5. **Add tests** -- the project enforces code coverage via JaCoCo (80% for paygate-core, 60% for most modules; example and integration test modules are currently excluded from coverage gates)
 6. **All secret comparisons must be constant-time** (XOR accumulation)
 7. **Never log full macaroon values** -- only token IDs
 

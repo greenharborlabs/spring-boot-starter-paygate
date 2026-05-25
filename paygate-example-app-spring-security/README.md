@@ -21,7 +21,7 @@ For the servlet filter approach (without Spring Security), see the sibling modul
 - [Authorization Model](#authorization-model)
   - [ROLE_PAYMENT -- Universal Payment Role](#role_payment----universal-payment-role)
   - [ROLE_L402 -- Protocol-Specific Role](#role_l402----protocol-specific-role)
-  - [L402_CAPABILITY_* -- Capability-Based Authorization](#l402_capability----capability-based-authorization)
+  - [PAYGATE_CAPABILITY_* -- Capability-Based Authorization](#paygate_capability----capability-based-authorization)
   - [Authorization Summary](#authorization-summary)
 - [Endpoints](#endpoints)
 - [Configuration](#configuration)
@@ -64,7 +64,7 @@ This gives you fine-grained, declarative control over authorization -- including
 |--------|----------------------------------------|-------------------------------|
 | Integration point | `PaygateSecurityFilter` (standalone servlet filter) | `PaygateAuthenticationFilter` + `PaygateAuthenticationProvider` + `PaygateAuthenticationEntryPoint` |
 | Configuration | Auto-configured; no explicit setup | Explicit `SecurityFilterChain` bean |
-| Authorization model | Binary: paid or not paid | Role-based (`ROLE_PAYMENT`, `ROLE_L402`) and capability-based (`L402_CAPABILITY_*`) |
+| Authorization model | Binary: paid or not paid | Role-based (`ROLE_PAYMENT`, `ROLE_L402`) and capability-based (`PAYGATE_CAPABILITY_*`) |
 | Protocol-specific rules | Not supported | `hasRole("L402")` restricts to L402 only |
 | Method-level security | Not supported | `@PreAuthorize` with SpEL expressions |
 | Authentication context | Request attribute | `SecurityContextHolder` (`PaygateAuthenticationToken`) |
@@ -251,14 +251,14 @@ An MPP credential presented to this endpoint will be authenticated (the filter a
 
 This is useful when an endpoint depends on L402-specific features like macaroon caveats, or when you want to enforce a specific protocol for compliance or business reasons.
 
-### L402_CAPABILITY_* -- Capability-Based Authorization
+### PAYGATE_CAPABILITY_* -- Capability-Based Authorization
 
-L402 macaroons can carry capability caveats (e.g., `example-api_capabilities=premium-analyze`). These are mapped to Spring Security authorities with the prefix `L402_CAPABILITY_`. Use `@PreAuthorize` with `hasAuthority()` for fine-grained access control:
+L402 macaroons can carry capability caveats (e.g., `example-api_capabilities=premium-analyze`). These are mapped to Spring Security authorities with the prefix `PAYGATE_CAPABILITY_`. Use `@PreAuthorize` with `hasAuthority()` for fine-grained access control:
 
 ```java
 @PaymentRequired(priceSats = 25, capability = "premium-analyze",
         description = "Capability-gated analysis")
-@PreAuthorize("hasAuthority('L402_CAPABILITY_premium-analyze')")
+@PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_premium-analyze')")
 @PostMapping("/premium-analyze")
 public AnalyzeResponse premiumAnalyze(@RequestBody AnalyzeRequest request) {
     // Only accessible with an L402 credential that has the "premium-analyze" capability
@@ -276,7 +276,7 @@ The `capability` attribute on `@PaymentRequired` tells the validator to check th
 |-----------|------------|----------|
 | `ROLE_PAYMENT` | All authenticated credentials (L402 + MPP) | Accept payment from any protocol |
 | `ROLE_L402` | L402 credentials only | Require L402 protocol specifically |
-| `L402_CAPABILITY_<name>` | L402 credentials with matching capability caveat | Fine-grained, capability-based access control |
+| `PAYGATE_CAPABILITY_<name>` | L402 credentials with matching capability caveat | Fine-grained, capability-based access control |
 
 ---
 
@@ -290,7 +290,7 @@ The `capability` attribute on `@PaymentRequired` tells the validator to check th
 | POST | `/api/v1/analyze` | 50 sats | `hasRole("PAYMENT")` | Content analysis with dynamic pricing. Accepts L402 or MPP. |
 | GET | `/api/v1/protocol-info` | 1 sat | `hasRole("PAYMENT")` | Returns details about the authenticated credential (protocol, tokenId, attributes). |
 | GET | `/api/v1/l402-only` | 10 sats | `hasRole("L402")` | L402-exclusive endpoint. MPP credentials receive 403 Forbidden. |
-| POST | `/api/v1/premium-analyze` | 25 sats | `hasRole("PAYMENT")` + `@PreAuthorize("hasAuthority('L402_CAPABILITY_premium-analyze')")` | Capability-gated analysis. Requires L402 with the `premium-analyze` capability caveat. |
+| POST | `/api/v1/premium-analyze` | 25 sats | `hasRole("PAYMENT")` + `@PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_premium-analyze')")` | Capability-gated analysis. Requires L402 with the `premium-analyze` capability caveat. |
 
 ---
 
@@ -390,7 +390,7 @@ The JSON body includes a `protocols` object with details for each active protoco
 |----------|-----------------|----------------|
 | `hasRole("PAYMENT")` endpoint | 200 OK | 200 OK |
 | `hasRole("L402")` endpoint | 200 OK | 403 Forbidden |
-| `@PreAuthorize("hasAuthority('L402_CAPABILITY_...')")` | 200 OK (if caveat present) | 403 Forbidden |
+| `@PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_...')")` | 200 OK (if caveat present) | 403 Forbidden |
 | No credential | 402 Payment Required (both challenges) | 402 Payment Required (both challenges) |
 | Invalid credential | 401 Unauthorized | 401 Unauthorized |
 
@@ -425,7 +425,7 @@ public ProtocolInfoResponse protocolInfo() {
 | `getServiceName()` | `String` | The service name from configuration. |
 | `getL402Credential()` | `L402Credential` | The underlying L402 credential (null for MPP). |
 | `getPaymentCredential()` | `PaymentCredential` | The protocol-agnostic credential (null for L402-only path). |
-| `getAuthorities()` | `Collection<GrantedAuthority>` | Granted authorities (`ROLE_PAYMENT`, `ROLE_L402`, `L402_CAPABILITY_*`). |
+| `getAuthorities()` | `Collection<GrantedAuthority>` | Granted authorities (`ROLE_PAYMENT`, `ROLE_L402`, `PAYGATE_CAPABILITY_*`). |
 
 ---
 

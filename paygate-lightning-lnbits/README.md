@@ -70,7 +70,7 @@ This module depends on:
 | Dependency | Purpose |
 |------------|---------|
 | `paygate-core` | `LightningBackend` interface, `Invoice` record, `InvoiceStatus` enum |
-| `jackson-databind` (2.18.2) | JSON serialization/deserialization for LNbits API requests and responses |
+| `jackson-databind` (Spring Boot managed) | JSON serialization/deserialization for LNbits API requests and responses |
 
 HTTP communication uses `java.net.http.HttpClient` from the JDK -- no additional HTTP client library is required.
 

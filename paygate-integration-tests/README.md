@@ -25,7 +25,8 @@ All tests boot the example application on a random port using `@SpringBootTest(w
 From the project root:
 
 ```bash
-./gradlew :paygate-integration-tests:test
+./gradlew :paygate-integration-tests:test -Pintegration
+./gradlew :paygate-integration-tests:securityTest -Pintegration
 ```
 
 This module is excluded from the default `./gradlew build`. All test classes are tagged with `@Tag("integration")` and the Gradle test task is configured to include only that tag.
@@ -43,13 +44,11 @@ JaCoCo coverage verification is disabled for this module since it contains only 
 | test | `paygate-example-app` | Provides the Spring Boot application under test |
 | test | `paygate-core` | Macaroon minting and verification for Go interop tests |
 | test | `paygate-api` | Protocol abstraction API |
-| test | `paygate-protocol-l402` | L402 protocol implementation |
-| test | `paygate-protocol-mpp` | MPP protocol implementation |
-| test | `paygate-spring-boot-starter` | Starter dependency aggregator |
 | test | `paygate-spring-autoconfigure` | Auto-configuration for filter, properties, and health |
 | test | Spring Boot Starter Test | `@SpringBootTest`, JUnit 5, AssertJ |
 | test | Spring Boot Starter Web | Embedded web server for integration tests |
-| test | OkHttp MockWebServer | HTTP mocking utilities |
+| securityTest | `paygate-example-app-spring-security` | Spring Security integration app under test |
+| securityTest | Spring Boot Starter Security | Spring Security stack for security integration tests |
 
 ---
 
