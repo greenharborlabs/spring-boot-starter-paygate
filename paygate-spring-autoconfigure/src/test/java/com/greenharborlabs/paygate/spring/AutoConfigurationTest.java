@@ -72,6 +72,18 @@ class AutoConfigurationTest {
   }
 
   @Test
+  @DisplayName("creates endpoint registry when actuator handler mapping is also present")
+  void endpointRegistryUsesMvcHandlerMappingWhenActuatorMappingAlsoPresent() {
+    contextRunner
+        .withBean(
+            "controllerEndpointHandlerMapping",
+            org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping
+                .class,
+            org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping::new)
+        .run(context -> assertThat(context).hasSingleBean(PaygateEndpointRegistry.class));
+  }
+
+  @Test
   @DisplayName("creates FilterRegistrationBean for PaygateSecurityFilter when paygate.enabled=true")
   void createsFilterRegistration() {
     contextRunner.run(context -> assertThat(context).hasBean("paygateSecurityFilterRegistration"));

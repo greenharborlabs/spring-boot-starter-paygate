@@ -415,7 +415,8 @@ public class PaygateAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean
   public PaygateEndpointRegistry paygateEndpointRegistry(
-      RequestMappingHandlerMapping handlerMapping, PaygateProperties properties) {
+      @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping,
+      PaygateProperties properties) {
     var registry = new PaygateEndpointRegistry(properties.getDefaultTimeoutSeconds());
     registry.scanAnnotatedEndpoints(handlerMapping);
     return registry;

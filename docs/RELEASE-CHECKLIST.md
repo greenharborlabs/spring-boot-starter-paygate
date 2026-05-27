@@ -22,8 +22,25 @@ Step-by-step process for publishing a new release of `spring-boot-starter-paygat
 ```
 
 - [ ] Build, dependency health, integration tests, and aggregate Javadocs all pass
+- [ ] CI uses Java 25 for every Gradle job; no lower-JDK fallback is active
 
-### 2. Smoke test with Docker (manual)
+### 2. Dogfood the Maven coordinates from a separate app
+
+Publish the current snapshot locally and validate it from a clean consumer project:
+
+```bash
+./gradlew publishToMavenLocal
+cd ../paygate-dogfood-app
+../spring-boot-starter-l402/gradlew -p . clean test bootJar
+```
+
+- [ ] The dogfood app depends on `com.greenharborlabs:*` artifacts from `mavenLocal()` rather than project dependencies
+- [ ] Public endpoints pass without payment
+- [ ] Protected endpoints return 402 with `WWW-Authenticate` challenges
+- [ ] Servlet-mode and Spring Security-mode profiles both start cleanly
+- [ ] Any missing setup step discovered while dogfooding has been added to the public README
+
+### 3. Smoke test with Docker (manual)
 
 ```bash
 cd integration-tests
@@ -31,11 +48,12 @@ cd integration-tests
 # Direct LND backend
 docker compose -f docker-compose-lnd.yml up -d
 COMPOSE_FILE=docker-compose-lnd.yml bash scripts/setup-lnd.sh
+COMPOSE_FILE=docker-compose-lnd.yml bash scripts/wait-for-app.sh
 curl -sf "http://localhost:${APP_PORT:-18080}/api/v1/health"
 docker compose -f docker-compose-lnd.yml down -v
 
 # LNbits backend backed by a payee LND node, paid by a separate payer LND node
-docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
+docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd-payee lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
@@ -50,12 +68,12 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 - [ ] MPP smoke flow works against two-node LNbits-over-LND and verifies `sha256(preimage) == payment_hash`
 - [ ] MPP key rotation verified: current secret signs new challenges, previous secret still validates in-flight credentials
 
-### 3. Update CHANGELOG.md
+### 4. Update CHANGELOG.md
 
 - [ ] Move items from `[Unreleased]` into a new version section: `[X.Y.Z] - YYYY-MM-DD`
 - [ ] Add comparison link at the bottom of the file
 
-### 4. Bump version in gradle.properties
+### 5. Bump version in gradle.properties
 
 Remove the `-SNAPSHOT` suffix:
 
@@ -68,7 +86,7 @@ version=0.1.0
 
 - [ ] Version updated
 
-### 5. Commit and tag
+### 6. Commit and tag
 
 ```bash
 git add gradle.properties CHANGELOG.md
@@ -76,7 +94,7 @@ git commit -m "Release v0.1.0"
 git tag -a v0.1.0 -m "Release v0.1.0"
 ```
 
-### 6. Push to trigger the release workflow
+### 7. Push to trigger the release workflow
 
 ```bash
 git push origin main
@@ -90,7 +108,7 @@ The `release.yml` GitHub Actions workflow will automatically:
 
 - [ ] Workflow completes successfully in GitHub Actions
 
-### 7. Verify artifacts on Maven Central
+### 8. Verify artifacts on Maven Central
 
 - [ ] All modules are present on [Maven Central](https://central.sonatype.com/):
   - `com.greenharborlabs:paygate-core`
@@ -103,7 +121,7 @@ The `release.yml` GitHub Actions workflow will automatically:
 
 Note: Maven Central indexing can take up to 30 minutes.
 
-### 8. Bump to next SNAPSHOT
+### 9. Bump to next SNAPSHOT
 
 ```bash
 # Update gradle.properties
@@ -116,7 +134,7 @@ git push origin main
 
 - [ ] Next SNAPSHOT version pushed
 
-### 9. Announce
+### 10. Announce
 
 - [ ] Create a GitHub Release from the tag (copy notes from CHANGELOG.md)
 

@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/CD: CodeQL analysis workflow for security scanning
 - CI/CD: Gradle wrapper validation in CI
 - CI/CD: Integration test CI stage
-- CI/CD: Javadoc publishing to GitHub Pages
+- CI/CD: Aggregate Javadoc generation and upload as a GitHub Actions artifact
 - Testcontainers-based integration test module
 - Go interop test automation for cross-platform macaroon compatibility
 - `.editorconfig` for consistent formatting across editors
