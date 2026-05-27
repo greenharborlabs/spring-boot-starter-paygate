@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-05-27
+
+### Security
+
+- Removed checked-in local L402 integration credential material from `integration-tests/.l402-credential.env`.
+- Added `*.env` ignore coverage while still allowing `*.env.example` templates.
+- Hardened release publishing so `v*` release tags must point to commits already on `main`.
+
+## [0.1.0] - 2026-05-27
 
 ### Added
 
@@ -85,4 +93,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WWW-Authenticate` header format corrected to `L402 version="0", token=`
 - `MacaroonSerializer` validation for field types and lengths
 
+[0.1.1]: https://github.com/greenharborlabs/spring-boot-starter-l402/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/greenharborlabs/spring-boot-starter-l402/releases/tag/v0.1.0
