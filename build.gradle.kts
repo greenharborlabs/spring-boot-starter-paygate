@@ -67,8 +67,8 @@ dependencyAnalysis {
 nexusPublishing {
     repositories {
         sonatype {
-            nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
-            snapshotRepositoryUrl.set(uri("https://s01.oss.sonatype.org/content/repositories/snapshots/"))
+            nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
+            snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
             username.set(providers.gradleProperty("sonatypeUsername")
                 .orElse(providers.environmentVariable("SONATYPE_USERNAME"))
                 .orNull)
@@ -246,12 +246,23 @@ subprojects {
             configure<SigningExtension> {
                 val signingKey = findProperty("signingKey") as String? ?: System.getenv("GPG_SIGNING_KEY")
                 val signingPassword = findProperty("signingPassword") as String? ?: System.getenv("GPG_SIGNING_PASSWORD")
-                isRequired = !version.toString().endsWith("SNAPSHOT")
-                if (signingKey != null && signingPassword != null) {
+                val missingSigningProperties = listOfNotNull(
+                    "GPG_SIGNING_KEY".takeIf { signingKey.isNullOrBlank() },
+                    "GPG_SIGNING_PASSWORD".takeIf { signingPassword.isNullOrBlank() },
+                )
+                val sonatypePublishingRequested = gradle.startParameter.taskNames.any {
+                    it.contains("Sonatype", ignoreCase = true)
+                        || it.contains("StagingRepository", ignoreCase = true)
+                }
+
+                isRequired = sonatypePublishingRequested
+                if (missingSigningProperties.isEmpty()) {
                     useInMemoryPgpKeys(signingKey, signingPassword)
                     sign(the<PublishingExtension>().publications["mavenJava"])
                 } else if (isRequired) {
-                    throw GradleException("GPG signing keys are required for release builds but not configured")
+                    throw GradleException(
+                        "GPG signing material is required for publishing. Missing: ${missingSigningProperties.joinToString(", ")}"
+                    )
                 }
             }
         }

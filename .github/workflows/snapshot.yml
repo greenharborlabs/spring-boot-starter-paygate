@@ -44,6 +44,24 @@ jobs:
           fi
           echo "Publishing snapshot version: $VERSION"
 
+      - name: Verify publishing secrets
+        run: |
+          missing=()
+          for name in SONATYPE_USERNAME SONATYPE_PASSWORD GPG_SIGNING_KEY GPG_SIGNING_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing required publishing secret: %s\n' "${missing[@]}"
+            exit 1
+          fi
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
+
       - name: Publish snapshot
         run: ./gradlew publishToSonatype
         env:
