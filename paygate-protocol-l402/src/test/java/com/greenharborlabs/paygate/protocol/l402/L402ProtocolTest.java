@@ -20,6 +20,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import com.greenharborlabs.paygate.core.protocol.L402Challenge;
+import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.security.MessageDigest;
@@ -129,6 +130,21 @@ class L402ProtocolTest {
       assertThat(credential.preimage()).hasSize(32);
       assertThat(credential.source()).isNull();
       assertThat(credential.metadata()).isInstanceOf(L402Metadata.class);
+    }
+
+    @Test
+    void parsedPaymentCredentialPreimageRemainsUsableAfterTemporaryCredentialIsDestroyed() {
+      byte[] preimage = new byte[32];
+      Arrays.fill(preimage, (byte) 0x5A);
+      byte[] paymentHash = sha256(preimage);
+      byte[] tokenId = new byte[32];
+      Arrays.fill(tokenId, (byte) 0x13);
+      String authHeader = buildAuthHeader("L402", preimage, paymentHash, tokenId);
+
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+
+      assertThat(credential.preimage()).isEqualTo(preimage);
+      assertThat(credential.preimage()).isEqualTo(preimage);
     }
 
     @Test
@@ -509,6 +525,23 @@ class L402ProtocolTest {
       protocol.validate(credential, requestContext);
 
       verify(validator).validate(eq(authHeader), any());
+    }
+
+    @Test
+    void destroysCallerOwnedValidationResultCredentialAfterSuccessfulValidation() {
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      L402Credential resultCredential = L402Credential.parse(authHeader);
+
+      when(validator.validate(eq(authHeader), any()))
+          .thenReturn(new L402Validator.ValidationResult(resultCredential, true));
+
+      protocol.validate(credential, Map.of());
+
+      assertThat(resultCredential.preimage().isDestroyed()).isTrue();
+      assertThatThrownBy(() -> resultCredential.preimage().value())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("destroyed");
     }
 
     @Test

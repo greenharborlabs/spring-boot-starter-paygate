@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
+import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
@@ -85,17 +86,24 @@ class L402ValidatorTest {
       new CredentialStore() {
         @Override
         public void store(String tokenId, L402Credential credential, long ttlSeconds) {
-          credentialMap.put(tokenId, credential);
+          L402Credential previous = credentialMap.put(tokenId, credential.copy());
+          if (previous != null) {
+            previous.destroy();
+          }
         }
 
         @Override
         public L402Credential get(String tokenId) {
-          return credentialMap.get(tokenId);
+          L402Credential credential = credentialMap.get(tokenId);
+          return credential == null ? null : credential.copy();
         }
 
         @Override
         public void revoke(String tokenId) {
-          credentialMap.remove(tokenId);
+          L402Credential removed = credentialMap.remove(tokenId);
+          if (removed != null) {
+            removed.destroy();
+          }
         }
 
         @Override
@@ -149,6 +157,21 @@ class L402ValidatorTest {
       assertThat(result.freshValidation()).isTrue();
       assertThat(result.credential().tokenId()).isEqualTo(tokenIdHex);
       assertThat(result.credential().preimage().toHex()).isEqualTo(HEX.formatHex(preimageBytes));
+    }
+
+    @Test
+    @DisplayName("fresh validation result remains usable after cache revocation")
+    void freshValidationResultRemainsUsableAfterCacheRevocation() {
+      try (var realStore = new InMemoryCredentialStore(100, 0)) {
+        L402Validator validator =
+            new L402Validator(rootKeyStore, realStore, List.of(), SERVICE_NAME);
+
+        L402Validator.ValidationResult result = validator.validate(validAuthHeader);
+        realStore.revoke(tokenIdHex);
+
+        assertThat(result.freshValidation()).isTrue();
+        assertThat(result.credential().preimage().toHex()).isEqualTo(HEX.formatHex(preimageBytes));
+      }
     }
   }
 
@@ -226,7 +249,29 @@ class L402ValidatorTest {
       L402Validator.ValidationResult result = validator.validate(validAuthHeader);
 
       assertThat(result.freshValidation()).isFalse();
-      assertThat(result.credential()).isSameAs(cached);
+      assertThat(result.credential()).isNotSameAs(cached);
+      assertThat(result.credential().tokenId()).isEqualTo(cached.tokenId());
+      assertThat(result.credential().macaroon()).isEqualTo(cached.macaroon());
+      assertThat(result.credential().preimage().toHex()).isEqualTo(cached.preimage().toHex());
+    }
+
+    @Test
+    @DisplayName("cache-hit validation result remains usable after cache revocation")
+    void cacheHitValidationResultRemainsUsableAfterCacheRevocation() {
+      try (var realStore = new InMemoryCredentialStore(100, 0)) {
+        L402Validator validator =
+            new L402Validator(rootKeyStore, realStore, List.of(), SERVICE_NAME);
+
+        validator.validate(validAuthHeader);
+        L402Credential cachedCopy = realStore.get(tokenIdHex);
+        L402Validator.ValidationResult result = validator.validate(validAuthHeader);
+        realStore.revoke(tokenIdHex);
+
+        assertThat(result.freshValidation()).isFalse();
+        assertThat(result.credential()).isNotSameAs(cachedCopy);
+        assertThat(result.credential().preimage().toHex()).isEqualTo(HEX.formatHex(preimageBytes));
+        cachedCopy.destroy();
+      }
     }
 
     @Test
@@ -387,7 +432,10 @@ class L402ValidatorTest {
       L402Validator.ValidationResult result = validator.validate(header);
 
       assertThat(result.freshValidation()).isFalse();
-      assertThat(result.credential()).isSameAs(cached);
+      assertThat(result.credential()).isNotSameAs(cached);
+      assertThat(result.credential().tokenId()).isEqualTo(cached.tokenId());
+      assertThat(result.credential().macaroon()).isEqualTo(cached.macaroon());
+      assertThat(result.credential().preimage().toHex()).isEqualTo(cached.preimage().toHex());
       // Credential should NOT be revoked
       assertThat(credentialStore.get(tokenIdHex)).isNotNull();
     }
@@ -809,17 +857,24 @@ class L402ValidatorTest {
       @Override
       public void store(String tokenId, L402Credential credential, long ttlSeconds) {
         capturedTtl.set(ttlSeconds);
-        map.put(tokenId, credential);
+        L402Credential previous = map.put(tokenId, credential.copy());
+        if (previous != null) {
+          previous.destroy();
+        }
       }
 
       @Override
       public L402Credential get(String tokenId) {
-        return map.get(tokenId);
+        L402Credential credential = map.get(tokenId);
+        return credential == null ? null : credential.copy();
       }
 
       @Override
       public void revoke(String tokenId) {
-        map.remove(tokenId);
+        L402Credential removed = map.remove(tokenId);
+        if (removed != null) {
+          removed.destroy();
+        }
       }
 
       @Override

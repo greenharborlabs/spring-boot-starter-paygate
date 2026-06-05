@@ -58,6 +58,21 @@ class InMemoryCredentialStoreTest {
     return HEX.formatHex(bytes);
   }
 
+  private static CachedCredential requireRetained(InMemoryCredentialStore store, String tokenId) {
+    CachedCredential retained = store.peekRetainedForTesting(tokenId);
+    assertThat(retained).isNotNull();
+    return retained;
+  }
+
+  private static void assertCredentialUsable(L402Credential credential) {
+    assertThat(credential.preimage().toHex()).hasSize(64);
+  }
+
+  private static void assertRetainedCredentialDestroyed(CachedCredential retained) {
+    assertThatThrownBy(() -> retained.credential().preimage().toHex())
+        .isInstanceOf(IllegalStateException.class);
+  }
+
   @Nested
   @DisplayName("store and retrieve")
   class StoreAndRetrieve {
@@ -156,9 +171,14 @@ class InMemoryCredentialStoreTest {
       L402Credential credential = createTestCredential(tokenId);
 
       store.store(tokenId, credential, 3600);
+      L402Credential returnedCopy = store.get(tokenId);
+      CachedCredential retained = requireRetained(store, tokenId);
       store.revoke(tokenId);
 
       assertThat(store.get(tokenId)).isNull();
+      assertRetainedCredentialDestroyed(retained);
+      assertCredentialUsable(credential);
+      assertCredentialUsable(returnedCopy);
     }
 
     @Test
@@ -292,7 +312,10 @@ class InMemoryCredentialStoreTest {
     void evictsLruEntryWhenNoExpired() {
       try (var boundedStore = new InMemoryCredentialStore(3, 0)) {
         String first = randomTokenId();
-        boundedStore.store(first, createTestCredential(first), 3600);
+        L402Credential firstCredential = createTestCredential(first);
+        boundedStore.store(first, firstCredential, 3600);
+        L402Credential firstReturnedCopy = boundedStore.get(first);
+        CachedCredential firstRetained = requireRetained(boundedStore, first);
 
         String second = randomTokenId();
         boundedStore.store(second, createTestCredential(second), 3600);
@@ -309,6 +332,9 @@ class InMemoryCredentialStoreTest {
         assertThat(boundedStore.get(third)).isNotNull();
         assertThat(boundedStore.get(fourth)).isNotNull();
         assertThat(boundedStore.activeCount()).isEqualTo(3);
+        assertRetainedCredentialDestroyed(firstRetained);
+        assertCredentialUsable(firstCredential);
+        assertCredentialUsable(firstReturnedCopy);
       }
     }
 
@@ -345,15 +371,23 @@ class InMemoryCredentialStoreTest {
       try (var boundedStore = new InMemoryCredentialStore(2, 0)) {
         String tokenId1 = randomTokenId();
         String tokenId2 = randomTokenId();
-        boundedStore.store(tokenId1, createTestCredential(tokenId1), 3600);
+        L402Credential originalCredential = createTestCredential(tokenId1);
+        boundedStore.store(tokenId1, originalCredential, 3600);
+        L402Credential returnedCopy = boundedStore.get(tokenId1);
+        CachedCredential replacedRetained = requireRetained(boundedStore, tokenId1);
         boundedStore.store(tokenId2, createTestCredential(tokenId2), 3600);
 
         // Update existing entry — should not evict
-        boundedStore.store(tokenId1, createTestCredential(tokenId1), 7200);
+        L402Credential replacementCredential = createTestCredential(tokenId1);
+        boundedStore.store(tokenId1, replacementCredential, 7200);
 
         assertThat(boundedStore.get(tokenId1)).isNotNull();
         assertThat(boundedStore.get(tokenId2)).isNotNull();
         assertThat(boundedStore.activeCount()).isEqualTo(2);
+        assertRetainedCredentialDestroyed(replacedRetained);
+        assertCredentialUsable(originalCredential);
+        assertCredentialUsable(returnedCopy);
+        assertCredentialUsable(replacementCredential);
       }
     }
 
@@ -480,7 +514,10 @@ class InMemoryCredentialStoreTest {
     @DisplayName("expired entry is evicted on get and no longer counted")
     void expiredEntryEvictedOnGet() throws InterruptedException {
       String tokenId = randomTokenId();
-      store.store(tokenId, createTestCredential(tokenId), 1);
+      L402Credential credential = createTestCredential(tokenId);
+      store.store(tokenId, credential, 1);
+      L402Credential returnedCopy = store.get(tokenId);
+      CachedCredential retained = requireRetained(store, tokenId);
 
       Thread.sleep(1200);
 
@@ -490,6 +527,9 @@ class InMemoryCredentialStoreTest {
 
       // After eviction, activeCount should not include the expired entry
       assertThat(store.activeCount()).isZero();
+      assertRetainedCredentialDestroyed(retained);
+      assertCredentialUsable(credential);
+      assertCredentialUsable(returnedCopy);
     }
   }
 
@@ -503,7 +543,10 @@ class InMemoryCredentialStoreTest {
       // Use 1-second cleanup interval for testing
       try (var cleanupStore = new InMemoryCredentialStore(100, 1)) {
         String tokenId = randomTokenId();
-        cleanupStore.store(tokenId, createTestCredential(tokenId), 1);
+        L402Credential credential = createTestCredential(tokenId);
+        cleanupStore.store(tokenId, credential, 1);
+        L402Credential returnedCopy = cleanupStore.get(tokenId);
+        CachedCredential retained = requireRetained(cleanupStore, tokenId);
 
         assertThat(cleanupStore.activeCount()).isEqualTo(1);
 
@@ -512,6 +555,9 @@ class InMemoryCredentialStoreTest {
 
         // The cleanup should have removed the expired entry
         assertThat(cleanupStore.get(tokenId)).isNull();
+        assertRetainedCredentialDestroyed(retained);
+        assertCredentialUsable(credential);
+        assertCredentialUsable(returnedCopy);
       }
     }
 
@@ -527,16 +573,21 @@ class InMemoryCredentialStoreTest {
     }
 
     @Test
-    @DisplayName("close shuts down cleanup executor")
+    @DisplayName("close shuts down cleanup executor and removes retained credentials")
     void closeShutdownsExecutor() {
       var cleanupStore = new InMemoryCredentialStore(100, 1);
       String tokenId = randomTokenId();
-      cleanupStore.store(tokenId, createTestCredential(tokenId), 3600);
+      L402Credential credential = createTestCredential(tokenId);
+      cleanupStore.store(tokenId, credential, 3600);
+      L402Credential returnedCopy = cleanupStore.get(tokenId);
+      CachedCredential retained = requireRetained(cleanupStore, tokenId);
 
       cleanupStore.close();
 
-      // After close, store should still be queryable (just no more cleanup)
-      assertThat(cleanupStore.get(tokenId)).isNotNull();
+      assertThat(cleanupStore.get(tokenId)).isNull();
+      assertRetainedCredentialDestroyed(retained);
+      assertCredentialUsable(credential);
+      assertCredentialUsable(returnedCopy);
     }
 
     @Test

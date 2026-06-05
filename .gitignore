@@ -36,3 +36,4 @@ bin/
 .env.*.local
 *.env
 !*.env.example
+/reports/

@@ -485,6 +485,20 @@ class MacaroonSerializerTest {
           .hasMessageContaining("Invalid packet length");
     }
 
+    @Test
+    @DisplayName("rejects trailing bytes after signature")
+    void rejectsTrailingBytesAfterSignature() throws IOException {
+      byte[] identifier = identifierFilledWith((byte) 0x01);
+      byte[] signature = signatureFilledWith((byte) 0x02);
+      byte[] validBytes = buildExpectedV2Bytes(null, identifier, List.of(), signature);
+      byte[] withTrailingByte = Arrays.copyOf(validBytes, validBytes.length + 1);
+      withTrailingByte[withTrailingByte.length - 1] = 0x7F;
+
+      assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(withTrailingByte))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Trailing bytes after V2 macaroon signature");
+    }
+
     /**
      * Finds the position of the second EOS (0x00) byte that marks the end of the caveats section.
      * This is the byte right before the signature packet in a no-caveats macaroon.

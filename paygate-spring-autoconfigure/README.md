@@ -286,6 +286,8 @@ Validated L402 credentials are cached to avoid re-verifying macaroon signatures 
 
 `CaffeineCredentialStore` uses Caffeine's variable expiry API (`Expiry`) so each cached credential expires independently based on its own TTL, rather than a global expiration.
 
+Custom `CredentialStore` implementations must treat credentials passed to `store()` as caller-owned. If the store retains credentials in Redis, a database, or another cache, copy them before storing and return caller-owned copies from `get()`. Cache eviction, expiry, replacement, removal, or shutdown must destroy only the store's private retained copies and must not invalidate validation results already returned to callers. If backend removal or destruction fails or becomes uncertain, fail closed and stop serving the affected credential.
+
 ---
 
 ## @PaymentRequired Annotation
@@ -615,6 +617,8 @@ public class CustomCredentialStoreConfig {
     }
 }
 ```
+
+`RedisCredentialStore` is only an example replacement. Do not retain caller-owned `L402Credential` instances directly; serialize or copy credentials into backend-owned values, return fresh caller-owned copies from reads, zeroize only retained private preimages on removal or close, and fail closed if removal or destruction cannot be confirmed.
 
 ### Override the Lightning Backend
 
