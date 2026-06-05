@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.core.protocol;
 
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
+import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
@@ -15,10 +16,8 @@ import java.util.Objects;
  * hex-encoded token identifier.
  */
 public record L402Credential(
-    Macaroon macaroon,
-    PaymentPreimage preimage,
-    String tokenId,
-    List<Macaroon> additionalMacaroons) {
+    Macaroon macaroon, PaymentPreimage preimage, String tokenId, List<Macaroon> additionalMacaroons)
+    implements AutoCloseable {
 
   public L402Credential {
     Objects.requireNonNull(macaroon, "macaroon must not be null");
@@ -50,6 +49,9 @@ public record L402Credential(
   /**
    * Parses an L402/LSAT Authorization header into an {@link L402Credential}.
    *
+   * <p>The returned credential is caller-owned. Callers that retain it beyond request processing
+   * are responsible for destroying it when no longer needed.
+   *
    * @param authorizationHeader the raw Authorization header value
    * @return a parsed credential
    * @throws L402Exception with {@link ErrorCode#MALFORMED_HEADER} on any parse failure
@@ -60,6 +62,9 @@ public record L402Credential(
 
   /**
    * Parses pre-extracted header components into an {@link L402Credential}.
+   *
+   * <p>The returned credential is caller-owned. Callers that retain it beyond request processing
+   * are responsible for destroying it when no longer needed.
    *
    * @param components the structurally validated header components
    * @return a parsed credential
@@ -116,6 +121,35 @@ public record L402Credential(
     String tokenId = HEX.formatHex(id.tokenId());
 
     return new L402Credential(primaryMacaroon, preimage, tokenId, additionalMacaroons);
+  }
+
+  /**
+   * Returns a caller-owned copy of this credential with the same macaroons and token id, and a
+   * distinct {@link PaymentPreimage} containing the same bytes.
+   *
+   * @throws IllegalStateException if this credential's preimage has already been destroyed
+   */
+  public L402Credential copy() {
+    byte[] value = preimage.value();
+    try {
+      return new L402Credential(macaroon, new PaymentPreimage(value), tokenId, additionalMacaroons);
+    } finally {
+      KeyMaterial.zeroize(value);
+    }
+  }
+
+  /**
+   * Destroys only this credential's preimage. Macaroons and token id are immutable metadata and are
+   * left unchanged. This method is idempotent.
+   */
+  public void destroy() {
+    preimage.destroy();
+  }
+
+  /** Delegates to {@link #destroy()}. */
+  @Override
+  public void close() {
+    destroy();
   }
 
   private static Macaroon decodeMacaroon(String base64Token) {

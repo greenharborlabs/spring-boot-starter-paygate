@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
+import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
@@ -63,16 +64,24 @@ public class L402Protocol implements PaymentProtocol {
       throws PaymentValidationException {
     try {
       L402Credential credential = L402Credential.parse(authorizationHeader);
-      MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
-
-      return new PaymentCredential(
-          macId.paymentHash(),
-          credential.preimage().value(),
-          credential.tokenId(),
-          SCHEME,
-          null,
-          new L402Metadata(
-              credential.macaroon(), credential.additionalMacaroons(), authorizationHeader));
+      try {
+        MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
+        byte[] preimage = credential.preimage().value();
+        try {
+          return new PaymentCredential(
+              macId.paymentHash(),
+              preimage,
+              credential.tokenId(),
+              SCHEME,
+              null,
+              new L402Metadata(
+                  credential.macaroon(), credential.additionalMacaroons(), authorizationHeader));
+        } finally {
+          KeyMaterial.zeroize(preimage);
+        }
+      } finally {
+        credential.destroy();
+      }
     } catch (L402Exception e) {
       throw mapL402Exception(e);
     }
@@ -132,10 +141,15 @@ public class L402Protocol implements PaymentProtocol {
             .requestMetadata(requestContext)
             .build();
 
+    L402Validator.ValidationResult result = null;
     try {
-      validator.validate(metadata.rawAuthorizationHeader(), context);
+      result = validator.validate(metadata.rawAuthorizationHeader(), context);
     } catch (L402Exception e) {
       throw mapL402Exception(e);
+    } finally {
+      if (result != null && result.credential() != null) {
+        result.credential().destroy();
+      }
     }
   }
 

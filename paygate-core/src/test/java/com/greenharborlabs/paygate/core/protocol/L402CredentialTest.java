@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.core.protocol;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
@@ -66,6 +67,10 @@ class L402CredentialTest {
     Macaroon additionalMacaroon =
         MacaroonMinter.mint(additionalRootKey, additionalId, "https://example.com", List.of());
     return Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(additionalMacaroon));
+  }
+
+  private L402Credential newCredential() {
+    return new L402Credential(macaroon, PaymentPreimage.fromHex(preimageHex), tokenIdHex);
   }
 
   @Nested
@@ -490,6 +495,70 @@ class L402CredentialTest {
           .isInstanceOf(L402Exception.class)
           .extracting(e -> ((L402Exception) e).getErrorCode())
           .isEqualTo(ErrorCode.MALFORMED_HEADER);
+    }
+  }
+
+  @Nested
+  @DisplayName("lifecycle")
+  class Lifecycle {
+
+    @Test
+    @DisplayName("copy creates distinct preimage with same hex value")
+    void copyCreatesDistinctPreimageWithSameHexValue() {
+      L402Credential credential = newCredential();
+
+      L402Credential copy = credential.copy();
+
+      assertThat(copy).isNotSameAs(credential);
+      assertThat(copy.preimage()).isNotSameAs(credential.preimage());
+      assertThat(copy.preimage().toHex()).isEqualTo(preimageHex);
+      assertThat(copy.macaroon()).isEqualTo(credential.macaroon());
+      assertThat(copy.tokenId()).isEqualTo(credential.tokenId());
+      assertThat(copy.additionalMacaroons()).isEqualTo(credential.additionalMacaroons());
+    }
+
+    @Test
+    @DisplayName("destroying original preimage does not destroy copied preimage")
+    void destroyingOriginalDoesNotDestroyCopy() {
+      L402Credential credential = newCredential();
+      L402Credential copy = credential.copy();
+
+      credential.destroy();
+
+      assertThatThrownBy(() -> credential.preimage().toHex())
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(copy.preimage().toHex()).isEqualTo(preimageHex);
+    }
+
+    @Test
+    @DisplayName("destroying copied preimage does not destroy original preimage")
+    void destroyingCopyDoesNotDestroyOriginal() {
+      L402Credential credential = newCredential();
+      L402Credential copy = credential.copy();
+
+      copy.destroy();
+
+      assertThatThrownBy(() -> copy.preimage().toHex()).isInstanceOf(IllegalStateException.class);
+      assertThat(credential.preimage().toHex()).isEqualTo(preimageHex);
+    }
+
+    @Test
+    @DisplayName("destroy and close are idempotent and only affect this credential preimage")
+    void destroyAndCloseAreIdempotentAndOnlyAffectThisCredentialPreimage() {
+      L402Credential credential = newCredential();
+      L402Credential copy = credential.copy();
+
+      credential.destroy();
+      credential.close();
+      credential.destroy();
+
+      assertThatThrownBy(() -> credential.preimage().value())
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> credential.preimage().toHex())
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(credential.macaroon()).isEqualTo(macaroon);
+      assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
+      assertThat(copy.preimage().toHex()).isEqualTo(preimageHex);
     }
   }
 }

@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
@@ -50,6 +51,28 @@ class CaffeineCredentialStoreTest {
     return HEX.formatHex(bytes);
   }
 
+  private static String preimageHex(L402Credential credential) {
+    return credential.preimage().toHex();
+  }
+
+  private static void assertCredentialUsable(L402Credential credential) {
+    assertThat(preimageHex(credential)).hasSize(64);
+  }
+
+  private static void assertCredentialDestroyed(L402Credential credential) {
+    assertThatThrownBy(() -> credential.preimage().toHex())
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  private static void awaitUnchecked(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError(e);
+    }
+  }
+
   @Nested
   @DisplayName("store and retrieve")
   class StoreAndRetrieve {
@@ -65,6 +88,40 @@ class CaffeineCredentialStoreTest {
       L402Credential retrieved = store.get(tokenId);
       assertThat(retrieved).isNotNull();
       assertThat(retrieved.tokenId()).isEqualTo(tokenId);
+    }
+
+    @Test
+    @DisplayName("store retains private copy, not caller-owned credential")
+    void storeRetainsPrivateCopy() {
+      String tokenId = randomTokenId();
+      L402Credential credential = createTestCredential(tokenId);
+
+      store.store(tokenId, credential, 3600);
+      credential.destroy();
+
+      L402Credential retrieved = store.get(tokenId);
+      assertThat(retrieved).isNotNull();
+      assertCredentialUsable(retrieved);
+    }
+
+    @Test
+    @DisplayName("get returns caller-owned copy, not retained cache credential")
+    void getReturnsCallerOwnedCopy() {
+      String tokenId = randomTokenId();
+      L402Credential credential = createTestCredential(tokenId);
+
+      store.store(tokenId, credential, 3600);
+      L402Credential retained = store.peekRetainedForTesting(tokenId);
+      L402Credential retrieved = store.get(tokenId);
+
+      assertThat(retrieved).isNotSameAs(retained);
+      assertThat(preimageHex(retrieved)).isEqualTo(preimageHex(retained));
+
+      retrieved.destroy();
+
+      assertCredentialDestroyed(retrieved);
+      assertCredentialUsable(retained);
+      assertCredentialUsable(store.get(tokenId));
     }
 
     @Test
@@ -122,6 +179,23 @@ class CaffeineCredentialStoreTest {
     }
 
     @Test
+    @DisplayName("TTL expiry destroys retained credential and leaves caller credential usable")
+    void ttlExpiryDestroysRetainedCredential() throws InterruptedException {
+      String tokenId = randomTokenId();
+      L402Credential credential = createTestCredential(tokenId);
+
+      store.store(tokenId, credential, 1);
+      L402Credential retained = store.peekRetainedForTesting(tokenId);
+
+      Thread.sleep(1200);
+
+      assertThat(store.activeCount()).isZero();
+      assertThat(store.get(tokenId)).isNull();
+      assertCredentialDestroyed(retained);
+      assertCredentialUsable(credential);
+    }
+
+    @Test
     @DisplayName("credential with long TTL is still retrievable before expiry")
     void longTtlStillRetrievableBeforeExpiry() {
       String tokenId = randomTokenId();
@@ -165,6 +239,25 @@ class CaffeineCredentialStoreTest {
     }
 
     @Test
+    @DisplayName("revoke destroys retained credential and leaves caller-owned copies usable")
+    void revokeDestroysRetainedCredentialOnly() {
+      String tokenId = randomTokenId();
+      L402Credential credential = createTestCredential(tokenId);
+
+      store.store(tokenId, credential, 3600);
+      L402Credential retained = store.peekRetainedForTesting(tokenId);
+      L402Credential retrieved = store.get(tokenId);
+
+      store.revoke(tokenId);
+      store.activeCount();
+
+      assertThat(store.get(tokenId)).isNull();
+      assertCredentialDestroyed(retained);
+      assertCredentialUsable(credential);
+      assertCredentialUsable(retrieved);
+    }
+
+    @Test
     @DisplayName("revoking unknown tokenId does not throw")
     void revokingUnknownTokenIdDoesNotThrow() {
       store.revoke(randomTokenId());
@@ -182,6 +275,75 @@ class CaffeineCredentialStoreTest {
 
       assertThat(store.get(tokenId1)).isNull();
       assertThat(store.get(tokenId2)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("get copying retained credential wins race with revoke")
+    void getCopyingRetainedCredentialWinsRaceWithRevoke() throws InterruptedException {
+      String tokenId = randomTokenId();
+      store.store(tokenId, createTestCredential(tokenId), 3600);
+      L402Credential retained = store.peekRetainedForTesting(tokenId);
+
+      var copyStarted = new CountDownLatch(1);
+      var allowCopy = new CountDownLatch(1);
+      store.setBeforeCopyForTesting(
+          () -> {
+            copyStarted.countDown();
+            awaitUnchecked(allowCopy);
+          });
+
+      var retrieved = new AtomicReference<L402Credential>();
+      var getFailure = new AtomicReference<Throwable>();
+      Thread getter =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      retrieved.set(store.get(tokenId));
+                    } catch (Throwable t) {
+                      getFailure.set(t);
+                    }
+                  });
+
+      assertThat(copyStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+      var revokeFailure = new AtomicReference<Throwable>();
+      Thread revoker =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      store.revoke(tokenId);
+                    } catch (Throwable t) {
+                      revokeFailure.set(t);
+                    }
+                  });
+
+      allowCopy.countDown();
+      getter.join();
+      revoker.join();
+      store.setBeforeCopyForTesting(null);
+
+      assertThat(getFailure.get()).isNull();
+      assertThat(revokeFailure.get()).isNull();
+      assertThat(retrieved.get()).isNotNull();
+      assertCredentialUsable(retrieved.get());
+      assertCredentialDestroyed(retained);
+      assertThat(store.get(tokenId)).isNull();
+    }
+
+    @Test
+    @DisplayName("revoke winning before get copy returns null")
+    void revokeWinningBeforeGetCopyReturnsNull() {
+      String tokenId = randomTokenId();
+      store.store(tokenId, createTestCredential(tokenId), 3600);
+      L402Credential retained = store.peekRetainedForTesting(tokenId);
+
+      store.revoke(tokenId);
+      store.activeCount();
+
+      assertThat(store.get(tokenId)).isNull();
+      assertCredentialDestroyed(retained);
     }
   }
 
@@ -250,6 +412,217 @@ class CaffeineCredentialStoreTest {
 
       // Caffeine eviction is asynchronous; cleanUp forces it
       assertThat(smallStore.activeCount()).isLessThanOrEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("size eviction destroys evicted retained credentials and leaves originals usable")
+    void sizeEvictionDestroysRetainedCredentialsOnly() {
+      var smallStore = new CaffeineCredentialStore(2);
+      var originals = new ConcurrentHashMap<String, L402Credential>();
+      var retained = new ConcurrentHashMap<String, L402Credential>();
+
+      for (int i = 0; i < 2; i++) {
+        String tokenId = randomTokenId();
+        L402Credential credential = createTestCredential(tokenId);
+        originals.put(tokenId, credential);
+        smallStore.store(tokenId, credential, 3600);
+        retained.put(tokenId, smallStore.peekRetainedForTesting(tokenId));
+      }
+
+      for (int i = 0; i < 10; i++) {
+        String tokenId = randomTokenId();
+        L402Credential credential = createTestCredential(tokenId);
+        originals.put(tokenId, credential);
+        smallStore.store(tokenId, credential, 3600);
+      }
+
+      smallStore.activeCount();
+
+      long destroyed =
+          retained.entrySet().stream()
+              .filter(entry -> smallStore.peekRetainedForTesting(entry.getKey()) == null)
+              .peek(entry -> assertCredentialDestroyed(entry.getValue()))
+              .count();
+
+      assertThat(destroyed).isGreaterThanOrEqualTo(1);
+      assertThat(smallStore.activeCount()).isLessThanOrEqualTo(2);
+      originals.values().forEach(CaffeineCredentialStoreTest::assertCredentialUsable);
+    }
+  }
+
+  @Nested
+  @DisplayName("replacement")
+  class Replacement {
+
+    @Test
+    @DisplayName("replacement destroys old retained credential without public eviction event")
+    void replacementDestroysOldRetainedCredentialWithoutEvictionEvent() {
+      var evictions = new ConcurrentHashMap<String, EvictionReason>();
+      store.setEvictionListener(evictions::put);
+
+      String tokenId = randomTokenId();
+      L402Credential first = createTestCredential(tokenId);
+      L402Credential second = createTestCredential(tokenId);
+
+      store.store(tokenId, first, 3600);
+      L402Credential oldRetained = store.peekRetainedForTesting(tokenId);
+      L402Credential oldReturnedCopy = store.get(tokenId);
+      String secondPreimage = preimageHex(second);
+
+      store.store(tokenId, second, 3600);
+      store.activeCount();
+
+      L402Credential current = store.get(tokenId);
+      assertThat(current).isNotNull();
+      assertThat(preimageHex(current)).isEqualTo(secondPreimage);
+      assertCredentialDestroyed(oldRetained);
+      assertCredentialUsable(oldReturnedCopy);
+      assertThat(evictions).isEmpty();
+    }
+
+    @Test
+    @DisplayName("get copying old retained credential wins race with replacement")
+    void getCopyingOldRetainedCredentialWinsRaceWithReplacement() throws InterruptedException {
+      var evictions = new ConcurrentHashMap<String, EvictionReason>();
+      store.setEvictionListener(evictions::put);
+
+      String tokenId = randomTokenId();
+      L402Credential first = createTestCredential(tokenId);
+      L402Credential second = createTestCredential(tokenId);
+
+      store.store(tokenId, first, 3600);
+      L402Credential oldRetained = store.peekRetainedForTesting(tokenId);
+      String firstPreimage = preimageHex(first);
+      String secondPreimage = preimageHex(second);
+
+      var copyStarted = new CountDownLatch(1);
+      var allowCopy = new CountDownLatch(1);
+      store.setBeforeCopyForTesting(
+          () -> {
+            copyStarted.countDown();
+            awaitUnchecked(allowCopy);
+          });
+
+      var retrieved = new AtomicReference<L402Credential>();
+      var getFailure = new AtomicReference<Throwable>();
+      Thread getter =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      retrieved.set(store.get(tokenId));
+                    } catch (Throwable t) {
+                      getFailure.set(t);
+                    }
+                  });
+
+      assertThat(copyStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+      var replaceFailure = new AtomicReference<Throwable>();
+      Thread replacer =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      store.store(tokenId, second, 3600);
+                    } catch (Throwable t) {
+                      replaceFailure.set(t);
+                    }
+                  });
+
+      allowCopy.countDown();
+      getter.join();
+      replacer.join();
+      store.setBeforeCopyForTesting(null);
+
+      L402Credential current = store.get(tokenId);
+      assertThat(getFailure.get()).isNull();
+      assertThat(replaceFailure.get()).isNull();
+      assertThat(retrieved.get()).isNotNull();
+      assertThat(preimageHex(retrieved.get())).isEqualTo(firstPreimage);
+      assertCredentialUsable(retrieved.get());
+      assertCredentialDestroyed(oldRetained);
+      assertThat(current).isNotNull();
+      assertThat(preimageHex(current)).isEqualTo(secondPreimage);
+      assertThat(evictions).isEmpty();
+    }
+  }
+
+  @Nested
+  @DisplayName("close")
+  class Close {
+
+    @Test
+    @DisplayName("close invalidates all entries, destroys retained credentials, and is idempotent")
+    void closeInvalidatesAllAndDestroysRetainedCredentials() {
+      var retained = new ConcurrentHashMap<String, L402Credential>();
+      for (int i = 0; i < 3; i++) {
+        String tokenId = randomTokenId();
+        store.store(tokenId, createTestCredential(tokenId), 3600);
+        retained.put(tokenId, store.peekRetainedForTesting(tokenId));
+      }
+
+      store.close();
+      store.close();
+
+      assertThat(store.activeCount()).isZero();
+      retained.values().forEach(CaffeineCredentialStoreTest::assertCredentialDestroyed);
+    }
+
+    @Test
+    @DisplayName("get copying retained credential wins race with close")
+    void getCopyingRetainedCredentialWinsRaceWithClose() throws InterruptedException {
+      String tokenId = randomTokenId();
+      store.store(tokenId, createTestCredential(tokenId), 3600);
+      L402Credential retained = store.peekRetainedForTesting(tokenId);
+
+      var copyStarted = new CountDownLatch(1);
+      var allowCopy = new CountDownLatch(1);
+      store.setBeforeCopyForTesting(
+          () -> {
+            copyStarted.countDown();
+            awaitUnchecked(allowCopy);
+          });
+
+      var retrieved = new AtomicReference<L402Credential>();
+      var getFailure = new AtomicReference<Throwable>();
+      Thread getter =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      retrieved.set(store.get(tokenId));
+                    } catch (Throwable t) {
+                      getFailure.set(t);
+                    }
+                  });
+
+      assertThat(copyStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+      var closeFailure = new AtomicReference<Throwable>();
+      Thread closer =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      store.close();
+                    } catch (Throwable t) {
+                      closeFailure.set(t);
+                    }
+                  });
+
+      allowCopy.countDown();
+      getter.join();
+      closer.join();
+      store.setBeforeCopyForTesting(null);
+
+      assertThat(getFailure.get()).isNull();
+      assertThat(closeFailure.get()).isNull();
+      if (retrieved.get() != null) {
+        assertCredentialUsable(retrieved.get());
+      }
+      assertCredentialDestroyed(retained);
+      assertThat(store.activeCount()).isZero();
     }
   }
 

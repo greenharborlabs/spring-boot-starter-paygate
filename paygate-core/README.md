@@ -510,6 +510,14 @@ public interface CredentialStore {
 }
 ```
 
+Credential ownership follows a caller-owned boundary:
+
+- `store()` receives a caller-owned `L402Credential`. Retaining stores must copy the credential before caching or persisting it, and must never retain the instance passed by the caller.
+- `get()` returns a caller-owned copy. Later cache eviction, expiry, replacement, `revoke()`, or `close()` must not invalidate credentials or validation results already returned to callers.
+- `revoke()`, expiry, replacement, backend removal, and `close()` may destroy only private retained copies owned by the store.
+- Stores that retain payment preimages must define invalidate-all behavior for shutdown or administrative cache clearing, and must zeroize only their own retained preimage bytes.
+- Custom backends should fail closed if destruction, expiry, or backend removal is uncertain or fails: do not serve removed, expired, or uncertain credentials.
+
 ### InMemoryCredentialStore
 
 - Backed by `ConcurrentHashMap<String, CachedCredential>`

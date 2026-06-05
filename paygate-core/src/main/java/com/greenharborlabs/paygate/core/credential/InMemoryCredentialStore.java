@@ -64,13 +64,13 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
   @Override
   public void store(String tokenId, L402Credential credential, long ttlSeconds) {
     Instant expiresAt = Instant.now().plusSeconds(ttlSeconds);
-    CachedCredential cached = new CachedCredential(credential, expiresAt);
+    CachedCredential cached = new CachedCredential(credential.copy(), expiresAt);
 
     storeLock.lock();
     try {
       // If updating an existing entry, always allow it (updates access order too)
       if (entries.containsKey(tokenId)) {
-        entries.put(tokenId, cached);
+        destroyCached(entries.put(tokenId, cached));
         return;
       }
 
@@ -105,12 +105,12 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
         return null;
       }
       if (cached.isExpired()) {
-        entries.remove(tokenId);
+        destroyCached(entries.remove(tokenId));
         notifyListener(tokenId, EvictionReason.EXPIRED);
         return null;
       }
       // LinkedHashMap.get() already updated access order under lock
-      return cached.credential();
+      return cached.credential().copy();
     } finally {
       storeLock.unlock();
     }
@@ -122,6 +122,7 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
     try {
       CachedCredential removed = entries.remove(tokenId);
       if (removed != null) {
+        destroyCached(removed);
         notifyListener(tokenId, EvictionReason.REVOKED);
       }
     } finally {
@@ -152,6 +153,13 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
         Thread.currentThread().interrupt();
       }
     }
+    storeLock.lock();
+    try {
+      entries.values().forEach(InMemoryCredentialStore::destroyCached);
+      entries.clear();
+    } finally {
+      storeLock.unlock();
+    }
   }
 
   private void scheduledCleanup() {
@@ -167,6 +175,20 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
     }
   }
 
+  /**
+   * Test support only: returns the retained cache-owned entry without copying it.
+   *
+   * <p>This is intentionally package-private and must not be added to {@link CredentialStore}.
+   */
+  CachedCredential peekRetainedForTesting(String tokenId) {
+    storeLock.lock();
+    try {
+      return entries.get(tokenId);
+    } finally {
+      storeLock.unlock();
+    }
+  }
+
   private void evictExpired() {
     // Must be called under storeLock
     var iterator = entries.entrySet().iterator();
@@ -174,7 +196,9 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
       Map.Entry<String, CachedCredential> entry = iterator.next();
       if (entry.getValue().isExpired()) {
         String tokenId = entry.getKey();
+        CachedCredential cached = entry.getValue();
         iterator.remove();
+        destroyCached(cached);
         notifyListener(tokenId, EvictionReason.EXPIRED);
       }
     }
@@ -187,8 +211,16 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
     if (iterator.hasNext()) {
       Map.Entry<String, CachedCredential> eldest = iterator.next();
       String tokenId = eldest.getKey();
+      CachedCredential cached = eldest.getValue();
       iterator.remove();
+      destroyCached(cached);
       notifyListener(tokenId, EvictionReason.CAPACITY);
+    }
+  }
+
+  private static void destroyCached(CachedCredential cached) {
+    if (cached != null) {
+      cached.credential().destroy();
     }
   }
 

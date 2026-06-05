@@ -49,6 +49,11 @@ public final class L402Validator {
   /**
    * Wraps a validated credential with a flag indicating whether it was freshly validated (true) or
    * served from cache (false).
+   *
+   * <p>The contained credential is caller-owned. Callers are responsible for destroying it when no
+   * longer needed. Fresh validation returns the parsed request credential. Cache hits return a
+   * separate caller-owned copy of the credential retrieved from {@link
+   * CredentialStore#get(String)}.
    */
   public record ValidationResult(L402Credential credential, boolean freshValidation) {}
 
@@ -97,47 +102,60 @@ public final class L402Validator {
     // 1. Parse the pre-extracted header components
     L402Credential credential = L402Credential.parse(components);
     String tokenId = credential.tokenId();
+    boolean returningCredential = false;
 
-    // 2. Check credential cache — verify presented credential matches cached, re-verify caveats.
-    //    Root key existence is NOT re-checked here: the credential was fully validated
-    //    (including root key + HMAC) before it entered the cache. If a root key is revoked,
-    //    the revoking code should proactively call credentialStore.revoke() to evict it.
-    L402Credential cached = credentialStore.get(tokenId);
-    if (cached != null) {
-      return verifyCachedCredential(credential, cached, context);
-    }
+    try {
+      // 2. Check credential cache — verify presented credential matches cached, re-verify caveats.
+      //    Root key existence is NOT re-checked here: the credential was fully validated
+      //    (including root key + HMAC) before it entered the cache. If a root key is revoked,
+      //    the revoking code should proactively call credentialStore.revoke() to evict it.
+      L402Credential cached = credentialStore.get(tokenId);
+      if (cached != null) {
+        try {
+          return verifyCachedCredential(credential, cached, context);
+        } finally {
+          cached.destroy();
+        }
+      }
 
-    // 3. Decode identifier
-    MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
-    byte[] tokenIdBytes = macId.tokenId();
+      // 3. Decode identifier
+      MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
+      byte[] tokenIdBytes = macId.tokenId();
 
-    // 4. Verify preimage matches payment hash (BEFORE root key lookup — see security invariant)
-    verifyPreimage(credential, macId);
+      // 4. Verify preimage matches payment hash (BEFORE root key lookup — see security invariant)
+      verifyPreimage(credential, macId);
 
-    // 5. Look up root key
-    SensitiveBytes rootKeySb = rootKeyStore.getRootKey(tokenIdBytes);
-    if (rootKeySb == null) {
-      throw new L402Exception(ErrorCode.REVOKED_CREDENTIAL, "No root key found for token", tokenId);
-    }
+      // 5. Look up root key
+      SensitiveBytes rootKeySb = rootKeyStore.getRootKey(tokenIdBytes);
+      if (rootKeySb == null) {
+        throw new L402Exception(
+            ErrorCode.REVOKED_CREDENTIAL, "No root key found for token", tokenId);
+      }
 
-    // 6. Verify macaroon signature and caveats using the provided context
-    Instant now = context.getCurrentTime();
-    try (rootKeySb) {
-      byte[] rootKey = rootKeySb.value();
-      try {
-        MacaroonVerifier.verify(credential.macaroon(), rootKey, caveatVerifiers, context);
-      } catch (MacaroonVerificationException e) {
-        throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
-      } finally {
-        KeyMaterial.zeroize(rootKey);
+      // 6. Verify macaroon signature and caveats using the provided context
+      Instant now = context.getCurrentTime();
+      try (rootKeySb) {
+        byte[] rootKey = rootKeySb.value();
+        try {
+          MacaroonVerifier.verify(credential.macaroon(), rootKey, caveatVerifiers, context);
+        } catch (MacaroonVerificationException e) {
+          throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
+        } finally {
+          KeyMaterial.zeroize(rootKey);
+        }
+      }
+
+      // 7. Cache the credential with TTL derived from valid_until caveats
+      long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
+      credentialStore.store(tokenId, credential, cacheTtl);
+
+      returningCredential = true;
+      return new ValidationResult(credential, true);
+    } finally {
+      if (!returningCredential) {
+        credential.destroy();
       }
     }
-
-    // 7. Cache the credential with TTL derived from valid_until caveats
-    long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
-    credentialStore.store(tokenId, credential, cacheTtl);
-
-    return new ValidationResult(credential, true);
   }
 
   /**
@@ -151,7 +169,8 @@ public final class L402Validator {
    * @param credential the presented credential from the request
    * @param cached the previously validated and cached credential
    * @param context the verification context for caveat re-evaluation
-   * @return a {@link ValidationResult} with the cached credential and freshValidation=false
+   * @return a {@link ValidationResult} with a caller-owned credential copy and
+   *     freshValidation=false
    * @throws L402Exception if preimage, macaroon, or caveat verification fails
    */
   private ValidationResult verifyCachedCredential(
@@ -185,7 +204,7 @@ public final class L402Validator {
       throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
     }
 
-    return new ValidationResult(cached, false);
+    return new ValidationResult(cached.copy(), false);
   }
 
   /**

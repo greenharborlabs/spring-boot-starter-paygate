@@ -8,6 +8,7 @@ import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Caffeine-backed {@link CredentialStore} with per-entry TTL.
@@ -17,18 +18,62 @@ import java.util.concurrent.TimeUnit;
  * configurable maximum size.
  *
  * <p>An optional {@link EvictionListener} can be set via {@link #setEvictionListener} to receive
- * notifications when entries are removed. The listener is invoked asynchronously on Caffeine's
- * maintenance executor thread. The listener field is volatile, so it can be set after cache
- * construction and will take effect on the next eviction.
+ * notifications when entries are removed. The listener field is volatile, so it can be set after
+ * cache construction and will take effect on the next eviction.
  */
-public class CaffeineCredentialStore implements CredentialStore {
+public class CaffeineCredentialStore implements CredentialStore, AutoCloseable {
 
   private static final System.Logger log =
       System.getLogger(CaffeineCredentialStore.class.getName());
 
-  private record CacheEntry(L402Credential credential, long ttlNanos) {}
+  private static final class CacheEntry {
+
+    private final L402Credential credential;
+    private final long ttlNanos;
+    private final ReentrantLock lock = new ReentrantLock();
+    private boolean removed;
+
+    private CacheEntry(L402Credential credential, long ttlNanos) {
+      this.credential = credential;
+      this.ttlNanos = ttlNanos;
+    }
+
+    private long ttlNanos() {
+      return ttlNanos;
+    }
+
+    private L402Credential copyIfActive(Runnable beforeCopy) {
+      lock.lock();
+      try {
+        if (removed) {
+          return null;
+        }
+        beforeCopy.run();
+        return credential.copy();
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    private void destroyOnce() {
+      lock.lock();
+      try {
+        if (!removed) {
+          removed = true;
+          credential.destroy();
+        }
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    private L402Credential credentialForTesting() {
+      return credential;
+    }
+  }
 
   private volatile EvictionListener evictionListener;
+  private volatile Runnable beforeCopyForTesting = () -> {};
 
   private final Cache<String, CacheEntry> cache;
 
@@ -36,6 +81,7 @@ public class CaffeineCredentialStore implements CredentialStore {
     this.cache =
         Caffeine.newBuilder()
             .maximumSize(maxSize)
+            .executor(Runnable::run)
             .expireAfter(
                 new Expiry<String, CacheEntry>() {
                   @Override
@@ -55,27 +101,7 @@ public class CaffeineCredentialStore implements CredentialStore {
                     return currentDuration;
                   }
                 })
-            .removalListener(
-                (String key, CacheEntry value, RemovalCause cause) -> {
-                  EvictionListener listener = this.evictionListener;
-                  if (listener == null) {
-                    return;
-                  }
-                  EvictionReason reason = mapCause(cause);
-                  if (reason == null) {
-                    return;
-                  }
-                  try {
-                    listener.onEviction(key, reason);
-                  } catch (Exception e) {
-                    log.log(
-                        System.Logger.Level.WARNING,
-                        "Eviction listener threw for tokenId={0}, reason={1}: {2}",
-                        key,
-                        reason,
-                        e.getMessage());
-                  }
-                })
+            .removalListener(this::handleRemoval)
             .build();
   }
 
@@ -87,13 +113,19 @@ public class CaffeineCredentialStore implements CredentialStore {
   @Override
   public void store(String tokenId, L402Credential credential, long ttlSeconds) {
     long ttlNanos = TimeUnit.SECONDS.toNanos(ttlSeconds);
-    cache.put(tokenId, new CacheEntry(credential, ttlNanos));
+    L402Credential retained = credential.copy();
+    try {
+      cache.put(tokenId, new CacheEntry(retained, ttlNanos));
+    } catch (RuntimeException | Error e) {
+      retained.destroy();
+      throw e;
+    }
   }
 
   @Override
   public L402Credential get(String tokenId) {
     CacheEntry entry = cache.getIfPresent(tokenId);
-    return entry != null ? entry.credential() : null;
+    return entry != null ? entry.copyIfActive(beforeCopyForTesting) : null;
   }
 
   @Override
@@ -105,6 +137,52 @@ public class CaffeineCredentialStore implements CredentialStore {
   public long activeCount() {
     cache.cleanUp();
     return cache.estimatedSize();
+  }
+
+  @Override
+  public void close() {
+    cache.invalidateAll();
+    cache.cleanUp();
+  }
+
+  L402Credential peekRetainedForTesting(String tokenId) {
+    CacheEntry entry = cache.getIfPresent(tokenId);
+    return entry != null ? entry.credentialForTesting() : null;
+  }
+
+  void setBeforeCopyForTesting(Runnable beforeCopyForTesting) {
+    this.beforeCopyForTesting = beforeCopyForTesting != null ? beforeCopyForTesting : () -> {};
+  }
+
+  private void handleRemoval(String tokenId, CacheEntry entry, RemovalCause cause) {
+    destroyCached(entry);
+
+    EvictionReason reason = mapCause(cause);
+    if (reason == null) {
+      return;
+    }
+
+    EvictionListener listener = this.evictionListener;
+    if (listener == null) {
+      return;
+    }
+
+    try {
+      listener.onEviction(tokenId, reason);
+    } catch (Exception e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Eviction listener threw for tokenId={0}, reason={1}: {2}",
+          tokenId,
+          reason,
+          e.getMessage());
+    }
+  }
+
+  private static void destroyCached(CacheEntry entry) {
+    if (entry != null) {
+      entry.destroyOnce();
+    }
   }
 
   private static EvictionReason mapCause(RemovalCause cause) {
