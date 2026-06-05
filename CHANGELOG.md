@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-05
+
+### Changed
+
+- **paygate-core**: Clarified credential cache ownership boundaries so stores retain and return caller-owned copies.
+- **paygate-core**: Reused precomputed caveat verifier maps for fresh and cached L402 credential validation paths.
+
+### Security
+
+- **paygate-core**: Reject non-canonical V2 macaroons with trailing bytes after the signature.
+- **paygate-core**: Zeroize temporary payment preimage bytes decoded from hex.
+- **paygate-core**: Destroy retained cache-owned preimages on revoke, expiry, replacement, capacity eviction, and close.
+- **paygate-protocol-l402**: Clean up parsed credential material when validation fails.
+- **paygate-spring-autoconfigure**: Apply credential ownership cleanup to the Caffeine-backed credential store.
+
+### Fixed
+
+- **paygate-core**: Preserve usable validation results after credential cache revocation.
+- **paygate-core**: Keep cached credential validation fail-closed while avoiding repeated verifier-map construction.
+
 ## [0.1.1] - 2026-05-27
 
 ### Security
@@ -93,5 +113,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WWW-Authenticate` header format corrected to `L402 version="0", token=`
 - `MacaroonSerializer` validation for field types and lengths
 
+[0.1.2]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/greenharborlabs/spring-boot-starter-l402/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/greenharborlabs/spring-boot-starter-l402/releases/tag/v0.1.0
