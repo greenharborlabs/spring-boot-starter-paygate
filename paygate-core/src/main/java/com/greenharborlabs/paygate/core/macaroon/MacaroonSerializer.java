@@ -210,6 +210,12 @@ public final class MacaroonSerializer {
     }
     byte[] signature = new byte[sigLen];
     System.arraycopy(data, pos, signature, 0, sigLen);
+    pos += sigLen;
+
+    if (pos != data.length) {
+      throw new IllegalArgumentException(
+          "Trailing bytes after V2 macaroon signature: %d bytes".formatted(data.length - pos));
+    }
 
     return new Macaroon(identifier, location, caveats, signature);
   }

@@ -120,11 +120,14 @@ public final class PaymentPreimage implements AutoCloseable, Destroyable {
               + " characters, got "
               + hex.length());
     }
+    byte[] decoded = null;
     try {
-      byte[] decoded = HEX.parseHex(hex.toLowerCase());
+      decoded = HEX.parseHex(hex.toLowerCase());
       return new PaymentPreimage(decoded);
     } catch (IllegalArgumentException e) {
       throw new IllegalArgumentException("Invalid hex string: " + e.getMessage(), e);
+    } finally {
+      KeyMaterial.zeroize(decoded);
     }
   }
 

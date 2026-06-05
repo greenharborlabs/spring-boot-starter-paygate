@@ -14,6 +14,7 @@ import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -31,6 +32,7 @@ public final class L402Validator {
   private final RootKeyStore rootKeyStore;
   private final CredentialStore credentialStore;
   private final List<CaveatVerifier> caveatVerifiers;
+  private final Map<String, CaveatVerifier> caveatVerifiersByKey;
   private final String serviceName;
 
   public L402Validator(
@@ -43,6 +45,7 @@ public final class L402Validator {
         Objects.requireNonNull(credentialStore, "credentialStore must not be null");
     this.caveatVerifiers =
         List.copyOf(Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
+    this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(this.caveatVerifiers);
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
   }
 
@@ -198,7 +201,7 @@ public final class L402Validator {
 
     // Re-verify all caveats against the provided context (includes escalation detection)
     try {
-      MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiers, context);
+      MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiersByKey, context);
     } catch (MacaroonVerificationException e) {
       credentialStore.revoke(tokenId);
       throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
