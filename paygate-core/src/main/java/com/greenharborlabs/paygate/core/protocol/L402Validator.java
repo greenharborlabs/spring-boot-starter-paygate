@@ -7,11 +7,13 @@ import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +33,6 @@ public final class L402Validator {
 
   private final RootKeyStore rootKeyStore;
   private final CredentialStore credentialStore;
-  private final List<CaveatVerifier> caveatVerifiers;
   private final Map<String, CaveatVerifier> caveatVerifiersByKey;
   private final String serviceName;
 
@@ -43,9 +44,9 @@ public final class L402Validator {
     this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
     this.credentialStore =
         Objects.requireNonNull(credentialStore, "credentialStore must not be null");
-    this.caveatVerifiers =
+    List<CaveatVerifier> verifiers =
         List.copyOf(Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
-    this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(this.caveatVerifiers);
+    this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(verifiers);
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
   }
 
@@ -140,7 +141,7 @@ public final class L402Validator {
       try (rootKeySb) {
         byte[] rootKey = rootKeySb.value();
         try {
-          MacaroonVerifier.verify(credential.macaroon(), rootKey, caveatVerifiers, context);
+          verifyMacaroon(credential.macaroon(), rootKey, context);
         } catch (MacaroonVerificationException e) {
           throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
         } finally {
@@ -208,6 +209,28 @@ public final class L402Validator {
     }
 
     return new ValidationResult(cached.copy(), false);
+  }
+
+  private void verifyMacaroon(Macaroon macaroon, byte[] rootKey, L402VerificationContext context) {
+    byte[] derivedKey = MacaroonCrypto.deriveKey(rootKey);
+    byte[] sig = null;
+    try {
+      sig = MacaroonCrypto.hmac(derivedKey, macaroon.identifier());
+
+      for (Caveat caveat : macaroon.caveats()) {
+        byte[] oldSig = sig;
+        sig = MacaroonCrypto.hmac(oldSig, caveat.toString().getBytes(StandardCharsets.UTF_8));
+        KeyMaterial.zeroize(oldSig);
+      }
+
+      if (!MacaroonCrypto.constantTimeEquals(sig, macaroon.signature())) {
+        throw new MacaroonVerificationException("signature verification failed");
+      }
+
+      MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
+    } finally {
+      KeyMaterial.zeroize(derivedKey, sig);
+    }
   }
 
   /**

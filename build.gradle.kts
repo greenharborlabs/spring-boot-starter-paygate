@@ -109,6 +109,10 @@ subprojects {
         }
     }
 
+    tasks.withType<JavaCompile>().configureEach {
+        dependsOn("spotlessApply")
+    }
+
     the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
         imports {
             mavenBom("org.springframework.boot:spring-boot-dependencies:$springBootVersion")
