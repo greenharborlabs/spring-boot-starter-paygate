@@ -4,9 +4,10 @@
 
 ### Core Commands
 ```bash
-./gradlew build          # Build all modules (includes tests)
-./gradlew test           # Run all tests across all modules
+./gradlew build          # Build default modules (includes tests; excludes paygate-integration-tests)
+./gradlew test           # Run tests across default modules
 ./gradlew :paygate-core:test  # Test core module only
+./gradlew build -Pintegration # Include paygate-integration-tests in the build
 ```
 
 ### Running Single Tests
@@ -30,12 +31,27 @@
 ./gradlew jacocoTestReport     # Generate coverage reports (HTML/XML)
 ./gradlew aggregateJavadoc     # Generate API documentation
 ./gradlew check                # Build + tests + coverage verification
+./gradlew buildHealth          # Dependency analysis health report
+./gradlew releaseReadiness -Pintegration  # Full local release gate
 ```
 
 ### Integration Tests
 ```bash
-cd integration-tests && docker-compose -f docker-compose-lnd.yml up --build      # Run Docker-based integration tests (LND)
-cd integration-tests && docker-compose -f docker-compose-lnbits.yml up --build   # Run Docker-based integration tests (LNbits)
+./gradlew :paygate-integration-tests:test -Pintegration          # Run Gradle integration tests
+./gradlew :paygate-integration-tests:securityTest -Pintegration  # Run integration security tests
+
+cd integration-tests && docker-compose -f docker-compose-lnd.yml up --build             # LND
+cd integration-tests && docker-compose -f docker-compose-lnbits.yml up --build          # LNbits
+cd integration-tests && docker-compose -f docker-compose-lnbits-lnd.yml up --build      # LNbits + LND payer
+cd integration-tests && docker-compose -f docker-compose-lnd-two-node.yml up --build    # Two-node LND
+```
+
+### Formatting, Static Analysis & Benchmarks
+```bash
+./gradlew spotlessCheck      # Check formatting
+./gradlew spotlessApply      # Apply Google Java Format
+./gradlew pmdMain           # Run PMD on production sources
+./gradlew :paygate-core:jmh # Run paygate-core JMH benchmarks
 ```
 
 ---
@@ -88,7 +104,8 @@ cd integration-tests && docker-compose -f docker-compose-lnbits.yml up --build  
 - Test edge cases: empty inputs, null handling, binary data, concurrent access
 
 ### paygate-core Constraints
-- **ZERO external dependencies** — only JDK `javax.crypto`, `java.security`, `java.util`
+- **ZERO external production dependencies outside project modules** — `paygate-core` may depend on `paygate-api`; production crypto code stays JDK-only (`javax.crypto`, `java.security`, `java.util`, etc.)
+- Test sources may use test-only libraries such as JUnit, AssertJ, and Jackson fixtures.
 - Macaroon V2 format must be byte-level compatible with Go `go-macaroon`
 - Key derivation: `HMAC-SHA256(key="macaroons-key-generator", data=rootKey)`
 - Identifier layout: `[version:2 bytes BE][payment_hash:32][token_id:32]` = 66 bytes
@@ -100,7 +117,7 @@ cd integration-tests && docker-compose -f docker-compose-lnbits.yml up --build  
 - Security mode auto-detection via `L402SecurityModeResolver` (servlet vs Spring Security)
 
 ### Code Quality Requirements
-- **Coverage minimums**: paygate-core ≥80%, other modules ≥60%, example app ≥40%
+- **Coverage minimums**: paygate-core ≥80%, non-example/non-integration modules ≥60%, example apps and integration tests currently 0%
 - No compilation warnings, clean code inspection passes
 - Javadoc for public APIs, inline comments only where necessary
 - For JCA objects (e.g., `Mac`), call `Mac.getInstance()` fresh per operation rather than caching in a `ThreadLocal`; JCA provider lookups are cached after the first call so the cost is negligible, and `ThreadLocal` is problematic with virtual threads (pinning, memory leaks)
@@ -110,7 +127,7 @@ cd integration-tests && docker-compose -f docker-compose-lnbits.yml up --build  
 ## Additional Resources
 
 ### Configuration Metadata
-See project root `docs/` folder and `additional-spring-configuration-metadata.json` for all available properties.
+See project root `docs/` folder and `paygate-spring-autoconfigure/src/main/resources/META-INF/additional-spring-configuration-metadata.json` for all available properties.
 
 ### Key Security Patterns
 1. **Key derivation**: Always use `MacaroonCrypto.deriveKey()` with the fixed generator key
