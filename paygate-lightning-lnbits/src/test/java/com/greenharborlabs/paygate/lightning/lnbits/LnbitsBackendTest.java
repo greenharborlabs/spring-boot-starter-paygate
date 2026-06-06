@@ -8,6 +8,8 @@ import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.lightning.LightningTimeoutException;
 import java.net.http.HttpClient;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -261,7 +263,8 @@ class LnbitsBackendTest {
     assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
         .isInstanceOf(LnbitsException.class)
         .hasMessageContaining("HTTP 401")
-        .hasMessageContaining("Unauthorized");
+        .message()
+        .doesNotContain("Unauthorized");
   }
 
   @Test
@@ -271,7 +274,8 @@ class LnbitsBackendTest {
     assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
         .isInstanceOf(LnbitsException.class)
         .hasMessageContaining("HTTP 500")
-        .hasMessageContaining("Internal Server Error");
+        .message()
+        .doesNotContain("Internal Server Error");
   }
 
   @Test
@@ -281,7 +285,8 @@ class LnbitsBackendTest {
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
         .hasMessageContaining("HTTP 404")
-        .hasMessageContaining("Not Found");
+        .message()
+        .doesNotContain("Not Found");
   }
 
   @Test
@@ -291,7 +296,8 @@ class LnbitsBackendTest {
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
         .hasMessageContaining("HTTP 502")
-        .hasMessageContaining("Bad Gateway");
+        .message()
+        .doesNotContain("Bad Gateway");
   }
 
   // Verify the backend implements the LightningBackend interface
@@ -301,6 +307,44 @@ class LnbitsBackendTest {
   }
 
   // --- Input validation tests ---
+
+  @Test
+  void createInvoice_throws_whenAmountIsZero() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"payment_hash": "%s", "payment_request": "%s"}
+                        """
+                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+
+    assertThatThrownBy(() -> backend.createInvoice(0L, "memo"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("amountSats");
+
+    assertThat(server.getRequestCount()).isZero();
+  }
+
+  @Test
+  void createInvoice_throws_whenAmountIsNegative() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"payment_hash": "%s", "payment_request": "%s"}
+                        """
+                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+
+    assertThatThrownBy(() -> backend.createInvoice(-1L, "memo"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("amountSats");
+
+    assertThat(server.getRequestCount()).isZero();
+  }
 
   @Test
   void lookupInvoice_throws_whenPaymentHashIsNull() {
@@ -566,20 +610,21 @@ class LnbitsBackendTest {
         .isInstanceOf(LnbitsException.class)
         .isNotInstanceOf(LnbitsTimeoutException.class)
         .hasMessageContaining("HTTP 500")
-        .hasMessageContaining("Internal Server Error");
+        .message()
+        .doesNotContain("Internal Server Error");
   }
 
   @Test
-  void createInvoice_truncatesLongErrorBody() {
-    String longBody = "X".repeat(250);
-    server.enqueue(new MockResponse().setResponseCode(500).setBody(longBody));
+  void createInvoice_doesNotExposeSecretErrorBody() {
+    String secretBody = "lnbits-secret=x-api-key-abc123-super-secret";
+    server.enqueue(new MockResponse().setResponseCode(500).setBody(secretBody));
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
         .hasMessageContaining("HTTP 500")
-        .hasMessageEndingWith("...")
         .message()
-        .doesNotContain(longBody);
+        .doesNotContain(secretBody)
+        .doesNotContain("x-api-key-abc123-super-secret");
   }
 
   @Test
@@ -589,6 +634,26 @@ class LnbitsBackendTest {
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
         .hasMessageContaining("HTTP 502");
+  }
+
+  @Test
+  void checkResponseStatusWarning_doesNotFormatResponseBody() throws Exception {
+    Path sourcePath =
+        Path.of("src/main/java/com/greenharborlabs/paygate/lightning/lnbits/LnbitsBackend.java");
+    if (!Files.exists(sourcePath)) {
+      sourcePath =
+          Path.of(
+              "paygate-lightning-lnbits/src/main/java/com/greenharborlabs/paygate/lightning/lnbits/LnbitsBackend.java");
+    }
+
+    String source = Files.readString(sourcePath);
+    String methodSource =
+        source.substring(source.indexOf("private static void checkResponseStatus"));
+
+    assertThat(methodSource)
+        .doesNotContain("response.body()")
+        .doesNotContain("truncateBody")
+        .doesNotContain("sensitive-body-secret");
   }
 
   @Test

@@ -144,7 +144,7 @@ paygate.lnd.macaroon-path=/path/to/invoice.macaroon
 | `paygate.lnd.host` | `string` | `localhost` | No | Hostname or IP address of the LND gRPC endpoint. |
 | `paygate.lnd.port` | `int` | `10009` | No | Port number of the LND gRPC endpoint. LND defaults to `10009`. |
 | `paygate.lnd.tls-cert-path` | `string` | `null` | Yes* | Absolute path to the LND TLS certificate file (`tls.cert`). Required unless `allow-plaintext=true`. |
-| `paygate.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup, hex-encoded, and attached to every gRPC call. |
+| `paygate.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup and attached to every gRPC call as lower-case hex metadata. |
 | `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC connections. Intended only for local development with a localhost LND node. A warning is logged when active. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | Interval between gRPC keepalive pings. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Timeout for keepalive ping acknowledgement. |
@@ -162,7 +162,7 @@ The TLS certificate and macaroon file are sensitive credentials. Recommended app
 - **Docker volume mounts**: Mount LND credential files into the container and reference the mount paths
 - **Kubernetes secrets**: Mount as files via secret volumes
 
-The macaroon file is read once at startup and held in memory as a hex string. The file path itself may appear in logs, but the macaroon value is never logged.
+The macaroon file is read once at startup and held in memory as zeroizable bytes. Factory-created channels clear those bytes when the channel is shut down. The file path itself may appear in logs, but the macaroon value is never logged.
 
 ---
 
@@ -233,7 +233,7 @@ The channel is built in one of two modes:
 
 ### MacaroonClientInterceptor
 
-A gRPC `ClientInterceptor` (defined in this module) that attaches the LND macaroon as gRPC metadata on every outgoing call. The macaroon is read from the file at startup, hex-encoded, and injected into the `macaroon` metadata key -- matching LND's expected authentication format.
+A gRPC `ClientInterceptor` (defined in this module) that attaches the LND macaroon as gRPC metadata on every outgoing call. The macaroon is read from the file at startup, stored as zeroizable bytes, and injected into the `macaroon` metadata key as lower-case hex -- matching LND's expected authentication format.
 
 ---
 
@@ -277,7 +277,7 @@ public class CustomLndConfiguration {
                 .sslContext(buildCustomSslContext())
                 .keepAliveTime(30, TimeUnit.SECONDS)
                 .keepAliveTimeout(10, TimeUnit.SECONDS)
-                .intercept(new MacaroonClientInterceptor(loadMacaroonHex()))
+                .intercept(new MacaroonClientInterceptor(loadMacaroonBytes()))
                 .build();
     }
 
@@ -287,6 +287,8 @@ public class CustomLndConfiguration {
     }
 }
 ```
+
+Prefer the `MacaroonClientInterceptor(byte[])` constructor for custom channels so the interceptor can keep a defensive zeroizable copy of the macaroon. The `String` constructor remains for compatibility, but a Java `String` cannot be zeroized by the interceptor after the caller creates it.
 
 You can also override just the channel while letting auto-configuration create the `LndBackend`:
 

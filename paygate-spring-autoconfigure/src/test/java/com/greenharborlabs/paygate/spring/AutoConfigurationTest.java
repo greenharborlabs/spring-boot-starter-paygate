@@ -17,6 +17,8 @@ import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.protocol.mpp.MppProtocol;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -90,6 +92,23 @@ class AutoConfigurationTest {
   }
 
   @Test
+  @DisplayName("auto mode keeps servlet filter registration active without Paygate integration")
+  void autoModeKeepsServletFilterRegistrationWhenIntegrationMissing() {
+    contextRunner
+        .withPropertyValues("paygate.security-mode=auto")
+        .run(
+            context -> {
+              assertThat(context).hasBean("paygateSecurityFilterRegistration");
+              assertThat(context).doesNotHaveBean("paygateSecurityFilterDisabledRegistration");
+              Object validator = context.getBean("paygateSecurityModeStartupValidator");
+              var method = validator.getClass().getMethod("resolvedMode");
+              method.setAccessible(true);
+              String resolvedMode = (String) method.invoke(validator);
+              assertThat(resolvedMode).isEqualTo("servlet");
+            });
+  }
+
+  @Test
   @DisplayName("creates caveatVerifiers list bean when paygate.enabled=true")
   void createsCaveatVerifiers() {
     contextRunner.run(context -> assertThat(context).hasBean("caveatVerifiers"));
@@ -135,13 +154,27 @@ class AutoConfigurationTest {
   }
 
   @Test
-  @DisplayName("spring-security mode without Spring Security on classpath fails startup")
-  void springSecurityModeWithoutSpringSecurityFails() {
-    // Spring Security is not on this module's test classpath, so spring-security mode
-    // should cause a validation failure at startup.
+  @DisplayName("spring-security mode without required classpath fails startup")
+  void springSecurityModeWithoutRequiredClasspathFails() {
     contextRunner
         .withPropertyValues("paygate.security-mode=spring-security")
-        .run(context -> assertThat(context).hasFailed());
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .hasMessageContaining("paygate.security-mode=spring-security")
+                  .hasMessageContaining("paygate-spring-security integration module");
+            });
+  }
+
+  @Test
+  @DisplayName("starter does not declare paygate-spring-security dependency")
+  void starterDoesNotDeclarePaygateSpringSecurityDependency() throws Exception {
+    Path starterBuildFile = Path.of("..", "paygate-spring-boot-starter", "build.gradle.kts");
+    String buildFile = Files.readString(starterBuildFile);
+    assertThat(buildFile)
+        .contains("paygate-spring-autoconfigure")
+        .doesNotContain("paygate-spring-security");
   }
 
   @Test

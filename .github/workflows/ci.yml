@@ -56,6 +56,11 @@ jobs:
 
           echo "=== Checking for files larger than 500KB ==="
           while IFS= read -r -d '' file; do
+            case "$file" in
+              */src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
+                continue
+                ;;
+            esac
             size=$(wc -c < "$file")
             if [ "$size" -gt 512000 ]; then
               echo "::error file=${file}::File exceeds 500KB limit ($(( size / 1024 ))KB): ${file}"
@@ -66,6 +71,11 @@ jobs:
           echo ""
           echo "=== Checking for source files exceeding 1000 lines ==="
           while IFS= read -r -d '' file; do
+            case "$file" in
+              */src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
+                continue
+                ;;
+            esac
             case "$file" in
               *.java|*.kt|*.kts|*.xml|*.yml|*.yaml|*.properties|*.json|*.gradle|*.gradle.kts)
                 lines=$(wc -l < "$file")

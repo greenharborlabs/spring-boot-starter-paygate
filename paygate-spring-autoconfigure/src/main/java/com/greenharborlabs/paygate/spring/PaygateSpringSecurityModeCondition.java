@@ -11,10 +11,11 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  *
  * <ul>
  *   <li>{@code paygate.security-mode=spring-security} (explicit), or
- *   <li>{@code paygate.security-mode=auto} (or unset) and Spring Security is on the classpath
+ *   <li>{@code paygate.security-mode=auto} (or unset) and both Spring Security and the Paygate
+ *       Spring Security integration are on the classpath
  * </ul>
  *
- * <p>Used by {@code L402SecurityAutoConfiguration} in the spring-security module.
+ * <p>Used by {@code PaygateSecurityAutoConfiguration} in the spring-security module.
  */
 public class PaygateSpringSecurityModeCondition implements Condition {
 

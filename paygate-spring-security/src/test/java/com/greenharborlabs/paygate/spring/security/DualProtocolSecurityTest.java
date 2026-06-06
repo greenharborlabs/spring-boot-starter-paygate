@@ -210,7 +210,7 @@ class DualProtocolSecurityTest {
               new byte[32],
               null,
               null);
-      when(challengeService.createChallenge(any(), eq(config))).thenReturn(challengeContext);
+      when(challengeService.createChallenge(any(), eq(config), any())).thenReturn(challengeContext);
 
       var entryPoint =
           new PaygateAuthenticationEntryPoint(

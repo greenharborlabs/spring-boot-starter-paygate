@@ -16,6 +16,7 @@ import io.grpc.ServerServiceDefinition;
 import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -34,15 +35,85 @@ class MacaroonClientInterceptorTest {
 
   @Test
   void nullMacaroonHex_throwsIllegalArgumentException() {
-    assertThatThrownBy(() -> new MacaroonClientInterceptor(null))
+    assertThatThrownBy(() -> new MacaroonClientInterceptor((String) null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("macaroonHex must not be null");
   }
 
   @Test
-  void interceptorAttachesMacaroonHeader() throws Exception {
-    String expectedHex = "abcdef0123456789";
-    var interceptor = new MacaroonClientInterceptor(expectedHex);
+  void nullMacaroonBytes_throwsIllegalArgumentException() {
+    assertThatThrownBy(() -> new MacaroonClientInterceptor((byte[]) null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("macaroonBytes must not be null");
+  }
+
+  @Test
+  void byteArrayConstructorAttachesLowerCaseMacaroonHeader() throws Exception {
+    byte[] macaroonBytes = {
+      (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, 0x01, 0x23, 0x45, 0x67, (byte) 0x89
+    };
+    String expectedHex = HexFormat.of().formatHex(macaroonBytes);
+    var interceptor = new MacaroonClientInterceptor(macaroonBytes);
+
+    String capturedMacaroon = captureMacaroonHeader(interceptor);
+
+    assertThat(capturedMacaroon).isEqualTo(expectedHex);
+  }
+
+  @Test
+  void stringConstructorAttachesLowerCaseMacaroonHeader() throws Exception {
+    byte[] macaroonBytes = {
+      (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, 0x01, 0x23, 0x45, 0x67, (byte) 0x89
+    };
+    String expectedHex = HexFormat.of().formatHex(macaroonBytes);
+    var interceptor = new MacaroonClientInterceptor(expectedHex.toUpperCase());
+
+    String capturedMacaroon = captureMacaroonHeader(interceptor);
+
+    assertThat(capturedMacaroon).isEqualTo(expectedHex);
+  }
+
+  @Test
+  void byteArrayConstructorDefensivelyCopiesCallerBytes() throws Exception {
+    byte[] macaroonBytes = {0x0A, 0x1B, 0x2C, 0x3D};
+    String expectedHex = HexFormat.of().formatHex(macaroonBytes);
+    var interceptor = new MacaroonClientInterceptor(macaroonBytes);
+    macaroonBytes[0] = 0x55;
+    macaroonBytes[1] = 0x66;
+
+    String capturedMacaroon = captureMacaroonHeader(interceptor);
+
+    assertThat(capturedMacaroon).isEqualTo(expectedHex);
+  }
+
+  @Test
+  void zeroizeClearsInterceptorOwnedBytesIdempotently() throws Exception {
+    byte[] macaroonBytes = {0x01, 0x23, 0x45, 0x67};
+    String originalHex = HexFormat.of().formatHex(macaroonBytes);
+    var interceptor = new MacaroonClientInterceptor(macaroonBytes);
+
+    assertThat(captureMacaroonHeader(interceptor)).isEqualTo(originalHex);
+
+    interceptor.zeroize();
+    interceptor.zeroize();
+
+    assertThat(interceptor.isZeroized()).isTrue();
+    assertThat(captureMacaroonHeader(interceptor)).isNotEqualTo(originalHex);
+  }
+
+  @Test
+  void interceptorIsPublic() {
+    assertThat(MacaroonClientInterceptor.class).isPublic();
+  }
+
+  @Test
+  void emptyStringIsAllowed() {
+    var interceptor = new MacaroonClientInterceptor("");
+    assertThat(interceptor).isNotNull();
+  }
+
+  private static String captureMacaroonHeader(MacaroonClientInterceptor interceptor)
+      throws Exception {
 
     var capturedMacaroon = new AtomicReference<String>();
 
@@ -90,23 +161,12 @@ class MacaroonClientInterceptorTest {
 
       // Allow in-process transport to propagate
       Thread.sleep(100);
-
-      assertThat(capturedMacaroon.get()).isEqualTo(expectedHex);
     } finally {
       channel.shutdownNow();
       server.shutdownNow();
     }
-  }
 
-  @Test
-  void interceptorIsPublic() {
-    assertThat(MacaroonClientInterceptor.class).isPublic();
-  }
-
-  @Test
-  void emptyStringIsAllowed() {
-    var interceptor = new MacaroonClientInterceptor("");
-    assertThat(interceptor).isNotNull();
+    return capturedMacaroon.get();
   }
 
   private static class ByteArrayMarshaller implements MethodDescriptor.Marshaller<byte[]> {

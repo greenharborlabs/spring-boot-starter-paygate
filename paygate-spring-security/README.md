@@ -515,9 +515,9 @@ The servlet filter and Spring Security paths are mutually exclusive. The `paygat
 
 | Value | Servlet filter (`PaygateSecurityFilter`) | Spring Security (`PaygateAuthenticationFilter` + entry point) |
 |-------|--------------------------------------|----------------------------------------------------------|
-| `auto` (default) | Active when Spring Security is **not** on the classpath | Active when Spring Security **is** on the classpath |
+| `auto` (default) | Active unless both Spring Security and `paygate-spring-security` are on the classpath | Active only when both Spring Security and `paygate-spring-security` are on the classpath |
 | `servlet` | Always active | Disabled, even if Spring Security is on the classpath |
-| `spring-security` | Disabled | Always active. Fails at startup if Spring Security is not on the classpath. |
+| `spring-security` | Disabled | Always active. Fails at startup if Spring Security or `paygate-spring-security` is not on the classpath. |
 
 Only one mode is active at a time. This prevents conflicts where both the servlet filter and the Spring Security filter chain attempt to handle the same request.
 

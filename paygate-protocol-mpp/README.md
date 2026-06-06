@@ -106,8 +106,8 @@ The central class of this module. Implements the `PaymentProtocol` interface fro
 | `scheme()` | Returns `"Payment"` |
 | `canHandle(String)` | Returns `true` if the Authorization header starts with `"Payment "` (case-insensitive) |
 | `parseCredential(String)` | Strips the `"Payment "` prefix, delegates to `MppCredentialParser.parse()`, and validates that the payment method is `"lightning"` |
-| `formatChallenge(ChallengeContext)` | Builds the `WWW-Authenticate: Payment ...` header with HMAC-bound ID, JCS-serialized charge request, RFC 3339 expiry, and optional opaque/description fields |
-| `validate(PaymentCredential, Map)` | Executes the security-critical four-step validation: (1) preimage hash check, (2) HMAC binding check, (3) expiry check, (4) method check |
+| `formatChallenge(ChallengeContext)` | Builds the `WWW-Authenticate: Payment ...` header with HMAC-bound ID, JCS-serialized charge request, required digest binding, RFC 3339 expiry, and optional opaque/description fields |
+| `validate(PaymentCredential, Map)` | Executes the security-critical validation flow: (1) preimage hash check, (2) digest binding check, (3) HMAC binding check, (4) expiry check, (5) method check |
 | `createReceipt(PaymentCredential, ChallengeContext)` | Delegates to `MppReceipt.from()` to build a `PaymentReceipt` |
 
 Constructor requires a `byte[] challengeBindingSecret` of at least 32 bytes. The secret is defensively copied.
@@ -121,7 +121,7 @@ Utility class that computes and verifies HMAC-SHA256 challenge IDs for stateless
 | `createId(realm, method, intent, requestB64, expires, digest, opaqueB64, secret)` | Computes HMAC-SHA256 over the pipe-delimited 7-slot input and returns base64url-nopad encoded result |
 | `verify(id, realm, method, intent, requestB64, expires, digest, opaqueB64, secret)` | Recomputes the HMAC and compares against the presented ID using constant-time comparison |
 
-The HMAC input is a pipe-delimited string with 7 slots. Absent optional fields (expires, digest, opaque) use empty string in their slot. A fresh `Mac.getInstance("HmacSHA256")` is obtained per call for virtual-thread safety; JCA provider lookups are cached after the first call, so the overhead is negligible.
+The HMAC input is a pipe-delimited string with 7 slots. For MPP challenges created by `MppProtocol.formatChallenge()`, `digest` is required and is always populated in the header and response body. The low-level binding helper still accepts nullable optional slots for callers that use it directly; null `expires`, `digest`, or `opaque` values map to an empty string in their slot. A fresh `Mac.getInstance("HmacSHA256")` is obtained per call for virtual-thread safety; JCA provider lookups are cached after the first call, so the overhead is negligible.
 
 ### MppCredentialParser
 
@@ -132,7 +132,7 @@ Utility class that parses `Authorization: Payment <base64url-nopad>` credential 
 3. Extract the `challenge` object as a `Map<String, String>` of echoed challenge fields
 4. Extract `challenge.id` as the token ID
 5. Extract `payload.preimage` as a 64-character lowercase hex string
-6. Decode the preimage and compute SHA-256 to derive the payment hash
+6. Decode the preimage and extract the payment hash from `methodDetails.paymentHash` in the echoed charge request
 7. Extract optional `source` field
 8. Build `MppMetadata` and return a `PaymentCredential`
 
@@ -146,7 +146,8 @@ An immutable `record` implementing `ProtocolMetadata` that carries MPP-specific 
 |-------|------|-------------|
 | `echoedChallenge` | `Map<String, String>` | The challenge parameters echoed back by the client (defensively copied via `Map.copyOf()`) |
 | `source` | `String` | Optional identifier for the credential source (may be `null`) |
-| `rawCredentialJson` | `String` | The raw JSON credential string as received from the client |
+
+`MppMetadata` intentionally does not expose raw credential JSON. The decoded credential contains `payload.preimage`, so retaining it in metadata would keep payment preimage material alive beyond parsing.
 
 ### MppReceipt
 
@@ -215,7 +216,8 @@ Client                                  Server (MppProtocol)
   |    method="lightning",                |
   |    intent="charge",                   |
   |    request="<b64url charge req>",     |
-  |    expires="<ISO-8601>"               |
+  |    expires="<ISO-8601>",              |
+  |    digest="sha-256=:...:"             |
   |<--------------------------------------|
   |                                       |
   |  [pays Lightning invoice]             |
@@ -225,20 +227,20 @@ Client                                  Server (MppProtocol)
   |-------------------------------------->|
   |                                       |
   |                            MppCredentialParser.parse()
-  |                            Validate: preimage, HMAC, expiry, method
+  |                            Validate: preimage, digest binding, HMAC, expiry, method
   |                                       |
   |  200 OK                               |
   |  Payment-Receipt: <b64url receipt>    |
   |<--------------------------------------|
 ```
 
-**Step 1: Challenge issuance.** When a request arrives without credentials at a protected endpoint, `MppProtocol.formatChallenge()` builds a `WWW-Authenticate: Payment` header. The charge request (containing the BOLT-11 invoice, payment hash, amount, and network) is JCS-serialized and base64url-encoded into the `request` parameter. All challenge parameters are HMAC-bound into the `id` field.
+**Step 1: Challenge issuance.** When a request arrives without credentials at a protected endpoint, `MppProtocol.formatChallenge()` builds a `WWW-Authenticate: Payment` header. The caller must provide a non-blank request digest in `ChallengeContext.digest()`; missing or blank digest values are rejected before charge request serialization, HMAC ID creation, header construction, or body construction. The charge request (containing the BOLT-11 invoice, payment hash, amount, and network) is JCS-serialized and base64url-encoded into the `request` parameter. All challenge parameters, including the required digest, are HMAC-bound into the `id` field.
 
 **Step 2: Payment.** The client extracts the BOLT-11 invoice from the decoded `request` parameter and pays it through the Lightning Network.
 
 **Step 3: Credential presentation.** The client echoes back the entire challenge object plus the payment preimage in a base64url-encoded JSON blob in the `Authorization: Payment` header.
 
-**Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, HMAC binding, expiry, and method. On success, a `Payment-Receipt` header is included in the response.
+**Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, digest binding, HMAC binding, expiry, and method. The echoed challenge digest must be present and must match the request digest from the validation context. On success, a `Payment-Receipt` header is included in the response.
 
 ---
 
@@ -272,9 +274,10 @@ Client echoes challenge + provides preimage:
 
 Server validates (security-critical order):
   1. SHA-256(preimage) == payment_hash       (preimage check)
-  2. HMAC-SHA256(secret, fields) == id        (binding check)
-  3. Instant.now() < expires                   (expiry check)
-  4. method == "lightning"                      (method check)
+  2. echoed digest == request digest           (digest binding)
+  3. HMAC-SHA256(secret, fields) == id         (binding check)
+  4. Instant.now() < expires                   (expiry check)
+  5. method == "lightning"                     (method check)
 ```
 
 ### HMAC Input Format
@@ -285,8 +288,8 @@ The 7-slot pipe-delimited input string:
 realm|method|intent|request_b64url|expires_or_empty|digest_or_empty|opaque_b64url_or_empty
 ```
 
-- **Required slots**: `realm`, `method`, `intent`, `request_b64url` (must not be null)
-- **Optional slots**: `expires`, `digest`, `opaque_b64url` (null maps to empty string `""`)
+- **Required slots for MPP challenges**: `realm`, `method`, `intent`, `request_b64url`, `digest` (must not be null or blank)
+- **Low-level helper optional slots**: `expires`, `digest`, `opaque_b64url` (null maps to empty string `""` when calling `MppChallengeBinding` directly)
 - The pipe delimiter `|` ensures that field values cannot be shifted across slot boundaries
 
 ### Validation Order Rationale
@@ -307,7 +310,8 @@ The `Authorization: Payment` header carries a base64url-nopad encoded JSON blob:
     "method": "lightning",
     "intent": "charge",
     "request": "<base64url-nopad JCS charge request>",
-    "expires": "2026-12-31T23:59:59Z"
+    "expires": "2026-12-31T23:59:59Z",
+    "digest": "sha-256=:..."
   },
   "source": "optional-payer-identity",
   "payload": {
@@ -324,6 +328,7 @@ The `Authorization: Payment` header carries a base64url-nopad encoded JSON blob:
 | `challenge.method` | Yes | Payment method (must be `"lightning"`) |
 | `challenge.intent` | Yes | Challenge intent (e.g., `"charge"`) |
 | `challenge.request` | Yes | Base64url-nopad encoded JCS charge request |
+| `challenge.digest` | Yes | Digest for the protected request; must match validation request context |
 | `challenge.expires` | No | RFC 3339 expiry timestamp |
 | `source` | No | Optional payer identity string (may be null or absent) |
 | `payload.preimage` | Yes | 64-character lowercase hex string (32 bytes) |

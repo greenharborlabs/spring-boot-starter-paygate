@@ -59,6 +59,9 @@ public class LndBackend implements LightningBackend, AutoCloseable {
 
   @Override
   public Invoice createInvoice(long amountSats, String memo) {
+    if (amountSats <= 0) {
+      throw new IllegalArgumentException("amountSats must be > 0, got: " + amountSats);
+    }
     try {
       var request =
           Lnrpc.Invoice.newBuilder()
@@ -106,6 +109,13 @@ public class LndBackend implements LightningBackend, AutoCloseable {
 
   @Override
   public Invoice lookupInvoice(byte[] paymentHash) {
+    if (paymentHash == null) {
+      throw new IllegalArgumentException("paymentHash must not be null");
+    }
+    if (paymentHash.length != 32) {
+      throw new IllegalArgumentException(
+          "paymentHash must be exactly 32 bytes, got " + paymentHash.length);
+    }
     try {
       var request =
           Lnrpc.PaymentHash.newBuilder().setRHash(ByteString.copyFrom(paymentHash)).build();

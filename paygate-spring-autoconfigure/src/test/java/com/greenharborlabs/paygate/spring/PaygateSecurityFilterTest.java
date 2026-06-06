@@ -12,7 +12,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentCredential;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -39,6 +43,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -94,6 +100,8 @@ class PaygateSecurityFilterTest {
   @Autowired private PaygateEarningsTracker earningsTracker;
 
   @Autowired private PaygateSecurityFilter paygateSecurityFilter;
+
+  @Autowired private CapturingPaymentProtocol capturingPaymentProtocol;
 
   // -----------------------------------------------------------------------
   // Test application and configuration
@@ -164,7 +172,8 @@ class PaygateSecurityFilterTest {
         CredentialStore credentialStore,
         List<CaveatVerifier> caveatVerifiers,
         PaygateEarningsTracker paygateEarningsTracker,
-        PaygateProperties paygateProperties) {
+        PaygateProperties paygateProperties,
+        CapturingPaymentProtocol capturingPaymentProtocol) {
       var validator =
           new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, "test-service");
       var l402Protocol = new L402Protocol(validator, "test-service");
@@ -180,13 +189,18 @@ class PaygateSecurityFilterTest {
               null);
       return new PaygateSecurityFilter(
           endpointRegistry,
-          List.of(l402Protocol),
+          List.of(l402Protocol, capturingPaymentProtocol),
           challengeService,
           "test-service",
           null,
           null,
           paygateEarningsTracker,
           null);
+    }
+
+    @Bean
+    CapturingPaymentProtocol capturingPaymentProtocol() {
+      return new CapturingPaymentProtocol();
     }
 
     @Bean
@@ -219,6 +233,55 @@ class PaygateSecurityFilterTest {
     }
   }
 
+  static class CapturingPaymentProtocol implements PaymentProtocol {
+    private final AtomicReference<ChallengeContext> lastChallengeContext = new AtomicReference<>();
+
+    @Override
+    public String scheme() {
+      return "Payment";
+    }
+
+    @Override
+    public boolean canHandle(String authorizationHeader) {
+      return false;
+    }
+
+    @Override
+    public PaymentCredential parseCredential(String authorizationHeader)
+        throws PaymentValidationException {
+      throw new PaymentValidationException(
+          PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL,
+          "Payment credentials are not parsed in this boundary test",
+          (String) null);
+    }
+
+    @Override
+    public ChallengeResponse formatChallenge(ChallengeContext context) {
+      if (context.digest() == null || context.digest().isBlank()) {
+        throw new IllegalArgumentException("MPP challenge digest must not be null or blank");
+      }
+      lastChallengeContext.set(context);
+      return new ChallengeResponse(
+          "Payment digest=\"" + context.digest() + "\"",
+          "Payment",
+          Map.of("digest", context.digest()));
+    }
+
+    @Override
+    public void validate(PaymentCredential credential, Map<String, String> requestContext)
+        throws PaymentValidationException {
+      // Not used because canHandle returns false.
+    }
+
+    void reset() {
+      lastChallengeContext.set(null);
+    }
+
+    ChallengeContext lastChallengeContext() {
+      return lastChallengeContext.get();
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Test scenarios
   // -----------------------------------------------------------------------
@@ -231,6 +294,7 @@ class PaygateSecurityFilterTest {
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
       ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
+      capturingPaymentProtocol.reset();
     }
 
     @Test
@@ -245,6 +309,27 @@ class PaygateSecurityFilterTest {
           .andExpect(header().string("WWW-Authenticate", containsString("token=")))
           .andExpect(header().string("WWW-Authenticate", containsString("macaroon=")))
           .andExpect(header().string("WWW-Authenticate", containsString("invoice=")));
+    }
+
+    @Test
+    @DisplayName("returns 402 with Payment digest challenge when MPP is enabled")
+    void returns402WithPaymentDigestChallengeWhenMppEnabled() throws Exception {
+      var result =
+          mockMvc
+              .perform(get(PROTECTED_PATH))
+              .andExpect(status().isPaymentRequired())
+              .andExpect(jsonPath("$.protocols.Payment.digest", notNullValue()))
+              .andReturn();
+
+      List<String> wwwAuthHeaders = result.getResponse().getHeaders("WWW-Authenticate");
+      assertThat(wwwAuthHeaders).hasSize(2);
+      assertThat(wwwAuthHeaders.get(0)).startsWith("L402");
+      assertThat(wwwAuthHeaders.get(1)).startsWith("Payment").contains("digest=");
+
+      ChallengeContext capturedContext = capturingPaymentProtocol.lastChallengeContext();
+      assertThat(capturedContext).isNotNull();
+      assertThat(capturedContext.digest()).isNotBlank();
+      assertThat(result.getResponse().getContentAsString()).contains(capturedContext.digest());
     }
 
     @Test

@@ -171,6 +171,8 @@ These modules provide additional capabilities and can be added alongside the sta
 |--------|---------|------------|
 | `paygate-spring-security` | Spring Security integration for L402 authentication | `com.greenharborlabs:paygate-spring-security:0.1.0` |
 
+The starter does not pull in `paygate-spring-security` automatically. In `paygate.security-mode=auto`, unrelated Spring Security dependencies keep the standalone servlet filter active until this optional module is added.
+
 Optional libraries detected by auto-configuration:
 
 | Library | Effect When Present |

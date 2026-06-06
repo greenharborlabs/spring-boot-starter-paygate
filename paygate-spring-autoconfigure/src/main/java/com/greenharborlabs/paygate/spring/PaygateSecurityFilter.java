@@ -123,6 +123,10 @@ public class PaygateSecurityFilter implements Filter {
     if (authHeader != null) {
       for (PaymentProtocol protocol : protocols) {
         if (protocol.canHandle(authHeader)) {
+          if (!tryAcquireRateLimit(httpRequest)) {
+            PaygateResponseWriter.writeRateLimited(httpResponse);
+            return;
+          }
           HttpServletRequest protocolRequest = httpRequest;
           if (RequestDigestSupport.isMppProtocol(protocol)) {
             try {
@@ -132,10 +136,6 @@ public class PaygateSecurityFilter implements Filter {
               recordRejected(config.pathPattern(), protocol.scheme());
               return;
             }
-          }
-          if (!tryAcquireRateLimit(httpRequest)) {
-            PaygateResponseWriter.writeRateLimited(httpResponse);
-            return;
           }
           tryValidateWithProtocol(
               protocol,
@@ -158,6 +158,12 @@ public class PaygateSecurityFilter implements Filter {
     // 3. No valid credential — delegate to ChallengeService for health check,
     //    rate limiting, invoice creation, and macaroon minting.
     HttpServletRequest challengeRequest = httpRequest;
+    try {
+      challengeService.acquireChallengeRateLimit(httpRequest);
+    } catch (PaygateRateLimitedException _) {
+      PaygateResponseWriter.writeRateLimited(httpResponse);
+      return;
+    }
     if (mppEnabled) {
       try {
         challengeRequest = RequestDigestSupport.wrapForDigest(httpRequest);
@@ -212,7 +218,11 @@ public class PaygateSecurityFilter implements Filter {
       PaygateEndpointConfig config)
       throws IOException {
     try {
-      ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
+      ChallengeContext challengeContext =
+          challengeService.createChallenge(
+              httpRequest,
+              config,
+              PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
       List<ChallengeResponse> challenges = buildChallenges(challengeContext);
       PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
       recordChallenge(config.pathPattern());
@@ -339,7 +349,12 @@ public class PaygateSecurityFilter implements Filter {
         tokenCorrelationId,
         e.getErrorCode());
     try {
-      ChallengeContext challengeContext = challengeService.createChallenge(httpRequest, config);
+      PaygateChallengeService.ChallengeOptions challengeOptions =
+          rateLimiter != null
+              ? PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed()
+              : PaygateChallengeService.ChallengeOptions.enforceRateLimit();
+      ChallengeContext challengeContext =
+          challengeService.createChallenge(httpRequest, config, challengeOptions);
       List<ChallengeResponse> challenges = buildChallenges(challengeContext);
       PaygateResponseWriter.writeMppError(httpResponse, e, challenges);
     } catch (Exception challengeEx) {

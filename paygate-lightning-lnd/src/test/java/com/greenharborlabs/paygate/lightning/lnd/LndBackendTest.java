@@ -15,6 +15,7 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
 import lnrpc.LightningGrpc;
 import lnrpc.Lnrpc;
 import org.junit.jupiter.api.AfterEach;
@@ -94,6 +95,128 @@ class LndBackendTest {
         .hasMessageContaining("NOT_FOUND")
         .hasMessageContaining("invoice not found")
         .hasCauseInstanceOf(StatusRuntimeException.class);
+  }
+
+  @Test
+  void lookupInvoice_throws_whenPaymentHashIsNull() throws Exception {
+    var lookupCalls = new AtomicInteger();
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                lookupCalls.incrementAndGet();
+                responseObserver.onError(Status.INTERNAL.asRuntimeException());
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("paymentHash");
+    assertThat(lookupCalls).hasValue(0);
+  }
+
+  @Test
+  void lookupInvoice_throws_whenPaymentHashIsEmpty() throws Exception {
+    var lookupCalls = new AtomicInteger();
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                lookupCalls.incrementAndGet();
+                responseObserver.onError(Status.INTERNAL.asRuntimeException());
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(new byte[0]))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("32");
+    assertThat(lookupCalls).hasValue(0);
+  }
+
+  @Test
+  void lookupInvoice_throws_whenPaymentHashTooShort() throws Exception {
+    var lookupCalls = new AtomicInteger();
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                lookupCalls.incrementAndGet();
+                responseObserver.onError(Status.INTERNAL.asRuntimeException());
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(new byte[31]))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("32");
+    assertThat(lookupCalls).hasValue(0);
+  }
+
+  @Test
+  void lookupInvoice_throws_whenPaymentHashTooLong() throws Exception {
+    var lookupCalls = new AtomicInteger();
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                lookupCalls.incrementAndGet();
+                responseObserver.onError(Status.INTERNAL.asRuntimeException());
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(new byte[33]))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("32");
+    assertThat(lookupCalls).hasValue(0);
+  }
+
+  @Test
+  void createInvoice_throws_whenAmountIsZero() throws Exception {
+    var addInvoiceCalls = new AtomicInteger();
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void addInvoice(
+                  Lnrpc.Invoice request,
+                  StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
+                addInvoiceCalls.incrementAndGet();
+                responseObserver.onError(Status.INTERNAL.asRuntimeException());
+              }
+            });
+
+    assertThatThrownBy(() -> backend.createInvoice(0, "memo"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("amountSats");
+    assertThat(addInvoiceCalls).hasValue(0);
+  }
+
+  @Test
+  void createInvoice_throws_whenAmountIsNegative() throws Exception {
+    var addInvoiceCalls = new AtomicInteger();
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void addInvoice(
+                  Lnrpc.Invoice request,
+                  StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
+                addInvoiceCalls.incrementAndGet();
+                responseObserver.onError(Status.INTERNAL.asRuntimeException());
+              }
+            });
+
+    assertThatThrownBy(() -> backend.createInvoice(-1, "memo"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("amountSats");
+    assertThat(addInvoiceCalls).hasValue(0);
   }
 
   @Test

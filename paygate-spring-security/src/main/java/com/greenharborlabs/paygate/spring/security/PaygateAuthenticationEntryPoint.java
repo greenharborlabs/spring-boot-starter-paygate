@@ -85,12 +85,17 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       }
 
       HttpServletRequest challengeRequest = request;
+      challengeService.acquireChallengeRateLimit(request);
       if (mppEnabled) {
         challengeRequest = RequestDigestSupport.wrapForDigest(request);
         RequestDigestSupport.ensureDigestAttribute(challengeRequest, path);
       }
 
-      var challengeContext = challengeService.createChallenge(challengeRequest, config);
+      var challengeContext =
+          challengeService.createChallenge(
+              challengeRequest,
+              config,
+              PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
       List<ChallengeResponse> challenges = new ArrayList<>();
       for (PaymentProtocol protocol : protocols) {
         challenges.add(protocol.formatChallenge(challengeContext));

@@ -147,6 +147,8 @@ The `PaymentProtocol` interface is the primary extension point. Protocol impleme
 | `ProtocolMetadata` | marker interface | Carried by `PaymentCredential` to hold protocol-specific fields that the core framework does not need to understand. Each protocol module provides its own implementation (e.g., `L402Metadata`, `MppMetadata`). Consumers that know the concrete protocol can cast to the expected subtype. |
 | `PaymentValidationException` | class | Runtime exception thrown when credential validation fails. Carries an `ErrorCode` that determines the HTTP status code and RFC 9457 problem type URI. Optionally carries a `tokenId` for logging (safe to log, unlike the full credential). |
 
+MPP callers that cast `ProtocolMetadata` to `MppMetadata` should use `echoedChallenge()` and `source()`. `MppMetadata.rawCredentialJson()` and the three-argument canonical constructor were removed so decoded credentials do not retain `payload.preimage` after parsing.
+
 ### ChallengeContext Fields
 
 | Field | Type | Required | Description |

@@ -103,7 +103,14 @@ public class L402Protocol implements PaymentProtocol {
     caveats.add(
         new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
 
-    Macaroon macaroon = MacaroonMinter.mint(context.rootKeyBytes(), identifier, null, caveats);
+    byte[] rootKeyBytes = null;
+    Macaroon macaroon;
+    rootKeyBytes = context.rootKeyBytes();
+    try {
+      macaroon = MacaroonMinter.mint(rootKeyBytes, identifier, null, caveats);
+    } finally {
+      KeyMaterial.zeroize(rootKeyBytes);
+    }
 
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);

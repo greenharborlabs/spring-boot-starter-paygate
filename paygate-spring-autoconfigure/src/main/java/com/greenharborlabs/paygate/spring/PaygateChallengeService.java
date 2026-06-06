@@ -71,9 +71,9 @@ public class PaygateChallengeService {
    * <ol>
    *   <li>Check Lightning backend health
    *   <li>Check rate limit for the client IP
-   *   <li>Generate root key and token ID
    *   <li>Resolve effective price (dynamic strategy or static)
    *   <li>Create Lightning invoice
+   *   <li>Generate root key and token ID
    *   <li>Build and return the {@link ChallengeContext}
    * </ol>
    *
@@ -85,6 +85,27 @@ public class PaygateChallengeService {
    */
   public ChallengeContext createChallenge(HttpServletRequest request, PaygateEndpointConfig config)
       throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    return createChallenge(request, config, ChallengeOptions.enforceRateLimit());
+  }
+
+  /**
+   * Creates a protocol-agnostic challenge context with explicit Spring integration options.
+   *
+   * <p>This overload is public only so sibling Spring modules can coordinate request-body digest
+   * capture with challenge rate limiting. It is internal-to-Spring integration behavior and does
+   * not change any payment protocol API or wire format.
+   *
+   * @param request the current HTTP request
+   * @param config the endpoint configuration
+   * @param options internal Spring integration options for challenge creation
+   * @return the challenge context containing all data for protocol-specific formatting
+   * @throws PaygateLightningUnavailableException if the Lightning backend is unhealthy or fails
+   * @throws PaygateRateLimitedException if the client is rate-limited
+   */
+  public ChallengeContext createChallenge(
+      HttpServletRequest request, PaygateEndpointConfig config, ChallengeOptions options)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    Objects.requireNonNull(options, "options must not be null");
 
     // 1. Check Lightning backend health
     if (!lightningBackend.isHealthy()) {
@@ -92,11 +113,8 @@ public class PaygateChallengeService {
     }
 
     // 2. Check rate limit
-    PaygateRateLimiter limiter = this.rateLimiter;
-    String clientIp =
-        clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
-    if (limiter != null && !limiter.tryAcquire(clientIp)) {
-      throw new PaygateRateLimitedException("Rate limit exceeded for client");
+    if (!options.skipRateLimitCheck()) {
+      acquireChallengeRateLimit(request);
     }
 
     // 3. Generate root key, create invoice, build context
@@ -110,34 +128,88 @@ public class PaygateChallengeService {
     }
   }
 
+  /**
+   * Acquires the unauthenticated challenge rate-limit token for the current request.
+   *
+   * <p>This method is public only so Spring servlet and Spring Security integrations can rate-limit
+   * before MPP request-body digest capture, then call {@link #createChallenge(HttpServletRequest,
+   * PaygateEndpointConfig, ChallengeOptions)} with {@link
+   * ChallengeOptions#rateLimitAlreadyConsumed()}. It is internal-to-Spring integration behavior and
+   * does not change any payment protocol API or wire format.
+   *
+   * @throws PaygateRateLimitedException if the rate limiter denies the request or fails closed
+   */
+  public void acquireChallengeRateLimit(HttpServletRequest request)
+      throws PaygateRateLimitedException {
+    PaygateRateLimiter limiter = this.rateLimiter;
+    if (limiter == null) {
+      return;
+    }
+    try {
+      String clientIp =
+          clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+      if (!limiter.tryAcquire(clientIp)) {
+        throw new PaygateRateLimitedException("Rate limit exceeded for client");
+      }
+    } catch (PaygateRateLimitedException e) {
+      throw e;
+    } catch (Exception e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Rate limiter threw exception, denying challenge request: {0}",
+          e.getMessage());
+      throw new PaygateRateLimitedException("Rate limiter denied challenge request");
+    }
+  }
+
+  /**
+   * Internal Spring integration options for challenge creation.
+   *
+   * <p>This type is public only because {@code paygate-spring-security} is a sibling Java package.
+   * It is not part of the payment protocol API and does not affect challenge wire format.
+   */
+  public record ChallengeOptions(boolean skipRateLimitCheck) {
+
+    /** Uses the default service behavior: the challenge service checks rate limits. */
+    public static ChallengeOptions enforceRateLimit() {
+      return new ChallengeOptions(false);
+    }
+
+    /** Indicates the caller already consumed the challenge rate-limit token for this request. */
+    public static ChallengeOptions rateLimitAlreadyConsumed() {
+      return new ChallengeOptions(true);
+    }
+  }
+
   // NOTE: This method performs two sequential blocking operations:
-  // (1) rootKeyStore.generateRootKey() -- file I/O with write lock
-  // (2) lightningBackend.createInvoice() -- synchronous network call
-  // The CachingLightningBackendWrapper mitigates (2) for health checks.
+  // (1) lightningBackend.createInvoice() -- synchronous network call
+  // (2) rootKeyStore.generateRootKey() -- file I/O with write lock
+  // The CachingLightningBackendWrapper mitigates health checks before this method runs.
   // Future optimization: consider virtual threads or structured concurrency
   // to parallelize (1) and (2) when they are independent.
   private ChallengeContext buildChallengeContext(
       HttpServletRequest request, PaygateEndpointConfig config)
       throws PaygateLightningUnavailableException {
 
-    // Generate root key and tokenId atomically; try-with-resources ensures
-    // SensitiveBytes.destroy() is called even if an exception is thrown.
+    // Resolve effective price before creating any root key material.
+    long effectivePrice = resolvePrice(request, config);
+
+    // Create Lightning invoice before root key generation so invoice failures do not allocate
+    // sensitive key material.
+    Invoice invoice;
+    try {
+      invoice = lightningBackend.createInvoice(effectivePrice, config.description());
+    } catch (RuntimeException e) {
+      throw new PaygateLightningUnavailableException(
+          "Failed to create invoice: " + e.getMessage(), e);
+    }
+
+    // Generate root key and tokenId atomically after invoice creation; try-with-resources ensures
+    // SensitiveBytes.destroy() is called if a later step fails.
     try (RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey()) {
       byte[] rootKey = generationResult.rootKey().value();
       try {
         byte[] tokenId = generationResult.tokenId();
-
-        // Resolve effective price: dynamic strategy overrides static annotation value
-        long effectivePrice = resolvePrice(request, config);
-
-        // Create Lightning invoice
-        Invoice invoice;
-        try {
-          invoice = lightningBackend.createInvoice(effectivePrice, config.description());
-        } catch (RuntimeException e) {
-          throw new PaygateLightningUnavailableException(
-              "Failed to create invoice: " + e.getMessage(), e);
-        }
 
         // Record invoice creation in earnings tracker
         try {
@@ -201,8 +273,6 @@ public class PaygateChallengeService {
       } finally {
         KeyMaterial.zeroize(rootKey);
       }
-    } catch (PaygateLightningUnavailableException e) {
-      throw e;
     } catch (RuntimeException e) {
       throw new PaygateLightningUnavailableException(
           "Failed to generate root key: " + e.getMessage(), e);

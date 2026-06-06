@@ -31,8 +31,7 @@ import org.springframework.context.ApplicationContext;
 
 /**
  * Unit tests verifying that root key material is zeroized after minting in {@link
- * PaygateSecurityFilter}, covering both the success path and the exception path (e.g. createInvoice
- * throws).
+ * PaygateSecurityFilter}, and that invoice failures do not generate root key material.
  */
 @DisplayName("PaygateSecurityFilter root key zeroization")
 class PaygateSecurityFilterZeroizationTest {
@@ -82,8 +81,8 @@ class PaygateSecurityFilterZeroizationTest {
   }
 
   @Test
-  @DisplayName("SensitiveBytes is destroyed even when createInvoice throws")
-  void sensitiveByteDestroyedWhenCreateInvoiceThrows() throws Exception {
+  @DisplayName("root key is not generated when createInvoice throws")
+  void rootKeyNotGeneratedWhenCreateInvoiceThrows() throws Exception {
     var trackingStore = new ZeroizationTrackingRootKeyStore();
 
     when(lightningBackend.createInvoice(anyLong(), anyString()))
@@ -94,10 +93,10 @@ class PaygateSecurityFilterZeroizationTest {
     // doFilter catches the exception internally and writes 503
     filter.doFilter(request, response, chain);
 
-    assertThat(trackingStore.lastSensitiveBytes).isNotNull();
-    assertThat(trackingStore.lastSensitiveBytes.isDestroyed())
-        .as("SensitiveBytes must be destroyed even when createInvoice throws")
-        .isTrue();
+    assertThat(trackingStore.generateRootKeyInvocations)
+        .as("Root key generation must not happen when createInvoice throws")
+        .isZero();
+    assertThat(trackingStore.lastSensitiveBytes).isNull();
   }
 
   @Test
@@ -166,9 +165,12 @@ class PaygateSecurityFilterZeroizationTest {
   static class ZeroizationTrackingRootKeyStore implements RootKeyStore {
 
     volatile SensitiveBytes lastSensitiveBytes;
+    int generateRootKeyInvocations;
 
     @Override
     public GenerationResult generateRootKey() {
+      generateRootKeyInvocations++;
+
       byte[] rawKey = new byte[32];
       new SecureRandom().nextBytes(rawKey);
 

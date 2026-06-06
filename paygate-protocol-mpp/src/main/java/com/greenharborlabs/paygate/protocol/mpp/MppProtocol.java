@@ -143,6 +143,9 @@ public final class MppProtocol implements PaymentProtocol {
   @Override
   public ChallengeResponse formatChallenge(ChallengeContext context) {
     Objects.requireNonNull(context, "context must not be null");
+    if (context.digest() == null || context.digest().isBlank()) {
+      throw new IllegalArgumentException("MPP challenge digest must not be null or blank");
+    }
 
     String realm = context.serviceName();
 
@@ -197,9 +200,7 @@ public final class MppProtocol implements PaymentProtocol {
     header.append("intent=\"charge\", ");
     header.append("request=\"").append(requestB64).append("\", ");
     header.append("expires=\"").append(expires).append("\"");
-    if (context.digest() != null && !context.digest().isBlank()) {
-      header.append(", digest=\"").append(sanitizeHeaderValue(context.digest())).append("\"");
-    }
+    header.append(", digest=\"").append(sanitizeHeaderValue(context.digest())).append("\"");
 
     if (context.description() != null && !context.description().isEmpty()) {
       header
@@ -220,9 +221,7 @@ public final class MppProtocol implements PaymentProtocol {
     bodyData.put("intent", "charge");
     bodyData.put("request", requestB64);
     bodyData.put("expires", expires);
-    if (context.digest() != null && !context.digest().isBlank()) {
-      bodyData.put("digest", context.digest());
-    }
+    bodyData.put("digest", context.digest());
     if (context.description() != null && !context.description().isEmpty()) {
       bodyData.put("description", context.description());
     }
@@ -262,81 +261,94 @@ public final class MppProtocol implements PaymentProtocol {
 
     // ---- Security-critical validation order ----
 
-    // 1. Preimage hash check (before HMAC to prevent oracle attacks)
-    byte[] computedHash = MppCryptoUtils.sha256(credential.preimage());
-    if (!MppCryptoUtils.constantTimeEquals(computedHash, credential.paymentHash())) {
-      throw new PaymentValidationException(
-          ErrorCode.INVALID_PREIMAGE, "Preimage does not match payment hash", credential.tokenId());
-    }
+    byte[] preimage = null;
+    byte[] paymentHash = null;
+    byte[] computedHash = null;
+    try {
+      // 1. Preimage hash check (before HMAC to prevent oracle attacks)
+      preimage = credential.preimage();
+      paymentHash = credential.paymentHash();
+      computedHash = MppCryptoUtils.sha256(preimage);
+      if (!MppCryptoUtils.constantTimeEquals(computedHash, paymentHash)) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID_PREIMAGE,
+            "Preimage does not match payment hash",
+            credential.tokenId());
+      }
 
-    // 2. HMAC binding check
-    if (id == null || realm == null || method == null || intent == null || request == null) {
-      throw new PaymentValidationException(
-          ErrorCode.INVALID_CHALLENGE_BINDING,
-          "Echoed challenge is missing required fields",
-          credential.tokenId());
-    }
-    if (digest == null || digest.isBlank()) {
-      throw new PaymentValidationException(
-          ErrorCode.INVALID_CHALLENGE_BINDING,
-          "Echoed challenge is missing digest binding",
-          credential.tokenId());
-    }
-    if (requestDigest == null || requestDigest.isBlank()) {
-      throw new PaymentValidationException(
-          ErrorCode.INVALID_CHALLENGE_BINDING,
-          "Request context is missing digest binding",
-          credential.tokenId());
-    }
-    if (!requestDigest.equals(digest)) {
-      throw new PaymentValidationException(
-          ErrorCode.INVALID_CHALLENGE_BINDING, "Request digest mismatch", credential.tokenId());
-    }
-    boolean hmacCurrentSecretValid =
-        MppChallengeBinding.verify(
-            id, realm, method, intent, request, expires, digest, opaque, challengeBindingSecret);
-    boolean hmacPreviousSecretValid = false;
-    if (previousChallengeBindingSecret != null) {
-      hmacPreviousSecretValid =
+      // 2. HMAC binding check
+      if (id == null || realm == null || method == null || intent == null || request == null) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID_CHALLENGE_BINDING,
+            "Echoed challenge is missing required fields",
+            credential.tokenId());
+      }
+      if (digest == null || digest.isBlank()) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID_CHALLENGE_BINDING,
+            "Echoed challenge is missing digest binding",
+            credential.tokenId());
+      }
+      if (requestDigest == null || requestDigest.isBlank()) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID_CHALLENGE_BINDING,
+            "Request context is missing digest binding",
+            credential.tokenId());
+      }
+      if (!requestDigest.equals(digest)) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID_CHALLENGE_BINDING, "Request digest mismatch", credential.tokenId());
+      }
+      boolean hmacCurrentSecretValid =
           MppChallengeBinding.verify(
-              id,
-              realm,
-              method,
-              intent,
-              request,
-              expires,
-              digest,
-              opaque,
-              previousChallengeBindingSecret);
-    }
-    if (!(hmacCurrentSecretValid || hmacPreviousSecretValid)) {
-      throw new PaymentValidationException(
-          ErrorCode.INVALID_CHALLENGE_BINDING,
-          "Challenge binding verification failed",
-          credential.tokenId());
-    }
-
-    // 3. Expiry check
-    if (expires != null) {
-      Instant expiresInstant;
-      try {
-        expiresInstant = Instant.parse(expires);
-      } catch (DateTimeParseException e) {
-        throw new PaymentValidationException(
-            ErrorCode.EXPIRED_CREDENTIAL, "Invalid expires timestamp format", credential.tokenId());
+              id, realm, method, intent, request, expires, digest, opaque, challengeBindingSecret);
+      boolean hmacPreviousSecretValid = false;
+      if (!hmacCurrentSecretValid && previousChallengeBindingSecret != null) {
+        hmacPreviousSecretValid =
+            MppChallengeBinding.verify(
+                id,
+                realm,
+                method,
+                intent,
+                request,
+                expires,
+                digest,
+                opaque,
+                previousChallengeBindingSecret);
       }
-      if (Instant.now().isAfter(expiresInstant)) {
+      if (!(hmacCurrentSecretValid || hmacPreviousSecretValid)) {
         throw new PaymentValidationException(
-            ErrorCode.EXPIRED_CREDENTIAL, "Credential has expired", credential.tokenId());
+            ErrorCode.INVALID_CHALLENGE_BINDING,
+            "Challenge binding verification failed",
+            credential.tokenId());
       }
-    }
 
-    // 4. Defense-in-depth: method must be "lightning"
-    if (!"lightning".equals(method)) {
-      throw new PaymentValidationException(
-          ErrorCode.METHOD_UNSUPPORTED,
-          "Unsupported payment method: " + method,
-          credential.tokenId());
+      // 3. Expiry check
+      if (expires != null) {
+        Instant expiresInstant;
+        try {
+          expiresInstant = Instant.parse(expires);
+        } catch (DateTimeParseException e) {
+          throw new PaymentValidationException(
+              ErrorCode.EXPIRED_CREDENTIAL,
+              "Invalid expires timestamp format",
+              credential.tokenId());
+        }
+        if (Instant.now().isAfter(expiresInstant)) {
+          throw new PaymentValidationException(
+              ErrorCode.EXPIRED_CREDENTIAL, "Credential has expired", credential.tokenId());
+        }
+      }
+
+      // 4. Defense-in-depth: method must be "lightning"
+      if (!"lightning".equals(method)) {
+        throw new PaymentValidationException(
+            ErrorCode.METHOD_UNSUPPORTED,
+            "Unsupported payment method: " + method,
+            credential.tokenId());
+      }
+    } finally {
+      CryptoUtils.zeroize(preimage, paymentHash, computedHash);
     }
   }
 

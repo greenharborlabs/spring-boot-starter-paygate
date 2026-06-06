@@ -49,7 +49,7 @@
     {
       "name": "paygate.security-mode",
       "type": "java.lang.String",
-      "description": "Security mode controlling which L402 authentication path is active. 'auto' (default) detects Spring Security on the classpath and uses spring-security mode if present. 'servlet' forces the PaygateSecurityFilter servlet path. 'spring-security' forces the Spring Security integration path.",
+      "description": "Security mode controlling which L402 authentication path is active. 'auto' (default) uses spring-security mode only when the Paygate Spring Security integration is present. 'servlet' forces the PaygateSecurityFilter servlet path. 'spring-security' forces the Spring Security integration path.",
       "defaultValue": "auto"
     },
     {
@@ -219,7 +219,7 @@
       "values": [
         {
           "value": "auto",
-          "description": "Auto-detect: use spring-security mode if Spring Security is on the classpath, otherwise use servlet mode."
+          "description": "Auto-detect: use spring-security mode only when the Paygate Spring Security integration is present, otherwise use servlet mode."
         },
         {
           "value": "servlet",

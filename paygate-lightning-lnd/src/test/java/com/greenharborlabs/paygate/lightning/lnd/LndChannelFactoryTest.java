@@ -335,6 +335,62 @@ class LndChannelFactoryTest {
   }
 
   @Test
+  void plaintextMacaroonChannelShutdownZeroizesInterceptorBytes(@TempDir Path tempDir)
+      throws Exception {
+    byte[] macaroonBytes = {0x0A, 0x1B, 0x2C, 0x3D, 0x4E, 0x5F};
+    Path macaroonFile = tempDir.resolve("admin.macaroon");
+    Files.write(macaroonFile, macaroonBytes);
+
+    server = ServerBuilder.forPort(0).addService(echoServiceDefinition()).build().start();
+    int port = server.getPort();
+
+    var config =
+        new LndConfig(
+            "localhost", port, null, macaroonFile.toString(), true, 60, 20, 5, 4_194_304, 5);
+
+    channel = LndChannelFactory.create(config);
+
+    ClientCalls.blockingUnaryCall(
+        channel, TEST_METHOD, io.grpc.CallOptions.DEFAULT, Empty.getDefaultInstance());
+    assertThat(LndChannelFactory.isMacaroonZeroized(channel)).isFalse();
+
+    channel.shutdown();
+    channel.shutdownNow();
+
+    assertThat(LndChannelFactory.isMacaroonZeroized(channel)).isTrue();
+  }
+
+  @Test
+  void tlsMacaroonChannelShutdownNowZeroizesInterceptorBytes(@TempDir Path tempDir)
+      throws Exception {
+    Path certFile = tempDir.resolve("tls.cert");
+    Files.writeString(certFile, SELF_SIGNED_CERT_PEM);
+    Path macaroonFile = tempDir.resolve("admin.macaroon");
+    Files.write(macaroonFile, new byte[] {0x01, 0x23, 0x45, 0x67});
+
+    var config =
+        new LndConfig(
+            "localhost",
+            10009,
+            certFile.toString(),
+            macaroonFile.toString(),
+            false,
+            60,
+            20,
+            5,
+            4_194_304,
+            5);
+
+    channel = LndChannelFactory.create(config);
+    assertThat(LndChannelFactory.isMacaroonZeroized(channel)).isFalse();
+
+    channel.shutdownNow();
+    channel.shutdown();
+
+    assertThat(LndChannelFactory.isMacaroonZeroized(channel)).isTrue();
+  }
+
+  @Test
   void tlsChannelConnectsAndMakesRpcCall(@TempDir Path tempDir) throws Exception {
     // Generate a PKCS12 keystore with a self-signed cert via keytool (JDK tool).
     // This avoids depending on internal sun.security.x509 APIs that Java 25 blocks.

@@ -225,9 +225,9 @@ The following table shows every bean created by `PaygateAutoConfiguration`, the 
 | `l402RateLimiter` | `PaygateRateLimiter` | `@ConditionalOnMissingBean` | `CaffeineTokenBucketRateLimiter` when Caffeine is on the classpath; `TokenBucketRateLimiter` (JDK-only) otherwise. Both use configured burst size, refill rate, and max buckets. |
 | `l402EarningsTracker` | `PaygateEarningsTracker` | `@ConditionalOnMissingBean` | In-memory tracker; resets on restart |
 | `l402ChallengeService` | `PaygateChallengeService` | `@ConditionalOnMissingBean` | Encapsulates challenge generation and invoice creation logic |
-| `l402SecurityModeResolver` | `PaygateSecurityModeResolver` | `@ConditionalOnMissingBean` | Determines which security integration mode to use (servlet filter vs Spring Security) |
+| `l402SecurityModeResolver` | `PaygateSecurityModeResolver` | `@ConditionalOnMissingBean` | Determines which security integration mode to use. `auto` selects Spring Security only when the optional `paygate-spring-security` integration is present with Spring Security; otherwise it keeps servlet filter mode. |
 | `l402SecurityFilter` | `PaygateSecurityFilter` | `@ConditionalOnMissingBean` | The core servlet filter. Receives `List<PaymentProtocol>` and iterates over all registered protocols to match credentials. Metrics, earnings tracker, and rate limiter are optional. |
-| `l402SecurityFilterRegistration` | `FilterRegistrationBean<PaygateSecurityFilter>` | Always (when auto-config is active) | Registered at `Ordered.HIGHEST_PRECEDENCE + 10`, matching `/*` |
+| `l402SecurityFilterRegistration` | `FilterRegistrationBean<PaygateSecurityFilter>` | Servlet security mode | Registered at `Ordered.HIGHEST_PRECEDENCE + 10`, matching `/*` |
 | `lightningBackend` (LNbits) | `LightningBackend` | `paygate.backend=lnbits` + `LnbitsBackend` on classpath + `@ConditionalOnMissingBean` | Creates `LnbitsBackend` with 10-second connect timeout `HttpClient` |
 | `lightningBackend` (LND) | `LightningBackend` | `paygate.backend=lnd` + `LndBackend` on classpath + `@ConditionalOnMissingBean` | Creates gRPC `ManagedChannel` and `LndBackend` |
 | `lndManagedChannel` | `ManagedChannel` | `paygate.backend=lnd` + `@ConditionalOnMissingBean(ManagedChannel.class)` | TLS with optional macaroon interceptor. `destroyMethod="shutdown"` |

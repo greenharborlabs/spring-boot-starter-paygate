@@ -36,15 +36,19 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Check snapshot version
+        id: version
         run: |
           VERSION=$(grep -oP '^version=\K.*' gradle.properties || echo "")
           if [[ ! "$VERSION" == *-SNAPSHOT ]]; then
-            echo "::error::Version '$VERSION' is not a SNAPSHOT version. Skipping publish."
-            exit 1
+            echo "Version '$VERSION' is not a SNAPSHOT version. Skipping publish."
+            echo "is_snapshot=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "Publishing snapshot version: $VERSION"
+          echo "is_snapshot=true" >> "$GITHUB_OUTPUT"
 
       - name: Verify publishing secrets
+        if: steps.version.outputs.is_snapshot == 'true'
         run: |
           missing=()
           for name in SONATYPE_USERNAME SONATYPE_PASSWORD GPG_SIGNING_KEY GPG_SIGNING_PASSWORD; do
@@ -63,6 +67,7 @@ jobs:
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
 
       - name: Publish snapshot
+        if: steps.version.outputs.is_snapshot == 'true'
         run: ./gradlew publishToSonatype
         env:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}

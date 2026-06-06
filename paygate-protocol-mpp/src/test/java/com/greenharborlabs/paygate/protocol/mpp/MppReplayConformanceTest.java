@@ -79,7 +79,7 @@ class MppReplayConformanceTest {
             original.tokenId(),
             original.sourceProtocolScheme(),
             original.source(),
-            new MppMetadata(tampered, metadata.source(), metadata.rawCredentialJson()));
+            new MppMetadata(tampered, metadata.source()));
 
     assertThatThrownBy(
             () -> protocol.validate(tamperedCredential, requestContextWithDigest(REQUEST_DIGEST_A)))
@@ -129,7 +129,7 @@ class MppReplayConformanceTest {
             tamperedId,
             "Payment",
             null,
-            new MppMetadata(echoedChallenge, null, "{}"));
+            new MppMetadata(echoedChallenge, null));
 
     assertThatThrownBy(
             () -> protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST_A)))
@@ -189,7 +189,7 @@ class MppReplayConformanceTest {
     echoedChallenge.put("digest", digest);
 
     return new PaymentCredential(
-        paymentHash, preimage, id, "Payment", null, new MppMetadata(echoedChallenge, null, "{}"));
+        paymentHash, preimage, id, "Payment", null, new MppMetadata(echoedChallenge, null));
   }
 
   private static byte[] sha256(byte[] data) {

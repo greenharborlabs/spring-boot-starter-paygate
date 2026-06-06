@@ -12,9 +12,6 @@ specs/
 .claude/
 .vscode/settings.json
 
-# Claude Code
-CLAUDE.md
-
 # IDE
 .idea/
 *.iml
