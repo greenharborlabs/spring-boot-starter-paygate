@@ -9,10 +9,8 @@ import java.util.Objects;
  *
  * @param echoedChallenge the challenge parameters echoed back by the client (defensively copied)
  * @param source optional identifier for the credential source (may be {@code null})
- * @param rawCredentialJson the raw JSON credential string as received from the client
  */
-public record MppMetadata(
-    Map<String, String> echoedChallenge, String source, String rawCredentialJson)
+public record MppMetadata(Map<String, String> echoedChallenge, String source)
     implements ProtocolMetadata {
 
   /**
@@ -20,7 +18,6 @@ public record MppMetadata(
    */
   public MppMetadata {
     Objects.requireNonNull(echoedChallenge, "echoedChallenge must not be null");
-    Objects.requireNonNull(rawCredentialJson, "rawCredentialJson must not be null");
     echoedChallenge = Map.copyOf(echoedChallenge);
   }
 }

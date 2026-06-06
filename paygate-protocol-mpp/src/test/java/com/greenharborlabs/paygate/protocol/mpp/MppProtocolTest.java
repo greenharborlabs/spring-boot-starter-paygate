@@ -523,7 +523,7 @@ class MppProtocolTest {
       echoedChallenge.put("expires", expires);
       echoedChallenge.put("digest", REQUEST_DIGEST);
 
-      MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
+      MppMetadata metadata = new MppMetadata(echoedChallenge, null);
       PaymentCredential credential =
           new PaymentCredential(PAYMENT_HASH, PREIMAGE, tamperedId, "Payment", null, metadata);
 
@@ -615,7 +615,7 @@ class MppProtocolTest {
       echoedChallenge.put("expires", expires);
       echoedChallenge.put("digest", REQUEST_DIGEST);
 
-      MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
+      MppMetadata metadata = new MppMetadata(echoedChallenge, null);
       PaymentCredential credential =
           new PaymentCredential(PAYMENT_HASH, wrongPreimage, tamperedId, "Payment", null, metadata);
 
@@ -787,7 +787,7 @@ class MppProtocolTest {
     echoedChallenge.put("expires", expires);
     echoedChallenge.put("digest", REQUEST_DIGEST);
 
-    MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
+    MppMetadata metadata = new MppMetadata(echoedChallenge, null);
     return new PaymentCredential(paymentHash, preimage, id, "Payment", null, metadata);
   }
 
@@ -813,7 +813,7 @@ class MppProtocolTest {
     echoedChallenge.put("expires", expires);
     echoedChallenge.put("digest", REQUEST_DIGEST);
 
-    MppMetadata metadata = new MppMetadata(echoedChallenge, null, "{}");
+    MppMetadata metadata = new MppMetadata(echoedChallenge, null);
     return new PaymentCredential(paymentHash, wrongPreimage, id, "Payment", null, metadata);
   }
 

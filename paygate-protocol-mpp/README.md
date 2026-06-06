@@ -132,7 +132,7 @@ Utility class that parses `Authorization: Payment <base64url-nopad>` credential 
 3. Extract the `challenge` object as a `Map<String, String>` of echoed challenge fields
 4. Extract `challenge.id` as the token ID
 5. Extract `payload.preimage` as a 64-character lowercase hex string
-6. Decode the preimage and compute SHA-256 to derive the payment hash
+6. Decode the preimage and extract the payment hash from `methodDetails.paymentHash` in the echoed charge request
 7. Extract optional `source` field
 8. Build `MppMetadata` and return a `PaymentCredential`
 
@@ -146,7 +146,8 @@ An immutable `record` implementing `ProtocolMetadata` that carries MPP-specific 
 |-------|------|-------------|
 | `echoedChallenge` | `Map<String, String>` | The challenge parameters echoed back by the client (defensively copied via `Map.copyOf()`) |
 | `source` | `String` | Optional identifier for the credential source (may be `null`) |
-| `rawCredentialJson` | `String` | The raw JSON credential string as received from the client |
+
+`MppMetadata` intentionally does not expose raw credential JSON. The decoded credential contains `payload.preimage`, so retaining it in metadata would keep payment preimage material alive beyond parsing.
 
 ### MppReceipt
 

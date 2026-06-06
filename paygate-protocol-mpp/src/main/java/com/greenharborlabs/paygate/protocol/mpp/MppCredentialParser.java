@@ -144,7 +144,7 @@ public final class MppCredentialParser {
     // null or absent → source stays null
 
     // Step 9: build metadata and credential
-    var metadata = new MppMetadata(echoedChallenge, source, json);
+    var metadata = new MppMetadata(echoedChallenge, source);
 
     return new PaymentCredential(
         paymentHash, preimageBytes, tokenId, PROTOCOL_SCHEME, source, metadata);

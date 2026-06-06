@@ -108,6 +108,7 @@ class MppCredentialParserTest {
 
     assertThat(cred.source()).isNull();
     assertThat(cred.tokenId()).isEqualTo(VALID_CHALLENGE_ID);
+    assertThat(((MppMetadata) cred.metadata()).source()).isNull();
   }
 
   @Test
@@ -134,6 +135,7 @@ class MppCredentialParserTest {
     PaymentCredential cred = MppCredentialParser.parse(blob);
 
     assertThat(cred.source()).isNull();
+    assertThat(((MppMetadata) cred.metadata()).source()).isNull();
   }
 
   @Test
@@ -156,14 +158,16 @@ class MppCredentialParserTest {
   }
 
   @Test
-  void metadataContainsRawJsonAndSource() {
-    String json = validJson();
-    String blob = toBlob(json);
+  void metadataContainsEchoedChallengeAndSource() {
+    String blob = toBlob(validJson());
 
     PaymentCredential cred = MppCredentialParser.parse(blob);
     MppMetadata meta = (MppMetadata) cred.metadata();
 
-    assertThat(meta.rawCredentialJson()).isEqualTo(json);
+    assertThat(meta.echoedChallenge()).containsEntry("id", VALID_CHALLENGE_ID);
+    assertThat(meta.echoedChallenge()).containsEntry("request", VALID_REQUEST_B64);
+    assertThatThrownBy(() -> meta.echoedChallenge().put("id", "tampered"))
+        .isInstanceOf(UnsupportedOperationException.class);
     assertThat(meta.source()).isEqualTo("did:example:alice");
   }
 
