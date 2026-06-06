@@ -482,6 +482,15 @@ class MppProtocolTest {
     }
 
     @Test
+    void successfulValidationIsIdempotent() {
+      PaymentCredential credential =
+          buildValidCredentialForValidation(PREIMAGE, Instant.now().plusSeconds(3600));
+
+      protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST));
+      protocol.validate(credential, requestContextWithDigest(REQUEST_DIGEST));
+    }
+
+    @Test
     void rejectsBadPreimage() {
       // Use a different preimage that does not match the payment hash
       byte[] wrongPreimage = new byte[32];
