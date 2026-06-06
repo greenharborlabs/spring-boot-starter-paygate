@@ -7,9 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-06
+
 ### Security
 
 - **paygate-protocol-mpp**: Removed `MppMetadata.rawCredentialJson()` and the three-argument canonical constructor so parsed MPP metadata no longer retains decoded credential JSON containing `payload.preimage`; downstream callers should use `echoedChallenge()` and `source()`.
+- **paygate-protocol-mpp**: Require request digest binding for all MPP challenges and credential validation, so Payment credentials are bound to the exact method, path, and request body.
+- **paygate-protocol-mpp**: Zeroize local preimage, payment-hash, and computed-hash validation copies after MPP credential validation.
+- **paygate-protocol-l402**: Zeroize the root-key defensive copy after macaroon challenge minting.
+- **paygate-lightning-lnd**: Store LND macaroon credentials as defensive byte-array copies and zeroize interceptor-owned macaroon bytes when factory-created channels shut down.
+- **paygate-lightning-lnbits**: Stop including LNbits non-2xx response bodies in warning logs and exception messages.
+- **paygate-spring-autoconfigure**: Rate-limit unauthenticated MPP challenge requests before request-body digest capture.
+- **paygate-spring-autoconfigure**: Reject malformed forwarded client IP identities instead of treating them as trusted proxy entries.
+- **paygate-spring-autoconfigure**: Create Lightning invoices before root-key generation so invoice failures do not allocate root-key material.
+
+### Fixed
+
+- **paygate-lightning-lnd**: Validate invoice amounts and lookup payment-hash lengths before making LND backend calls.
+- **paygate-lightning-lnbits**: Validate invoice amounts before making LNbits backend calls.
+- **paygate-protocol-mpp**: Avoid previous-secret HMAC verification when the current challenge-binding secret already validates.
+- **paygate-spring-autoconfigure**: Require the Paygate Spring Security integration module before `auto` mode switches from servlet filtering to Spring Security.
+- **paygate-spring-autoconfigure**: Fail explicit `paygate.security-mode=spring-security` startup when either Spring Security or the Paygate Spring Security integration module is missing.
+- **paygate-spring-autoconfigure**: Avoid double-charging challenge creation after the rate-limit token has already been consumed.
+
+### Changed
+
+- **paygate-lightning-lnd**: Added a preferred byte-array constructor path for `MacaroonClientInterceptor` while preserving the existing `String` constructor for source compatibility.
+- **paygate-protocol-mpp**: Documented the required digest validation flow for Payment challenge handling.
+- **release**: Updated the release checklist around the current Maven Central release flow.
 
 ## [0.1.2] - 2026-06-05
 
@@ -117,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WWW-Authenticate` header format corrected to `L402 version="0", token=`
 - `MacaroonSerializer` validation for field types and lengths
 
+[0.1.3]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/greenharborlabs/spring-boot-starter-l402/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/greenharborlabs/spring-boot-starter-l402/releases/tag/v0.1.0
