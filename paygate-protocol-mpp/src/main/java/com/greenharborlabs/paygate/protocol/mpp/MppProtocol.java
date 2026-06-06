@@ -143,6 +143,9 @@ public final class MppProtocol implements PaymentProtocol {
   @Override
   public ChallengeResponse formatChallenge(ChallengeContext context) {
     Objects.requireNonNull(context, "context must not be null");
+    if (context.digest() == null || context.digest().isBlank()) {
+      throw new IllegalArgumentException("MPP challenge digest must not be null or blank");
+    }
 
     String realm = context.serviceName();
 
@@ -197,9 +200,7 @@ public final class MppProtocol implements PaymentProtocol {
     header.append("intent=\"charge\", ");
     header.append("request=\"").append(requestB64).append("\", ");
     header.append("expires=\"").append(expires).append("\"");
-    if (context.digest() != null && !context.digest().isBlank()) {
-      header.append(", digest=\"").append(sanitizeHeaderValue(context.digest())).append("\"");
-    }
+    header.append(", digest=\"").append(sanitizeHeaderValue(context.digest())).append("\"");
 
     if (context.description() != null && !context.description().isEmpty()) {
       header
@@ -220,9 +221,7 @@ public final class MppProtocol implements PaymentProtocol {
     bodyData.put("intent", "charge");
     bodyData.put("request", requestB64);
     bodyData.put("expires", expires);
-    if (context.digest() != null && !context.digest().isBlank()) {
-      bodyData.put("digest", context.digest());
-    }
+    bodyData.put("digest", context.digest());
     if (context.description() != null && !context.description().isEmpty()) {
       bodyData.put("description", context.description());
     }
@@ -304,7 +303,7 @@ public final class MppProtocol implements PaymentProtocol {
           MppChallengeBinding.verify(
               id, realm, method, intent, request, expires, digest, opaque, challengeBindingSecret);
       boolean hmacPreviousSecretValid = false;
-      if (previousChallengeBindingSecret != null) {
+      if (!hmacCurrentSecretValid && previousChallengeBindingSecret != null) {
         hmacPreviousSecretValid =
             MppChallengeBinding.verify(
                 id,

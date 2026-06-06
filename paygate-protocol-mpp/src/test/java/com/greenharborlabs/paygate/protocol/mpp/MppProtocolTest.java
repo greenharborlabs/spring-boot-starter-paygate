@@ -48,6 +48,14 @@ class MppProtocolTest {
     return new SensitiveBytes(PREVIOUS_SECRET_BYTES.clone());
   }
 
+  private static SensitiveBytes unrelatedSecret() {
+    byte[] secretBytes = new byte[32];
+    for (int i = 0; i < secretBytes.length; i++) {
+      secretBytes[i] = (byte) (i + 65);
+    }
+    return new SensitiveBytes(secretBytes);
+  }
+
   private static final String REALM = "test-service";
   private static final String BOLT11 = "lnbc100n1p0test";
   private static final long PRICE_SATS = 100;
@@ -237,17 +245,34 @@ class MppProtocolTest {
       assertThat(header).contains("intent=\"charge\"");
       assertThat(header).contains("request=\"");
       assertThat(header).contains("expires=\"");
+      assertThat(header).contains("digest=\"" + REQUEST_DIGEST + "\"");
     }
 
     @Test
-    void includesDigestWhenPresent() {
-      ChallengeContext ctx = challengeContextWithDigest("Access to API", null, REQUEST_DIGEST);
+    void rejectsNullDigest() {
+      ChallengeContext ctx = challengeContextWithDigest("Access to API", null, null);
 
-      ChallengeResponse response = protocol.formatChallenge(ctx);
+      assertThatThrownBy(() -> protocol.formatChallenge(ctx))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("digest");
+    }
 
-      String header = response.wwwAuthenticateHeader();
-      assertThat(header).contains("digest=\"" + REQUEST_DIGEST + "\"");
-      assertThat(response.bodyData()).containsEntry("digest", REQUEST_DIGEST);
+    @Test
+    void rejectsEmptyDigest() {
+      ChallengeContext ctx = challengeContextWithDigest("Access to API", null, "");
+
+      assertThatThrownBy(() -> protocol.formatChallenge(ctx))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("digest");
+    }
+
+    @Test
+    void rejectsBlankDigest() {
+      ChallengeContext ctx = challengeContextWithDigest("Access to API", null, " \t\n");
+
+      assertThatThrownBy(() -> protocol.formatChallenge(ctx))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("digest");
     }
 
     @Test
@@ -397,6 +422,7 @@ class MppProtocolTest {
       assertThat(body).containsEntry("intent", "charge");
       assertThat(body).containsKey("request");
       assertThat(body).containsKey("expires");
+      assertThat(body).containsEntry("digest", REQUEST_DIGEST);
       assertThat(body).containsEntry("description", "A description");
       assertThat(body).containsKey("opaque");
     }
@@ -679,6 +705,35 @@ class MppProtocolTest {
 
       rotationAware.validate(credential, requestContextWithDigest(REQUEST_DIGEST));
     }
+
+    @Test
+    void acceptsChallengeSignedWithCurrentSecretWithoutCheckingPreviousSecret() {
+      SensitiveBytes previous = previousSecret();
+      MppProtocol rotationAware = new MppProtocol(secret(), MppParserLimits.defaults(), previous);
+      previous.destroy();
+      PaymentCredential credential =
+          buildValidCredentialForValidation(PREIMAGE, Instant.now().plusSeconds(3600), secret());
+
+      rotationAware.validate(credential, requestContextWithDigest(REQUEST_DIGEST));
+    }
+
+    @Test
+    void rejectsChallengeSignedWithNeitherCurrentNorPreviousSecret() {
+      MppProtocol rotationAware =
+          new MppProtocol(secret(), MppParserLimits.defaults(), previousSecret());
+      PaymentCredential credential =
+          buildValidCredentialForValidation(
+              PREIMAGE, Instant.now().plusSeconds(3600), unrelatedSecret());
+
+      assertThatThrownBy(
+              () -> rotationAware.validate(credential, requestContextWithDigest(REQUEST_DIGEST)))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              e -> {
+                PaymentValidationException pve = (PaymentValidationException) e;
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
+              });
+    }
   }
 
   // --- createReceipt() ---
@@ -719,7 +774,7 @@ class MppProtocolTest {
   // ---- Helper methods ----
 
   private ChallengeContext challengeContext(String description, Map<String, String> opaque) {
-    return challengeContextWithDigest(description, opaque, null);
+    return challengeContextWithDigest(description, opaque, REQUEST_DIGEST);
   }
 
   private ChallengeContext challengeContextWithDigest(

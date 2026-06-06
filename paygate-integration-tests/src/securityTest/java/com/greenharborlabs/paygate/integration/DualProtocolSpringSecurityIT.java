@@ -56,7 +56,9 @@ class DualProtocolSpringSecurityIT {
   }
 
   @Test
-  @DisplayName("402 response contains both L402 and Payment WWW-Authenticate headers in order")
+  @DisplayName(
+      "402 response contains both L402 and Payment WWW-Authenticate headers in order with digest")
+  @SuppressWarnings("unchecked")
   void dualProtocol402HasBothHeaders() throws Exception {
     try (var client = HttpClient.newHttpClient()) {
       var request = HttpRequest.newBuilder().uri(URI.create(baseUrl() + DATA_PATH)).GET().build();
@@ -68,6 +70,14 @@ class DualProtocolSpringSecurityIT {
       assertThat(wwwAuthHeaders).hasSize(2);
       assertThat(wwwAuthHeaders.get(0)).startsWith("L402");
       assertThat(wwwAuthHeaders.get(1)).startsWith("Payment");
+      assertThat(wwwAuthHeaders.get(1)).contains("digest=");
+
+      Map<String, Object> body = MAPPER.readValue(response.body(), Map.class);
+      Map<String, Object> protocols = (Map<String, Object>) body.get("protocols");
+      assertThat(protocols).containsKey("Payment");
+      Map<String, Object> paymentChallenge = (Map<String, Object>) protocols.get("Payment");
+      assertThat(paymentChallenge.get("digest")).isInstanceOf(String.class);
+      assertThat((String) paymentChallenge.get("digest")).isNotBlank();
     }
   }
 
