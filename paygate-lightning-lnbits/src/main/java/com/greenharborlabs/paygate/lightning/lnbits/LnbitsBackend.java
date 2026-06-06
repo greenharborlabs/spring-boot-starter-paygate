@@ -29,7 +29,6 @@ public class LnbitsBackend implements LightningBackend {
   private final JsonMapper objectMapper;
   private final HttpClient httpClient;
   private final String baseUrl;
-  private static final int MAX_BODY_LENGTH = 200;
 
   // LNbits returns invoice amounts in millisatoshis; divide by this factor to convert to satoshis.
   private static final long MSAT_PER_SAT = 1000;
@@ -48,6 +47,10 @@ public class LnbitsBackend implements LightningBackend {
 
   @Override
   public Invoice createInvoice(long amountSats, String memo) {
+    if (amountSats <= 0) {
+      throw new IllegalArgumentException("amountSats must be greater than zero");
+    }
+
     try {
       ObjectNode body = objectMapper.createObjectNode();
       body.put("out", false);
@@ -234,28 +237,20 @@ public class LnbitsBackend implements LightningBackend {
   }
 
   /**
-   * Validates the HTTP response status code and throws {@link LnbitsException} with a truncated
-   * body on non-2xx responses.
+   * Validates the HTTP response status code and throws {@link LnbitsException} on non-2xx
+   * responses.
    */
   private static void checkResponseStatus(
       HttpResponse<String> response, String operation, String detail) {
     if (response.statusCode() < 200 || response.statusCode() >= 300) {
-      String body = truncateBody(response.body());
       log.log(
           System.Logger.Level.WARNING,
-          "LNbits {0} returned HTTP {1}{2}: {3}",
+          "LNbits {0} returned HTTP {1}{2}",
           operation,
           response.statusCode(),
-          detail,
-          body);
-      throw new LnbitsException("LNbits API returned HTTP " + response.statusCode() + ": " + body);
+          detail);
+      throw new LnbitsException(
+          "LNbits " + operation + " returned HTTP " + response.statusCode() + detail);
     }
-  }
-
-  private static String truncateBody(String body) {
-    if (body == null || body.isEmpty()) {
-      return "";
-    }
-    return body.length() <= MAX_BODY_LENGTH ? body : body.substring(0, MAX_BODY_LENGTH) + "...";
   }
 }

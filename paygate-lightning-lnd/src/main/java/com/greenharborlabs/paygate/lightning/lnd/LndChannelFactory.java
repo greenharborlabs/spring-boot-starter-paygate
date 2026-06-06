@@ -1,7 +1,10 @@
 package com.greenharborlabs.paygate.lightning.lnd;
 
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.MethodDescriptor;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
@@ -9,7 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HexFormat;
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -84,12 +87,13 @@ public final class LndChannelFactory {
             .idleTimeout(config.idleTimeoutMinutes(), TimeUnit.MINUTES)
             .maxInboundMessageSize(config.maxInboundMessageSize());
 
+    MacaroonClientInterceptor macaroonInterceptor = null;
     if (config.macaroonPath() != null) {
-      String macaroonHex = readMacaroonHex(config.macaroonPath());
-      builder.intercept(new MacaroonClientInterceptor(macaroonHex));
+      macaroonInterceptor = newMacaroonInterceptor(config.macaroonPath());
+      builder.intercept(macaroonInterceptor);
     }
 
-    return builder.build();
+    return buildZeroizingChannel(builder, macaroonInterceptor);
   }
 
   private static ManagedChannel buildTlsChannel(LndConfig config) throws IOException {
@@ -109,12 +113,13 @@ public final class LndChannelFactory {
             .idleTimeout(config.idleTimeoutMinutes(), TimeUnit.MINUTES)
             .maxInboundMessageSize(config.maxInboundMessageSize());
 
+    MacaroonClientInterceptor macaroonInterceptor = null;
     if (config.macaroonPath() != null) {
-      String macaroonHex = readMacaroonHex(config.macaroonPath());
-      builder.intercept(new MacaroonClientInterceptor(macaroonHex));
+      macaroonInterceptor = newMacaroonInterceptor(config.macaroonPath());
+      builder.intercept(macaroonInterceptor);
     }
 
-    ManagedChannel channel = builder.build();
+    ManagedChannel channel = buildZeroizingChannel(builder, macaroonInterceptor);
 
     log.log(
         System.Logger.Level.INFO,
@@ -127,7 +132,43 @@ public final class LndChannelFactory {
 
   private static final long MAX_MACAROON_FILE_SIZE = 4096;
 
-  private static String readMacaroonHex(String macaroonPath) {
+  private static MacaroonClientInterceptor newMacaroonInterceptor(String macaroonPath) {
+    byte[] macaroonBytes = readMacaroonBytes(macaroonPath);
+    try {
+      return new MacaroonClientInterceptor(macaroonBytes);
+    } finally {
+      Arrays.fill(macaroonBytes, (byte) 0);
+    }
+  }
+
+  private static ManagedChannel buildZeroizingChannel(
+      ManagedChannelBuilder<?> builder, MacaroonClientInterceptor macaroonInterceptor) {
+    try {
+      return buildZeroizingChannel(builder.build(), macaroonInterceptor);
+    } catch (RuntimeException e) {
+      if (macaroonInterceptor != null) {
+        macaroonInterceptor.zeroize();
+      }
+      throw e;
+    }
+  }
+
+  private static ManagedChannel buildZeroizingChannel(
+      ManagedChannel channel, MacaroonClientInterceptor macaroonInterceptor) {
+    if (macaroonInterceptor == null) {
+      return channel;
+    }
+    return new ZeroizingManagedChannel(channel, macaroonInterceptor);
+  }
+
+  static boolean isMacaroonZeroized(ManagedChannel channel) {
+    if (channel instanceof ZeroizingManagedChannel zeroizingChannel) {
+      return zeroizingChannel.isMacaroonZeroized();
+    }
+    return true;
+  }
+
+  private static byte[] readMacaroonBytes(String macaroonPath) {
     Path path = Path.of(macaroonPath);
 
     try {
@@ -137,8 +178,7 @@ public final class LndChannelFactory {
             "LND macaroon file exceeds maximum size of %d bytes: %d"
                 .formatted(MAX_MACAROON_FILE_SIZE, fileSize));
       }
-      byte[] macaroonBytes = Files.readAllBytes(path);
-      return HexFormat.of().formatHex(macaroonBytes);
+      return Files.readAllBytes(path);
     } catch (IOException e) {
       throw new LndException("Failed to build LND gRPC channel: " + e.getMessage(), e);
     }
@@ -153,6 +193,62 @@ public final class LndChannelFactory {
   private static void validateFileReadable(Path path, String fileDescription) {
     if (!Files.isReadable(path)) {
       throw new LndException(fileDescription + " file not readable: " + path);
+    }
+  }
+
+  private static final class ZeroizingManagedChannel extends ManagedChannel {
+
+    private final ManagedChannel delegate;
+    private final MacaroonClientInterceptor macaroonInterceptor;
+
+    private ZeroizingManagedChannel(
+        ManagedChannel delegate, MacaroonClientInterceptor macaroonInterceptor) {
+      this.delegate = delegate;
+      this.macaroonInterceptor = macaroonInterceptor;
+    }
+
+    @Override
+    public ManagedChannel shutdown() {
+      macaroonInterceptor.zeroize();
+      delegate.shutdown();
+      return this;
+    }
+
+    @Override
+    public ManagedChannel shutdownNow() {
+      macaroonInterceptor.zeroize();
+      delegate.shutdownNow();
+      return this;
+    }
+
+    @Override
+    public boolean isShutdown() {
+      return delegate.isShutdown();
+    }
+
+    @Override
+    public boolean isTerminated() {
+      return delegate.isTerminated();
+    }
+
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+      return delegate.awaitTermination(timeout, unit);
+    }
+
+    @Override
+    public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
+        MethodDescriptor<ReqT, RespT> methodDescriptor, CallOptions callOptions) {
+      return delegate.newCall(methodDescriptor, callOptions);
+    }
+
+    @Override
+    public String authority() {
+      return delegate.authority();
+    }
+
+    private boolean isMacaroonZeroized() {
+      return macaroonInterceptor.isZeroized();
     }
   }
 }
