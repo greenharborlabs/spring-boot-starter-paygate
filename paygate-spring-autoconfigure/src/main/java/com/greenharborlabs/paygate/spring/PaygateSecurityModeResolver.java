@@ -10,10 +10,13 @@ import org.springframework.core.env.Environment;
  * <p>Resolution rules:
  *
  * <ul>
- *   <li>{@code auto} (default) + Spring Security on classpath -> {@code spring-security}
- *   <li>{@code auto} + no Spring Security -> {@code servlet}
+ *   <li>{@code auto} (default) + Spring Security and Paygate Spring Security integration on
+ *       classpath -> {@code spring-security}
+ *   <li>{@code auto} + missing Spring Security or Paygate Spring Security integration -> {@code
+ *       servlet}
  *   <li>{@code servlet} -> forced servlet mode regardless of classpath
- *   <li>{@code spring-security} -> forced Spring Security mode (fails if not on classpath)
+ *   <li>{@code spring-security} -> forced Spring Security mode (fails if Spring Security or the
+ *       Paygate Spring Security integration is not on the classpath)
  * </ul>
  */
 final class PaygateSecurityModeResolver {
@@ -27,6 +30,8 @@ final class PaygateSecurityModeResolver {
       Set.of(MODE_AUTO, MODE_SERVLET, MODE_SPRING_SECURITY);
   private static final String ENABLE_WEB_SECURITY_CLASS =
       "org.springframework.security.config.annotation.web.configuration.EnableWebSecurity";
+  private static final String PAYGATE_SECURITY_AUTO_CONFIGURATION_CLASS =
+      "com.greenharborlabs.paygate.spring.security.PaygateSecurityAutoConfiguration";
 
   private PaygateSecurityModeResolver() {}
 
@@ -46,8 +51,15 @@ final class PaygateSecurityModeResolver {
 
   /** Resolves an effective mode from a configured value. */
   static String resolveFromConfigured(String configured) {
+    return resolveFromConfigured(
+        configured, isSpringSecurityPresent(), isPaygateSpringSecurityIntegrationPresent());
+  }
+
+  static String resolveFromConfigured(
+      String configured, boolean springSecurityPresent, boolean paygateIntegrationPresent) {
     return switch (configured) {
-      case MODE_AUTO -> isSpringSecurityPresent() ? MODE_SPRING_SECURITY : MODE_SERVLET;
+      case MODE_AUTO ->
+          springSecurityPresent && paygateIntegrationPresent ? MODE_SPRING_SECURITY : MODE_SERVLET;
       case MODE_SERVLET -> MODE_SERVLET;
       case MODE_SPRING_SECURITY -> MODE_SPRING_SECURITY;
       default -> configured; // invalid -- will be caught by validate()
@@ -57,29 +69,63 @@ final class PaygateSecurityModeResolver {
   /**
    * Validates the configured mode and throws if invalid or incompatible with the classpath.
    *
-   * @throws IllegalStateException on invalid mode or missing Spring Security
+   * @throws IllegalStateException on invalid mode or missing Spring Security mode requirements
    */
   static void validate(String configured) {
+    validate(configured, isSpringSecurityPresent(), isPaygateSpringSecurityIntegrationPresent());
+  }
+
+  static void validate(
+      String configured, boolean springSecurityPresent, boolean paygateIntegrationPresent) {
     if (!VALID_MODES.contains(configured)) {
       throw new IllegalStateException(
           "Invalid paygate.security-mode value: '"
               + configured
               + "'. Valid values: auto, servlet, spring-security");
     }
-    if (MODE_SPRING_SECURITY.equals(configured) && !isSpringSecurityPresent()) {
+    if (MODE_SPRING_SECURITY.equals(configured)
+        && (!springSecurityPresent || !paygateIntegrationPresent)) {
       throw new IllegalStateException(
-          "paygate.security-mode=spring-security but Spring Security is not on the classpath");
+          "paygate.security-mode=spring-security requires Spring Security and the "
+              + "paygate-spring-security integration module on the classpath; missing: "
+              + missingSpringSecurityRequirements(
+                  springSecurityPresent, paygateIntegrationPresent));
     }
   }
 
   /** Returns true if Spring Security's {@code EnableWebSecurity} class is loadable. */
   static boolean isSpringSecurityPresent() {
+    return isClassPresent(ENABLE_WEB_SECURITY_CLASS);
+  }
+
+  /** Returns true if Paygate's Spring Security auto-configuration marker class is loadable. */
+  static boolean isPaygateSpringSecurityIntegrationPresent() {
+    return isClassPresent(PAYGATE_SECURITY_AUTO_CONFIGURATION_CLASS);
+  }
+
+  private static boolean isClassPresent(String className) {
     try {
-      Class.forName(
-          ENABLE_WEB_SECURITY_CLASS, false, PaygateSecurityModeResolver.class.getClassLoader());
+      Class.forName(className, false, PaygateSecurityModeResolver.class.getClassLoader());
       return true;
     } catch (ClassNotFoundException _) {
       return false;
     }
+  }
+
+  private static String missingSpringSecurityRequirements(
+      boolean springSecurityPresent, boolean paygateIntegrationPresent) {
+    if (!springSecurityPresent && !paygateIntegrationPresent) {
+      return "Spring Security ("
+          + ENABLE_WEB_SECURITY_CLASS
+          + ") and paygate-spring-security integration module ("
+          + PAYGATE_SECURITY_AUTO_CONFIGURATION_CLASS
+          + ")";
+    }
+    if (!springSecurityPresent) {
+      return "Spring Security (" + ENABLE_WEB_SECURITY_CLASS + ")";
+    }
+    return "paygate-spring-security integration module ("
+        + PAYGATE_SECURITY_AUTO_CONFIGURATION_CLASS
+        + ")";
   }
 }

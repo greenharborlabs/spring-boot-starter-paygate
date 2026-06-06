@@ -173,6 +173,33 @@ class PaygateChallengeServiceTest {
       assertThat(ctx).isNotNull();
       assertThat(ctx.bolt11Invoice()).isEqualTo(BOLT11);
     }
+
+    @Test
+    @DisplayName("skips service rate limit when caller already consumed challenge token")
+    void skipsRateLimitWhenAlreadyConsumed() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+
+      PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+      PaygateChallengeService service =
+          new PaygateChallengeService(
+              createTrackingRootKeyStore(),
+              lightningBackend,
+              properties,
+              applicationContext,
+              null,
+              rateLimiter,
+              null,
+              null);
+
+      ChallengeContext ctx =
+          service.createChallenge(
+              request, config, PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
+
+      assertThat(ctx).isNotNull();
+      verify(rateLimiter, never()).tryAcquire(anyString());
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -214,11 +241,16 @@ class PaygateChallengeServiceTest {
       RuntimeException cause = new RuntimeException("Connection refused");
       when(lightningBackend.createInvoice(anyLong(), anyString())).thenThrow(cause);
 
-      PaygateChallengeService service = createService(createTrackingRootKeyStore());
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
 
       assertThatThrownBy(() -> service.createChallenge(request, config))
           .isInstanceOf(PaygateLightningUnavailableException.class)
           .satisfies(throwable -> assertThat(throwable.getCause()).isSameAs(cause));
+
+      assertThat(trackingStore.generateRootKeyInvocations)
+          .as("Root key generation must not happen when invoice creation fails")
+          .isZero();
     }
   }
 
@@ -305,6 +337,42 @@ class PaygateChallengeServiceTest {
       ChallengeContext ctx = service.createChallenge(request, configWithStrategy);
 
       assertThat(ctx.priceSats()).isEqualTo(PRICE_SATS);
+    }
+
+    @Test
+    @DisplayName("does not generate root key when pricing strategy throws")
+    void doesNotGenerateRootKeyWhenPricingStrategyThrows() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+
+      RuntimeException cause = new RuntimeException("pricing exploded");
+      PaygatePricingStrategy strategy =
+          (req, defaultPrice) -> {
+            throw cause;
+          };
+      when(applicationContext.getBean("throwingStrategy", PaygatePricingStrategy.class))
+          .thenReturn(strategy);
+
+      PaygateEndpointConfig configWithStrategy =
+          new PaygateEndpointConfig(
+              "GET",
+              "/api/protected",
+              PRICE_SATS,
+              TIMEOUT_SECONDS,
+              DESCRIPTION,
+              "throwingStrategy",
+              "");
+
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+
+      assertThatThrownBy(() -> service.createChallenge(request, configWithStrategy))
+          .isInstanceOf(PaygateLightningUnavailableException.class)
+          .satisfies(throwable -> assertThat(throwable.getCause()).isSameAs(cause));
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations)
+          .as("Root key generation must not happen when pricing resolution fails")
+          .isZero();
     }
   }
 
@@ -406,8 +474,8 @@ class PaygateChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("SensitiveBytes is destroyed even when createInvoice throws")
-    void sensitiveBytesDestroyedOnFailure() {
+    @DisplayName("root key is not generated when createInvoice throws")
+    void rootKeyNotGeneratedOnInvoiceFailure() {
       when(lightningBackend.isHealthy()).thenReturn(true);
       when(lightningBackend.createInvoice(anyLong(), anyString()))
           .thenThrow(new RuntimeException("Lightning exploded"));
@@ -418,10 +486,10 @@ class PaygateChallengeServiceTest {
       assertThatThrownBy(() -> service.createChallenge(request, config))
           .isInstanceOf(PaygateLightningUnavailableException.class);
 
-      assertThat(trackingStore.lastSensitiveBytes).isNotNull();
-      assertThat(trackingStore.lastSensitiveBytes.isDestroyed())
-          .as("SensitiveBytes must be destroyed even when createInvoice throws")
-          .isTrue();
+      assertThat(trackingStore.generateRootKeyInvocations)
+          .as("Root key generation must not happen when createInvoice throws")
+          .isZero();
+      assertThat(trackingStore.lastSensitiveBytes).isNull();
     }
   }
 
@@ -794,9 +862,12 @@ class PaygateChallengeServiceTest {
 
     volatile SensitiveBytes lastSensitiveBytes;
     volatile byte[] lastRawKeyArray;
+    int generateRootKeyInvocations;
 
     @Override
     public GenerationResult generateRootKey() {
+      generateRootKeyInvocations++;
+
       byte[] rawKey = new byte[32];
       new SecureRandom().nextBytes(rawKey);
 

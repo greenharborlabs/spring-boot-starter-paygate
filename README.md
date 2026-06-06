@@ -629,9 +629,9 @@ The `paygate.security-mode` property controls how L402 protection is applied. Th
 
 | Value | Behavior |
 |-------|----------|
-| `auto` (default) | Detects Spring Security on the classpath. If present, uses `spring-security` mode; otherwise, uses `servlet` mode. |
+| `auto` (default) | Uses `spring-security` mode only when both Spring Security and the optional `paygate-spring-security` module are on the classpath; otherwise, uses `servlet` mode. |
 | `servlet` | Forces the standalone `PaygateSecurityFilter` (from `paygate-spring-autoconfigure`). The Spring Security module is ignored even if on the classpath. Use this when Spring Security is present but you want annotation-driven `@PaymentRequired` handling. |
-| `spring-security` | Forces the Spring Security path. The standalone servlet filter is disabled. Fails at startup if Spring Security is not on the classpath. |
+| `spring-security` | Forces the Spring Security path. The standalone servlet filter is disabled. Fails at startup if Spring Security or `paygate-spring-security` is not on the classpath. |
 
 The two modes are mutually exclusive -- only one is active at a time. Configure the mode explicitly when both modules are on the classpath and you want deterministic behavior:
 

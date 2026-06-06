@@ -21,7 +21,11 @@ public class ClientIpResolver {
     Objects.requireNonNull(trustedProxyAddresses, "trustedProxyAddresses must not be null");
     this.trustForwardedHeaders = trustForwardedHeaders;
     this.trustedProxyAddresses =
-        Set.copyOf(trustedProxyAddresses.stream().map(ClientIpResolver::normalizeIp).toList());
+        Set.copyOf(
+            trustedProxyAddresses.stream()
+                .map(ClientIpResolver::normalizeIpLiteral)
+                .filter(Objects::nonNull)
+                .toList());
   }
 
   public String resolve(HttpServletRequest request) {
@@ -47,7 +51,11 @@ public class ClientIpResolver {
     // Walk right-to-left, skipping trusted proxies
     for (int i = entries.length - 1; i >= 0; i--) {
       String entry = entries[i].trim();
-      if (!trustedProxyAddresses.contains(normalizeIp(entry))) {
+      String normalizedEntry = normalizeIpLiteral(entry);
+      if (normalizedEntry == null) {
+        continue;
+      }
+      if (!trustedProxyAddresses.contains(normalizedEntry)) {
         return entry;
       }
     }
@@ -57,10 +65,15 @@ public class ClientIpResolver {
   }
 
   private static String normalizeIp(String ip) {
+    String normalized = normalizeIpLiteral(ip);
+    return normalized == null ? ip : normalized;
+  }
+
+  private static String normalizeIpLiteral(String ip) {
     try {
       return InetAddress.ofLiteral(ip).getHostAddress();
     } catch (IllegalArgumentException _) {
-      return ip;
+      return null;
     }
   }
 }

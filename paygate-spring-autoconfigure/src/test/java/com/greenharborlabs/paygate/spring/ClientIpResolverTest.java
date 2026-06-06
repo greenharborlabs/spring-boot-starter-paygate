@@ -61,24 +61,23 @@ class ClientIpResolverTest {
       @DisplayName(
           "scans right-to-left skipping trusted proxies and returns first non-trusted entry")
       void rightToLeftScanSkipsTrustedProxies() {
-        var resolver = new ClientIpResolver(true, List.of("proxy2"));
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.2"));
         var request = new MockHttpServletRequest();
-        request.setRemoteAddr("proxy2");
-        request.addHeader("X-Forwarded-For", "client, proxy1, proxy2");
+        request.setRemoteAddr("10.0.0.2");
+        request.addHeader("X-Forwarded-For", "203.0.113.50, 10.0.0.1, 10.0.0.2");
 
         String result = resolver.resolve(request);
 
-        assertThat(result).isEqualTo("proxy1");
+        assertThat(result).isEqualTo("10.0.0.1");
       }
 
       @Test
       @DisplayName("returns remoteAddr when all XFF entries are trusted")
       void returnsRemoteAddrWhenAllTrusted() {
-        var resolver =
-            new ClientIpResolver(true, List.of("10.0.0.1", "client", "proxy1", "proxy2"));
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.1", "10.0.0.2", "10.0.0.3"));
         var request = new MockHttpServletRequest();
         request.setRemoteAddr("10.0.0.1");
-        request.addHeader("X-Forwarded-For", "client, proxy1, proxy2");
+        request.addHeader("X-Forwarded-For", "10.0.0.1, 10.0.0.2, 10.0.0.3");
 
         String result = resolver.resolve(request);
 
@@ -101,14 +100,40 @@ class ClientIpResolverTest {
       @Test
       @DisplayName("trims whitespace from XFF entries")
       void trimsWhitespaceFromXffEntries() {
-        var resolver = new ClientIpResolver(true, List.of("proxy2"));
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.2"));
         var request = new MockHttpServletRequest();
-        request.setRemoteAddr("proxy2");
-        request.addHeader("X-Forwarded-For", "  client ,  proxy1 ,  proxy2 ");
+        request.setRemoteAddr("10.0.0.2");
+        request.addHeader("X-Forwarded-For", "  203.0.113.50 ,  10.0.0.1 ,  10.0.0.2 ");
 
         String result = resolver.resolve(request);
 
-        assertThat(result).isEqualTo("proxy1");
+        assertThat(result).isEqualTo("10.0.0.1");
+      }
+
+      @Test
+      @DisplayName("skips malformed XFF entries while finding valid untrusted client IP")
+      void skipsMalformedXffEntries() {
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
+        var request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.1");
+        request.addHeader("X-Forwarded-For", "not-an-ip, 203.0.113.50, 10.0.0.1");
+
+        String result = resolver.resolve(request);
+
+        assertThat(result).isEqualTo("203.0.113.50");
+      }
+
+      @Test
+      @DisplayName("falls back to remoteAddr when XFF contains no valid untrusted client IP")
+      void fallsBackWhenXffContainsNoValidUntrustedClientIp() {
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
+        var request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.1");
+        request.addHeader("X-Forwarded-For", "not-an-ip, also-bad");
+
+        String result = resolver.resolve(request);
+
+        assertThat(result).isEqualTo("10.0.0.1");
       }
 
       @Test

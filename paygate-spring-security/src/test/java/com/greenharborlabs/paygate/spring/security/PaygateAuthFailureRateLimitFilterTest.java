@@ -185,6 +185,20 @@ class PaygateAuthFailureRateLimitFilterTest {
   }
 
   @Test
+  void noAuthChallengeRequest_bypassesFilterWithoutRateLimitCharge()
+      throws ServletException, IOException {
+    var filter =
+        new PaygateAuthFailureRateLimitFilter(
+            rateLimiter, clientIpResolver, endpointRegistry, protocols);
+
+    filter.doFilter(request, response, filterChain);
+
+    verify(filterChain).doFilter(request, response);
+    verify(rateLimiter, never()).tryAcquire(anyString());
+    verify(endpointRegistry, never()).findConfig(anyString(), anyString());
+  }
+
+  @Test
   void rateLimiterThrows_failsClosed429() throws ServletException, IOException {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolve(any())).thenReturn("192.168.1.1");

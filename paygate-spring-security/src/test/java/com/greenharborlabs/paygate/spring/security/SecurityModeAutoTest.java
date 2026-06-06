@@ -17,8 +17,8 @@ import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 
 /**
- * Verifies that {@code paygate.security-mode=auto} resolves to {@code spring-security} when Spring
- * Security is on the classpath (which it is in this module).
+ * Verifies that {@code paygate.security-mode=auto} resolves to {@code spring-security} when both
+ * Spring Security and the Paygate Spring Security integration are on the classpath.
  */
 @DisplayName("SecurityMode: auto (with Spring Security on classpath)")
 class SecurityModeAutoTest {

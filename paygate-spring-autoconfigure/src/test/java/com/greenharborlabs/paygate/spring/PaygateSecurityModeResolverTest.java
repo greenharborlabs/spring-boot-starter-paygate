@@ -11,13 +11,25 @@ import org.springframework.mock.env.MockEnvironment;
 class PaygateSecurityModeResolverTest {
 
   @Test
-  @DisplayName("auto mode resolves to spring-security when Spring Security is on classpath")
-  void autoResolvesToSpringSecurityWhenPresent() {
-    // Spring Security IS on the test classpath (via spring-boot-starter-test transitive deps
-    // may not include it). We test the resolver method directly.
-    String resolved = PaygateSecurityModeResolver.resolveFromConfigured("auto");
-    // Result depends on classpath -- just verify it returns a valid mode
-    assertThat(resolved).isIn("servlet", "spring-security");
+  @DisplayName(
+      "auto mode resolves to spring-security when Spring Security and integration are present")
+  void autoResolvesToSpringSecurityWhenSpringSecurityAndIntegrationPresent() {
+    String resolved = PaygateSecurityModeResolver.resolveFromConfigured("auto", true, true);
+    assertThat(resolved).isEqualTo("spring-security");
+  }
+
+  @Test
+  @DisplayName("auto mode resolves to servlet when Spring Security is present without integration")
+  void autoResolvesToServletWhenIntegrationMissing() {
+    String resolved = PaygateSecurityModeResolver.resolveFromConfigured("auto", true, false);
+    assertThat(resolved).isEqualTo("servlet");
+  }
+
+  @Test
+  @DisplayName("auto mode resolves to servlet when Spring Security is absent")
+  void autoResolvesToServletWhenSpringSecurityMissing() {
+    String resolved = PaygateSecurityModeResolver.resolveFromConfigured("auto", false, true);
+    assertThat(resolved).isEqualTo("servlet");
   }
 
   @Test
@@ -57,16 +69,43 @@ class PaygateSecurityModeResolverTest {
   }
 
   @Test
-  @DisplayName("validate accepts auto mode")
+  @DisplayName("validate accepts auto mode even when integration is missing")
   void acceptsAuto() {
-    // Should not throw
-    PaygateSecurityModeResolver.validate("auto");
+    PaygateSecurityModeResolver.validate("auto", true, false);
   }
 
   @Test
   @DisplayName("validate accepts servlet mode")
   void acceptsServlet() {
-    PaygateSecurityModeResolver.validate("servlet");
+    PaygateSecurityModeResolver.validate("servlet", false, false);
+  }
+
+  @Test
+  @DisplayName(
+      "validate accepts spring-security mode when Spring Security and integration are present")
+  void acceptsSpringSecurityWhenRequirementsPresent() {
+    PaygateSecurityModeResolver.validate("spring-security", true, true);
+  }
+
+  @Test
+  @DisplayName("validate rejects spring-security mode when Spring Security is missing")
+  void rejectsSpringSecurityWhenSpringSecurityMissing() {
+    assertThatThrownBy(() -> PaygateSecurityModeResolver.validate("spring-security", false, true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("paygate.security-mode=spring-security requires Spring Security")
+        .hasMessageContaining("missing: Spring Security")
+        .hasMessageContaining(
+            "org.springframework.security.config.annotation.web.configuration.EnableWebSecurity");
+  }
+
+  @Test
+  @DisplayName("validate rejects spring-security mode when Paygate integration is missing")
+  void rejectsSpringSecurityWhenIntegrationMissing() {
+    assertThatThrownBy(() -> PaygateSecurityModeResolver.validate("spring-security", true, false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("paygate-spring-security integration module")
+        .hasMessageContaining(
+            "com.greenharborlabs.paygate.spring.security.PaygateSecurityAutoConfiguration");
   }
 
   @Test
@@ -75,6 +114,13 @@ class PaygateSecurityModeResolverTest {
     // This test runs in a classpath that may or may not have Spring Security.
     // We just verify it returns a boolean without throwing.
     boolean result = PaygateSecurityModeResolver.isSpringSecurityPresent();
+    assertThat(result).isInstanceOf(Boolean.class);
+  }
+
+  @Test
+  @DisplayName("isPaygateSpringSecurityIntegrationPresent detects integration marker class")
+  void detectsPaygateSpringSecurityIntegrationClass() {
+    boolean result = PaygateSecurityModeResolver.isPaygateSpringSecurityIntegrationPresent();
     assertThat(result).isInstanceOf(Boolean.class);
   }
 }

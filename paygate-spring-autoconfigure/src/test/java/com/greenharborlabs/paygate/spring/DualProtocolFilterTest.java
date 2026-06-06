@@ -100,7 +100,7 @@ class DualProtocolFilterTest {
       "Both protocols enabled, no auth header -> response has two WWW-Authenticate headers")
   void dualWwwAuthenticateHeadersOn402() throws Exception {
     var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any())).thenReturn(challengeContext);
+    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
 
     when(l402Protocol.formatChallenge(any()))
         .thenReturn(
@@ -208,7 +208,7 @@ class DualProtocolFilterTest {
   @DisplayName("Unauthenticated request -> Cache-Control: no-store on 402")
   void cacheControlNoStoreOn402() throws Exception {
     var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any())).thenReturn(challengeContext);
+    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
 
     when(l402Protocol.formatChallenge(any()))
         .thenReturn(new ChallengeResponse("L402 challenge", "L402", Map.of("macaroon", "abc")));
@@ -310,7 +310,7 @@ class DualProtocolFilterTest {
   @DisplayName("Both protocols receive the same ChallengeContext from a single invoice creation")
   void singleSharedInvoice() throws Exception {
     var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any())).thenReturn(challengeContext);
+    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
 
     var l402ContextCaptor = ArgumentCaptor.forClass(ChallengeContext.class);
     var mppContextCaptor = ArgumentCaptor.forClass(ChallengeContext.class);
@@ -338,7 +338,7 @@ class DualProtocolFilterTest {
     when(mppProtocol.canHandle("Bearer some-jwt")).thenReturn(false);
 
     var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any())).thenReturn(challengeContext);
+    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
 
     when(l402Protocol.formatChallenge(any()))
         .thenReturn(new ChallengeResponse("L402 challenge", "L402", Map.of("macaroon", "abc")));

@@ -5,18 +5,29 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.core.lightning.LightningBackend;
+import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
+import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
+import com.greenharborlabs.paygate.spring.RequestDigestSupport;
+import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -98,7 +109,7 @@ class PaygateAuthenticationEntryPointTest {
   @Test
   void writes402WhenConfigFoundAndChallengeCreated() throws Exception {
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -128,7 +139,8 @@ class PaygateAuthenticationEntryPointTest {
             null);
 
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(contextWithPreimage);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any()))
+        .thenReturn(contextWithPreimage);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -153,7 +165,7 @@ class PaygateAuthenticationEntryPointTest {
   @Test
   void writes429WhenRateLimited() throws Exception {
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG)))
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any()))
         .thenThrow(new PaygateRateLimitedException("Rate limit exceeded"));
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
@@ -167,9 +179,72 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
+  void mppChallengeRateLimitDenied_doesNotReadBody() throws Exception {
+    PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+    RootKeyStore rootKeyStore = mock(RootKeyStore.class);
+    LightningBackend lightningBackend = mock(LightningBackend.class);
+    PaygateChallengeService realChallengeService =
+        new PaygateChallengeService(
+            rootKeyStore, lightningBackend, null, null, null, rateLimiter, null, null);
+    PaymentProtocol mppProtocol = mock(PaymentProtocol.class);
+    when(mppProtocol.scheme()).thenReturn("Payment");
+    PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
+    var postConfig =
+        new PaygateEndpointConfig("POST", "/api/protected", 100, 3600, "Test endpoint", "", "");
+    when(registry.findConfig("POST", "/api/protected")).thenReturn(postConfig);
+    when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(false);
+    var throwingRequest = new ThrowingBodyRequest();
+    throwingRequest.setMethod("POST");
+    throwingRequest.setRequestURI("/api/protected");
+    throwingRequest.setRemoteAddr("10.0.0.1");
+    var localResponse = new MockHttpServletResponse();
+    var localEntryPoint =
+        new PaygateAuthenticationEntryPoint(realChallengeService, registry, List.of(mppProtocol));
+
+    localEntryPoint.commence(throwingRequest, localResponse, new BadCredentialsException("test"));
+
+    assertThat(localResponse.getStatus()).isEqualTo(429);
+    assertThat(throwingRequest.bodyRead).isFalse();
+    verify(rateLimiter, times(1)).tryAcquire("10.0.0.1");
+    verify(lightningBackend, never()).isHealthy();
+  }
+
+  @Test
+  void oversizedMppChallengeBody_consumesOneRateLimitToken() throws Exception {
+    PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+    RootKeyStore rootKeyStore = mock(RootKeyStore.class);
+    LightningBackend lightningBackend = mock(LightningBackend.class);
+    PaygateChallengeService realChallengeService =
+        new PaygateChallengeService(
+            rootKeyStore, lightningBackend, null, null, null, rateLimiter, null, null);
+    PaymentProtocol mppProtocol = mock(PaymentProtocol.class);
+    when(mppProtocol.scheme()).thenReturn("Payment");
+    PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
+    var postConfig =
+        new PaygateEndpointConfig("POST", "/api/protected", 100, 3600, "Test endpoint", "", "");
+    when(registry.findConfig("POST", "/api/protected")).thenReturn(postConfig);
+    when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(true);
+    var oversizedRequest = new MockHttpServletRequest("POST", "/api/protected");
+    oversizedRequest.setRequestURI("/api/protected");
+    oversizedRequest.setRemoteAddr("10.0.0.1");
+    byte[] oversizedBody = new byte[RequestDigestSupport.MAX_CACHED_BODY_BYTES + 1];
+    Arrays.fill(oversizedBody, (byte) 'x');
+    oversizedRequest.setContent(oversizedBody);
+    var localResponse = new MockHttpServletResponse();
+    var localEntryPoint =
+        new PaygateAuthenticationEntryPoint(realChallengeService, registry, List.of(mppProtocol));
+
+    localEntryPoint.commence(oversizedRequest, localResponse, new BadCredentialsException("test"));
+
+    assertThat(localResponse.getStatus()).isEqualTo(400);
+    verify(rateLimiter, times(1)).tryAcquire("10.0.0.1");
+    verify(lightningBackend, never()).isHealthy();
+  }
+
+  @Test
   void writes503WhenLightningUnavailable() throws Exception {
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG)))
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any()))
         .thenThrow(new PaygateLightningUnavailableException("Backend down"));
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
@@ -184,7 +259,7 @@ class PaygateAuthenticationEntryPointTest {
   @Test
   void writes503OnUnexpectedException() throws Exception {
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG)))
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any()))
         .thenThrow(new RuntimeException("Unexpected error"));
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
@@ -216,7 +291,7 @@ class PaygateAuthenticationEntryPointTest {
   void normalizesPathBeforeLookup() throws Exception {
     request.setRequestURI("/api/../api/protected");
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -227,7 +302,7 @@ class PaygateAuthenticationEntryPointTest {
   void normalizesPercentEncodedPathBeforeLookup() throws Exception {
     request.setRequestURI("/api/%2e%2e/api/protected");
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -315,7 +390,7 @@ class PaygateAuthenticationEntryPointTest {
             null);
 
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(context);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(context);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -347,7 +422,7 @@ class PaygateAuthenticationEntryPointTest {
             challengeService, endpointRegistry, List.of(l402Protocol, mppProtocol));
 
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     multiEntryPoint.commence(request, response, new BadCredentialsException("test"));
 
@@ -367,11 +442,21 @@ class PaygateAuthenticationEntryPointTest {
         new PaygateAuthenticationEntryPoint(challengeService, endpointRegistry, List.of());
 
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG))).thenReturn(TEST_CONTEXT);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     emptyEntryPoint.commence(request, response, new BadCredentialsException("test"));
 
     assertThat(response.getStatus()).isEqualTo(402);
     assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+  }
+
+  private static final class ThrowingBodyRequest extends MockHttpServletRequest {
+    private boolean bodyRead;
+
+    @Override
+    public ServletInputStream getInputStream() {
+      bodyRead = true;
+      throw new UncheckedIOException(new IOException("body must not be read"));
+    }
   }
 }

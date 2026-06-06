@@ -31,7 +31,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *
  * <p>This filter should be placed <em>before</em> {@link PaygateAuthenticationFilter} in the Spring
  * Security filter chain. Requests without a payment-scheme {@code Authorization} header bypass this
- * filter entirely.
+ * filter entirely so unauthenticated challenge requests are charged by {@link
+ * PaygateAuthenticationEntryPoint} before any MPP request-body digest capture.
  */
 public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilter {
 
