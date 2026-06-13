@@ -81,7 +81,7 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 
 - The smoke test script does **not** start or stop Docker containers. You manage the stack lifecycle yourself (steps 1 and 5).
 - The script sources `.env` automatically if present, picking up `LNBITS_API_KEY`, `LNBITS_PORT`, and `APP_PORT`.
-- `docker-compose-lnbits.yml` still runs the fast LNbits FakeWallet environment for setup and invoice checks. FakeWallet and local LNbits self-payments do not provide usable full-proof preimages, so the smoke scripts fail early with a preimage/hash mismatch unless you use `PAYER_BACKEND=lnd-cli` with the distinct payer node.
+- `docker-compose-lnbits.yml` still runs the fast LNbits FakeWallet environment for setup and invoice checks. FakeWallet, local LNbits self-payments, and Spark-backed LNbits payers that omit preimages do not provide usable full-proof preimages, so the smoke scripts fail early unless you use `PAYER_BACKEND=lnd-cli` with the distinct payer node or another payer API that returns a matching preimage.
 - For the full manual walkthrough of each scenario, see the numbered sections below.
 
 ---
@@ -911,7 +911,7 @@ docker compose -f docker-compose-lnbits-lnd.yml down -v
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | LNbits returns 401 on pay | Wrong API key | Re-run `scripts/setup-lnbits.sh` and restart the app |
-| Preimage is empty or mismatched | Invoice was paid through LNbits self-payment or FakeWallet | Use `PAYER_BACKEND=lnd-cli` / `lnd-payer` for local proof verification |
+| Preimage is empty or mismatched | Invoice was paid through LNbits self-payment, FakeWallet, Spark-backed LNbits, or another payer path that did not expose a matching preimage | Use `PAYER_BACKEND=lnd-cli` / `lnd-payer` for local proof verification, or use a payer API that returns settled payment preimages |
 | App returns 503 | Cannot reach LNbits | Verify `PAYGATE_LNBITS_URL` points to `http://lnbits:5000` inside Docker network |
 
 ---

@@ -433,6 +433,8 @@ paygate:
 implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")
 ```
 
+**Preimage requirement:** Paygate credentials require the payer-side Lightning preimage. LNbits can create invoices through many funding sources, but not every funding source exposes the settled payment preimage to the payer API. If a payment settles and the payer cannot retrieve a 64-character hex preimage, the client cannot build a valid L402 or MPP credential and access must remain denied. Spark-backed LNbits is not supported for payer-side Paygate credential generation when it omits the preimage; use LND or another verified payer path that returns preimages.
+
 ### LND
 
 [LND](https://github.com/lightningnetwork/lnd) is a full Lightning Network node implementation. Use this for production deployments where you operate your own node.
@@ -504,7 +506,7 @@ PAYER_BACKEND=lnd-cli bash scripts/run-smoke-test.sh
 PAYER_BACKEND=lnd-cli bash scripts/run-mpp-smoke-test.sh
 ```
 
-Default host ports are intentionally uncommon: app `18080`, LNbits `15000`, LND REST `18081`, and payer LND REST `18082`. The fast `docker-compose-lnbits.yml` stack still uses LNbits `FakeWallet` for setup and invoice checks, but full credential proof validation requires `PAYER_BACKEND=lnd-cli` with the distinct payer node because the smoke scripts verify `sha256(preimage) == payment_hash`.
+Default host ports are intentionally uncommon: app `18080`, LNbits `15000`, LND REST `18081`, and payer LND REST `18082`. The fast `docker-compose-lnbits.yml` stack still uses LNbits `FakeWallet` for setup and invoice checks, but full credential proof validation requires `PAYER_BACKEND=lnd-cli` with the distinct payer node because the smoke scripts verify `sha256(preimage) == payment_hash`. A settled payment without a returned preimage is treated as unusable proof, not as successful authentication.
 
 For detailed manual L402 and MPP test flows, including where each command runs,
 what it does, why it is required, and how to verify each step, see

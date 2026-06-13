@@ -74,7 +74,9 @@ PREIMAGE=$(printf '%s\n%s\n' "$PAY_RESULT" "$TRACK_RESULT" \
   | tr '[:upper:]' '[:lower:]')
 
 if [ -z "$PREIMAGE" ]; then
-  log "ERROR: Could not extract PREIMAGE. Do not continue to the authenticated request."
+  log "ERROR: Payment may be settled, but no payment preimage was returned."
+  log "       Do not continue to the authenticated request; Paygate requires"
+  log "       sha256(preimage) to match the challenge payment_hash."
   exit 1
 fi
 

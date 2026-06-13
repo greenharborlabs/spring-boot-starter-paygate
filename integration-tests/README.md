@@ -67,7 +67,10 @@ The `docker-compose-lnbits.yml` FakeWallet stack remains useful for fast setup
 and invoice checks, but it does not provide usable proof preimages for the full
 L402/MPP credential flow. A wallet in the same local LNbits instance also cannot
 prove app-created invoices in this stack because LNbits records local
-self-payments with an unusable preimage.
+self-payments with an unusable preimage. The same rule applies to any hosted or
+external LNbits funding source, including Spark-backed LNbits, when the payer API
+does not return the settled payment preimage: the payment may be settled, but the
+client cannot build a valid Paygate credential.
 
 For a command-by-command manual walkthrough with where/what/why/how-to-verify
 notes for both L402 and MPP, see
@@ -170,6 +173,11 @@ the default `dev` profile.
 
 An optional `MAX_INVOICE_SATS` environment variable (default `50`) enforces a spend cap
 in `run-smoke-test.sh` before paying any invoice.
+
+`PAYER_BACKEND=lnbits` is only valid when that payer wallet returns the settled
+payment preimage. Spark-backed LNbits and other funding sources that omit the
+preimage can pay the invoice, but the smoke scripts will fail closed because
+Paygate cannot construct or validate the credential proof.
 
 ## See Also
 

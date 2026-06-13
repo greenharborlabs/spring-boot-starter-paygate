@@ -1,8 +1,8 @@
 # paygate-lightning-lnbits
 
-[LNbits](https://lnbits.com/) REST backend for the `spring-boot-starter-paygate` project. This module implements the `LightningBackend` interface from `paygate-core` using the LNbits REST API, enabling L402 payment-gated authentication with any LNbits instance.
+[LNbits](https://lnbits.com/) REST backend for the `spring-boot-starter-paygate` project. This module implements the `LightningBackend` interface from `paygate-core` using the LNbits REST API, enabling L402 payment-gated authentication with LNbits instances whose funding source exposes settled payment preimages to the payer.
 
-LNbits is a lightweight, account-based Lightning wallet system with a simple REST API. It is the easiest Lightning backend to get started with -- you can use a hosted instance or self-host one in minutes.
+LNbits is a lightweight, account-based Lightning wallet system with a simple REST API. It is the easiest Lightning backend to get started with -- you can use a hosted instance or self-host one in minutes. Because LNbits supports multiple funding sources, verify that the payer wallet/API you use returns a 32-byte payment preimage after settlement before relying on it for end-to-end L402 or MPP credentials.
 
 ---
 
@@ -174,7 +174,7 @@ The constructor accepts three dependencies:
 | Method | LNbits API Endpoint | Description |
 |--------|-------------------|-------------|
 | `createInvoice(long amountSats, String memo)` | `POST /api/v1/payments` | Creates a Lightning invoice. Returns an `Invoice` with status `PENDING`. |
-| `lookupInvoice(byte[] paymentHash)` | `GET /api/v1/payments/{hash}` | Checks payment status by payment hash. Returns `SETTLED` or `PENDING` with preimage when available. |
+| `lookupInvoice(byte[] paymentHash)` | `GET /api/v1/payments/{hash}` | Checks payment status by payment hash. Returns `SETTLED` or `PENDING`, with a preimage only when LNbits exposes one. |
 | `isHealthy()` | `GET /api/v1/wallet` | Returns `true` if the LNbits wallet endpoint responds with HTTP 200. |
 
 All API requests include the `X-Api-Key` header and have a configurable per-request timeout (default **5 seconds**, overridable via `paygate.lnbits.request-timeout-seconds`). The connect timeout on the `HttpClient` is configurable as well (default **10 seconds**, overridable via `paygate.lnbits.connect-timeout-seconds`).
@@ -237,11 +237,25 @@ public class CustomLnbitsConfiguration {
 
 ## Usage
 
-Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LnbitsBackend` directly -- the `PaygateSecurityFilter` calls it automatically when:
+Once configured, the module works transparently with the rest of the L402 stack. You do not interact with `LnbitsBackend` directly -- Paygate calls it automatically when:
 
 1. A request hits an `@PaymentRequired` endpoint without valid credentials, triggering `createInvoice()` to generate a payment challenge
-2. A request presents L402 credentials, triggering `lookupInvoice()` to verify the payment was made
+2. Operational code or tests need to inspect an invoice with `lookupInvoice()`
 3. The health indicator or filter checks backend availability via `isHealthy()`
+
+Credential validation itself is local: L402 and MPP clients must present the payment preimage, and Paygate verifies `sha256(preimage) == payment_hash` against the hash committed into the challenge. Paygate does not treat LNbits `paid=true` status as a substitute for the preimage.
+
+### Funding Source Compatibility
+
+L402 and MPP require the payer-side payment preimage. A settled invoice without a returned preimage cannot become a valid Paygate credential, because the client cannot construct `Authorization: L402 <macaroon>:<preimage>` or the equivalent MPP credential payload.
+
+Known operational implications:
+
+- LNbits can still create invoices for Paygate challenges when backed by a funding source that does not expose payer preimages.
+- After payment, clients and smoke-test helpers must fail closed if no 64-character hex preimage is returned.
+- Do not configure clients to fall back to LNbits invoice status checks for protected-resource access.
+- Spark-backed LNbits is not supported for payer-side Paygate credential generation if its payment API omits the preimage.
+- For production L402/MPP flows, use LND or another payer wallet/API path that you have verified returns the settled payment preimage.
 
 ### Minimal Example
 
@@ -318,6 +332,8 @@ The module validates required fields in LNbits API responses and throws `LnbitsE
 
 - `createInvoice`: Requires `payment_hash` and `payment_request` in the response
 - `lookupInvoice`: Requires `paid`, `details`, `details.bolt11`, and `details.amount` in the response
+
+A paid lookup response may omit `preimage`; in that case the returned `Invoice` has `status=SETTLED` and `preimage=null`. That is valid invoice-status information, but it is not enough for a Paygate client to produce an L402 or MPP credential.
 
 ---
 
