@@ -178,6 +178,39 @@ class LnbitsBackendTest {
   }
 
   @Test
+  void lookupInvoice_settledInvoiceWithoutPreimage_returnsSettledStatusWithNullPreimage()
+      throws Exception {
+    // Given: some LNbits funding sources report settlement without exposing proof material
+    String responseBody =
+        """
+                {
+                    "paid": true,
+                    "details": {
+                        "payment_hash": "%s",
+                        "bolt11": "%s",
+                        "amount": 250000,
+                        "memo": "settled without preimage",
+                        "time": 1700000000,
+                        "expiry": 3600
+                    }
+                }
+                """
+            .formatted(PAYMENT_HASH_HEX, BOLT11);
+
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(200)
+            .setHeader("Content-Type", "application/json")
+            .setBody(responseBody));
+
+    Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
+
+    assertThat(invoice.status()).isEqualTo(InvoiceStatus.SETTLED);
+    assertThat(invoice.preimage()).isNull();
+    assertThat(invoice.amountSats()).isEqualTo(250);
+  }
+
+  @Test
   void isHealthy_returnsTrue_when200() throws Exception {
     // Given: wallet endpoint returns 200
     server.enqueue(

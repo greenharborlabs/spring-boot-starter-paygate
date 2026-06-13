@@ -112,6 +112,8 @@ The starter provides the framework, but you need exactly one Lightning backend m
 | `paygate-lightning-lnbits` | [LNbits](https://lnbits.com/) | REST/JSON | Easiest setup. Works with hosted instances. Good for development and smaller deployments. |
 | `paygate-lightning-lnd` | [LND](https://github.com/lightningnetwork/lnd) | gRPC/Protobuf | Production deployments with your own Lightning node. Requires TLS cert and macaroon file. |
 
+LNbits compatibility depends on the funding source and payer API. L402 and MPP clients must receive the settled payment preimage; `paid=true` invoice status alone is not proof Paygate can accept. Spark-backed LNbits is not supported for payer-side credential generation if it omits the preimage. In that case, challenge issuance can work, but the paid client must fail closed and remain unauthenticated.
+
 **Gradle examples:**
 
 ```kotlin

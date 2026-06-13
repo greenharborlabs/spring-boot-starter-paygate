@@ -296,7 +296,7 @@ fi
 if [ -n "$PREIMAGE" ]; then
   pass "Preimage retrieved (${PREIMAGE:0:16}...)"
 else
-  fail "Could not retrieve preimage"
+  fail "Payment settled, but the payer API did not return a payment preimage; cannot construct an L402 credential. Spark-backed LNbits, local LNbits self-payments, and FakeWallet may omit or hide usable preimages."
   echo "Payment details: $PAYMENT_DETAILS"
   exit 1
 fi
@@ -311,7 +311,7 @@ pass "Preimage is valid lowercase hex (64 chars)"
 
 PREIMAGE_HASH=$(sha256_preimage "$PREIMAGE" 2>/dev/null || true)
 if [ "$PREIMAGE_HASH" != "$PAYMENT_HASH" ]; then
-  fail "Payer returned an unusable preimage: sha256(preimage)=${PREIMAGE_HASH:-<invalid>} does not match payment_hash=${PAYMENT_HASH}. Local LNbits self-payments and FakeWallet are only suitable for setup/invoice checks; full local proof verification requires PAYER_BACKEND=lnd-cli with a distinct payer node."
+  fail "Payer returned an unusable preimage: sha256(preimage)=${PREIMAGE_HASH:-<invalid>} does not match payment_hash=${PAYMENT_HASH}. Spark-backed LNbits, local LNbits self-payments, and FakeWallet are only suitable for setup/invoice checks when they do not expose a matching preimage; full local proof verification requires PAYER_BACKEND=lnd-cli with a distinct payer node."
   exit 1
 fi
 pass "Preimage hash matches payment_hash"
