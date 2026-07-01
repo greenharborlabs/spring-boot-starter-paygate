@@ -17,15 +17,12 @@ import org.springframework.context.annotation.Bean;
  * present. Separated from {@link PaygateAutoConfiguration} to allow independent conditional
  * activation.
  *
- * <p>Can be disabled by setting {@code paygate.actuator.enabled=false}.
+ * <p>Disabled by default. Can be enabled by setting {@code paygate.actuator.enabled=true}.
  */
 @AutoConfiguration(after = PaygateAutoConfiguration.class)
 @ConditionalOnClass(name = "org.springframework.boot.actuate.endpoint.annotation.Endpoint")
 @ConditionalOnBean(PaygateEndpointRegistry.class)
-@ConditionalOnProperty(
-    name = "paygate.actuator.enabled",
-    havingValue = "true",
-    matchIfMissing = true)
+@ConditionalOnProperty(name = "paygate.actuator.enabled", havingValue = "true")
 public class PaygateActuatorAutoConfiguration {
 
   @Bean

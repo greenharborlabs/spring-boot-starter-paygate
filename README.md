@@ -383,6 +383,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.lnbits.api-key` | `string` | -- | LNbits admin API key. |
 | `paygate.lnbits.request-timeout-seconds` | `int` | -- | HTTP request timeout. Overrides `paygate.lightning.timeout-seconds` when set. |
 | `paygate.lnbits.connect-timeout-seconds` | `int` | `10` | TCP connect timeout in seconds. |
+| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | Allow `http://` LNbits URLs only for local/test loopback targets. Production URLs should use HTTPS. |
 
 ### LND Backend
 
@@ -906,6 +907,7 @@ This library handles payment credentials and cryptographic tokens. The following
 - **Root key storage** defaults to file-based storage at `~/.paygate/keys`. In production, ensure this directory has restricted permissions (`chmod 700`)
 - **Never log full macaroon values** -- only token IDs appear in logs
 - **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`) and MPP challenge binding secrets, not plaintext in configuration files
+- **LNbits HTTPS by default** -- `http://` LNbits URLs require `paygate.lnbits.allow-plaintext-http=true` and are accepted only for local/test loopback targets
 - **Test mode is blocked in production** -- the `TestModeAutoConfiguration` throws at startup if `prod` or `production` profiles are active
 - **Fail-closed** -- any unexpected exception during validation produces HTTP 503, never leaking protected content
 

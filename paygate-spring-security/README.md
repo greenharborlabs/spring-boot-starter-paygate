@@ -241,7 +241,7 @@ Implements `AuthenticationProvider`. Accepts only `PaygateAuthenticationToken` i
 1. `EnableWebSecurity` and `L402Validator` classes are on the classpath (`@ConditionalOnClass`)
 2. An `L402Validator` bean exists in the application context (`@ConditionalOnBean`)
 
-It registers up to five beans:
+It registers up to five beans plus a startup guard:
 
 | Bean | Condition | Description |
 |------|-----------|-------------|
@@ -250,8 +250,9 @@ It registers up to five beans:
 | `PaygateAuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
 | `PaygateAuthFailureRateLimitFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(PaygateRateLimiter.class)` | Rate limits auth attempts with pre-check and post-failure penalty. Only created when rate limiting is enabled. |
 | `PaygateAuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
+| `PaygateSpringSecurityFilterChainGuard` | Spring Security mode + `FilterChainProxy` on classpath | Fails startup if no `PaygateAuthenticationFilter` is present in the effective filter chain. |
 
-The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). This gives you full control over filter ordering and which paths are protected.
+The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). Startup fails closed when the effective chain does not contain `PaygateAuthenticationFilter`. If you intentionally enforce Paygate through custom filter wiring that the guard cannot inspect, set `paygate.spring-security.custom-filter-chain-acknowledged=true`.
 
 ### Overriding Auto-Configured Beans
 
@@ -521,7 +522,7 @@ The servlet filter and Spring Security paths are mutually exclusive. The `paygat
 
 Only one mode is active at a time. This prevents conflicts where both the servlet filter and the Spring Security filter chain attempt to handle the same request.
 
-When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point in your `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security.
+When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthenticationFilter` in your `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. If the filter is absent, startup fails closed unless `paygate.spring-security.custom-filter-chain-acknowledged=true` is set.
 
 Set the mode explicitly when both modules are on the classpath:
 

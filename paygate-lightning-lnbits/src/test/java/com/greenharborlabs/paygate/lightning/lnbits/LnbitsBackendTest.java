@@ -44,7 +44,7 @@ class LnbitsBackendTest {
     server.start();
 
     objectMapper = JsonMapper.builder().build();
-    var config = new LnbitsConfig(server.url("/").toString(), API_KEY);
+    var config = new LnbitsConfig(server.url("/").toString(), API_KEY, 5, 10, true);
     backend = new LnbitsBackend(config, objectMapper, HttpClient.newHttpClient());
   }
 
@@ -594,7 +594,7 @@ class LnbitsBackendTest {
   private LnbitsBackend backendWithShortTimeout() {
     var config =
         new LnbitsConfig(
-            server.url("/").toString(), API_KEY, 1 // 1-second timeout for fast tests
+            server.url("/").toString(), API_KEY, 1, 10, true // 1-second timeout for fast tests
             );
     return new LnbitsBackend(config, objectMapper, HttpClient.newHttpClient());
   }
@@ -691,7 +691,7 @@ class LnbitsBackendTest {
 
   @Test
   void backendUsesConfiguredTimeout() {
-    var config = new LnbitsConfig(server.url("/").toString(), API_KEY, 30);
+    var config = new LnbitsConfig(server.url("/").toString(), API_KEY, 30, 10, true);
     assertThat(config.requestTimeoutSeconds()).isEqualTo(30);
   }
 
@@ -798,7 +798,7 @@ class LnbitsBackendTest {
   void createInvoice_trailingSlashUrl_normalizesPath() throws Exception {
     // Construct backend with explicit trailing-slash URL
     String trailingSlashUrl = "http://localhost:" + server.getPort() + "/";
-    var trailingSlashConfig = new LnbitsConfig(trailingSlashUrl, API_KEY);
+    var trailingSlashConfig = new LnbitsConfig(trailingSlashUrl, API_KEY, 5, 10, true);
     var trailingSlashBackend =
         new LnbitsBackend(trailingSlashConfig, objectMapper, HttpClient.newHttpClient());
 

@@ -59,6 +59,8 @@ public class PaygateProperties {
 
   private Protocols protocols = new Protocols();
 
+  private SpringSecurity springSecurity = new SpringSecurity();
+
   public Lightning getLightning() {
     return lightning;
   }
@@ -219,6 +221,28 @@ public class PaygateProperties {
     this.protocols = protocols;
   }
 
+  public SpringSecurity getSpringSecurity() {
+    return springSecurity;
+  }
+
+  public void setSpringSecurity(SpringSecurity springSecurity) {
+    this.springSecurity = springSecurity;
+  }
+
+  /** Spring Security integration configuration bound from {@code paygate.spring-security.*}. */
+  public static class SpringSecurity {
+
+    private boolean customFilterChainAcknowledged = false;
+
+    public boolean isCustomFilterChainAcknowledged() {
+      return customFilterChainAcknowledged;
+    }
+
+    public void setCustomFilterChainAcknowledged(boolean customFilterChainAcknowledged) {
+      this.customFilterChainAcknowledged = customFilterChainAcknowledged;
+    }
+  }
+
   /** Rate-limiting configuration bound from {@code paygate.rate-limit.*}. */
   public static class RateLimit {
 
@@ -306,6 +330,8 @@ public class PaygateProperties {
 
     private Integer connectTimeoutSeconds;
 
+    private boolean allowPlaintextHttp = false;
+
     public String getUrl() {
       return url;
     }
@@ -344,6 +370,14 @@ public class PaygateProperties {
             "paygate.lnbits.connect-timeout-seconds must be > 0, got: " + connectTimeoutSeconds);
       }
       this.connectTimeoutSeconds = connectTimeoutSeconds;
+    }
+
+    public boolean isAllowPlaintextHttp() {
+      return allowPlaintextHttp;
+    }
+
+    public void setAllowPlaintextHttp(boolean allowPlaintextHttp) {
+      this.allowPlaintextHttp = allowPlaintextHttp;
     }
   }
 

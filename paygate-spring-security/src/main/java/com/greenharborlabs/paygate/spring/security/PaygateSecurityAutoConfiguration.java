@@ -36,7 +36,9 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
  *
  * <p>Users must register the filter in their security filter chain configuration. This
  * auto-configuration provides the beans; placement in the filter chain is left to the application's
- * {@code SecurityFilterChain} definition.
+ * {@code SecurityFilterChain} definition. {@link
+ * PaygateSpringSecurityFilterChainGuardAutoConfiguration} verifies that placement after singleton
+ * initialization and is intentionally not gated on {@link L402Validator} bean creation.
  */
 @AutoConfiguration
 @ConditionalOnProperty(name = "paygate.enabled", havingValue = "true")

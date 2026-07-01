@@ -1,8 +1,6 @@
 spring:
   application:
     name: paygate-example-app-spring-security
-  profiles:
-    active: dev
 
 server:
   port: 8081

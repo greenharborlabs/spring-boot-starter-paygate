@@ -299,12 +299,10 @@ public final class MppProtocol implements PaymentProtocol {
         throw new PaymentValidationException(
             ErrorCode.INVALID_CHALLENGE_BINDING, "Request digest mismatch", credential.tokenId());
       }
-      boolean hmacCurrentSecretValid =
-          MppChallengeBinding.verify(
-              id, realm, method, intent, request, expires, digest, opaque, challengeBindingSecret);
+      boolean hmacCurrentSecretValid;
       boolean hmacPreviousSecretValid = false;
-      if (!hmacCurrentSecretValid && previousChallengeBindingSecret != null) {
-        hmacPreviousSecretValid =
+      try {
+        hmacCurrentSecretValid =
             MppChallengeBinding.verify(
                 id,
                 realm,
@@ -314,7 +312,23 @@ public final class MppProtocol implements PaymentProtocol {
                 expires,
                 digest,
                 opaque,
-                previousChallengeBindingSecret);
+                challengeBindingSecret);
+        if (!hmacCurrentSecretValid && previousChallengeBindingSecret != null) {
+          hmacPreviousSecretValid =
+              MppChallengeBinding.verify(
+                  id,
+                  realm,
+                  method,
+                  intent,
+                  request,
+                  expires,
+                  digest,
+                  opaque,
+                  previousChallengeBindingSecret);
+        }
+      } catch (IllegalArgumentException e) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID_CHALLENGE_BINDING, "Challenge binding verification failed", e);
       }
       if (!(hmacCurrentSecretValid || hmacPreviousSecretValid)) {
         throw new PaymentValidationException(

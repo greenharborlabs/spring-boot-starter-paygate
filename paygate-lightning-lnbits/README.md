@@ -111,6 +111,12 @@ paygate.lnbits.api-key=${LNBITS_API_KEY}
 | `paygate.lnbits.api-key` | `string` | -- | Yes | Invoice/read API key for authentication. Sent as the `X-Api-Key` header on all requests. |
 | `paygate.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout. Overrides default 5s. |
 | `paygate.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout. Overrides default 10s. |
+| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Allows `http://` URLs only for local/test loopback targets. Production LNbits URLs should use HTTPS. |
+
+Plaintext HTTP is rejected by default, including localhost URLs. For local tests
+or Docker Compose stacks, set `paygate.lnbits.allow-plaintext-http=true`; the
+URL host must still be loopback, localhost, or the known local Compose service
+name `lnbits`.
 
 ### Security: Handling the API Key
 
@@ -204,7 +210,7 @@ When the following conditions are met, the `PaygateAutoConfiguration` class in `
 The auto-configuration:
 
 - Reads `paygate.lnbits.url` and `paygate.lnbits.api-key` from `PaygateProperties`
-- Creates an `LnbitsConfig` record from those values
+- Creates an `LnbitsConfig` from those values, including the explicit plaintext HTTP opt-in flag
 - Uses the Spring-managed `ObjectMapper` from the application context
 - Creates a `java.net.http.HttpClient` with a 10-second connect timeout
 - Wraps the backend in a `CachingLightningBackendWrapper` (if `paygate.health-cache.enabled=true`, which is the default) to cache `isHealthy()` results
