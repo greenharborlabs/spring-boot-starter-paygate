@@ -30,6 +30,7 @@ dependencies {
 
     testImplementation(project(":paygate-protocol-l402"))
     testImplementation(project(":paygate-protocol-mpp"))
+    testRuntimeOnly(project(":paygate-lightning-lnbits"))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-web")
     testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")

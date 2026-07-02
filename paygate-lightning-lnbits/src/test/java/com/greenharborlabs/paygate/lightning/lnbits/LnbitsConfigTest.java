@@ -38,6 +38,15 @@ class LnbitsConfigTest {
   }
 
   @Test
+  void equalityShouldPreserveFormerRecordComponentSemanticsAfterClassConversion() {
+    var defaultConfig = new LnbitsConfig(BASE_URL, API_KEY, 5, 10);
+    var plaintextOptInConfig = new LnbitsConfig(BASE_URL, API_KEY, 5, 10, true);
+
+    assertThat(defaultConfig).isEqualTo(plaintextOptInConfig);
+    assertThat(defaultConfig.hashCode()).isEqualTo(plaintextOptInConfig.hashCode());
+  }
+
+  @Test
   void shouldRejectNullBaseUrl() {
     assertThatThrownBy(() -> new LnbitsConfig(null, API_KEY))
         .isInstanceOf(IllegalArgumentException.class);
@@ -134,7 +143,10 @@ class LnbitsConfigTest {
   void shouldRejectFileSchemeUrl() {
     assertThatThrownBy(() -> new LnbitsConfig("file:///etc/passwd", API_KEY))
         .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
         .hasMessageContaining("scheme")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp")
         .hasMessageContaining("file");
   }
 
@@ -142,7 +154,10 @@ class LnbitsConfigTest {
   void shouldRejectFtpSchemeUrl() {
     assertThatThrownBy(() -> new LnbitsConfig("ftp://evil.com", API_KEY))
         .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
         .hasMessageContaining("scheme")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp")
         .hasMessageContaining("ftp");
   }
 
@@ -150,7 +165,10 @@ class LnbitsConfigTest {
   void shouldRejectGopherSchemeUrl() {
     assertThatThrownBy(() -> new LnbitsConfig("gopher://evil.com", API_KEY))
         .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
         .hasMessageContaining("scheme")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp")
         .hasMessageContaining("gopher");
   }
 
@@ -168,9 +186,83 @@ class LnbitsConfigTest {
   }
 
   @Test
-  void shouldAcceptHttpScheme() {
-    var config = new LnbitsConfig("http://localhost:5000", API_KEY);
+  void shouldRejectNonLoopbackHttpSchemeByDefault() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://lnbits.example.com", API_KEY))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp");
+  }
+
+  @Test
+  void shouldRejectLocalHttpSchemeWithoutExplicitOptIn() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://localhost:5000", API_KEY))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp");
+  }
+
+  @Test
+  void shouldRejectNonLoopbackHttpSchemeEvenWithExplicitOptIn() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://lnbits.example.com", API_KEY, 5, 10, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp");
+  }
+
+  @Test
+  void shouldAcceptLocalHttpSchemeWithExplicitOptIn() {
+    var config = new LnbitsConfig("http://localhost:5000", API_KEY, 5, 10, true);
     assertThat(config.baseUrl()).isEqualTo("http://localhost:5000");
+    assertThat(config.allowPlaintextHttp()).isTrue();
+  }
+
+  @Test
+  void shouldAcceptLoopbackHttpSchemeWithExplicitOptIn() {
+    var config = new LnbitsConfig("http://127.0.0.1:5000", API_KEY, 5, 10, true);
+    assertThat(config.baseUrl()).isEqualTo("http://127.0.0.1:5000");
+  }
+
+  @Test
+  void shouldAcceptDockerComposeServiceNameHttpSchemeWithExplicitOptIn() {
+    var config = new LnbitsConfig("http://lnbits:5000", API_KEY, 5, 10, true);
+    assertThat(config.baseUrl()).isEqualTo("http://lnbits:5000");
+    assertThat(config.allowPlaintextHttp()).isTrue();
+  }
+
+  @Test
+  void shouldRejectUnknownSingleLabelHttpHostEvenWithExplicitOptIn() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://payments:5000", API_KEY, 5, 10, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp");
+  }
+
+  @Test
+  void shouldRejectIpv4WildcardHttpHostEvenWithExplicitOptIn() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://0.0.0.0:5000", API_KEY, 5, 10, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp");
+  }
+
+  @Test
+  void shouldRejectIpv6WildcardHttpHostEvenWithExplicitOptIn() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://[::]:5000", API_KEY, 5, 10, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'")
+        .hasMessageContaining("allow-plaintext-http")
+        .hasMessageContaining("allowPlaintextHttp");
   }
 
   @Test
@@ -180,8 +272,20 @@ class LnbitsConfigTest {
   }
 
   @Test
-  void shouldAcceptUppercaseHttpScheme() {
-    var config = new LnbitsConfig("HTTP://EXAMPLE.COM", API_KEY);
-    assertThat(config.baseUrl()).isEqualTo("HTTP://EXAMPLE.COM");
+  void shouldRejectUppercaseHttpSchemeWithoutExplicitOptIn() {
+    assertThatThrownBy(() -> new LnbitsConfig("HTTP://EXAMPLE.COM", API_KEY))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'");
+  }
+
+  @Test
+  void existingConstructorsShouldDefaultToNoPlaintextOptIn() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://localhost:5000", API_KEY))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new LnbitsConfig("http://localhost:5000", API_KEY, 5))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new LnbitsConfig("http://localhost:5000", API_KEY, 5, 10))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 }

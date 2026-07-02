@@ -53,9 +53,21 @@
       "defaultValue": "auto"
     },
     {
+      "name": "paygate.spring-security.custom-filter-chain-acknowledged",
+      "type": "java.lang.Boolean",
+      "description": "Advanced-user acknowledgement that Paygate enforcement is intentionally wired outside the standard Spring Security FilterChainProxy. When false, Spring Security mode fails closed if no PaygateAuthenticationFilter is found in the effective filter chain.",
+      "defaultValue": false
+    },
+    {
       "name": "paygate.test-mode",
       "type": "java.lang.Boolean",
       "description": "Enable test mode which uses an in-memory Lightning backend that auto-settles invoices. Must NOT be used in production. When enabled, no real Lightning node connection is required.",
+      "defaultValue": false
+    },
+    {
+      "name": "paygate.actuator.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether to register the Paygate actuator endpoint. Disabled by default to avoid exposing operational payment details; enable only when actuator access is appropriately secured.",
       "defaultValue": false
     },
     {
@@ -92,6 +104,12 @@
       "type": "java.lang.Integer",
       "description": "TCP connect timeout in seconds for the LNbits HTTP client. Defaults to 10 seconds if not set.",
       "defaultValue": 10
+    },
+    {
+      "name": "paygate.lnbits.allow-plaintext-http",
+      "type": "java.lang.Boolean",
+      "description": "Explicit local/test opt-in that allows LNbits http:// URLs only when the host is loopback or local. Production LNbits URLs should use HTTPS.",
+      "defaultValue": false
     },
     {
       "name": "paygate.lnd.rpc-deadline-seconds",

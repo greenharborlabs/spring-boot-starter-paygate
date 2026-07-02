@@ -574,6 +574,31 @@ class MppProtocolTest {
     }
 
     @Test
+    void rejectsPipeDelimiterInEchoedChallengeFieldsAsInvalidChallengeBinding() {
+      String[] fields = {"realm", "method", "intent", "request", "expires", "digest", "opaque"};
+
+      for (String field : fields) {
+        String invalidValue = field + "|tampered";
+        PaymentCredential credential =
+            buildCredentialWithEchoedChallengeOverride(
+                PREIMAGE, Instant.now().plusSeconds(3600), field, invalidValue);
+        String requestDigest = "digest".equals(field) ? invalidValue : REQUEST_DIGEST;
+
+        assertThatThrownBy(
+                () -> protocol.validate(credential, requestContextWithDigest(requestDigest)))
+            .as("field %s", field)
+            .isInstanceOf(PaymentValidationException.class)
+            .satisfies(
+                e -> {
+                  PaymentValidationException pve = (PaymentValidationException) e;
+                  assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
+                  assertThat(pve.getMessage()).contains("Challenge binding verification failed");
+                  assertThat(pve.getCause()).isInstanceOf(IllegalArgumentException.class);
+                });
+      }
+    }
+
+    @Test
     void rejectsExpiredChallenge() {
       // Build credential with an expires time in the past
       PaymentCredential credential =
@@ -853,6 +878,22 @@ class MppProtocolTest {
 
     MppMetadata metadata = new MppMetadata(echoedChallenge, null);
     return new PaymentCredential(paymentHash, preimage, id, "Payment", null, metadata);
+  }
+
+  private PaymentCredential buildCredentialWithEchoedChallengeOverride(
+      byte[] preimage, Instant expiresAt, String field, String value) {
+    PaymentCredential credential = buildValidCredentialForValidation(preimage, expiresAt, secret());
+    MppMetadata metadata = (MppMetadata) credential.metadata();
+    Map<String, String> echoedChallenge = new LinkedHashMap<>(metadata.echoedChallenge());
+    echoedChallenge.put(field, value);
+
+    return new PaymentCredential(
+        credential.paymentHash(),
+        preimage,
+        credential.tokenId(),
+        credential.sourceProtocolScheme(),
+        credential.source(),
+        new MppMetadata(echoedChallenge, null));
   }
 
   /**

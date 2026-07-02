@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -42,6 +43,7 @@ import tools.jackson.databind.json.JsonMapper;
 @SpringBootTest(
     classes = ExampleApplication.class,
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
 @TestPropertySource(
     properties = {
       "paygate.enabled=true",
@@ -261,6 +263,7 @@ class DualProtocolIntegrationTest {
   @SpringBootTest(
       classes = ExampleApplication.class,
       webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+  @ActiveProfiles("test")
   @TestPropertySource(
       properties = {
         "paygate.enabled=true",

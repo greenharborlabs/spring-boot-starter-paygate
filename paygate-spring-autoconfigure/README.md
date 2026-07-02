@@ -38,7 +38,7 @@ The module registers four `@AutoConfiguration` classes, declared in `META-INF/sp
 | Auto-Configuration Class | Condition | Purpose |
 |--------------------------|-----------|---------|
 | `PaygateAutoConfiguration` | `paygate.enabled=true` | Core beans: root key store, credential cache, caveat verifiers, validator, endpoint registry, rate limiter, security filter, earnings tracker, Lightning backend |
-| `PaygateActuatorAutoConfiguration` | Actuator on classpath + `PaygateEndpointRegistry` bean present + `paygate.actuator.enabled!=false` | Actuator endpoint at `/actuator/paygate` |
+| `PaygateActuatorAutoConfiguration` | Actuator on classpath + `PaygateEndpointRegistry` bean present + `paygate.actuator.enabled=true` | Actuator endpoint at `/actuator/paygate` |
 | `PaygateMetricsAutoConfiguration` | Micrometer on classpath + `MeterRegistry` bean present + `paygate.enabled=true` | Micrometer counters and gauges |
 | `TestModeAutoConfiguration` | `paygate.test-mode=true` (runs **before** `PaygateAutoConfiguration`) | Dummy Lightning backend for development |
 
@@ -157,6 +157,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnbits.api-key` | `string` | -- | When `paygate.backend=lnbits` | LNbits Invoice/read API key. Keep this value secret. |
 | `paygate.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout override. |
 | `paygate.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout override. |
+| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Explicit local/test opt-in for `http://` LNbits URLs. Accepted only for loopback, localhost, or the known local Compose service host. |
 
 ### LND Backend Properties
 
@@ -438,7 +439,7 @@ The health indicator caches its own result using the `paygate.health-cache.ttl-s
 
 ## Actuator Endpoint
 
-When Spring Boot Actuator is on the classpath, a custom endpoint is available at `GET /actuator/paygate` via `PaygateActuatorEndpoint`. It is enabled by default and can be disabled with `paygate.actuator.enabled=false`.
+When Spring Boot Actuator is on the classpath, a custom endpoint is available at `GET /actuator/paygate` via `PaygateActuatorEndpoint`. It is disabled by default and can be enabled with `paygate.actuator.enabled=true`.
 
 ### Response Structure
 

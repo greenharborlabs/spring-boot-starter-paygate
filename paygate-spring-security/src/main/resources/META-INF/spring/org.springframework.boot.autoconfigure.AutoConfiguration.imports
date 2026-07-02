@@ -1,1 +1,2 @@
 com.greenharborlabs.paygate.spring.security.PaygateSecurityAutoConfiguration
+com.greenharborlabs.paygate.spring.security.PaygateSpringSecurityFilterChainGuardAutoConfiguration

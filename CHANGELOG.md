@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **paygate-lightning-lnbits**: Require HTTPS LNbits URLs by default; plaintext HTTP now needs an explicit local/test opt-in and is limited to loopback or the known Docker Compose LNbits service host.
+- **paygate-spring-security**: Fail startup in Spring Security mode when no `PaygateAuthenticationFilter` is present in the effective filter chain, unless advanced custom filter-chain wiring is explicitly acknowledged.
+- **paygate-spring-autoconfigure**: Reject the committed MPP sample challenge-binding secret outside test mode.
+- **integration-tests**: Bind local Lightning and Bitcoin service ports to loopback and narrow regtest Bitcoin RPC access to the Docker subnet.
+
+### Changed
+
+- **paygate-spring-autoconfigure**: Disable the Paygate actuator endpoint by default; enable it explicitly with `paygate.actuator.enabled=true`.
+- **paygate-example-app** and **paygate-example-app-spring-security**: Stop activating the dev profile from default `application.yml`; local test mode now stays in the explicit dev profile.
+
+### Fixed
+
+- **paygate-protocol-mpp**: Convert malformed echoed challenge-binding fields into `INVALID_CHALLENGE_BINDING` validation failures instead of leaking delimiter parsing exceptions.
+
 ## [0.1.3] - 2026-06-06
 
 ### Security

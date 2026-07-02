@@ -326,6 +326,10 @@ class AutoConfigurationTest {
   /** A secret that is only 10 ASCII characters = 10 UTF-8 bytes. */
   private static final String SHORT_SECRET = "short_sec!";
 
+  /** A committed sample secret that must only be accepted in test mode. */
+  private static final String UNSAFE_SAMPLE_SECRET =
+      "dev-only-mpp-test-secret-do-not-use-in-production";
+
   @Nested
   @DisplayName("L402 protocol conditional registration")
   class L402ProtocolRegistration {
@@ -537,6 +541,120 @@ class AutoConfigurationTest {
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("previous-challenge-binding-secret")
                     .hasMessageContaining("at least 32 UTF-8 bytes");
+              });
+    }
+
+    @Test
+    @DisplayName("startup fails when primary secret uses committed sample outside test mode")
+    void failsWhenPrimarySecretUsesCommittedSampleOutsideTestMode() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.protocols.mpp.challenge-binding-secret=" + UNSAFE_SAMPLE_SECRET)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("paygate.protocols.mpp.challenge-binding-secret")
+                    .hasMessageContaining("Committed sample secrets are test-only")
+                    .hasMessageContaining("PAYGATE_MPP_SECRET")
+                    .hasMessageContaining("unique secret of at least 32 UTF-8 bytes");
+              });
+    }
+
+    @Test
+    @DisplayName(
+        "startup fails when disabled MPP primary secret uses committed sample outside test mode")
+    void failsWhenDisabledMppPrimarySecretUsesCommittedSampleOutsideTestMode() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.protocols.mpp.enabled=false",
+              "paygate.protocols.mpp.challenge-binding-secret=" + UNSAFE_SAMPLE_SECRET)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("paygate.protocols.mpp.challenge-binding-secret")
+                    .hasMessageContaining("Committed sample secrets are test-only")
+                    .hasMessageContaining("PAYGATE_MPP_SECRET")
+                    .hasMessageContaining("unique secret of at least 32 UTF-8 bytes");
+              });
+    }
+
+    @Test
+    @DisplayName("startup fails when previous secret uses committed sample outside test mode")
+    void failsWhenPreviousSecretUsesCommittedSampleOutsideTestMode() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.protocols.mpp.enabled=true",
+              "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET,
+              "paygate.protocols.mpp.previous-challenge-binding-secret=" + UNSAFE_SAMPLE_SECRET)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("paygate.protocols.mpp.previous-challenge-binding-secret")
+                    .hasMessageContaining("Committed sample secrets are test-only")
+                    .hasMessageContaining("PAYGATE_MPP_SECRET")
+                    .hasMessageContaining("unique secret of at least 32 UTF-8 bytes");
+              });
+    }
+
+    @Test
+    @DisplayName(
+        "startup fails when disabled MPP previous secret uses committed sample outside test mode")
+    void failsWhenDisabledMppPreviousSecretUsesCommittedSampleOutsideTestMode() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.protocols.mpp.enabled=false",
+              "paygate.protocols.mpp.challenge-binding-secret=" + VALID_SECRET,
+              "paygate.protocols.mpp.previous-challenge-binding-secret=" + UNSAFE_SAMPLE_SECRET)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("paygate.protocols.mpp.previous-challenge-binding-secret")
+                    .hasMessageContaining("Committed sample secrets are test-only")
+                    .hasMessageContaining("PAYGATE_MPP_SECRET")
+                    .hasMessageContaining("unique secret of at least 32 UTF-8 bytes");
+              });
+    }
+
+    @Test
+    @DisplayName("startup succeeds with committed sample secret in test mode")
+    void succeedsWithCommittedSampleSecretInTestMode() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.test-mode=true",
+              "paygate.protocols.mpp.enabled=true",
+              "paygate.protocols.mpp.challenge-binding-secret=" + UNSAFE_SAMPLE_SECRET)
+          .run(
+              context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasBean("mppProtocol");
+              });
+    }
+
+    @Test
+    @DisplayName("startup succeeds with unique production-length secret outside test mode")
+    void succeedsWithUniqueProductionLengthSecretOutsideTestMode() {
+      contextRunner
+          .withPropertyValues(
+              "paygate.test-mode=false",
+              "paygate.protocols.mpp.enabled=true",
+              "paygate.protocols.mpp.challenge-binding-secret="
+                  + "unique-mpp-secret-for-production-1234567890")
+          .run(
+              context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasBean("mppProtocol");
               });
     }
 

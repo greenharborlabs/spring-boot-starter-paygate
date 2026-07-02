@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -99,6 +100,8 @@ public class PaygateAutoConfiguration {
   }
 
   private static final String DEFAULT_ROOT_KEY_STORE_PATH = "~/.paygate/keys";
+  private static final Set<String> UNSAFE_MPP_SAMPLE_SECRETS =
+      Set.of("dev-only-mpp-test-secret-do-not-use-in-production");
 
   private static String resolvePath(String rawPath) {
     if (rawPath == null || rawPath.isBlank()) {
@@ -334,7 +337,7 @@ public class PaygateAutoConfiguration {
     String previousSecret = mppConfig.getPreviousChallengeBindingSecret();
     boolean secretPresent = hasText(secret);
 
-    validateMppSecrets(mppEnabled, secret, previousSecret);
+    validateMppSecrets(mppEnabled, secret, previousSecret, properties.isTestMode());
 
     // Determine which protocols will be active based on configuration + classpath
     boolean l402OnClasspath =
@@ -356,7 +359,8 @@ public class PaygateAutoConfiguration {
     return new ProtocolStartupValidator(count);
   }
 
-  private static void validateMppSecrets(String mppEnabled, String secret, String previousSecret) {
+  private static void validateMppSecrets(
+      String mppEnabled, String secret, String previousSecret, boolean testMode) {
     boolean secretPresent = hasText(secret);
     boolean previousSecretPresent = hasText(previousSecret);
 
@@ -367,6 +371,8 @@ public class PaygateAutoConfiguration {
     }
 
     validateSecretMinBytes("paygate.protocols.mpp.challenge-binding-secret", secret);
+    validateNoUnsafeSampleSecret(
+        "paygate.protocols.mpp.challenge-binding-secret", secret, testMode);
 
     if (previousSecretPresent && !secretPresent) {
       throw new IllegalStateException(
@@ -376,6 +382,8 @@ public class PaygateAutoConfiguration {
 
     validateSecretMinBytes(
         "paygate.protocols.mpp.previous-challenge-binding-secret", previousSecret);
+    validateNoUnsafeSampleSecret(
+        "paygate.protocols.mpp.previous-challenge-binding-secret", previousSecret, testMode);
   }
 
   private static void validateSecretMinBytes(String propertyName, String secret) {
@@ -386,6 +394,19 @@ public class PaygateAutoConfiguration {
     if (byteLength < 32) {
       throw new IllegalStateException(
           propertyName + " must be at least 32 UTF-8 bytes, got " + byteLength + " bytes.");
+    }
+  }
+
+  private static void validateNoUnsafeSampleSecret(
+      String propertyName, String secret, boolean testMode) {
+    if (testMode || !hasText(secret)) {
+      return;
+    }
+    if (UNSAFE_MPP_SAMPLE_SECRETS.contains(secret)) {
+      throw new IllegalStateException(
+          propertyName
+              + " uses a committed sample secret. Committed sample secrets are test-only; "
+              + "set PAYGATE_MPP_SECRET or provide a unique secret of at least 32 UTF-8 bytes.");
     }
   }
 
@@ -597,9 +618,13 @@ public class PaygateAutoConfiguration {
       var config =
           lnbits.getConnectTimeoutSeconds() != null
               ? new com.greenharborlabs.paygate.lightning.lnbits.LnbitsConfig(
-                  lnbits.getUrl(), lnbits.getApiKey(), timeout, lnbits.getConnectTimeoutSeconds())
+                  lnbits.getUrl(),
+                  lnbits.getApiKey(),
+                  timeout,
+                  lnbits.getConnectTimeoutSeconds(),
+                  lnbits.isAllowPlaintextHttp())
               : new com.greenharborlabs.paygate.lightning.lnbits.LnbitsConfig(
-                  lnbits.getUrl(), lnbits.getApiKey(), timeout);
+                  lnbits.getUrl(), lnbits.getApiKey(), timeout, 10, lnbits.isAllowPlaintextHttp());
       return new com.greenharborlabs.paygate.lightning.lnbits.LnbitsBackend(
           config,
           objectMapper,

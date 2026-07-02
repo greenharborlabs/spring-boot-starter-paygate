@@ -29,12 +29,14 @@ class SecurityModeSpringSecurityTest {
               AutoConfigurations.of(
                   PaygateAutoConfiguration.class,
                   WebMvcAutoConfiguration.class,
-                  PaygateSecurityAutoConfiguration.class))
+                  PaygateSecurityAutoConfiguration.class,
+                  PaygateSpringSecurityFilterChainGuardAutoConfiguration.class))
           .withPropertyValues(
               "paygate.enabled=true",
               "paygate.backend=lnbits",
               "paygate.root-key-store=memory",
-              "paygate.security-mode=spring-security")
+              "paygate.security-mode=spring-security",
+              "paygate.spring-security.custom-filter-chain-acknowledged=true")
           .withBean(LightningBackend.class, StubLightningBackend::new);
 
   @Test
@@ -75,6 +77,36 @@ class SecurityModeSpringSecurityTest {
           String resolvedMode = (String) method.invoke(validator);
           assertThat(resolvedMode).isEqualTo("spring-security");
         });
+  }
+
+  @Test
+  @DisplayName("guard still runs when PaygateAuthenticationFilter bean creation is skipped")
+  void guardRunsWhenAuthenticationManagerMissing() {
+    contextRunner
+        .withPropertyValues("paygate.spring-security.custom-filter-chain-acknowledged=false")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("no PaygateAuthenticationFilter");
+            });
+  }
+
+  @Test
+  @DisplayName("guard is not gated on L402Validator bean presence")
+  void guardRunsWhenL402ValidatorMissing() {
+    new WebApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(PaygateSpringSecurityFilterChainGuardAutoConfiguration.class))
+        .withPropertyValues("paygate.enabled=true", "paygate.security-mode=spring-security")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("no PaygateAuthenticationFilter");
+            });
   }
 
   static class StubLightningBackend implements LightningBackend {

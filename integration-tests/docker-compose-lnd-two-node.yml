@@ -8,14 +8,14 @@ services:
       - -server
       - -rpcuser=devuser
       - -rpcpassword=devpass
-      - -rpcallowip=0.0.0.0/0
+      - -rpcallowip=172.29.0.0/16
       - -rpcbind=0.0.0.0
       - -fallbackfee=0.00001
       - -txindex=1
       - -zmqpubrawblock=tcp://0.0.0.0:28332
       - -zmqpubrawtx=tcp://0.0.0.0:28333
     ports:
-      - "${BITCOIND_RPC_PORT:-18443}:18443"
+      - "127.0.0.1:${BITCOIND_RPC_PORT:-18443}:18443"
     volumes:
       - bitcoind-data:/home/bitcoin/.bitcoin
     healthcheck:
@@ -47,8 +47,8 @@ services:
       - --restlisten=0.0.0.0:8080
       - --listen=0.0.0.0:9735
     ports:
-      - "${LND_GRPC_PORT:-10009}:10009"
-      - "${LND_REST_PORT:-18081}:8080"
+      - "127.0.0.1:${LND_GRPC_PORT:-10009}:10009"
+      - "127.0.0.1:${LND_REST_PORT:-18081}:8080"
     volumes:
       - lnd-data:/root/.lnd
     networks:
@@ -84,8 +84,8 @@ services:
       - --restlisten=0.0.0.0:8080
       - --listen=0.0.0.0:9735
     ports:
-      - "${LND_PAYER_GRPC_PORT:-11009}:10009"
-      - "${LND_PAYER_REST_PORT:-18082}:8080"
+      - "127.0.0.1:${LND_PAYER_GRPC_PORT:-11009}:10009"
+      - "127.0.0.1:${LND_PAYER_REST_PORT:-18082}:8080"
     volumes:
       - lnd-payer-data:/root/.lnd
     healthcheck:
@@ -130,3 +130,9 @@ volumes:
   bitcoind-data:
   lnd-data:
   lnd-payer-data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16

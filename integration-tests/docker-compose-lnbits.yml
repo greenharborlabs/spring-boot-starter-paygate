@@ -9,7 +9,7 @@ services:
       FAKE_WALLET_SECRET: "ToTheMoon1"
       LNBITS_ADMIN_UI: "true"
     ports:
-      - "${LNBITS_PORT:-15000}:5000"
+      - "127.0.0.1:${LNBITS_PORT:-15000}:5000"
     volumes:
       - lnbits-data:/data
     healthcheck:
@@ -41,6 +41,7 @@ services:
       PAYGATE_RATE_LIMIT_BURST_SIZE: "${PAYGATE_RATE_LIMIT_BURST_SIZE:-20}"
       PAYGATE_RATE_LIMIT_MAX_BUCKETS: "${PAYGATE_RATE_LIMIT_MAX_BUCKETS:-100000}"
       PAYGATE_LNBITS_URL: "http://lnbits:5000"
+      PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP: "true"
       PAYGATE_LNBITS_API_KEY: "${LNBITS_API_KEY:-}"
       # Set LNBITS_API_KEY in .env or the shell before starting this service.
     healthcheck:

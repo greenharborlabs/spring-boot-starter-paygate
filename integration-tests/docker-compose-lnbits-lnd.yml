@@ -8,14 +8,14 @@ services:
       - -server
       - -rpcuser=devuser
       - -rpcpassword=devpass
-      - -rpcallowip=0.0.0.0/0
+      - -rpcallowip=172.30.0.0/16
       - -rpcbind=0.0.0.0
       - -fallbackfee=0.00001
       - -txindex=1
       - -zmqpubrawblock=tcp://0.0.0.0:28332
       - -zmqpubrawtx=tcp://0.0.0.0:28333
     ports:
-      - "${BITCOIND_RPC_PORT:-18443}:18443"
+      - "127.0.0.1:${BITCOIND_RPC_PORT:-18443}:18443"
     volumes:
       - bitcoind-data:/home/bitcoin/.bitcoin
     healthcheck:
@@ -47,8 +47,8 @@ services:
       - --restlisten=0.0.0.0:8080
       - --listen=0.0.0.0:9735
     ports:
-      - "${LND_GRPC_PORT:-10009}:10009"
-      - "${LND_REST_PORT:-18081}:8080"
+      - "127.0.0.1:${LND_GRPC_PORT:-10009}:10009"
+      - "127.0.0.1:${LND_REST_PORT:-18081}:8080"
     volumes:
       - lnd-data:/root/.lnd
     networks:
@@ -84,8 +84,8 @@ services:
       - --restlisten=0.0.0.0:8080
       - --listen=0.0.0.0:9735
     ports:
-      - "${LND_PAYER_GRPC_PORT:-11009}:10009"
-      - "${LND_PAYER_REST_PORT:-18082}:8080"
+      - "127.0.0.1:${LND_PAYER_GRPC_PORT:-11009}:10009"
+      - "127.0.0.1:${LND_PAYER_REST_PORT:-18082}:8080"
     volumes:
       - lnd-payer-data:/root/.lnd
     healthcheck:
@@ -109,7 +109,7 @@ services:
       LND_REST_CERT: "/lnd/tls.cert"
       LND_REST_MACAROON: "/lnd/data/chain/bitcoin/regtest/admin.macaroon"
     ports:
-      - "${LNBITS_PORT:-15000}:5000"
+      - "127.0.0.1:${LNBITS_PORT:-15000}:5000"
     volumes:
       - lnbits-data:/data
       - lnd-data:/lnd:ro
@@ -139,6 +139,7 @@ services:
       PAYGATE_ROOT_KEY_STORE: "memory"
       PAYGATE_DEFAULT_TIMEOUT_SECONDS: "${PAYGATE_DEFAULT_TIMEOUT_SECONDS:-3600}"
       PAYGATE_LNBITS_URL: "http://lnbits:5000"
+      PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP: "true"
       PAYGATE_LNBITS_API_KEY: "${LNBITS_API_KEY:-}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
@@ -152,3 +153,9 @@ volumes:
   lnd-data:
   lnd-payer-data:
   lnbits-data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
