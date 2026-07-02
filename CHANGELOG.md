@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-01
+
 ### Security
 
 - **paygate-lightning-lnbits**: Require HTTPS LNbits URLs by default; plaintext HTTP now needs an explicit local/test opt-in and is limited to loopback or the known Docker Compose LNbits service host.
@@ -158,6 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WWW-Authenticate` header format corrected to `L402 version="0", token=`
 - `MacaroonSerializer` validation for field types and lengths
 
+[0.1.4]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/greenharborlabs/spring-boot-starter-l402/compare/v0.1.0...v0.1.1
