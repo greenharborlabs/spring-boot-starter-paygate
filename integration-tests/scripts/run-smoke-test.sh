@@ -4,8 +4,8 @@
 #
 # Works in two modes:
 #   1. Docker Compose local testing — run against the two-node LNbits-over-LND
-#      stack with PAYER_BACKEND=lnd-cli for full proof verification
-#   2. Live endpoint testing — point APP_URL and LNBITS_URL at a running
+#      stack with PAYER_BACKEND=lnd-cli or PAYER_BACKEND=breez-spark for full proof verification
+#   2. Live endpoint testing — point APP_URL and payer env vars at a running
 #      instance (e.g., a testnet deployment with SPRING_PROFILES_ACTIVE=lnbits-testnet)
 #
 # Exercises the full 402 -> pay -> 200 flow:
@@ -105,6 +105,9 @@ done
 if [ "$PAYER_BACKEND" = "lnd-cli" ] && ! command -v docker > /dev/null 2>&1; then
   MISSING="$MISSING docker"
 fi
+if [ "$PAYER_BACKEND" = "breez-spark" ] && ! command -v python3 > /dev/null 2>&1; then
+  MISSING="$MISSING python3"
+fi
 
 if [ -n "$MISSING" ]; then
   fail "Missing required tools:${MISSING}"
@@ -120,13 +123,20 @@ fi
 if [ "$PAYER_BACKEND" = "lnbits" ]; then
   pass "LNBITS_API_KEY is set"
 fi
+if [ "$PAYER_BACKEND" = "breez-spark" ]; then
+  if [ -z "${BREEZ_API_KEY:-}" ] || [ -z "${BREEZ_MNEMONIC:-}" ]; then
+    fail "BREEZ_API_KEY and BREEZ_MNEMONIC are required for PAYER_BACKEND=breez-spark."
+    exit 1
+  fi
+  pass "Breez Spark credentials are set"
+fi
 
 case "$PAYER_BACKEND" in
-  lnbits|lnd-cli)
+  lnbits|lnd-cli|breez-spark)
     pass "PAYER_BACKEND=${PAYER_BACKEND}"
     ;;
   *)
-    fail "Unsupported PAYER_BACKEND=${PAYER_BACKEND}. Expected 'lnbits' or 'lnd-cli'."
+    fail "Unsupported PAYER_BACKEND=${PAYER_BACKEND}. Expected 'lnbits', 'lnd-cli', or 'breez-spark'."
     exit 1
     ;;
 esac
@@ -247,6 +257,14 @@ if [ "$PAYER_BACKEND" = "lnd-cli" ]; then
   if [ -z "$PREIMAGE" ]; then
     PREIMAGE=$(printf '%s' "$PAY_RESULT" | lnd_text_preimage)
   fi
+elif [ "$PAYER_BACKEND" = "breez-spark" ]; then
+  info "Paying invoice via Breez SDK Spark"
+  PAY_RESULT=$(bash "$SCRIPT_DIR/pay-breez-spark-invoice.sh" \
+    "$INVOICE" \
+    "${BREEZ_MAX_FEE_SATS:-$MAX_INVOICE_SATS}" \
+    "${BREEZ_COMPLETION_TIMEOUT_SECONDS:-30}")
+  PAYMENT_HASH=$(printf '%s' "$PAY_RESULT" | sed -n 's/^PAYMENT_HASH=//p' | tail -1)
+  PREIMAGE=$(printf '%s' "$PAY_RESULT" | sed -n 's/^PREIMAGE=//p' | tail -1)
 else
   info "Paying invoice via LNbits at ${LNBITS_URL}"
   PAY_RESULT=$(curl -s -X POST "${LNBITS_URL}/api/v1/payments" \

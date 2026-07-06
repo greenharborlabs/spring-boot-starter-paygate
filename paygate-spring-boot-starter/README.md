@@ -114,6 +114,12 @@ The starter provides the framework, but you need exactly one Lightning backend m
 
 LNbits compatibility depends on the funding source and payer API. L402 and MPP clients must receive the settled payment preimage; `paid=true` invoice status alone is not proof Paygate can accept. Spark-backed LNbits is not supported for payer-side credential generation if it omits the preimage. In that case, challenge issuance can work, but the paid client must fail closed and remain unauthenticated.
 
+Breez SDK Spark is currently supported in this repository as an integration-test
+payer option, not as a Spring `LightningBackend`. Use
+`PAYER_BACKEND=breez-spark` in `integration-tests/scripts/run-smoke-test.sh` or
+`run-mpp-smoke-test.sh` to pay app-created BOLT11 invoices and obtain the
+preimage without running a separate payer node.
+
 **Gradle examples:**
 
 ```kotlin
