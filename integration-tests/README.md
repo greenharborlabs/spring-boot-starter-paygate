@@ -63,6 +63,101 @@ PAYER_BACKEND=lnd-cli bash scripts/run-smoke-test.sh
 PAYER_BACKEND=lnd-cli bash scripts/run-mpp-smoke-test.sh
 ```
 
+### Breez Spark payer option
+
+The smoke scripts can also pay invoices with Breez SDK Spark instead of a local
+`lnd-payer` node. This is a payer-side option only: the example app can continue
+issuing invoices through LNbits or LND, while Breez pays the BOLT11 invoice and
+returns the preimage needed to build the Paygate credential.
+
+```bash
+cd integration-tests
+
+export BREEZ_API_KEY="<breez api key>"
+export BREEZ_MNEMONIC="<funded breez wallet mnemonic>"
+export BREEZ_STORAGE_DIR="${HOME}/.paygate/breez-spark-payer"
+export BREEZ_NETWORK=MAINNET
+export BREEZ_MAX_FEE_SATS=10
+export BREEZ_COMPLETION_TIMEOUT_SECONDS=30
+
+PAYER_BACKEND=breez-spark bash scripts/run-smoke-test.sh
+PAYER_BACKEND=breez-spark bash scripts/run-mpp-smoke-test.sh
+```
+
+`scripts/pay-breez-spark-invoice.sh` creates a versioned virtual environment
+under `~/.cache/paygate`, installs `breez-sdk-spark==0.17.1` on first use, pays
+with `prefer_spark=false`, rejects fees above `BREEZ_MAX_FEE_SATS`, and verifies
+`sha256(preimage) == payment_hash` before printing proof variables.
+
+The broader `paygate-client` repository also has Breez diagnostics under
+`/Users/mark/code/greenharborlabs/paygate-client/scripts`, including
+`breez-preimage-doctor.py`, `check-breez-wallet.sh`, and
+`breez-payment-history.sh`. Use those for client-side investigation and wallet
+diagnostics. The local `pay-breez-spark-invoice.sh` wrapper exists only to give
+these smoke tests a stable shell output contract: `PAYMENT_HASH`, `PREIMAGE`,
+and `FEE_SATS`.
+
+### Proven reference service flow: Paygate Agent Trust + Breez
+
+This flow was verified against
+`/Users/mark/code/greenharborlabs/paygate-agent-trust` running locally as the
+Paygate reference service. The reference service issues real mainnet LNbits
+payee invoices; Breez SDK Spark is used only as the payer.
+
+Start the reference service in one terminal:
+
+```bash
+cd /Users/mark/code/greenharborlabs/paygate-agent-trust
+
+source ~/.zshrc
+source scripts/local-dev-env.sh
+
+export PAYGATE_ENABLED=true
+export PAYGATE_TEST_MODE=false
+export PAYGATE_BACKEND=lnbits
+export PAYGATE_LNBITS_URL="<your LNbits payee URL>"
+export PAYGATE_LNBITS_API_KEY="<your LNbits payee wallet api key>"
+export PAYGATE_PROTOCOLS_MPP_CHALLENGE_BINDING_SECRET="${PAYGATE_PROTOCOLS_MPP_CHALLENGE_BINDING_SECRET:-$(openssl rand -base64 32)}"
+
+./gradlew bootRun
+```
+
+Confirm the service is healthy:
+
+```bash
+curl -s http://localhost:8080/healthz
+```
+
+Run both proof-verifying smoke tests from this repository:
+
+```bash
+cd /Users/mark/code/greenharborlabs/spring-boot-starter-l402/integration-tests
+
+source ~/.zshrc
+
+export APP_URL="http://localhost:8080"
+export HEALTH_ENDPOINT="http://localhost:8080/healthz"
+export PROTECTED_ENDPOINT="http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns"
+
+export PAYER_BACKEND=breez-spark
+export BREEZ_NETWORK=MAINNET
+export BREEZ_MAX_FEE_SATS=10
+export BREEZ_COMPLETION_TIMEOUT_SECONDS=30
+
+bash scripts/run-smoke-test.sh
+bash scripts/run-mpp-smoke-test.sh
+```
+
+Expected result for both scripts: `ALL CHECKS PASSED`. The L402 script should
+pay via Breez, verify the preimage hash, retry the protected endpoint with an
+`Authorization: L402 ...` credential, and receive `200`. The MPP script should
+do the same with `Authorization: Payment ...` and also validate a
+`Payment-Receipt` response header.
+
+If this flow fails with `Invoice network does not match`, the reference service
+is issuing non-mainnet invoices. Breez mainnet can pay hosted/mainnet LNbits
+invoices, but it cannot pay the local Docker regtest invoices.
+
 The `docker-compose-lnbits.yml` FakeWallet stack remains useful for fast setup
 and invoice checks, but it does not provide usable proof preimages for the full
 L402/MPP credential flow. A wallet in the same local LNbits instance also cannot
@@ -157,9 +252,10 @@ environment variables directly:
 
 ```bash
 export APP_URL="https://your-testnet-host:8080"
-export LNBITS_URL="https://your-lnbits-instance"
-export LNBITS_API_KEY="<payer-wallet-admin-key>"
-export PAYER_BACKEND=lnbits
+export PAYER_BACKEND=breez-spark
+export BREEZ_API_KEY="<breez api key>"
+export BREEZ_MNEMONIC="<funded breez wallet mnemonic>"
+export BREEZ_STORAGE_DIR="${HOME}/.paygate/breez-spark-payer"
 
 # L402 smoke test
 bash scripts/run-smoke-test.sh
@@ -178,6 +274,10 @@ in `run-smoke-test.sh` before paying any invoice.
 payment preimage. Spark-backed LNbits and other funding sources that omit the
 preimage can pay the invoice, but the smoke scripts will fail closed because
 Paygate cannot construct or validate the credential proof.
+
+Use `PAYER_BACKEND=breez-spark` when you want a nodeless payer that returns the
+preimage directly. Breez still requires a funded wallet and API key, but it does
+not require running or hosting a separate payer Lightning node.
 
 ## See Also
 
