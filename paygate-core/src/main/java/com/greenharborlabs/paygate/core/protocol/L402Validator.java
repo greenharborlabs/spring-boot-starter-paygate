@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Orchestrates L402 credential validation: parse header, check cache, verify preimage, verify
@@ -51,15 +52,43 @@ public final class L402Validator {
   }
 
   /**
-   * Wraps a validated credential with a flag indicating whether it was freshly validated (true) or
-   * served from cache (false).
+   * Wraps a validated credential with its validation freshness and effective capabilities.
    *
    * <p>The contained credential is caller-owned. Callers are responsible for destroying it when no
    * longer needed. Fresh validation returns the parsed request credential. Cache hits return a
    * separate caller-owned copy of the credential retrieved from {@link
    * CredentialStore#get(String)}.
+   *
+   * <p>Effective capabilities are an immutable snapshot. As part of the record state, they
+   * participate in the generated equality and hash-code semantics.
+   *
+   * @param credential the validated caller-owned credential
+   * @param freshValidation whether the credential was freshly validated rather than served from
+   *     cache
+   * @param effectiveCapabilities the non-null capabilities effective for this validation
    */
-  public record ValidationResult(L402Credential credential, boolean freshValidation) {}
+  public record ValidationResult(
+      L402Credential credential, boolean freshValidation, Set<String> effectiveCapabilities) {
+
+    /** Creates a result after defensively snapshotting its effective capabilities. */
+    public ValidationResult {
+      effectiveCapabilities =
+          Set.copyOf(
+              Objects.requireNonNull(
+                  effectiveCapabilities, "effectiveCapabilities must not be null"));
+    }
+
+    /**
+     * Creates a result with no effective capabilities.
+     *
+     * @param credential the validated caller-owned credential
+     * @param freshValidation whether the credential was freshly validated rather than served from
+     *     cache
+     */
+    public ValidationResult(L402Credential credential, boolean freshValidation) {
+      this(credential, freshValidation, Set.of());
+    }
+  }
 
   /**
    * Validates an L402 Authorization header using a default verification context built from the

@@ -25,8 +25,10 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
@@ -139,6 +141,90 @@ class L402ValidatorTest {
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
     String preimageHex = HEX.formatHex(preimageBytes);
     validAuthHeader = "L402 " + macaroonBase64 + ":" + preimageHex;
+  }
+
+  @Nested
+  @DisplayName("validation result API")
+  class ValidationResultApi {
+
+    @Test
+    @DisplayName("canonical constructor snapshots effective capabilities")
+    void canonicalConstructorSnapshotsEffectiveCapabilities() {
+      L402Credential credential =
+          new L402Credential(
+              macaroon, PaymentPreimage.fromHex(HEX.formatHex(preimageBytes)), tokenIdHex);
+      Set<String> mutableCapabilities = new LinkedHashSet<>(List.of("search", "analyze"));
+
+      try {
+        L402Validator.ValidationResult result =
+            new L402Validator.ValidationResult(credential, true, mutableCapabilities);
+        mutableCapabilities.clear();
+
+        assertThat(result.effectiveCapabilities()).containsExactlyInAnyOrder("search", "analyze");
+        assertThatThrownBy(() -> result.effectiveCapabilities().add("admin"))
+            .isInstanceOf(UnsupportedOperationException.class);
+      } finally {
+        credential.destroy();
+      }
+    }
+
+    @Test
+    @DisplayName("canonical constructor rejects null effective capabilities")
+    void canonicalConstructorRejectsNullEffectiveCapabilities() {
+      L402Credential credential =
+          new L402Credential(
+              macaroon, PaymentPreimage.fromHex(HEX.formatHex(preimageBytes)), tokenIdHex);
+
+      try {
+        assertThatThrownBy(() -> new L402Validator.ValidationResult(credential, true, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessageContaining("effectiveCapabilities");
+      } finally {
+        credential.destroy();
+      }
+    }
+
+    @Test
+    @DisplayName("two-argument constructor defaults to immutable empty capabilities")
+    void twoArgumentConstructorDefaultsToImmutableEmptyCapabilities() {
+      L402Credential credential =
+          new L402Credential(
+              macaroon, PaymentPreimage.fromHex(HEX.formatHex(preimageBytes)), tokenIdHex);
+
+      try {
+        L402Validator.ValidationResult result =
+            new L402Validator.ValidationResult(credential, false);
+
+        assertThat(result.effectiveCapabilities()).isEmpty();
+        assertThatThrownBy(() -> result.effectiveCapabilities().add("search"))
+            .isInstanceOf(UnsupportedOperationException.class);
+      } finally {
+        credential.destroy();
+      }
+    }
+
+    @Test
+    @DisplayName("equality and hash code include effective capabilities")
+    void equalityAndHashCodeIncludeEffectiveCapabilities() {
+      L402Credential credential =
+          new L402Credential(
+              macaroon, PaymentPreimage.fromHex(HEX.formatHex(preimageBytes)), tokenIdHex);
+
+      try {
+        L402Validator.ValidationResult first =
+            new L402Validator.ValidationResult(
+                credential, true, new LinkedHashSet<>(List.of("search", "analyze")));
+        L402Validator.ValidationResult equal =
+            new L402Validator.ValidationResult(
+                credential, true, new LinkedHashSet<>(List.of("analyze", "search")));
+        L402Validator.ValidationResult different =
+            new L402Validator.ValidationResult(credential, true, Set.of("search"));
+
+        assertThat(first).isEqualTo(equal).hasSameHashCodeAs(equal).isNotEqualTo(different);
+      } finally {
+        credential.destroy();
+      }
+    }
   }
 
   @Nested

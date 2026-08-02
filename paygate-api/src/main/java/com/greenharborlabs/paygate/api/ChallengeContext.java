@@ -12,6 +12,11 @@ import java.util.Objects;
  *
  * <p>Defensive copies are made for all mutable fields ({@code paymentHash}, {@code rootKeyBytes},
  * {@code opaque}) both on construction and on access.
+ *
+ * <p>{@code routePattern} is the canonical framework route pattern and {@code requestMethod} is the
+ * actual request method used to mint the challenge. Both are optional request-boundary metadata and
+ * are intentionally omitted from {@link #toString()}. The eleven-argument compatibility constructor
+ * leaves both components {@code null} for non-L402 and receipt-only callers.
  */
 public record ChallengeContext(
     byte[] paymentHash,
@@ -24,7 +29,9 @@ public record ChallengeContext(
     String capability,
     byte[] rootKeyBytes,
     Map<String, String> opaque,
-    String digest) {
+    String digest,
+    String routePattern,
+    String requestMethod) {
 
   public ChallengeContext {
     Objects.requireNonNull(paymentHash, "paymentHash must not be null");
@@ -38,6 +45,41 @@ public record ChallengeContext(
     paymentHash = paymentHash.clone();
     rootKeyBytes = rootKeyBytes != null ? rootKeyBytes.clone() : null;
     opaque = opaque != null ? Map.copyOf(opaque) : null;
+  }
+
+  /**
+   * Creates a challenge without request-boundary metadata.
+   *
+   * <p>This constructor preserves the original public constructor descriptor for existing non-L402
+   * and receipt-only callers. {@link #routePattern()} and {@link #requestMethod()} return {@code
+   * null} for contexts created through it.
+   */
+  public ChallengeContext(
+      byte[] paymentHash,
+      String tokenId,
+      String bolt11Invoice,
+      long priceSats,
+      String description,
+      String serviceName,
+      long timeoutSeconds,
+      String capability,
+      byte[] rootKeyBytes,
+      Map<String, String> opaque,
+      String digest) {
+    this(
+        paymentHash,
+        tokenId,
+        bolt11Invoice,
+        priceSats,
+        description,
+        serviceName,
+        timeoutSeconds,
+        capability,
+        rootKeyBytes,
+        opaque,
+        digest,
+        null,
+        null);
   }
 
   @Override
@@ -67,7 +109,9 @@ public record ChallengeContext(
                 && that.rootKeyBytes != null
                 && CryptoUtils.constantTimeEquals(rootKeyBytes, that.rootKeyBytes)))
         && Objects.equals(opaque, that.opaque)
-        && Objects.equals(digest, that.digest);
+        && Objects.equals(digest, that.digest)
+        && Objects.equals(routePattern, that.routePattern)
+        && Objects.equals(requestMethod, that.requestMethod);
   }
 
   @Override
@@ -82,7 +126,9 @@ public record ChallengeContext(
             timeoutSeconds,
             capability,
             opaque,
-            digest);
+            digest,
+            routePattern,
+            requestMethod);
     result = 31 * result + Arrays.hashCode(paymentHash);
     result = 31 * result + Arrays.hashCode(rootKeyBytes);
     return result;

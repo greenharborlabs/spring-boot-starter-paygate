@@ -21,6 +21,8 @@ class ChallengeContextTest {
   private static final long VALID_TIMEOUT = 3600L;
   private static final String VALID_CAPABILITY = "read";
   private static final String VALID_DIGEST = "sha256:abc";
+  private static final String VALID_ROUTE_PATTERN = "/api/widgets/{widgetId}";
+  private static final String VALID_REQUEST_METHOD = "POST";
 
   static {
     for (int i = 0; i < 32; i++) {
@@ -44,6 +46,23 @@ class ChallengeContextTest {
         VALID_DIGEST);
   }
 
+  private ChallengeContext validBoundaryContext() {
+    return new ChallengeContext(
+        VALID_HASH.clone(),
+        VALID_TOKEN_ID,
+        VALID_BOLT11,
+        VALID_PRICE,
+        VALID_DESCRIPTION,
+        VALID_SERVICE,
+        VALID_TIMEOUT,
+        VALID_CAPABILITY,
+        VALID_ROOT_KEY.clone(),
+        Map.of("key", "value"),
+        VALID_DIGEST,
+        VALID_ROUTE_PATTERN,
+        VALID_REQUEST_METHOD);
+  }
+
   // --- Valid construction ---
 
   @Test
@@ -61,6 +80,22 @@ class ChallengeContextTest {
     assertThat(ctx.rootKeyBytes()).isEqualTo(VALID_ROOT_KEY);
     assertThat(ctx.opaque()).containsEntry("key", "value");
     assertThat(ctx.digest()).isEqualTo(VALID_DIGEST);
+  }
+
+  @Test
+  void canonicalConstructorAppendsRoutePatternAndRequestMethod() {
+    var ctx = validBoundaryContext();
+
+    assertThat(ctx.routePattern()).isEqualTo(VALID_ROUTE_PATTERN);
+    assertThat(ctx.requestMethod()).isEqualTo(VALID_REQUEST_METHOD);
+  }
+
+  @Test
+  void elevenArgumentConstructorSuppliesNullRequestBoundaries() {
+    var ctx = validContext();
+
+    assertThat(ctx.routePattern()).isNull();
+    assertThat(ctx.requestMethod()).isNull();
   }
 
   @Test
@@ -368,6 +403,43 @@ class ChallengeContextTest {
     assertThat(ctx.opaque()).isNull();
   }
 
+  @Test
+  void canonicalConstructorRetainsDefensiveCopiesForMutableFields() {
+    byte[] paymentHash = VALID_HASH.clone();
+    byte[] rootKey = VALID_ROOT_KEY.clone();
+    var opaque = new HashMap<String, String>();
+    opaque.put("key", "value");
+    var ctx =
+        new ChallengeContext(
+            paymentHash,
+            VALID_TOKEN_ID,
+            VALID_BOLT11,
+            VALID_PRICE,
+            VALID_DESCRIPTION,
+            VALID_SERVICE,
+            VALID_TIMEOUT,
+            VALID_CAPABILITY,
+            rootKey,
+            opaque,
+            VALID_DIGEST,
+            VALID_ROUTE_PATTERN,
+            VALID_REQUEST_METHOD);
+
+    paymentHash[0] = (byte) 0xFF;
+    rootKey[0] = (byte) 0xFF;
+    opaque.put("added", "after-construction");
+    byte[] returnedPaymentHash = ctx.paymentHash();
+    byte[] returnedRootKey = ctx.rootKeyBytes();
+    returnedPaymentHash[1] = (byte) 0xFF;
+    returnedRootKey[1] = (byte) 0xFF;
+
+    assertThat(ctx.paymentHash()).isEqualTo(VALID_HASH);
+    assertThat(ctx.rootKeyBytes()).isEqualTo(VALID_ROOT_KEY);
+    assertThat(ctx.opaque()).containsOnly(Map.entry("key", "value"));
+    assertThatThrownBy(() -> ctx.opaque().put("another", "value"))
+        .isInstanceOf(UnsupportedOperationException.class);
+  }
+
   // --- equals / hashCode ---
 
   @Test
@@ -512,6 +584,48 @@ class ChallengeContextTest {
     assertThat(a.hashCode()).isEqualTo(b.hashCode());
   }
 
+  @Test
+  void equalityAndHashCodeIncludeRoutePatternAndRequestMethod() {
+    var baseline = validBoundaryContext();
+    var same = validBoundaryContext();
+    var differentRoute =
+        new ChallengeContext(
+            VALID_HASH.clone(),
+            VALID_TOKEN_ID,
+            VALID_BOLT11,
+            VALID_PRICE,
+            VALID_DESCRIPTION,
+            VALID_SERVICE,
+            VALID_TIMEOUT,
+            VALID_CAPABILITY,
+            VALID_ROOT_KEY.clone(),
+            Map.of("key", "value"),
+            VALID_DIGEST,
+            "/api/other/{widgetId}",
+            VALID_REQUEST_METHOD);
+    var differentMethod =
+        new ChallengeContext(
+            VALID_HASH.clone(),
+            VALID_TOKEN_ID,
+            VALID_BOLT11,
+            VALID_PRICE,
+            VALID_DESCRIPTION,
+            VALID_SERVICE,
+            VALID_TIMEOUT,
+            VALID_CAPABILITY,
+            VALID_ROOT_KEY.clone(),
+            Map.of("key", "value"),
+            VALID_DIGEST,
+            VALID_ROUTE_PATTERN,
+            "DELETE");
+
+    assertThat(baseline).isEqualTo(same);
+    assertThat(baseline.hashCode()).isEqualTo(same.hashCode());
+    assertThat(baseline).isNotEqualTo(differentRoute).isNotEqualTo(differentMethod);
+    assertThat(baseline.hashCode()).isNotEqualTo(differentRoute.hashCode());
+    assertThat(baseline.hashCode()).isNotEqualTo(differentMethod.hashCode());
+  }
+
   // --- toString ---
 
   @Test
@@ -532,5 +646,15 @@ class ChallengeContextTest {
     // toString should not contain raw byte array representations or rootKeyBytes
     assertThat(str).doesNotContain("rootKeyBytes");
     assertThat(str).doesNotContain("paymentHash");
+  }
+
+  @Test
+  void toStringDoesNotLeakRequestBoundaryText() {
+    String str = validBoundaryContext().toString();
+
+    assertThat(str).doesNotContain(VALID_ROUTE_PATTERN);
+    assertThat(str).doesNotContain(VALID_REQUEST_METHOD);
+    assertThat(str).doesNotContain("routePattern");
+    assertThat(str).doesNotContain("requestMethod");
   }
 }
