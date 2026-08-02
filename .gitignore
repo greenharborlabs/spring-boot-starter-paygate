@@ -8,6 +8,8 @@ plans/
 specs/
 # Ignore the entire specify directory and all its contents
 .specify/
+# Ignore generated local agent integrations
+.agents/
 # Ignore the entire claude directory and all its contents
 .claude/
 .vscode/settings.json
