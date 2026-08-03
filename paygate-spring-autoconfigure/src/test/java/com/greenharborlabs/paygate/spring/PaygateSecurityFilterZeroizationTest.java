@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
+import org.springframework.mock.web.MockHttpServletRequest;
 
 /**
  * Unit tests verifying that root key material is zeroized after minting in {@link
@@ -49,15 +50,13 @@ class PaygateSecurityFilterZeroizationTest {
 
   @BeforeEach
   void setUp() throws Exception {
-    request = mock(HttpServletRequest.class);
+    var servletRequest = new MockHttpServletRequest("GET", PROTECTED_PATH);
+    servletRequest.setRemoteAddr("127.0.0.1");
+    request = servletRequest;
     response = mock(HttpServletResponse.class);
     chain = mock(FilterChain.class);
     lightningBackend = mock(LightningBackend.class);
     credentialStore = mock(CredentialStore.class);
-
-    when(request.getMethod()).thenReturn("GET");
-    when(request.getRequestURI()).thenReturn(PROTECTED_PATH);
-    when(request.getRemoteAddr()).thenReturn("127.0.0.1");
 
     when(lightningBackend.isHealthy()).thenReturn(true);
 

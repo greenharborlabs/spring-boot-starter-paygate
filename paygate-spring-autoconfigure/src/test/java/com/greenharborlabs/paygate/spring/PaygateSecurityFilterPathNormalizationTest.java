@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
@@ -241,6 +242,39 @@ class PaygateSecurityFilterPathNormalizationTest {
     void challengesProtectedRouteUnderCombinedPrefixesBeforeHandler() throws Exception {
       assertProtectedBeforeHandler(
           pathMappedRequest("/shop/gateway/api/protected", "/shop", "/gateway"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+      "context path boundary mismatch, /application/api/orders, /app, ''",
+      "servlet mapping boundary mismatch, /gateway-other/api/orders, '', /gateway"
+    })
+    @DisplayName("rejects ambiguous deployment prefixes before endpoint lookup")
+    void rejectsAmbiguousDeploymentPrefixesBeforeEndpointLookup(
+        String description, String requestUri, String contextPath, String servletPath)
+        throws Exception {
+      var request = request(requestUri);
+      request.setContextPath(contextPath);
+      if (!servletPath.isEmpty()) {
+        request.setServletPath(servletPath);
+        request.setHttpServletMapping(
+            new MockHttpServletMapping("", servletPath + "/*", "dispatcher", MappingMatch.PATH));
+      }
+      var registry = mock(PaygateEndpointRegistry.class);
+      var challengeService = mock(PaygateChallengeService.class);
+      var filter =
+          new PaygateSecurityFilter(
+              registry, List.of(), challengeService, "test-service", null, null, null, null);
+      var response = new MockHttpServletResponse();
+      var chain = mock(FilterChain.class);
+
+      filter.doFilter(request, response, chain);
+
+      assertThat(response.getStatus()).isEqualTo(400);
+      assertThat(response.getContentAsString())
+          .isEqualTo(
+              "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
+      verifyNoInteractions(registry, challengeService, chain);
     }
 
     private void assertProtectedBeforeHandler(MockHttpServletRequest request) throws Exception {
