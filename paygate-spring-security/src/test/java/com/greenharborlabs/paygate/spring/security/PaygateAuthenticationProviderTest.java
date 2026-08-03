@@ -239,12 +239,43 @@ class PaygateAuthenticationProviderTest {
     @Mock private CapabilityResolver capabilityResolver;
 
     @Test
-    void l402WithResolvedCapabilityAddsPaygateCapabilityAuthority() {
+    void l402UsesOnlyVerifiedEffectiveCapabilitiesAndDoesNotInvokeResolver() {
+      L402Credential credential =
+          createTestCredential(
+              List.of(
+                  new Caveat(SERVICE_NAME + "_capabilities", "raw-caveat"),
+                  new Caveat(SERVICE_NAME + "_capabilities", "union-escalation")));
+      when(l402Validator.validate(
+              any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+          .thenReturn(
+              new L402Validator.ValidationResult(credential, true, Set.of("verified-subset")));
+
+      var providerWithResolver =
+          new PaygateAuthenticationProvider(
+              l402Validator, List.of(), SERVICE_NAME, capabilityResolver);
+      var unauthToken =
+          new PaygateAuthenticationToken(
+              new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64)),
+              Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "requested-escalation"));
+
+      Authentication result = providerWithResolver.authenticate(unauthToken);
+
+      assertThat(result.getAuthorities())
+          .extracting(GrantedAuthority::getAuthority)
+          .containsExactlyInAnyOrder(
+              "ROLE_PAYMENT",
+              "ROLE_L402",
+              "L402_CAPABILITY_verified-subset",
+              "PAYGATE_CAPABILITY_verified-subset");
+      verifyNoInteractions(capabilityResolver);
+    }
+
+    @Test
+    void l402WithVerifiedCapabilityAddsCapabilityAuthorities() {
       L402Credential credential = createTestCredential(List.of());
       when(l402Validator.validate(
               any(L402HeaderComponents.class), any(L402VerificationContext.class)))
-          .thenReturn(new L402Validator.ValidationResult(credential, true));
-      when(capabilityResolver.resolve(any())).thenReturn(Set.of("search"));
+          .thenReturn(new L402Validator.ValidationResult(credential, true, Set.of("search")));
 
       var providerWithResolver =
           new PaygateAuthenticationProvider(
@@ -259,17 +290,18 @@ class PaygateAuthenticationProviderTest {
       var authToken = (PaygateAuthenticationToken) result;
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
-          .contains("PAYGATE_CAPABILITY_search", "ROLE_PAYMENT", "ROLE_L402");
+          .containsExactlyInAnyOrder(
+              "PAYGATE_CAPABILITY_search", "L402_CAPABILITY_search", "ROLE_PAYMENT", "ROLE_L402");
+      verifyNoInteractions(capabilityResolver);
     }
 
     @Test
-    void l402WithEmptyResolverResultDoesNotEmitCapabilityAuthorities() {
+    void l402WithNoCapabilityCeilingDoesNotEmitCapabilityAuthorities() {
       L402Credential credential =
           createTestCredential(List.of(new Caveat(SERVICE_NAME + "_capabilities", "read")));
       when(l402Validator.validate(
               any(L402HeaderComponents.class), any(L402VerificationContext.class)))
           .thenReturn(new L402Validator.ValidationResult(credential, true));
-      when(capabilityResolver.resolve(any())).thenReturn(Set.of());
 
       var providerWithResolver =
           new PaygateAuthenticationProvider(
@@ -285,6 +317,7 @@ class PaygateAuthenticationProviderTest {
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
           .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
+      verifyNoInteractions(capabilityResolver);
     }
 
     @Test
@@ -309,21 +342,19 @@ class PaygateAuthenticationProviderTest {
     }
 
     @Test
-    void resolverThrowsRuntimeExceptionStillAuthenticates() {
-      L402Credential credential = createTestCredential(List.of());
-      when(l402Validator.validate(
-              any(L402HeaderComponents.class), any(L402VerificationContext.class)))
-          .thenReturn(new L402Validator.ValidationResult(credential, true));
+    void nonL402ResolverThrowsRuntimeExceptionStillAuthenticatesWithoutCapabilities() {
+      PaymentCredential credential = createPaymentCredential();
       when(capabilityResolver.resolve(any()))
           .thenThrow(new RuntimeException("resolver unavailable"));
 
       var providerWithResolver =
           new PaygateAuthenticationProvider(
-              l402Validator, List.of(), SERVICE_NAME, capabilityResolver);
+              l402Validator,
+              List.of(paymentProtocolFor(credential)),
+              SERVICE_NAME,
+              capabilityResolver);
 
-      var unauthToken =
-          new PaygateAuthenticationToken(
-              new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64)));
+      var unauthToken = PaygateAuthenticationToken.unauthenticated("Payment dGVzdA==", Map.of());
 
       Authentication result = providerWithResolver.authenticate(unauthToken);
 
@@ -331,55 +362,21 @@ class PaygateAuthenticationProviderTest {
       var authToken = (PaygateAuthenticationToken) result;
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
-          .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
+          .containsExactly("ROLE_PAYMENT");
     }
 
     @Test
     void mppWithResolvedCapabilityAddsPaygateCapabilityAuthority() {
-      byte[] paymentHash = new byte[32];
-      byte[] preimage = new byte[32];
-      RNG.nextBytes(paymentHash);
-      RNG.nextBytes(preimage);
-      String tokenId = HexFormat.of().formatHex(preimage);
-
-      PaymentCredential credential =
-          new PaymentCredential(
-              paymentHash, preimage, tokenId, "Payment", null, new ProtocolMetadata() {});
-
-      PaymentProtocol mockProtocol =
-          new PaymentProtocol() {
-            @Override
-            public String scheme() {
-              return "Payment";
-            }
-
-            @Override
-            public boolean canHandle(String header) {
-              return header.startsWith("Payment ");
-            }
-
-            @Override
-            public PaymentCredential parseCredential(String header) {
-              return credential;
-            }
-
-            @Override
-            public void validate(PaymentCredential c, Map<String, String> ctx) {
-              /* valid */
-            }
-
-            @Override
-            public com.greenharborlabs.paygate.api.ChallengeResponse formatChallenge(
-                com.greenharborlabs.paygate.api.ChallengeContext ctx) {
-              return null;
-            }
-          };
+      PaymentCredential credential = createPaymentCredential();
 
       when(capabilityResolver.resolve(any())).thenReturn(Set.of("analyze"));
 
       var providerWithResolver =
           new PaygateAuthenticationProvider(
-              l402Validator, List.of(mockProtocol), SERVICE_NAME, capabilityResolver);
+              l402Validator,
+              List.of(paymentProtocolFor(credential)),
+              SERVICE_NAME,
+              capabilityResolver);
 
       var unauthToken = PaygateAuthenticationToken.unauthenticated("Payment dGVzdA==", Map.of());
 
@@ -393,13 +390,12 @@ class PaygateAuthenticationProviderTest {
     }
 
     @Test
-    void deduplicationWhenResolverAndCaveatsReturnSameCapability() {
+    void verifiedCapabilityIsEmittedOnlyOnceWhenRawCaveatRepeatsIt() {
       L402Credential credential =
           createTestCredential(List.of(new Caveat(SERVICE_NAME + "_capabilities", "search")));
       when(l402Validator.validate(
               any(L402HeaderComponents.class), any(L402VerificationContext.class)))
-          .thenReturn(new L402Validator.ValidationResult(credential, true));
-      when(capabilityResolver.resolve(any())).thenReturn(Set.of("search"));
+          .thenReturn(new L402Validator.ValidationResult(credential, true, Set.of("search")));
 
       var providerWithResolver =
           new PaygateAuthenticationProvider(
@@ -424,7 +420,52 @@ class PaygateAuthenticationProviderTest {
           .extracting(GrantedAuthority::getAuthority)
           .contains(
               "ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_search", "PAYGATE_CAPABILITY_search");
+      verifyNoInteractions(capabilityResolver);
     }
+  }
+
+  private PaymentCredential createPaymentCredential() {
+    byte[] paymentHash = new byte[32];
+    byte[] preimage = new byte[32];
+    RNG.nextBytes(paymentHash);
+    RNG.nextBytes(preimage);
+    return new PaymentCredential(
+        paymentHash,
+        preimage,
+        HexFormat.of().formatHex(preimage),
+        "Payment",
+        null,
+        new ProtocolMetadata() {});
+  }
+
+  private PaymentProtocol paymentProtocolFor(PaymentCredential credential) {
+    return new PaymentProtocol() {
+      @Override
+      public String scheme() {
+        return "Payment";
+      }
+
+      @Override
+      public boolean canHandle(String header) {
+        return header.startsWith("Payment ");
+      }
+
+      @Override
+      public PaymentCredential parseCredential(String header) {
+        return credential;
+      }
+
+      @Override
+      public void validate(PaymentCredential c, Map<String, String> ctx) {
+        /* valid */
+      }
+
+      @Override
+      public com.greenharborlabs.paygate.api.ChallengeResponse formatChallenge(
+          com.greenharborlabs.paygate.api.ChallengeContext ctx) {
+        return null;
+      }
+    };
   }
 
   private L402Credential createTestCredential(List<Caveat> caveats) {

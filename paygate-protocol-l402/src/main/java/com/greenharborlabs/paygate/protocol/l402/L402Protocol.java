@@ -109,9 +109,8 @@ public class L402Protocol implements PaymentProtocol {
     caveats.add(new Caveat("route", routePattern));
     caveats.add(new Caveat("method", requestMethod));
     String capability = context.capability();
-    if (capability != null && !capability.isBlank()) {
-      caveats.add(new Caveat(serviceName + "_capabilities", capability));
-    }
+    String capabilityCeiling = capability == null || capability.isBlank() ? "~" : capability;
+    caveats.add(new Caveat(serviceName + "_capabilities", capabilityCeiling));
     Instant validUntil = Instant.now(clock).plusSeconds(context.timeoutSeconds());
     caveats.add(
         new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond())));

@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
@@ -71,6 +72,23 @@ class AutoConfigurationTest {
   @DisplayName("creates PaygateEndpointRegistry bean when paygate.enabled=true")
   void createsEndpointRegistry() {
     contextRunner.run(context -> assertThat(context).hasSingleBean(PaygateEndpointRegistry.class));
+  }
+
+  @Test
+  @DisplayName("endpoint registry uses the configured caveat value limit")
+  void endpointRegistryUsesConfiguredCaveatValueLimit() {
+    contextRunner
+        .withPropertyValues("paygate.caveat.max-values-per-caveat=1")
+        .run(
+            context -> {
+              var registry = context.getBean(PaygateEndpointRegistry.class);
+              var config =
+                  new PaygateEndpointConfig("GET", "/bounded", 10, 600, "", "", "read,write");
+
+              assertThatThrownBy(() -> registry.register(config))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("maximum allowed is 1");
+            });
   }
 
   @Test

@@ -433,7 +433,7 @@ class L402ProtocolTest {
     }
 
     @Test
-    void challengeOmitsCapabilityCaveatWhenNull() {
+    void challengeIncludesNoCapabilityCeilingWhenNull() {
       byte[] rootKey = new byte[32];
       byte[] paymentHash = new byte[32];
       byte[] tokenId = new byte[32];
@@ -465,7 +465,13 @@ class L402ProtocolTest {
 
       assertThat(macaroon.caveats())
           .extracting(caveat -> caveat.key())
-          .containsExactly("services", "route", "method", SERVICE_NAME + "_valid_until");
+          .containsExactly(
+              "services",
+              "route",
+              "method",
+              SERVICE_NAME + "_capabilities",
+              SERVICE_NAME + "_valid_until");
+      assertThat(macaroon.caveats().get(3).value()).isEqualTo("~");
     }
 
     @Test
@@ -857,7 +863,7 @@ class L402ProtocolTest {
   class FormatChallengeBlankCapability {
 
     @Test
-    void omitsCapabilityCaveatWhenCapabilityIsBlank() {
+    void includesNoCapabilityCeilingWhenCapabilityIsBlank() {
       byte[] rootKey = new byte[32];
       byte[] paymentHash = new byte[32];
       byte[] tokenId = new byte[32];
@@ -888,7 +894,12 @@ class L402ProtocolTest {
       var macaroon = MacaroonSerializer.deserializeV2(macBytes);
 
       assertThat(macaroon.caveats())
-          .noneSatisfy(caveat -> assertThat(caveat.key()).contains("_capabilities"));
+          .extracting(caveat -> caveat.key() + "=" + caveat.value())
+          .startsWith(
+              "services=" + SERVICE_NAME + ":0",
+              "route=/widgets/{id}",
+              "method=GET",
+              SERVICE_NAME + "_capabilities=~");
     }
   }
 

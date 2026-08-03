@@ -93,6 +93,7 @@ public final class MacaroonVerifier {
       Map<String, CaveatVerifier> verifiersByKey,
       L402VerificationContext context) {
     Map<String, Caveat> lastSeenByKey = new HashMap<>();
+    Map<String, Caveat> finalEvaluationByKey = new HashMap<>();
     for (Caveat caveat : caveats) {
       CaveatVerifier verifier = verifiersByKey.get(caveat.key());
       if (verifier == null) {
@@ -108,7 +109,17 @@ public final class MacaroonVerifier {
       }
       lastSeenByKey.put(caveat.key(), caveat);
 
-      verifier.verify(caveat, context);
+      // Capability satisfaction is meaningful only for the final, monotonically narrowed value.
+      // isMoreRestrictive validates the grammar and bounds of every repeated occurrence.
+      if (verifier instanceof CapabilitiesCaveatVerifier) {
+        finalEvaluationByKey.put(caveat.key(), caveat);
+      } else {
+        verifier.verify(caveat, context);
+      }
+    }
+
+    for (Map.Entry<String, Caveat> entry : finalEvaluationByKey.entrySet()) {
+      verifiersByKey.get(entry.getKey()).verify(entry.getValue(), context);
     }
 
     // Post-loop enforcement: if a capability is required, the macaroon MUST contain

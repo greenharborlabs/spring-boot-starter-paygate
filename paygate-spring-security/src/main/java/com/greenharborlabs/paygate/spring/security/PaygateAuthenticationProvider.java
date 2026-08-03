@@ -87,15 +87,8 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
 
     try {
       L402Validator.ValidationResult result = l402Validator.validate(components, context);
-      Set<String> capabilities =
-          resolveCapabilitiesSafely(
-              new CapabilityResolutionContext(
-                  result.credential().tokenId(),
-                  serviceName,
-                  result.credential(),
-                  token.getRequestMetadata()));
       return PaygateAuthenticationToken.authenticated(
-          result.credential(), serviceName, capabilities);
+          result.credential(), serviceName, result.effectiveCapabilities());
     } catch (L402Exception e) {
       throw new BadCredentialsException("L402 authentication failed", e);
     }

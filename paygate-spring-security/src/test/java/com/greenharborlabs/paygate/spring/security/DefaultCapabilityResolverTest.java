@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
@@ -142,15 +143,15 @@ class DefaultCapabilityResolverTest {
     }
   }
 
-  // ---- Strategy 2: L402 caveat extraction ----
+  // ---- L402 fallback isolation ----
 
   @Nested
-  @DisplayName("Strategy 2: L402 caveat extraction")
-  class CaveatExtraction {
+  @DisplayName("L402 fallback isolation")
+  class L402FallbackIsolation {
 
     @Test
-    @DisplayName("extracts capabilities from service_capabilities caveat")
-    void extractsCapabilitiesFromCaveat() {
+    @DisplayName("does not derive authorities from raw capability caveats")
+    void ignoresRawCapabilityCaveat() {
       var credential =
           credentialWithCaveats(List.of(new Caveat(SERVICE_NAME + "_capabilities", "read")));
       var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
@@ -159,12 +160,12 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactly("read");
+      assertThat(result).isEmpty();
     }
 
     @Test
-    @DisplayName("extracts multiple capabilities from comma-separated caveat value")
-    void extractsMultipleCapabilities() {
+    @DisplayName("does not derive authorities from comma-separated raw caveats")
+    void ignoresCommaSeparatedRawCapabilities() {
       var credential =
           credentialWithCaveats(
               List.of(new Caveat(SERVICE_NAME + "_capabilities", "read,write,admin")));
@@ -174,12 +175,12 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactlyInAnyOrder("read", "write", "admin");
+      assertThat(result).isEmpty();
     }
 
     @Test
-    @DisplayName("merges capabilities from multiple matching caveats")
-    void mergesMultipleCaveats() {
+    @DisplayName("does not union repeated raw capability caveats")
+    void doesNotUnionRepeatedCaveats() {
       var credential =
           credentialWithCaveats(
               List.of(
@@ -191,11 +192,11 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactlyInAnyOrder("read", "write");
+      assertThat(result).isEmpty();
     }
 
     @Test
-    @DisplayName("skips strategy 2 when l402Credential is null")
+    @DisplayName("preserves metadata fallback when l402Credential is null")
     void skipsWhenNoCredential() {
       var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
       var context =
@@ -211,8 +212,8 @@ class DefaultCapabilityResolverTest {
     }
 
     @Test
-    @DisplayName("skips strategy 2 when serviceName is null")
-    void skipsWhenServiceNameNull() {
+    @DisplayName("does not use metadata fallback for L402 when serviceName is null")
+    void ignoresMetadataForL402WhenServiceNameNull() {
       var credential =
           credentialWithCaveats(List.of(new Caveat(SERVICE_NAME + "_capabilities", "read")));
       var resolver = new DefaultCapabilityResolver(null, null);
@@ -225,8 +226,7 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      // Falls through to strategy 3
-      assertThat(result).containsExactly("metadata-cap");
+      assertThat(result).isEmpty();
     }
 
     @Test
@@ -247,11 +247,31 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactly("fallback");
+      assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("does not consult cache or request metadata for an L402 credential")
+    void ignoresCacheAndRequestMetadataForL402() {
+      var credential =
+          credentialWithCaveats(
+              List.of(new Caveat(SERVICE_NAME + "_capabilities", "raw-capability")));
+      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var context =
+          new CapabilityResolutionContext(
+              credential.tokenId(),
+              SERVICE_NAME,
+              credential,
+              Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "requested-capability"));
+
+      Set<String> result = resolver.resolve(context);
+
+      assertThat(result).isEmpty();
+      verifyNoInteractions(capabilityCache);
     }
   }
 
-  // ---- Strategy 3: Request metadata ----
+  // ---- Strategy 2: Request metadata ----
 
   @Nested
   @DisplayName("Strategy 3: Request metadata fallback")
@@ -289,43 +309,39 @@ class DefaultCapabilityResolverTest {
   class StrategyOrdering {
 
     @Test
-    @DisplayName("cache hit takes priority over caveat extraction and metadata")
-    void cacheWinsOverCaveatsAndMetadata() {
+    @DisplayName("L402 context bypasses cache, caveats, and metadata")
+    void l402BypassesAllFallbackStrategies() {
       var credential =
           credentialWithCaveats(List.of(new Caveat(SERVICE_NAME + "_capabilities", "caveat-cap")));
-      when(capabilityCache.get(credential.tokenId())).thenReturn("cached-cap");
-
       var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
       var context =
           new CapabilityResolutionContext(
               credential.tokenId(),
               SERVICE_NAME,
               credential,
+              Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "metadata-cap"));
+
+      Set<String> result = resolver.resolve(context);
+
+      assertThat(result).isEmpty();
+      verifyNoInteractions(capabilityCache);
+    }
+
+    @Test
+    @DisplayName("cache still takes priority over metadata for non-L402 protocols")
+    void cacheWinsOverMetadataForNonL402() {
+      when(capabilityCache.get(TOKEN_ID)).thenReturn("cached-cap");
+      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var context =
+          new CapabilityResolutionContext(
+              TOKEN_ID,
+              SERVICE_NAME,
+              null,
               Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "metadata-cap"));
 
       Set<String> result = resolver.resolve(context);
 
       assertThat(result).containsExactly("cached-cap");
-    }
-
-    @Test
-    @DisplayName("caveat extraction takes priority over metadata when cache misses")
-    void caveatsWinOverMetadata() {
-      var credential =
-          credentialWithCaveats(List.of(new Caveat(SERVICE_NAME + "_capabilities", "caveat-cap")));
-      when(capabilityCache.get(credential.tokenId())).thenReturn(null);
-
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
-      var context =
-          new CapabilityResolutionContext(
-              credential.tokenId(),
-              SERVICE_NAME,
-              credential,
-              Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "metadata-cap"));
-
-      Set<String> result = resolver.resolve(context);
-
-      assertThat(result).containsExactly("caveat-cap");
     }
 
     @Test

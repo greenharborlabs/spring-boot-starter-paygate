@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.spring;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,8 +27,11 @@ public class PaygateEndpointRegistry {
       System.getLogger(PaygateEndpointRegistry.class.getName());
   private static final PathPatternParser PATTERN_PARSER = new PathPatternParser();
   private static final long DEFAULT_TIMEOUT_SECONDS_FALLBACK = 3600;
+  private static final int DEFAULT_MAX_VALUES_PER_CAVEAT = 50;
+  private static final String NO_CAPABILITY_SENTINEL = "~";
 
   private final long defaultTimeoutSeconds;
+  private final int maxValuesPerCaveat;
   private final Map<String, PaygateEndpointConfig> configs = new ConcurrentHashMap<>();
   private final Map<String, Map<String, PathPattern>> patternsByMethod = new ConcurrentHashMap<>();
 
@@ -37,12 +41,26 @@ public class PaygateEndpointRegistry {
    * @param defaultTimeoutSeconds the default credential timeout in seconds
    */
   public PaygateEndpointRegistry(long defaultTimeoutSeconds) {
+    this(defaultTimeoutSeconds, DEFAULT_MAX_VALUES_PER_CAVEAT);
+  }
+
+  /**
+   * Creates a registry with the given timeout default and capability-list bound.
+   *
+   * @param defaultTimeoutSeconds the default credential timeout in seconds
+   * @param maxValuesPerCaveat the maximum number of capability values in one declaration
+   */
+  public PaygateEndpointRegistry(long defaultTimeoutSeconds, int maxValuesPerCaveat) {
+    if (maxValuesPerCaveat < 1) {
+      throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
+    }
     this.defaultTimeoutSeconds = defaultTimeoutSeconds;
+    this.maxValuesPerCaveat = maxValuesPerCaveat;
   }
 
   /** Creates a registry with the built-in default timeout of 3600 seconds. */
   public PaygateEndpointRegistry() {
-    this(DEFAULT_TIMEOUT_SECONDS_FALLBACK);
+    this(DEFAULT_TIMEOUT_SECONDS_FALLBACK, DEFAULT_MAX_VALUES_PER_CAVEAT);
   }
 
   /**
@@ -51,11 +69,57 @@ public class PaygateEndpointRegistry {
    * @param config the endpoint configuration
    */
   public void register(PaygateEndpointConfig config) {
+    config = normalizeCapabilities(config);
     var key = toKey(config.httpMethod(), config.pathPattern());
     configs.put(key, config);
     patternsByMethod
         .computeIfAbsent(config.httpMethod().toUpperCase(), _ -> new ConcurrentHashMap<>())
         .put(key, PATTERN_PARSER.parse(config.pathPattern()));
+  }
+
+  private PaygateEndpointConfig normalizeCapabilities(PaygateEndpointConfig config) {
+    String declaration = config.capability();
+    String normalized;
+    if (declaration == null || declaration.isBlank()) {
+      normalized = "";
+    } else {
+      int splitLimit =
+          maxValuesPerCaveat == Integer.MAX_VALUE ? Integer.MAX_VALUE : maxValuesPerCaveat + 1;
+      String[] segments = declaration.split(",", splitLimit);
+      if (segments.length > maxValuesPerCaveat) {
+        throw new IllegalArgumentException(
+            "Capability declaration has "
+                + segments.length
+                + " values, maximum allowed is "
+                + maxValuesPerCaveat);
+      }
+
+      var capabilities = new LinkedHashSet<String>();
+      for (String segment : segments) {
+        String capability = segment.trim();
+        if (capability.isEmpty()) {
+          throw new IllegalArgumentException("Capability declaration contains a blank segment");
+        }
+        if (NO_CAPABILITY_SENTINEL.equals(capability)) {
+          throw new IllegalArgumentException(
+              "Capability '~' is reserved for the internal no-capability state");
+        }
+        capabilities.add(capability);
+      }
+      normalized = String.join(",", capabilities);
+    }
+
+    if (normalized.equals(declaration)) {
+      return config;
+    }
+    return new PaygateEndpointConfig(
+        config.httpMethod(),
+        config.pathPattern(),
+        config.priceSats(),
+        config.timeoutSeconds(),
+        config.description(),
+        config.pricingStrategy(),
+        normalized);
   }
 
   /**

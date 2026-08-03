@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.core.protocol;
 
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
+import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
@@ -38,6 +39,8 @@ public final class L402Validator {
   private final CredentialStore credentialStore;
   private final Map<String, CaveatVerifier> caveatVerifiersByKey;
   private final String serviceName;
+  private final String capabilityCaveatKey;
+  private final CapabilitiesCaveatVerifier capabilitiesCaveatVerifier;
 
   public L402Validator(
       RootKeyStore rootKeyStore,
@@ -47,12 +50,19 @@ public final class L402Validator {
     this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
     this.credentialStore =
         Objects.requireNonNull(credentialStore, "credentialStore must not be null");
+    this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
+    this.capabilityCaveatKey = this.serviceName + "_capabilities";
     List<CaveatVerifier> verifiers =
         List.copyOf(Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
     this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(verifiers);
     requireBoundaryVerifier(ROUTE_CAVEAT_KEY);
     requireBoundaryVerifier(METHOD_CAVEAT_KEY);
-    this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
+    CaveatVerifier capabilityVerifier = requireBoundaryVerifier(capabilityCaveatKey);
+    if (!(capabilityVerifier instanceof CapabilitiesCaveatVerifier typedVerifier)) {
+      throw new IllegalArgumentException(
+          "Required capability caveat verifier must be a CapabilitiesCaveatVerifier");
+    }
+    this.capabilitiesCaveatVerifier = typedVerifier;
   }
 
   /**
@@ -177,10 +187,11 @@ public final class L402Validator {
 
       // 5. Verify macaroon signature and caveats using the provided context
       Instant now = context.getCurrentTime();
+      Set<String> effectiveCapabilities;
       try (rootKeySb) {
         byte[] rootKey = rootKeySb.value();
         try {
-          verifyMacaroon(credential.macaroon(), rootKey, context);
+          effectiveCapabilities = verifyMacaroon(credential.macaroon(), rootKey, context);
         } catch (MacaroonVerificationException e) {
           throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
         } finally {
@@ -188,12 +199,13 @@ public final class L402Validator {
         }
       }
 
-      // 6. Cache the credential with TTL derived from valid_until caveats
+      // 6. Cache only after complete signature/caveat validation and return the verified final
+      //    capability ceiling.
       long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
       credentialStore.store(tokenId, credential, cacheTtl);
 
       returningCredential = true;
-      return new ValidationResult(credential, true);
+      return new ValidationResult(credential, true, effectiveCapabilities);
     } finally {
       if (!returningCredential) {
         credential.destroy();
@@ -234,10 +246,12 @@ public final class L402Validator {
       throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
     }
 
-    return new ValidationResult(cached.copy(), false);
+    Set<String> effectiveCapabilities = extractFinalEffectiveCapabilities(cached.macaroon());
+    return new ValidationResult(cached.copy(), false, effectiveCapabilities);
   }
 
-  private void verifyMacaroon(Macaroon macaroon, byte[] rootKey, L402VerificationContext context) {
+  private Set<String> verifyMacaroon(
+      Macaroon macaroon, byte[] rootKey, L402VerificationContext context) {
     byte[] derivedKey = MacaroonCrypto.deriveKey(rootKey);
     byte[] sig = null;
     try {
@@ -255,29 +269,49 @@ public final class L402Validator {
 
       verifyRequiredBoundaryCaveats(macaroon.caveats());
       MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
+      return extractFinalEffectiveCapabilities(macaroon);
     } finally {
       KeyMaterial.zeroize(derivedKey, sig);
     }
   }
 
-  private void requireBoundaryVerifier(String key) {
-    if (!caveatVerifiersByKey.containsKey(key)) {
+  private CaveatVerifier requireBoundaryVerifier(String key) {
+    CaveatVerifier verifier = caveatVerifiersByKey.get(key);
+    if (verifier == null) {
       throw new IllegalArgumentException("Missing required " + key + " caveat verifier");
     }
+    return verifier;
   }
 
-  private static void verifyRequiredBoundaryCaveats(List<Caveat> caveats) {
+  private void verifyRequiredBoundaryCaveats(List<Caveat> caveats) {
     boolean hasRoute = false;
     boolean hasMethod = false;
+    boolean hasCapabilityCeiling = false;
     for (Caveat caveat : caveats) {
       hasRoute |= ROUTE_CAVEAT_KEY.equals(caveat.key());
       hasMethod |= METHOD_CAVEAT_KEY.equals(caveat.key());
+      hasCapabilityCeiling |= capabilityCaveatKey.equals(caveat.key());
     }
-    if (!hasRoute || !hasMethod) {
+    if (!hasRoute || !hasMethod || !hasCapabilityCeiling) {
       throw new MacaroonVerificationException(
           VerificationFailureReason.CAVEAT_NOT_MET,
           "Credential is missing a required request boundary caveat");
     }
+  }
+
+  private Set<String> extractFinalEffectiveCapabilities(Macaroon macaroon) {
+    Caveat finalCapabilityCaveat = null;
+    for (Caveat caveat : macaroon.caveats()) {
+      if (capabilityCaveatKey.equals(caveat.key())) {
+        finalCapabilityCaveat = caveat;
+      }
+    }
+    if (finalCapabilityCaveat == null) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET,
+          "Credential is missing a required request boundary caveat");
+    }
+    return capabilitiesCaveatVerifier.parseEffectiveCapabilities(finalCapabilityCaveat.value());
   }
 
   /**

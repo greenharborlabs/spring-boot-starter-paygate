@@ -440,7 +440,9 @@ public class PaygateAutoConfiguration {
   public PaygateEndpointRegistry paygateEndpointRegistry(
       @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping,
       PaygateProperties properties) {
-    var registry = new PaygateEndpointRegistry(properties.getDefaultTimeoutSeconds());
+    var registry =
+        new PaygateEndpointRegistry(
+            properties.getDefaultTimeoutSeconds(), properties.getCaveat().getMaxValuesPerCaveat());
     registry.scanAnnotatedEndpoints(handlerMapping);
     return registry;
   }
