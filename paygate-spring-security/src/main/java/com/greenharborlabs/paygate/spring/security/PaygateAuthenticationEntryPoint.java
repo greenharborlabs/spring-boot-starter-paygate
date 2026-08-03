@@ -5,13 +5,13 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
-import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -66,8 +66,8 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
         return;
       }
 
-      PaygateEndpointConfig config = endpointRegistry.findConfig(method, path);
-      if (config == null) {
+      ResolvedEndpoint resolvedEndpoint = endpointRegistry.resolve(method, path);
+      if (resolvedEndpoint == null) {
         PaygateResponseWriter.writeUnauthorized(response);
         return;
       }
@@ -82,7 +82,7 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       var challengeContext =
           challengeService.createChallenge(
               challengeRequest,
-              config,
+              resolvedEndpoint,
               PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
       List<ChallengeResponse> challenges = new ArrayList<>();
       for (PaymentProtocol protocol : protocols) {

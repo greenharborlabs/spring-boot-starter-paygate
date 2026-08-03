@@ -89,6 +89,25 @@ public class PaygateChallengeService {
   }
 
   /**
+   * Creates a protocol-agnostic challenge using the selected policy and its canonical registered
+   * route.
+   *
+   * <p>The request's actual HTTP method remains the challenge boundary. In particular, a {@code
+   * HEAD} request resolved through a {@code GET} policy is issued a {@code HEAD}-bound credential.
+   *
+   * @param request the current HTTP request
+   * @param resolvedEndpoint the endpoint policy selected for the request
+   * @return the challenge context containing all data for protocol-specific formatting
+   * @throws PaygateLightningUnavailableException if the Lightning backend is unhealthy or fails
+   * @throws PaygateRateLimitedException if the client is rate-limited
+   */
+  public ChallengeContext createChallenge(
+      HttpServletRequest request, ResolvedEndpoint resolvedEndpoint)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    return createChallenge(request, resolvedEndpoint, ChallengeOptions.enforceRateLimit());
+  }
+
+  /**
    * Creates a protocol-agnostic challenge context with explicit Spring integration options.
    *
    * <p>This overload is public only so sibling Spring modules can coordinate request-body digest
@@ -105,8 +124,42 @@ public class PaygateChallengeService {
   public ChallengeContext createChallenge(
       HttpServletRequest request, PaygateEndpointConfig config, ChallengeOptions options)
       throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    Objects.requireNonNull(config, "config must not be null");
+    return createChallenge(request, config, config.pathPattern(), options);
+  }
+
+  /**
+   * Creates a protocol-agnostic challenge using a resolved endpoint and explicit Spring integration
+   * options.
+   *
+   * <p>Policy values come from {@link ResolvedEndpoint#config()}, the route boundary comes from
+   * {@link ResolvedEndpoint#routePattern()}, and the method boundary always comes from the actual
+   * request.
+   *
+   * @param request the current HTTP request
+   * @param resolvedEndpoint the endpoint policy selected for the request
+   * @param options internal Spring integration options for challenge creation
+   * @return the challenge context containing all data for protocol-specific formatting
+   * @throws PaygateLightningUnavailableException if the Lightning backend is unhealthy or fails
+   * @throws PaygateRateLimitedException if the client is rate-limited
+   */
+  public ChallengeContext createChallenge(
+      HttpServletRequest request, ResolvedEndpoint resolvedEndpoint, ChallengeOptions options)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    Objects.requireNonNull(resolvedEndpoint, "resolvedEndpoint must not be null");
+    return createChallenge(
+        request, resolvedEndpoint.config(), resolvedEndpoint.routePattern(), options);
+  }
+
+  private ChallengeContext createChallenge(
+      HttpServletRequest request,
+      PaygateEndpointConfig config,
+      String routePattern,
+      ChallengeOptions options)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
     Objects.requireNonNull(request, "request must not be null");
     Objects.requireNonNull(config, "config must not be null");
+    Objects.requireNonNull(routePattern, "routePattern must not be null");
     Objects.requireNonNull(options, "options must not be null");
 
     // 1. Check Lightning backend health
@@ -121,7 +174,7 @@ public class PaygateChallengeService {
 
     // 3. Generate root key, create invoice, build context
     try {
-      return buildChallengeContext(request, config, config.pathPattern(), request.getMethod());
+      return buildChallengeContext(request, config, routePattern, request.getMethod());
     } catch (PaygateLightningUnavailableException e) {
       throw e;
     } catch (RuntimeException e) {

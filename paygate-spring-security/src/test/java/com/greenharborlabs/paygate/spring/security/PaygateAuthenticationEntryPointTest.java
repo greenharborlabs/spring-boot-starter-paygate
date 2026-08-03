@@ -23,6 +23,7 @@ import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.MappingMatch;
@@ -75,7 +76,7 @@ class PaygateAuthenticationEntryPointTest {
       new ChallengeResponse("L402 token=\"test-token\", invoice=\"lnbc1000n1test\"", "L402", null);
 
   @BeforeEach
-  void setUp() {
+  void setUp() throws Exception {
     org.mockito.Mockito.lenient()
         .when(protocol.formatChallenge(any()))
         .thenReturn(DEFAULT_CHALLENGE);
@@ -84,6 +85,32 @@ class PaygateAuthenticationEntryPointTest {
     request = new MockHttpServletRequest("GET", "/api/protected");
     request.setRequestURI("/api/protected");
     response = new MockHttpServletResponse();
+    org.mockito.Mockito.lenient()
+        .doAnswer(
+            invocation -> {
+              String method = invocation.getArgument(0);
+              String path = invocation.getArgument(1);
+              PaygateEndpointConfig config = endpointRegistry.findConfig(method, path);
+              return config == null
+                  ? null
+                  : new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+            })
+        .when(endpointRegistry)
+        .resolve(any(String.class), any(String.class));
+    org.mockito.Mockito.lenient()
+        .doAnswer(
+            invocation -> {
+              HttpServletRequest challengeRequest = invocation.getArgument(0);
+              ResolvedEndpoint resolvedEndpoint = invocation.getArgument(1);
+              PaygateChallengeService.ChallengeOptions options = invocation.getArgument(2);
+              return challengeService.createChallenge(
+                  challengeRequest, resolvedEndpoint.config(), options);
+            })
+        .when(challengeService)
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
   }
 
   @Test
@@ -120,6 +147,78 @@ class PaygateAuthenticationEntryPointTest {
     assertThat(response.getContentAsString()).contains("\"code\": 402");
     assertThat(response.getContentAsString()).contains("\"price_sats\": 100");
     assertThat(response.getContentAsString()).contains("\"invoice\": \"lnbc1000n1test\"");
+  }
+
+  @Test
+  void headChallengeUsesInheritedGetPolicyCanonicalRouteAndActualHeadMethod() throws Exception {
+    request.setMethod("HEAD");
+    request.setRequestURI("/shop/api/orders/42");
+    request.setContextPath("/shop");
+    var getConfig =
+        new PaygateEndpointConfig("GET", "/api/orders/{orderId}", 100, 3600, "Order", "", "read");
+    var resolvedEndpoint = new ResolvedEndpoint(getConfig, "/api/orders/{orderId}", "GET");
+    org.mockito.Mockito.doReturn(resolvedEndpoint)
+        .when(endpointRegistry)
+        .resolve("HEAD", "/api/orders/42");
+    org.mockito.Mockito.doReturn(TEST_CONTEXT)
+        .when(challengeService)
+        .createChallenge(
+            any(HttpServletRequest.class),
+            eq(resolvedEndpoint),
+            any(PaygateChallengeService.ChallengeOptions.class));
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(request.getMethod()).isEqualTo("HEAD");
+    verify(endpointRegistry).resolve("HEAD", "/api/orders/42");
+    verify(challengeService)
+        .createChallenge(
+            request,
+            resolvedEndpoint,
+            PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
+  }
+
+  @Test
+  void explicitHeadPolicyWinsForHeadChallenge() throws Exception {
+    request.setMethod("HEAD");
+    var headConfig =
+        new PaygateEndpointConfig("HEAD", "/api/protected", 200, 3600, "Head", "", "head-read");
+    var resolvedEndpoint = new ResolvedEndpoint(headConfig, "/api/protected", "HEAD");
+    org.mockito.Mockito.doReturn(resolvedEndpoint)
+        .when(endpointRegistry)
+        .resolve("HEAD", "/api/protected");
+    org.mockito.Mockito.doReturn(TEST_CONTEXT)
+        .when(challengeService)
+        .createChallenge(
+            any(HttpServletRequest.class),
+            eq(resolvedEndpoint),
+            any(PaygateChallengeService.ChallengeOptions.class));
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(challengeService)
+        .createChallenge(
+            request,
+            resolvedEndpoint,
+            PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
+  }
+
+  @Test
+  void optionsChallengeDoesNotInheritGetPolicy() throws Exception {
+    request.setMethod("OPTIONS");
+    org.mockito.Mockito.doReturn(null).when(endpointRegistry).resolve("OPTIONS", "/api/protected");
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(401);
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
   }
 
   @Test
@@ -208,7 +307,8 @@ class PaygateAuthenticationEntryPointTest {
     PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
     var postConfig =
         new PaygateEndpointConfig("POST", "/api/protected", 100, 3600, "Test endpoint", "", "");
-    when(registry.findConfig("POST", "/api/protected")).thenReturn(postConfig);
+    when(registry.resolve("POST", "/api/protected"))
+        .thenReturn(new ResolvedEndpoint(postConfig, "/api/protected", "POST"));
     when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(false);
     var throwingRequest = new ThrowingBodyRequest();
     throwingRequest.setMethod("POST");
@@ -239,7 +339,8 @@ class PaygateAuthenticationEntryPointTest {
     PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
     var postConfig =
         new PaygateEndpointConfig("POST", "/api/protected", 100, 3600, "Test endpoint", "", "");
-    when(registry.findConfig("POST", "/api/protected")).thenReturn(postConfig);
+    when(registry.resolve("POST", "/api/protected"))
+        .thenReturn(new ResolvedEndpoint(postConfig, "/api/protected", "POST"));
     when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(true);
     var oversizedRequest = new MockHttpServletRequest("POST", "/api/protected");
     oversizedRequest.setRequestURI("/api/protected");

@@ -289,6 +289,108 @@ class PaygateEndpointRegistryTest {
     assertThat(postConfig.capability()).isEqualTo("any");
   }
 
+  @Test
+  @DisplayName("HEAD falls back to GET policy before wildcard policy")
+  void headFallsBackToGetBeforeWildcard() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("GET", "/api/{name}", 10, 600, "", "", "read"));
+    registry.register(new PaygateEndpointConfig("*", "/api/resource", 5, 300, "", "", "any"));
+
+    var resolved = registry.resolve("HEAD", "/api/resource");
+
+    assertThat(resolved.config().capability()).isEqualTo("read");
+    assertThat(resolved.routePattern()).isEqualTo("/api/{name}");
+    assertThat(resolved.policyMethod()).isEqualTo("GET");
+    assertThat(registry.findConfig("HEAD", "/api/resource")).isSameAs(resolved.config());
+  }
+
+  @Test
+  @DisplayName("explicit HEAD policy takes precedence and remains distinct from GET")
+  void explicitHeadPolicyTakesPrecedenceOverGetAndWildcard() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("HEAD", "/api/resource", 15, 600, "", "", "head"));
+    registry.register(new PaygateEndpointConfig("GET", "/api/resource", 10, 600, "", "", "read"));
+    registry.register(new PaygateEndpointConfig("*", "/api/resource", 5, 300, "", "", "any"));
+
+    var head = registry.resolve("head", "/api/resource");
+    var get = registry.resolve("GET", "/api/resource");
+
+    assertThat(head.config().capability()).isEqualTo("head");
+    assertThat(head.routePattern()).isEqualTo("/api/resource");
+    assertThat(head.policyMethod()).isEqualTo("HEAD");
+    assertThat(get.config().capability()).isEqualTo("read");
+    assertThat(get.policyMethod()).isEqualTo("GET");
+  }
+
+  @Test
+  @DisplayName("exact route takes precedence over matching patterns")
+  void exactRouteTakesPrecedenceOverPattern() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(
+        new PaygateEndpointConfig("GET", "/api/items/{id}", 5, 300, "", "", "pattern"));
+    registry.register(new PaygateEndpointConfig("GET", "/api/items/42", 10, 600, "", "", "exact"));
+
+    var resolved = registry.resolve("GET", "/api/items/42");
+
+    assertThat(resolved.config().capability()).isEqualTo("exact");
+    assertThat(resolved.routePattern()).isEqualTo("/api/items/42");
+  }
+
+  @Test
+  @DisplayName("most specific matching pattern is selected deterministically")
+  void mostSpecificPatternIsSelected() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("GET", "/api/**", 5, 300, "", "", "broad"));
+    registry.register(
+        new PaygateEndpointConfig("GET", "/api/items/{id}", 10, 600, "", "", "specific"));
+
+    var resolved = registry.resolve("GET", "/api/items/42");
+
+    assertThat(resolved.config().capability()).isEqualTo("specific");
+    assertThat(resolved.routePattern()).isEqualTo("/api/items/{id}");
+  }
+
+  @Test
+  @DisplayName("equal-specificity patterns fail closed even with identical policies")
+  void equalSpecificityPatternsFailClosed() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("GET", "/api/{left}", 10, 600, "", "", "read"));
+    registry.register(new PaygateEndpointConfig("GET", "/api/{right}", 10, 600, "", "", "read"));
+
+    assertThatThrownBy(() -> registry.resolve("GET", "/api/value"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Ambiguous endpoint registrations");
+  }
+
+  @Test
+  @DisplayName("duplicate normalized method and canonical pattern is rejected")
+  void duplicateRegistrationIsRejected() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    var original = new PaygateEndpointConfig("GET", "/api/items", 10, 600, "", "", "read");
+    registry.register(original);
+
+    assertThatThrownBy(
+            () ->
+                registry.register(
+                    new PaygateEndpointConfig("get", "/api/items", 20, 1200, "", "", "other")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Duplicate endpoint registration");
+
+    assertThat(registry.size()).isEqualTo(1);
+    assertThat(registry.resolve("GET", "/api/items"))
+        .extracting(ResolvedEndpoint::config)
+        .isSameAs(original);
+  }
+
+  @Test
+  @DisplayName("OPTIONS does not inherit a GET policy")
+  void optionsDoesNotFallBackToGet() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("GET", "/api/resource", 10, 600, "", "", "read"));
+
+    assertThat(registry.resolve("OPTIONS", "/api/resource")).isNull();
+  }
+
   private static PaymentRequired paymentRequired(String capability) {
     return new PaymentRequired() {
       @Override

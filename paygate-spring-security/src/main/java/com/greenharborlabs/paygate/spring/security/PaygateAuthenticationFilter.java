@@ -14,6 +14,7 @@ import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -122,14 +123,16 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       }
     }
 
+    ResolvedEndpoint resolvedEndpoint;
     PaygateEndpointConfig endpointConfig;
     String capability;
     try {
-      endpointConfig = resolveEndpointConfig(request, normalizedPath);
-      if (endpointConfig == null) {
+      resolvedEndpoint = resolveEndpoint(request, normalizedPath);
+      if (resolvedEndpoint == null) {
         filterChain.doFilter(request, response);
         return;
       }
+      endpointConfig = resolvedEndpoint.config();
       capability = extractCapability(endpointConfig);
     } catch (RuntimeException e) {
       SecurityContextHolder.clearContext();
@@ -141,7 +144,11 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     try {
       requestMetadata =
           extractRequestMetadata(
-              authRequest, normalizedPath, endpointConfig.pathPattern(), capability, includeDigest);
+              authRequest,
+              normalizedPath,
+              resolvedEndpoint.routePattern(),
+              capability,
+              includeDigest);
     } catch (RequestBodyTooLargeException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
@@ -223,14 +230,13 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   }
 
   /**
-   * Resolves the endpoint configuration for the current request by looking up the endpoint
-   * registry. Returns {@code null} if no config is found for the given method and path. Re-throws
-   * {@link RuntimeException} to enforce fail-closed behavior.
+   * Resolves the endpoint for the current request by looking up the endpoint registry. Returns
+   * {@code null} if no endpoint is found for the given method and path. Re-throws {@link
+   * RuntimeException} to enforce fail-closed behavior.
    */
-  private PaygateEndpointConfig resolveEndpointConfig(
-      HttpServletRequest request, String normalizedPath) {
+  private ResolvedEndpoint resolveEndpoint(HttpServletRequest request, String normalizedPath) {
     try {
-      return endpointRegistry.findConfig(request.getMethod(), normalizedPath);
+      return endpointRegistry.resolve(request.getMethod(), normalizedPath);
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,

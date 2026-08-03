@@ -19,6 +19,7 @@ import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -66,6 +67,17 @@ class PaygateAuthenticationFilterTest {
     org.mockito.Mockito.lenient()
         .when(endpointRegistry.findConfig(anyString(), anyString()))
         .thenReturn(DEFAULT_CONFIG);
+    org.mockito.Mockito.lenient()
+        .when(endpointRegistry.resolve(anyString(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              String method = invocation.getArgument(0);
+              String path = invocation.getArgument(1);
+              PaygateEndpointConfig config = endpointRegistry.findConfig(method, path);
+              return config == null
+                  ? null
+                  : new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+            });
     filter = new PaygateAuthenticationFilter(authenticationManager, List.of(), endpointRegistry);
     request = new MockHttpServletRequest();
     response = new MockHttpServletResponse();
@@ -169,6 +181,99 @@ class PaygateAuthenticationFilterTest {
         .containsEntry(VerificationContextKeys.REQUEST_PATH, "/api/orders/42")
         .containsEntry(VerificationContextKeys.REQUEST_ROUTE, "/api/orders/{orderId}")
         .containsEntry(VerificationContextKeys.REQUEST_METHOD, "POST");
+  }
+
+  @Test
+  void headUsesInheritedGetPolicyAndCanonicalRouteWhileCredentialMethodRemainsHead()
+      throws ServletException, IOException {
+    request.setMethod("HEAD");
+    request.setRequestURI("/api/orders/42");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+    var getConfig =
+        new PaygateEndpointConfig("GET", "/api/orders/{orderId}", 10, 3600, "Order", "", "read");
+    org.mockito.Mockito.doReturn(new ResolvedEndpoint(getConfig, "/api/orders/{orderId}", "GET"))
+        .when(endpointRegistry)
+        .resolve("HEAD", "/api/orders/42");
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+    filter.doFilter(request, response, filterChain);
+
+    ArgumentCaptor<PaygateAuthenticationToken> captor =
+        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
+    verify(authenticationManager).authenticate(captor.capture());
+    assertThat(captor.getValue().getRequestMetadata())
+        .containsEntry(VerificationContextKeys.REQUEST_PATH, "/api/orders/42")
+        .containsEntry(VerificationContextKeys.REQUEST_ROUTE, "/api/orders/{orderId}")
+        .containsEntry(VerificationContextKeys.REQUEST_METHOD, "HEAD")
+        .containsEntry(VerificationContextKeys.REQUESTED_CAPABILITY, "read");
+  }
+
+  @Test
+  void getBoundCredentialIsRejectedForHeadAndDoesNotContinueFilterChain()
+      throws ServletException, IOException {
+    request.setMethod("HEAD");
+    request.setRequestURI("/api/protected");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    var getConfig =
+        new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "Protected", "", null);
+    org.mockito.Mockito.doReturn(new ResolvedEndpoint(getConfig, "/api/protected", "GET"))
+        .when(endpointRegistry)
+        .resolve("HEAD", "/api/protected");
+    when(authenticationManager.authenticate(any()))
+        .thenAnswer(
+            invocation -> {
+              PaygateAuthenticationToken token = invocation.getArgument(0);
+              String actualMethod =
+                  token.getRequestMetadata().get(VerificationContextKeys.REQUEST_METHOD);
+              if (!"GET".equals(actualMethod)) {
+                throw new BadCredentialsException("credential is bound to GET");
+              }
+              return authenticatedResult;
+            });
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(401);
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void explicitHeadPolicyWinsAndStillUsesActualHeadCredentialMethod()
+      throws ServletException, IOException {
+    request.setMethod("HEAD");
+    request.setRequestURI("/api/protected");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    var headConfig =
+        new PaygateEndpointConfig("HEAD", "/api/protected", 20, 3600, "Head", "", "head-read");
+    org.mockito.Mockito.doReturn(new ResolvedEndpoint(headConfig, "/api/protected", "HEAD"))
+        .when(endpointRegistry)
+        .resolve("HEAD", "/api/protected");
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+    filter.doFilter(request, response, filterChain);
+
+    ArgumentCaptor<PaygateAuthenticationToken> captor =
+        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
+    verify(authenticationManager).authenticate(captor.capture());
+    assertThat(captor.getValue().getRequestMetadata())
+        .containsEntry(VerificationContextKeys.REQUEST_METHOD, "HEAD")
+        .containsEntry(VerificationContextKeys.REQUEST_ROUTE, "/api/protected")
+        .containsEntry(VerificationContextKeys.REQUESTED_CAPABILITY, "head-read");
+  }
+
+  @Test
+  void optionsDoesNotInheritGetPolicy() throws ServletException, IOException {
+    request.setMethod("OPTIONS");
+    request.setRequestURI("/api/protected");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    org.mockito.Mockito.doReturn(null).when(endpointRegistry).resolve("OPTIONS", "/api/protected");
+
+    filter.doFilter(request, response, filterChain);
+
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain).doFilter(request, response);
   }
 
   @Test

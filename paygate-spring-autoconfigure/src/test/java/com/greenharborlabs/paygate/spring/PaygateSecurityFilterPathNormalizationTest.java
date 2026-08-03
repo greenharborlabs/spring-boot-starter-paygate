@@ -2,7 +2,6 @@ package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -19,6 +18,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletMapping;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -282,7 +282,7 @@ class PaygateSecurityFilterPathNormalizationTest {
       var registry = new PaygateEndpointRegistry();
       registry.register(config);
       var challengeService = mock(PaygateChallengeService.class);
-      when(challengeService.createChallenge(any(), eq(config), any()))
+      when(challengeService.createChallenge(any(), any(ResolvedEndpoint.class), any()))
           .thenReturn(challengeContext());
       var filter =
           new PaygateSecurityFilter(
@@ -294,6 +294,10 @@ class PaygateSecurityFilterPathNormalizationTest {
 
       assertThat(response.getStatus()).isEqualTo(402);
       verify(chain, never()).doFilter(any(), any());
+      var resolvedEndpointCaptor = ArgumentCaptor.forClass(ResolvedEndpoint.class);
+      verify(challengeService).createChallenge(any(), resolvedEndpointCaptor.capture(), any());
+      assertThat(resolvedEndpointCaptor.getValue())
+          .isEqualTo(new ResolvedEndpoint(config, PROTECTED_PATH, "GET"));
     }
 
     private ChallengeContext challengeContext() {

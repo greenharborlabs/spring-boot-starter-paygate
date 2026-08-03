@@ -1,8 +1,12 @@
 package com.greenharborlabs.paygate.spring;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,8 +36,8 @@ public class PaygateEndpointRegistry {
 
   private final long defaultTimeoutSeconds;
   private final int maxValuesPerCaveat;
-  private final Map<String, PaygateEndpointConfig> configs = new ConcurrentHashMap<>();
-  private final Map<String, Map<String, PathPattern>> patternsByMethod = new ConcurrentHashMap<>();
+  private final Map<String, Map<String, RegisteredEndpoint>> registrationsByMethod =
+      new ConcurrentHashMap<>();
 
   /**
    * Creates a registry that resolves the {@code -1} sentinel timeout to the given default.
@@ -70,11 +74,22 @@ public class PaygateEndpointRegistry {
    */
   public void register(PaygateEndpointConfig config) {
     config = normalizeCapabilities(config);
-    var key = toKey(config.httpMethod(), config.pathPattern());
-    configs.put(key, config);
-    patternsByMethod
-        .computeIfAbsent(config.httpMethod().toUpperCase(), _ -> new ConcurrentHashMap<>())
-        .put(key, PATTERN_PARSER.parse(config.pathPattern()));
+    var method = normalizeMethod(config.httpMethod());
+    var pattern = PATTERN_PARSER.parse(config.pathPattern());
+    var canonicalPattern = pattern.getPatternString();
+    var registered = new RegisteredEndpoint(config, pattern);
+    registrationsByMethod.compute(
+        method,
+        (_, current) -> {
+          if (current != null && current.containsKey(canonicalPattern)) {
+            throw new IllegalArgumentException(
+                "Duplicate endpoint registration for " + method + " " + canonicalPattern);
+          }
+          var updated =
+              current == null ? new HashMap<String, RegisteredEndpoint>() : new HashMap<>(current);
+          updated.put(canonicalPattern, registered);
+          return Map.copyOf(updated);
+        });
   }
 
   private PaygateEndpointConfig normalizeCapabilities(PaygateEndpointConfig config) {
@@ -131,38 +146,82 @@ public class PaygateEndpointRegistry {
    * @return the endpoint config, or {@code null} if the path is not protected
    */
   public PaygateEndpointConfig findConfig(String method, String path) {
-    // Fast path: exact match
-    String exactKey = toKey(method, path);
-    PaygateEndpointConfig exact = configs.get(exactKey);
-    if (exact != null) {
-      return exact;
-    }
+    var resolved = resolve(method, path);
+    return resolved == null ? null : resolved.config();
+  }
 
-    // Slow path: only iterate patterns for the matching method + wildcard "*"
+  /**
+   * Resolves the payment policy registered for the given HTTP method and request path.
+   *
+   * <p>An explicit method registration takes precedence over the wildcard method. {@code HEAD}
+   * additionally falls back to {@code GET} before the wildcard method. Within each method bucket,
+   * exact routes take precedence over patterns and the most specific matching Spring path pattern
+   * is selected. An unresolved specificity tie fails closed.
+   *
+   * @param method the actual HTTP request method
+   * @param path the request path
+   * @return the resolved endpoint, or {@code null} if the path is not protected
+   * @throws IllegalStateException if distinct matching route patterns are equally specific
+   */
+  public ResolvedEndpoint resolve(String method, String path) {
+    var normalizedMethod = normalizeMethod(method);
+    var buckets =
+        "HEAD".equals(normalizedMethod)
+            ? List.of("HEAD", "GET", "*")
+            : "*".equals(normalizedMethod) ? List.of("*") : List.of(normalizedMethod, "*");
     var pathContainer = PathContainer.parsePath(path);
-    var methodUpper = method.toUpperCase();
 
-    // Check method-specific patterns first
-    var methodPatterns = patternsByMethod.get(methodUpper);
-    if (methodPatterns != null) {
-      for (var entry : methodPatterns.entrySet()) {
-        if (entry.getValue().matches(pathContainer)) {
-          return configs.get(entry.getKey());
-        }
+    for (String bucket : buckets) {
+      var resolved = resolveBucket(bucket, path, pathContainer);
+      if (resolved != null) {
+        return resolved;
       }
     }
-
-    // Then check wildcard "*" patterns
-    var wildcardPatterns = patternsByMethod.get("*");
-    if (wildcardPatterns != null) {
-      for (var entry : wildcardPatterns.entrySet()) {
-        if (entry.getValue().matches(pathContainer)) {
-          return configs.get(entry.getKey());
-        }
-      }
-    }
-
     return null;
+  }
+
+  private ResolvedEndpoint resolveBucket(String method, String path, PathContainer pathContainer) {
+    var registrations = registrationsByMethod.get(method);
+    if (registrations == null) {
+      return null;
+    }
+
+    var exact = registrations.get(path);
+    if (exact != null) {
+      return toResolvedEndpoint(method, exact);
+    }
+
+    var matches = new ArrayList<RegisteredEndpoint>();
+    for (RegisteredEndpoint candidate : registrations.values()) {
+      if (candidate.pattern().matches(pathContainer)) {
+        matches.add(candidate);
+      }
+    }
+    if (matches.isEmpty()) {
+      return null;
+    }
+
+    matches.sort(
+        (left, right) ->
+            PathPattern.SPECIFICITY_COMPARATOR.compare(left.pattern(), right.pattern()));
+    var selected = matches.getFirst();
+    if (matches.size() > 1
+        && PathPattern.SPECIFICITY_COMPARATOR.compare(selected.pattern(), matches.get(1).pattern())
+            == 0) {
+      throw new IllegalStateException(
+          "Ambiguous endpoint registrations for "
+              + method
+              + " "
+              + selected.pattern().getPatternString()
+              + " and "
+              + matches.get(1).pattern().getPatternString());
+    }
+    return toResolvedEndpoint(method, selected);
+  }
+
+  private ResolvedEndpoint toResolvedEndpoint(String method, RegisteredEndpoint registered) {
+    return new ResolvedEndpoint(
+        registered.config(), registered.pattern().getPatternString(), method);
   }
 
   /**
@@ -203,12 +262,17 @@ public class PaygateEndpointRegistry {
 
   /** Returns an unmodifiable view of all registered endpoint configurations. */
   public Collection<PaygateEndpointConfig> getConfigs() {
-    return Collections.unmodifiableCollection(configs.values());
+    var configs =
+        registrationsByMethod.values().stream()
+            .flatMap(registrations -> registrations.values().stream())
+            .map(RegisteredEndpoint::config)
+            .toList();
+    return Collections.unmodifiableCollection(configs);
   }
 
   /** Returns the number of registered endpoint configurations. */
   public int size() {
-    return configs.size();
+    return registrationsByMethod.values().stream().mapToInt(Map::size).sum();
   }
 
   private PaygateEndpointConfig toConfig(String method, String path, PaymentRequired annotation) {
@@ -224,7 +288,9 @@ public class PaygateEndpointRegistry {
         annotation.capability());
   }
 
-  private static String toKey(String method, String path) {
-    return method.toUpperCase() + ":" + path;
+  private static String normalizeMethod(String method) {
+    return method.toUpperCase(Locale.ROOT);
   }
+
+  private record RegisteredEndpoint(PaygateEndpointConfig config, PathPattern pattern) {}
 }
