@@ -25,6 +25,7 @@ import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.MappingMatch;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Arrays;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletMapping;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -118,6 +120,21 @@ class PaygateAuthenticationEntryPointTest {
     assertThat(response.getContentAsString()).contains("\"code\": 402");
     assertThat(response.getContentAsString()).contains("\"price_sats\": 100");
     assertThat(response.getContentAsString()).contains("\"invoice\": \"lnbc1000n1test\"");
+  }
+
+  @Test
+  void writes402ForProtectedRouteUnderPathServletMapping() throws Exception {
+    request.setRequestURI("/gateway/api/protected");
+    request.setServletPath("/gateway");
+    request.setHttpServletMapping(
+        new MockHttpServletMapping("", "/gateway/*", "dispatcher", MappingMatch.PATH));
+    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry).findConfig("GET", "/api/protected");
   }
 
   @Test

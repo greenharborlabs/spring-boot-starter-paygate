@@ -4,9 +4,9 @@ import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
-import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
@@ -102,7 +102,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     String authHeader = request.getHeader(AUTHORIZATION_HEADER);
     String normalizedPath;
     try {
-      normalizedPath = PathNormalizer.normalize(request.getRequestURI());
+      normalizedPath = ApplicationRelativeRequestResolver.resolve(request);
     } catch (RuntimeException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeMalformedUri(response);

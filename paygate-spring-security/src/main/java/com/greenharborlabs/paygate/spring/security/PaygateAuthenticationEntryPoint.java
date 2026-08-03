@@ -3,7 +3,7 @@ package com.greenharborlabs.paygate.spring.security;
 import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
-import com.greenharborlabs.paygate.spring.LogSanitizer;
+import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -57,23 +57,11 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       throws IOException {
     try {
       String method = request.getMethod();
-      String rawRequestUri;
-      try {
-        rawRequestUri = request.getRequestURI();
-      } catch (RuntimeException e) {
-        log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: <unavailable>");
-        PaygateResponseWriter.writeMalformedUri(response);
-        return;
-      }
-
       String path;
       try {
-        path = normalizePath(rawRequestUri);
-      } catch (Exception e) {
-        log.log(
-            System.Logger.Level.WARNING,
-            "Rejected request with malformed URI: {0}",
-            LogSanitizer.sanitize(rawRequestUri));
+        path = ApplicationRelativeRequestResolver.resolve(request);
+      } catch (RuntimeException e) {
+        log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: <unavailable>");
         PaygateResponseWriter.writeMalformedUri(response);
         return;
       }

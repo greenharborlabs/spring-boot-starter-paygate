@@ -95,11 +95,9 @@ public class PaygateSecurityFilter implements Filter {
     }
 
     String method = httpRequest.getMethod();
-    String rawRequestUri;
     String path;
     try {
-      rawRequestUri = httpRequest.getRequestURI();
-      path = normalizePath(rawRequestUri);
+      path = ApplicationRelativeRequestResolver.resolve(httpRequest);
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING, "Rejected request with malformed URI: {0}", "<unavailable>");

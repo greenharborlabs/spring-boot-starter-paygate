@@ -172,6 +172,28 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
+  void authenticatesProtectedRouteUnderContextPathUsingApplicationRelativePath()
+      throws ServletException, IOException {
+    request.setMethod("GET");
+    request.setRequestURI("/shop/api/protected");
+    request.setContextPath("/shop");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    var config = new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "desc", "", "read");
+    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+    filter.doFilter(request, response, filterChain);
+
+    ArgumentCaptor<PaygateAuthenticationToken> captor =
+        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
+    verify(authenticationManager).authenticate(captor.capture());
+    assertThat(captor.getValue().getRequestMetadata())
+        .containsEntry(VerificationContextKeys.REQUEST_PATH, "/api/protected");
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
+  }
+
+  @Test
   void extractsLsatCredentialAndAuthenticates() throws ServletException, IOException {
     request.addHeader("Authorization", "LSAT " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
     when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
@@ -475,6 +497,22 @@ class PaygateAuthenticationFilterTest {
         .isEqualTo(
             "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");
     verify(authenticationManager, never()).authenticate(any());
+  }
+
+  @Test
+  void rejectsAmbiguousContextPrefixBeforeAuthenticationOrHandler()
+      throws ServletException, IOException {
+    request.setMethod("GET");
+    request.setRequestURI("/application/api/protected");
+    request.setContextPath("/app");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(endpointRegistry, never()).findConfig(anyString(), anyString());
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain, never()).doFilter(any(), any());
   }
 
   @Test
