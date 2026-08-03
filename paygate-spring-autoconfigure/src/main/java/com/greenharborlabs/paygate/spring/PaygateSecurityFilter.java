@@ -192,8 +192,9 @@ public class PaygateSecurityFilter implements Filter {
     String capability = config.capability();
     String digest = includeDigest ? RequestDigestSupport.computeDigest(httpRequest, path) : null;
 
-    var context = new java.util.LinkedHashMap<String, String>(5);
+    var context = new java.util.LinkedHashMap<String, String>(6);
     context.put(VerificationContextKeys.REQUEST_PATH, path);
+    context.put(VerificationContextKeys.REQUEST_ROUTE, config.pathPattern());
     context.put(VerificationContextKeys.REQUEST_METHOD, method);
     context.put(VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
     if (digest != null) {

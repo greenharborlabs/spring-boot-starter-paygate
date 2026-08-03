@@ -105,6 +105,8 @@ public class PaygateChallengeService {
   public ChallengeContext createChallenge(
       HttpServletRequest request, PaygateEndpointConfig config, ChallengeOptions options)
       throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    Objects.requireNonNull(request, "request must not be null");
+    Objects.requireNonNull(config, "config must not be null");
     Objects.requireNonNull(options, "options must not be null");
 
     // 1. Check Lightning backend health
@@ -119,7 +121,7 @@ public class PaygateChallengeService {
 
     // 3. Generate root key, create invoice, build context
     try {
-      return buildChallengeContext(request, config);
+      return buildChallengeContext(request, config, config.pathPattern(), request.getMethod());
     } catch (PaygateLightningUnavailableException e) {
       throw e;
     } catch (RuntimeException e) {
@@ -188,7 +190,10 @@ public class PaygateChallengeService {
   // Future optimization: consider virtual threads or structured concurrency
   // to parallelize (1) and (2) when they are independent.
   private ChallengeContext buildChallengeContext(
-      HttpServletRequest request, PaygateEndpointConfig config)
+      HttpServletRequest request,
+      PaygateEndpointConfig config,
+      String routePattern,
+      String requestMethod)
       throws PaygateLightningUnavailableException {
 
     // Resolve effective price before creating any root key material.
@@ -249,7 +254,9 @@ public class PaygateChallengeService {
                   config.capability(),
                   rootKeyClone,
                   opaque,
-                  requestDigest);
+                  requestDigest,
+                  routePattern,
+                  requestMethod);
 
           // Populate capability cache after successful invoice creation
           if (capabilityCache != null

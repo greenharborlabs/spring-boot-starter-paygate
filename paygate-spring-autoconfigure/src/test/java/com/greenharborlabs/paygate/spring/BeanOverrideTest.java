@@ -121,7 +121,12 @@ class BeanOverrideTest {
 
     final L402Validator customValidator =
         new L402Validator(
-            new InMemoryRootKeyStore(), new InMemoryCredentialStore(), List.of(), "custom-service");
+            new InMemoryRootKeyStore(),
+            new InMemoryCredentialStore(),
+            List.of(
+                new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50)),
+            "custom-service");
 
     @Bean
     L402Validator paygateValidator() {

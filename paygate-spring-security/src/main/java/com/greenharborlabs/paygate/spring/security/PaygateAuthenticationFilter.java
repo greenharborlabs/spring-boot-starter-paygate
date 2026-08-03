@@ -140,7 +140,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     Map<String, String> requestMetadata;
     try {
       requestMetadata =
-          extractRequestMetadata(authRequest, normalizedPath, capability, includeDigest);
+          extractRequestMetadata(
+              authRequest, normalizedPath, endpointConfig.pathPattern(), capability, includeDigest);
     } catch (RequestBodyTooLargeException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
@@ -197,10 +198,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   }
 
   private Map<String, String> extractRequestMetadata(
-      HttpServletRequest request, String normalizedPath, String capability, boolean includeDigest)
+      HttpServletRequest request,
+      String normalizedPath,
+      String canonicalRoute,
+      String capability,
+      boolean includeDigest)
       throws IOException {
-    Map<String, String> metadata = new HashMap<>(4);
+    Map<String, String> metadata = new HashMap<>(5);
     metadata.put(VerificationContextKeys.REQUEST_PATH, normalizedPath);
+    metadata.put(VerificationContextKeys.REQUEST_ROUTE, canonicalRoute);
     metadata.put(VerificationContextKeys.REQUEST_METHOD, request.getMethod());
     String clientIp =
         clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();

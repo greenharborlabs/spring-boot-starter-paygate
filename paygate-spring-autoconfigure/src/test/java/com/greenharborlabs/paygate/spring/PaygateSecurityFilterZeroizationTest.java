@@ -104,7 +104,14 @@ class PaygateSecurityFilterZeroizationTest {
   void constructorRejectsNullChallengeService() {
     var registry = new PaygateEndpointRegistry();
     var rootKeyStore = new ZeroizationTrackingRootKeyStore();
-    var validator = new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+    var validator =
+        new L402Validator(
+            rootKeyStore,
+            credentialStore,
+            List.of(
+                new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50)),
+            SERVICE_NAME);
     var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
 
     assertThatNullPointerException()
@@ -125,7 +132,14 @@ class PaygateSecurityFilterZeroizationTest {
         new PaygateEndpointConfig(
             "GET", PROTECTED_PATH, PRICE_SATS, TIMEOUT_SECONDS, "Test protected endpoint", "", ""));
 
-    var validator = new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+    var validator =
+        new L402Validator(
+            rootKeyStore,
+            credentialStore,
+            List.of(
+                new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50)),
+            SERVICE_NAME);
     var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
     var properties = new PaygateProperties();
     properties.setServiceName("test-service");

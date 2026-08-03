@@ -117,7 +117,9 @@ class PaygateMetricsTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of();
+      return List.of(
+          new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50));
     }
 
     @Bean
@@ -857,7 +859,14 @@ class PaygateMetricsTest {
     new SecureRandom().nextBytes(tokenId);
 
     MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
-    Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, List.of());
+    Macaroon macaroon =
+        MacaroonMinter.mint(
+            ROOT_KEY,
+            identifier,
+            null,
+            List.of(
+                new com.greenharborlabs.paygate.core.macaroon.Caveat("route", PROTECTED_PATH),
+                new com.greenharborlabs.paygate.core.macaroon.Caveat("method", "GET")));
 
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -877,7 +886,14 @@ class PaygateMetricsTest {
     new SecureRandom().nextBytes(tokenId);
 
     MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
-    Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, List.of());
+    Macaroon macaroon =
+        MacaroonMinter.mint(
+            ROOT_KEY,
+            identifier,
+            null,
+            List.of(
+                new com.greenharborlabs.paygate.core.macaroon.Caveat("route", PROTECTED_PATH),
+                new com.greenharborlabs.paygate.core.macaroon.Caveat("method", "GET")));
 
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);

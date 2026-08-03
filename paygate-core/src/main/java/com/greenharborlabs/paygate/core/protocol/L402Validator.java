@@ -31,6 +31,8 @@ import java.util.Set;
 public final class L402Validator {
 
   private static final long DEFAULT_TTL_SECONDS = 3600;
+  private static final String ROUTE_CAVEAT_KEY = "route";
+  private static final String METHOD_CAVEAT_KEY = "method";
 
   private final RootKeyStore rootKeyStore;
   private final CredentialStore credentialStore;
@@ -48,6 +50,8 @@ public final class L402Validator {
     List<CaveatVerifier> verifiers =
         List.copyOf(Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
     this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(verifiers);
+    requireBoundaryVerifier(ROUTE_CAVEAT_KEY);
+    requireBoundaryVerifier(METHOD_CAVEAT_KEY);
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
   }
 
@@ -138,34 +142,40 @@ public final class L402Validator {
     boolean returningCredential = false;
 
     try {
-      // 2. Check credential cache — verify presented credential matches cached, re-verify caveats.
+      // 2. Decode the identifier and verify proof-of-payment before consulting or comparing
+      //    cached credential variants. This ordering prevents cache membership from becoming a
+      //    macaroon/signature oracle for callers that do not possess the payment preimage.
+      MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
+      byte[] tokenIdBytes = macId.tokenId();
+      verifyPreimage(credential, macId);
+
+      // 3. Check credential cache — verify presented credential matches cached, re-verify caveats.
       //    Root key existence is NOT re-checked here: the credential was fully validated
       //    (including root key + HMAC) before it entered the cache. If a root key is revoked,
       //    the revoking code should proactively call credentialStore.revoke() to evict it.
       L402Credential cached = credentialStore.get(tokenId);
       if (cached != null) {
         try {
-          return verifyCachedCredential(credential, cached, context);
+          // A token ID identifies a cache slot, not an immutable macaroon variant. Only reuse the
+          // exact cached variant; a changed or attenuated variant must take the full verification
+          // path below. Failure there must not evict this independently valid cached credential.
+          if (credential.macaroon().equals(cached.macaroon())
+              && credential.additionalMacaroons().equals(cached.additionalMacaroons())) {
+            return verifyCachedCredential(credential, cached, context);
+          }
         } finally {
           cached.destroy();
         }
       }
 
-      // 3. Decode identifier
-      MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
-      byte[] tokenIdBytes = macId.tokenId();
-
-      // 4. Verify preimage matches payment hash (BEFORE root key lookup — see security invariant)
-      verifyPreimage(credential, macId);
-
-      // 5. Look up root key
+      // 4. Look up root key
       SensitiveBytes rootKeySb = rootKeyStore.getRootKey(tokenIdBytes);
       if (rootKeySb == null) {
         throw new L402Exception(
             ErrorCode.REVOKED_CREDENTIAL, "No root key found for token", tokenId);
       }
 
-      // 6. Verify macaroon signature and caveats using the provided context
+      // 5. Verify macaroon signature and caveats using the provided context
       Instant now = context.getCurrentTime();
       try (rootKeySb) {
         byte[] rootKey = rootKeySb.value();
@@ -178,7 +188,7 @@ public final class L402Validator {
         }
       }
 
-      // 7. Cache the credential with TTL derived from valid_until caveats
+      // 6. Cache the credential with TTL derived from valid_until caveats
       long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
       credentialStore.store(tokenId, credential, cacheTtl);
 
@@ -192,12 +202,9 @@ public final class L402Validator {
   }
 
   /**
-   * Validates a presented credential against a cached credential. Verification order: preimage,
-   * then signature, then caveats.
-   *
-   * <p>Preimage is checked first to uphold the security invariant: proof-of-payment must be
-   * verified before any macaroon-structural checks, preventing an adversary without payment proof
-   * from probing signature validity.
+   * Validates an exact presented credential variant against a cached credential. Verification
+   * order: mandatory boundary presence, then caveats. The caller has already verified the presented
+   * preimage against the payment hash before selecting this cached variant.
    *
    * @param credential the presented credential from the request
    * @param cached the previously validated and cached credential
@@ -210,30 +217,20 @@ public final class L402Validator {
       L402Credential credential, L402Credential cached, L402VerificationContext context) {
     String tokenId = credential.tokenId();
 
-    // Verify preimage first (security invariant: proof-of-payment before signature)
-    if (!credential.preimage().equals(cached.preimage())) {
-      throw new L402Exception(
-          ErrorCode.INVALID_PREIMAGE,
-          "Presented preimage does not match cached credential",
-          tokenId);
-    }
-
-    // Verify the presented macaroon matches the cached one. Signature-only comparison is
-    // insufficient because unsigned fields such as location can be altered without changing the
-    // signature bytes.
-    if (!credential.macaroon().equals(cached.macaroon())
-        || !credential.additionalMacaroons().equals(cached.additionalMacaroons())) {
-      throw new L402Exception(
-          ErrorCode.INVALID_MACAROON,
-          "Presented macaroon does not match cached credential",
-          tokenId);
-    }
-
     // Re-verify all caveats against the provided context (includes escalation detection)
+    try {
+      verifyRequiredBoundaryCaveats(cached.macaroon().caveats());
+    } catch (MacaroonVerificationException e) {
+      credentialStore.revoke(tokenId);
+      throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
+    }
     try {
       MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiersByKey, context);
     } catch (MacaroonVerificationException e) {
-      credentialStore.revoke(tokenId);
+      if (e.getReason() == VerificationFailureReason.CREDENTIAL_EXPIRED
+          || e.getReason() == VerificationFailureReason.CAVEAT_ESCALATION) {
+        credentialStore.revoke(tokenId);
+      }
       throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
     }
 
@@ -256,9 +253,30 @@ public final class L402Validator {
         throw new MacaroonVerificationException("signature verification failed");
       }
 
+      verifyRequiredBoundaryCaveats(macaroon.caveats());
       MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
     } finally {
       KeyMaterial.zeroize(derivedKey, sig);
+    }
+  }
+
+  private void requireBoundaryVerifier(String key) {
+    if (!caveatVerifiersByKey.containsKey(key)) {
+      throw new IllegalArgumentException("Missing required " + key + " caveat verifier");
+    }
+  }
+
+  private static void verifyRequiredBoundaryCaveats(List<Caveat> caveats) {
+    boolean hasRoute = false;
+    boolean hasMethod = false;
+    for (Caveat caveat : caveats) {
+      hasRoute |= ROUTE_CAVEAT_KEY.equals(caveat.key());
+      hasMethod |= METHOD_CAVEAT_KEY.equals(caveat.key());
+    }
+    if (!hasRoute || !hasMethod) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET,
+          "Credential is missing a required request boundary caveat");
     }
   }
 
@@ -279,7 +297,9 @@ public final class L402Validator {
     byte[] paymentHash = macId.paymentHash();
     if (!credential.preimage().matchesHash(paymentHash)) {
       throw new L402Exception(
-          ErrorCode.INVALID_PREIMAGE, "Preimage does not match payment hash", credential.tokenId());
+          ErrorCode.INVALID_PREIMAGE,
+          "Presented preimage does not match payment hash",
+          credential.tokenId());
     }
   }
 

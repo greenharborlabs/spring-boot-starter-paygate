@@ -25,6 +25,9 @@ import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -69,6 +72,13 @@ class L402ProtocolTest {
     assertThatThrownBy(() -> new L402Protocol(validator, null))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("serviceName");
+  }
+
+  @Test
+  void clockConstructor_rejectsNullClock() {
+    assertThatThrownBy(() -> new L402Protocol(validator, SERVICE_NAME, null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("clock");
   }
 
   @Nested
@@ -231,6 +241,80 @@ class L402ProtocolTest {
   class FormatChallenge {
 
     @Test
+    void fixedClockProducesDeterministicBoundCaveatOrderAndExpiry() {
+      Instant issuanceTime = Instant.parse("2026-01-02T03:04:05Z");
+      protocol =
+          new L402Protocol(validator, SERVICE_NAME, Clock.fixed(issuanceTime, ZoneOffset.UTC));
+      byte[] rootKey = new byte[32];
+      Arrays.fill(rootKey, (byte) 0x01);
+      byte[] paymentHash = new byte[32];
+      Arrays.fill(paymentHash, (byte) 0x02);
+      byte[] tokenId = new byte[32];
+      Arrays.fill(tokenId, (byte) 0x03);
+      ChallengeContext context =
+          new ChallengeContext(
+              paymentHash,
+              HEX.formatHex(tokenId),
+              "lnbc1invoice",
+              10L,
+              "test description",
+              SERVICE_NAME,
+              3600L,
+              "read",
+              rootKey,
+              null,
+              null,
+              "/widgets/{id}",
+              "POST");
+
+      ChallengeResponse response = protocol.formatChallenge(context);
+      ChallengeResponse repeatedResponse = protocol.formatChallenge(context);
+      byte[] serialized =
+          Base64.getDecoder().decode(extractQuotedValue(response.wwwAuthenticateHeader(), "token"));
+      var macaroon = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(repeatedResponse.wwwAuthenticateHeader())
+          .isEqualTo(response.wwwAuthenticateHeader());
+      assertThat(extractQuotedValue(response.wwwAuthenticateHeader(), "token"))
+          .isEqualTo(
+              "AgJCAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAIXc2VydmljZXM9dGVzdC1zZXJ2aWNlOjAAAhNyb3V0ZT0vd2lkZ2V0cy97aWR9AAILbWV0aG9kPVBPU1QAAh50ZXN0LXNlcnZpY2VfY2FwYWJpbGl0aWVzPXJlYWQAAiN0ZXN0LXNlcnZpY2VfdmFsaWRfdW50aWw9MTc2NzMyNjY0NQAABiBwdJIyRaGp/qak4kF9s2UFpVCqvWoV9CmhQU4Z6lCCSQ==");
+      assertThat(macaroon.caveats())
+          .extracting(caveat -> caveat.key() + "=" + caveat.value())
+          .containsExactly(
+              "services=" + SERVICE_NAME + ":0",
+              "route=/widgets/{id}",
+              "method=POST",
+              SERVICE_NAME + "_capabilities=read",
+              SERVICE_NAME + "_valid_until=1767326645");
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", " ", "\t"})
+    void rejectsMissingOrBlankRouteBoundaryBeforeIssuance(String routePattern) {
+      ChallengeContext context = challengeContext(routePattern, "GET", "read");
+
+      assertThatThrownBy(() -> protocol.formatChallenge(context))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("route pattern must not be blank")
+          .hasMessageNotContaining("secret-invoice")
+          .hasMessageNotContaining(context.tokenId());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", " ", "\t"})
+    void rejectsMissingOrBlankMethodBoundaryBeforeIssuance(String requestMethod) {
+      ChallengeContext context = challengeContext("/widgets/{id}", requestMethod, "read");
+
+      assertThatThrownBy(() -> protocol.formatChallenge(context))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("request method must not be blank")
+          .hasMessageNotContaining("secret-invoice")
+          .hasMessageNotContaining(context.tokenId());
+    }
+
+    @Test
     void producesCorrectWwwAuthenticateHeaderFormat() {
       byte[] rootKey = new byte[32];
       Arrays.fill(rootKey, (byte) 0x01);
@@ -253,7 +337,9 @@ class L402ProtocolTest {
               "read",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
 
@@ -286,7 +372,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -321,7 +409,9 @@ class L402ProtocolTest {
               "write",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "POST");
 
       ChallengeResponse response = protocol.formatChallenge(context);
 
@@ -361,7 +451,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -372,8 +464,8 @@ class L402ProtocolTest {
       var macaroon = MacaroonSerializer.deserializeV2(macBytes);
 
       assertThat(macaroon.caveats())
-          .noneSatisfy(
-              caveat -> assertThat(caveat.key()).isEqualTo(SERVICE_NAME + "_capabilities"));
+          .extracting(caveat -> caveat.key())
+          .containsExactly("services", "route", "method", SERVICE_NAME + "_valid_until");
     }
 
     @Test
@@ -395,7 +487,9 @@ class L402ProtocolTest {
               "read",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -432,7 +526,9 @@ class L402ProtocolTest {
               "read",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -471,7 +567,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       assertThatThrownBy(() -> protocol.formatChallenge(context))
           .isInstanceOf(IllegalArgumentException.class)
@@ -498,7 +596,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -513,6 +613,22 @@ class L402ProtocolTest {
 
   @Nested
   class Validate {
+
+    @Test
+    void validationUsesInjectedClock() {
+      Instant currentTime = Instant.parse("2026-03-04T05:06:07Z");
+      protocol =
+          new L402Protocol(validator, SERVICE_NAME, Clock.fixed(currentTime, ZoneOffset.UTC));
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      ArgumentCaptor<L402VerificationContext> contextCaptor =
+          ArgumentCaptor.forClass(L402VerificationContext.class);
+      when(validator.validate(eq(authHeader), contextCaptor.capture())).thenReturn(null);
+
+      protocol.validate(credential, Map.of());
+
+      assertThat(contextCaptor.getValue().getCurrentTime()).isEqualTo(currentTime);
+    }
 
     @Test
     void delegatesToL402Validator() {
@@ -759,7 +875,9 @@ class L402ProtocolTest {
               "  ",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -801,6 +919,30 @@ class L402ProtocolTest {
   }
 
   // --- Test helpers ---
+
+  private ChallengeContext challengeContext(
+      String routePattern, String requestMethod, String capability) {
+    byte[] paymentHash = new byte[32];
+    Arrays.fill(paymentHash, (byte) 0x22);
+    byte[] tokenId = new byte[32];
+    Arrays.fill(tokenId, (byte) 0x33);
+    byte[] rootKey = new byte[32];
+    Arrays.fill(rootKey, (byte) 0x44);
+    return new ChallengeContext(
+        paymentHash,
+        HEX.formatHex(tokenId),
+        "secret-invoice",
+        1L,
+        null,
+        SERVICE_NAME,
+        60L,
+        capability,
+        rootKey,
+        null,
+        null,
+        routePattern,
+        requestMethod);
+  }
 
   /** Builds a valid L402/LSAT Authorization header using real macaroon infrastructure. */
   private String buildValidAuthHeader(String scheme) {

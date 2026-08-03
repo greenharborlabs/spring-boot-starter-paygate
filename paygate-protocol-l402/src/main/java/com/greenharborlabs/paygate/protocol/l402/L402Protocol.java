@@ -17,6 +17,7 @@ import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -36,10 +37,16 @@ public class L402Protocol implements PaymentProtocol {
 
   private final L402Validator validator;
   private final String serviceName;
+  private final Clock clock;
 
   public L402Protocol(L402Validator validator, String serviceName) {
+    this(validator, serviceName, Clock.systemUTC());
+  }
+
+  public L402Protocol(L402Validator validator, String serviceName, Clock clock) {
     this.validator = Objects.requireNonNull(validator, "validator must not be null");
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
+    this.clock = Objects.requireNonNull(clock, "clock must not be null");
   }
 
   @Override
@@ -89,17 +96,23 @@ public class L402Protocol implements PaymentProtocol {
 
   @Override
   public ChallengeResponse formatChallenge(ChallengeContext context) {
+    Objects.requireNonNull(context, "context must not be null");
+    String routePattern = requireChallengeBoundary(context.routePattern(), "route pattern");
+    String requestMethod = requireChallengeBoundary(context.requestMethod(), "request method");
+
     byte[] tokenIdBytes = HexFormat.of().parseHex(context.tokenId());
     MacaroonIdentifier identifier =
         new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, context.paymentHash(), tokenIdBytes);
 
     List<Caveat> caveats = new ArrayList<>();
     caveats.add(new Caveat("services", serviceName + ":0"));
+    caveats.add(new Caveat("route", routePattern));
+    caveats.add(new Caveat("method", requestMethod));
     String capability = context.capability();
     if (capability != null && !capability.isBlank()) {
       caveats.add(new Caveat(serviceName + "_capabilities", capability));
     }
-    Instant validUntil = Instant.now().plusSeconds(context.timeoutSeconds());
+    Instant validUntil = Instant.now(clock).plusSeconds(context.timeoutSeconds());
     caveats.add(
         new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
 
@@ -144,7 +157,7 @@ public class L402Protocol implements PaymentProtocol {
     L402VerificationContext context =
         L402VerificationContext.builder()
             .serviceName(serviceName)
-            .currentTime(Instant.now())
+            .currentTime(Instant.now(clock))
             .requestMetadata(requestContext)
             .build();
 
@@ -158,6 +171,13 @@ public class L402Protocol implements PaymentProtocol {
         result.credential().destroy();
       }
     }
+  }
+
+  private static String requireChallengeBoundary(String value, String boundaryName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(boundaryName + " must not be blank");
+    }
+    return value;
   }
 
   /**

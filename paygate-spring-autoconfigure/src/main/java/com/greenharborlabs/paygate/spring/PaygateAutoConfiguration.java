@@ -14,6 +14,7 @@ import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ObservableRootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.PathCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
@@ -199,6 +200,7 @@ public class PaygateAutoConfiguration {
         new ValidUntilCaveatVerifier(svcName),
         new CapabilitiesCaveatVerifier(svcName, maxValues),
         new PathCaveatVerifier(maxValues),
+        new RouteCaveatVerifier(maxValues),
         new MethodCaveatVerifier(maxValues),
         new ClientIpCaveatVerifier(maxValues));
   }

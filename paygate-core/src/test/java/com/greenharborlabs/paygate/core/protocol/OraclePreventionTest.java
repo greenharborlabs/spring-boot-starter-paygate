@@ -6,14 +6,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
+import com.greenharborlabs.paygate.core.macaroon.Caveat;
+import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -37,6 +44,8 @@ class OraclePreventionTest {
   private static final HexFormat HEX = HexFormat.of();
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final String SERVICE_NAME = "test-api";
+  private static final String REQUEST_ROUTE = "/paid-resource";
+  private static final String REQUEST_METHOD = "GET";
 
   private byte[] rootKey;
   private byte[] preimageBytes;
@@ -115,7 +124,7 @@ class OraclePreventionTest {
     tokenIdHex = HEX.formatHex(tokenIdBytes);
 
     identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
-    macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", List.of());
+    macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", boundaryCaveats());
 
     // Register the root key so the validator can look it up by tokenId
     rootKeyMap.put(tokenIdHex, rootKey);
@@ -133,6 +142,27 @@ class OraclePreventionTest {
     byte[] wrongPreimage = new byte[32];
     RANDOM.nextBytes(wrongPreimage);
     return HEX.formatHex(wrongPreimage);
+  }
+
+  private List<Caveat> boundaryCaveats() {
+    return List.of(new Caveat("route", REQUEST_ROUTE), new Caveat("method", REQUEST_METHOD));
+  }
+
+  private List<CaveatVerifier> boundaryVerifiers() {
+    return List.of(new RouteCaveatVerifier(10), new MethodCaveatVerifier(10));
+  }
+
+  private L402VerificationContext boundaryContext() {
+    return L402VerificationContext.builder()
+        .serviceName(SERVICE_NAME)
+        .currentTime(Instant.now())
+        .requestMetadata(
+            Map.of(
+                VerificationContextKeys.REQUEST_ROUTE,
+                REQUEST_ROUTE,
+                VerificationContextKeys.REQUEST_METHOD,
+                REQUEST_METHOD))
+        .build();
   }
 
   @Nested
@@ -167,9 +197,9 @@ class OraclePreventionTest {
       String header = buildHeader(macaroon, wrongPreimageHex());
 
       L402Validator validator =
-          new L402Validator(spyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(spyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      assertThatThrownBy(() -> validator.validate(header))
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               ex -> {
@@ -195,20 +225,21 @@ class OraclePreventionTest {
       byte[] differentRootKey = new byte[32];
       RANDOM.nextBytes(differentRootKey);
       Macaroon tamperedMacaroon =
-          MacaroonMinter.mint(differentRootKey, identifier, "https://example.com", List.of());
+          MacaroonMinter.mint(
+              differentRootKey, identifier, "https://example.com", boundaryCaveats());
       String headerTamperedMac = buildHeader(tamperedMacaroon, wrongPreimage);
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       // Both must fail with INVALID_PREIMAGE — an attacker cannot distinguish
       // whether the macaroon signature was valid or not
       L402Exception[] exceptions = new L402Exception[2];
-      assertThatThrownBy(() -> validator.validate(headerValidMac))
+      assertThatThrownBy(() -> validator.validate(headerValidMac, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(ex -> exceptions[0] = (L402Exception) ex);
 
-      assertThatThrownBy(() -> validator.validate(headerTamperedMac))
+      assertThatThrownBy(() -> validator.validate(headerTamperedMac, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(ex -> exceptions[1] = (L402Exception) ex);
 
@@ -240,9 +271,9 @@ class OraclePreventionTest {
       String header = buildHeader(macaroon, wrongPreimageHex());
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      assertThatThrownBy(() -> validator.validate(header))
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               ex -> {
@@ -275,16 +306,16 @@ class OraclePreventionTest {
       String headerTamperedSig = "L402 " + tamperedBase64 + ":" + wrongPreimage;
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       // Both must fail with INVALID_PREIMAGE — an attacker cannot determine
       // whether their tampered signature would have been accepted
       L402Exception[] exceptions = new L402Exception[2];
-      assertThatThrownBy(() -> validator.validate(headerCorrectSig))
+      assertThatThrownBy(() -> validator.validate(headerCorrectSig, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(ex -> exceptions[0] = (L402Exception) ex);
 
-      assertThatThrownBy(() -> validator.validate(headerTamperedSig))
+      assertThatThrownBy(() -> validator.validate(headerTamperedSig, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(ex -> exceptions[1] = (L402Exception) ex);
 

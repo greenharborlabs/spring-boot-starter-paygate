@@ -90,7 +90,9 @@ class FailClosedTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of();
+      return List.of(
+          new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50));
     }
 
     @Bean

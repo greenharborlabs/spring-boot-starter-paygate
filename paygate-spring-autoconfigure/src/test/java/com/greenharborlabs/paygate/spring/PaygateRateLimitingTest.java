@@ -72,6 +72,14 @@ class PaygateRateLimitingTest {
     new SecureRandom().nextBytes(ROOT_KEY);
   }
 
+  private static List<CaveatVerifier> caveatVerifiersForTest() {
+    return List.of(
+        new ServicesCaveatVerifier(50),
+        new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+        new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+        new ValidUntilCaveatVerifier(SERVICE_NAME));
+  }
+
   // -----------------------------------------------------------------------
   // Test: unauthenticated requests beyond rate limit return 429
   // -----------------------------------------------------------------------
@@ -384,7 +392,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -471,7 +479,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -559,7 +567,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -642,7 +650,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -730,7 +738,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -825,7 +833,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -954,6 +962,8 @@ class PaygateRateLimitingTest {
       List<Caveat> caveats =
           List.of(
               new Caveat("services", SERVICE_NAME + ":0"),
+              new Caveat("route", PROTECTED_PATH),
+              new Caveat("method", "GET"),
               new Caveat(
                   SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);

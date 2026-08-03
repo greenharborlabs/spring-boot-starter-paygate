@@ -148,6 +148,30 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
+  void l402TokenIncludesConcretePathCanonicalRouteAndActualMethod()
+      throws ServletException, IOException {
+    request.setMethod("POST");
+    request.setRequestURI("/api/orders/42");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+    var matchedConfig =
+        new PaygateEndpointConfig("GET", "/api/orders/{orderId}", 10, 3600, "Order", "", null);
+    when(endpointRegistry.findConfig("POST", "/api/orders/42")).thenReturn(matchedConfig);
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+    filter.doFilter(request, response, filterChain);
+
+    ArgumentCaptor<PaygateAuthenticationToken> captor =
+        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
+    verify(authenticationManager).authenticate(captor.capture());
+
+    assertThat(captor.getValue().getRequestMetadata())
+        .containsEntry(VerificationContextKeys.REQUEST_PATH, "/api/orders/42")
+        .containsEntry(VerificationContextKeys.REQUEST_ROUTE, "/api/orders/{orderId}")
+        .containsEntry(VerificationContextKeys.REQUEST_METHOD, "POST");
+  }
+
+  @Test
   void extractsLsatCredentialAndAuthenticates() throws ServletException, IOException {
     request.addHeader("Authorization", "LSAT " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
     when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);

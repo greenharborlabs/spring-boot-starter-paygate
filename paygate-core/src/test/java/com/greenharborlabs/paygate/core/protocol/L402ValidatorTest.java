@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.core.protocol;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
@@ -11,17 +12,22 @@ import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -42,6 +48,8 @@ class L402ValidatorTest {
   private static final HexFormat HEX = HexFormat.of();
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final String SERVICE_NAME = "test-api";
+  private static final String REQUEST_ROUTE = "/widgets/{id}";
+  private static final String REQUEST_METHOD = "GET";
 
   private byte[] rootKey;
   private byte[] preimageBytes;
@@ -114,6 +122,35 @@ class L402ValidatorTest {
         }
       };
 
+  @Nested
+  @DisplayName("mandatory boundary verifier registration")
+  class MandatoryBoundaryVerifierRegistration {
+
+    @Test
+    @DisplayName("constructor rejects a missing route or method verifier")
+    void constructorRejectsMissingRouteOrMethodVerifier() {
+      assertThatThrownBy(
+              () ->
+                  new L402Validator(
+                      rootKeyStore,
+                      credentialStore,
+                      List.of(new MethodCaveatVerifier(10)),
+                      SERVICE_NAME))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("route");
+
+      assertThatThrownBy(
+              () ->
+                  new L402Validator(
+                      rootKeyStore,
+                      credentialStore,
+                      List.of(new RouteCaveatVerifier(10)),
+                      SERVICE_NAME))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("method");
+    }
+  }
+
   @BeforeEach
   void setUp() throws NoSuchAlgorithmException {
     rootKeyMap.clear();
@@ -131,7 +168,7 @@ class L402ValidatorTest {
     tokenIdHex = HEX.formatHex(tokenIdBytes);
 
     identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
-    macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", List.of());
+    macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", boundaryCaveats());
 
     // Register the root key so the validator can look it up by tokenId
     rootKeyMap.put(tokenIdHex, rootKey);
@@ -235,9 +272,10 @@ class L402ValidatorTest {
     @DisplayName("returns credential when macaroon signature and preimage are valid")
     void validCredentialPasses() {
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      L402Validator.ValidationResult result = validator.validate(validAuthHeader);
+      L402Validator.ValidationResult result =
+          validator.validate(validAuthHeader, boundaryContext());
 
       assertThat(result).isNotNull();
       assertThat(result.freshValidation()).isTrue();
@@ -250,9 +288,10 @@ class L402ValidatorTest {
     void freshValidationResultRemainsUsableAfterCacheRevocation() {
       try (var realStore = new InMemoryCredentialStore(100, 0)) {
         L402Validator validator =
-            new L402Validator(rootKeyStore, realStore, List.of(), SERVICE_NAME);
+            new L402Validator(rootKeyStore, realStore, boundaryVerifiers(), SERVICE_NAME);
 
-        L402Validator.ValidationResult result = validator.validate(validAuthHeader);
+        L402Validator.ValidationResult result =
+            validator.validate(validAuthHeader, boundaryContext());
         realStore.revoke(tokenIdHex);
 
         assertThat(result.freshValidation()).isTrue();
@@ -280,7 +319,7 @@ class L402ValidatorTest {
       String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       assertThatThrownBy(() -> validator.validate(header))
           .isInstanceOf(L402Exception.class)
@@ -306,7 +345,7 @@ class L402ValidatorTest {
       String header = "L402 " + macaroonBase64 + ":" + wrongPreimageHex;
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       assertThatThrownBy(() -> validator.validate(header))
           .isInstanceOf(L402Exception.class)
@@ -330,9 +369,10 @@ class L402ValidatorTest {
 
       // Root key exists — cache hit should return without full macaroon re-verification
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      L402Validator.ValidationResult result = validator.validate(validAuthHeader);
+      L402Validator.ValidationResult result =
+          validator.validate(validAuthHeader, boundaryContext());
 
       assertThat(result.freshValidation()).isFalse();
       assertThat(result.credential()).isNotSameAs(cached);
@@ -346,11 +386,12 @@ class L402ValidatorTest {
     void cacheHitValidationResultRemainsUsableAfterCacheRevocation() {
       try (var realStore = new InMemoryCredentialStore(100, 0)) {
         L402Validator validator =
-            new L402Validator(rootKeyStore, realStore, List.of(), SERVICE_NAME);
+            new L402Validator(rootKeyStore, realStore, boundaryVerifiers(), SERVICE_NAME);
 
-        validator.validate(validAuthHeader);
+        validator.validate(validAuthHeader, boundaryContext());
         L402Credential cachedCopy = realStore.get(tokenIdHex);
-        L402Validator.ValidationResult result = validator.validate(validAuthHeader);
+        L402Validator.ValidationResult result =
+            validator.validate(validAuthHeader, boundaryContext());
         realStore.revoke(tokenIdHex);
 
         assertThat(result.freshValidation()).isFalse();
@@ -365,8 +406,8 @@ class L402ValidatorTest {
     void cachedCredentialNotServedAfterCredentialStoreRevocation() {
       // First validate to cache the credential
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
-      validator.validate(validAuthHeader);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      validator.validate(validAuthHeader, boundaryContext());
 
       // Revoke via credential store (simulates what revokeRootKey callers should do)
       credentialStore.revoke(tokenIdHex);
@@ -374,7 +415,7 @@ class L402ValidatorTest {
       rootKeyStore.revokeRootKey(tokenIdBytes);
 
       // Second validate should fall through to full validation and fail
-      assertThatThrownBy(() -> validator.validate(validAuthHeader))
+      assertThatThrownBy(() -> validator.validate(validAuthHeader, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               ex -> {
@@ -405,15 +446,15 @@ class L402ValidatorTest {
       String header = "L402 " + macaroonBase64 + ":" + preimageHex;
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      assertThatThrownBy(() -> validator.validate(header))
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
-                assertThat(l402Ex.getMessage()).contains("macaroon");
+                assertThat(l402Ex.getMessage()).contains("signature verification failed");
                 assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
               });
     }
@@ -436,7 +477,7 @@ class L402ValidatorTest {
       String header = "L402 " + macaroonBase64 + ":" + wrongPreimageHex;
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       assertThatThrownBy(() -> validator.validate(header))
           .isInstanceOf(L402Exception.class)
@@ -450,13 +491,52 @@ class L402ValidatorTest {
     }
 
     @Test
+    @DisplayName("wrong preimage cannot reveal whether a macaroon variant matches the cache")
+    void wrongPreimageDoesNotExposeCachedMacaroonVariant() {
+      try (PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes))) {
+        credentialStore.store(tokenIdHex, new L402Credential(macaroon, preimage, tokenIdHex), 3600);
+      }
+
+      byte[] alteredSignature = macaroon.signature();
+      alteredSignature[0] ^= (byte) 0x80;
+      Macaroon alteredVariant =
+          new Macaroon(
+              macaroon.identifier(), macaroon.location(), macaroon.caveats(), alteredSignature);
+      byte[] wrongPreimage = new byte[32];
+      RANDOM.nextBytes(wrongPreimage);
+
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      L402Exception exactFailure =
+          catchThrowableOfType(
+              () -> validator.validate(authHeaderFor(macaroon, wrongPreimage), boundaryContext()),
+              L402Exception.class);
+      L402Exception alteredFailure =
+          catchThrowableOfType(
+              () ->
+                  validator.validate(
+                      authHeaderFor(alteredVariant, wrongPreimage), boundaryContext()),
+              L402Exception.class);
+
+      assertThat(exactFailure).isNotNull();
+      assertThat(alteredFailure).isNotNull();
+      assertThat(exactFailure.getErrorCode()).isEqualTo(ErrorCode.INVALID_PREIMAGE);
+      assertThat(alteredFailure.getErrorCode()).isEqualTo(exactFailure.getErrorCode());
+      assertThat(alteredFailure.getMessage()).isEqualTo(exactFailure.getMessage());
+      try (L402Credential stillCached = credentialStore.get(tokenIdHex)) {
+        assertThat(stillCached).isNotNull();
+      }
+    }
+
+    @Test
     @DisplayName(
         "throws EXPIRED_CREDENTIAL and revokes cache when cached credential has expired caveat")
     void rejectsCachedCredentialWithExpiredCaveat() {
       // Create a macaroon with a valid_until caveat set in the past
       long pastEpoch = Instant.now().minusSeconds(60).getEpochSecond();
       List<Caveat> caveats =
-          List.of(new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(pastEpoch)));
+          boundaryCaveats(new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(pastEpoch)));
       Macaroon expiredMacaroon =
           MacaroonMinter.mint(rootKey, identifier, "https://example.com", caveats);
 
@@ -473,9 +553,9 @@ class L402ValidatorTest {
 
       L402Validator validator =
           new L402Validator(
-              rootKeyStore, credentialStore, List.of(validUntilVerifier()), SERVICE_NAME);
+              rootKeyStore, credentialStore, boundaryVerifiers(validUntilVerifier()), SERVICE_NAME);
 
-      assertThatThrownBy(() -> validator.validate(header))
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               ex -> {
@@ -492,7 +572,7 @@ class L402ValidatorTest {
     @DisplayName("skips unknown caveats in cached credential instead of revoking")
     void skipsUnknownCaveatsInCachedCredential() {
       // Create a macaroon with an unknown caveat
-      List<Caveat> caveats = List.of(new Caveat("custom_app_data", "xyz"));
+      List<Caveat> caveats = boundaryCaveats(new Caveat("custom_app_data", "xyz"));
       Macaroon macWithUnknown =
           com.greenharborlabs.paygate.core.macaroon.MacaroonMinter.mint(
               rootKey, identifier, "https://example.com", caveats);
@@ -513,9 +593,9 @@ class L402ValidatorTest {
 
       // No verifiers registered — unknown caveat should be skipped, not cause rejection
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      L402Validator.ValidationResult result = validator.validate(header);
+      L402Validator.ValidationResult result = validator.validate(header, boundaryContext());
 
       assertThat(result.freshValidation()).isFalse();
       assertThat(result.credential()).isNotSameAs(cached);
@@ -524,6 +604,187 @@ class L402ValidatorTest {
       assertThat(result.credential().preimage().toHex()).isEqualTo(cached.preimage().toHex());
       // Credential should NOT be revoked
       assertThat(credentialStore.get(tokenIdHex)).isNotNull();
+    }
+  }
+
+  @Nested
+  @DisplayName("request boundary enforcement")
+  class RequestBoundaryEnforcement {
+
+    @Test
+    @DisplayName("rejects signed credentials missing route or method on fresh and cached paths")
+    void rejectsSignedCredentialMissingRouteOrMethodBoundaryOnFreshAndCachedPaths() {
+      List<List<Caveat>> incompleteBoundaries =
+          List.of(
+              List.of(new Caveat("method", REQUEST_METHOD)),
+              List.of(new Caveat("route", REQUEST_ROUTE)));
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      for (List<Caveat> caveats : incompleteBoundaries) {
+        Macaroon incomplete =
+            MacaroonMinter.mint(rootKey, identifier, "https://example.com", caveats);
+        String header = authHeaderFor(incomplete);
+
+        assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .satisfies(
+                error -> {
+                  L402Exception exception = (L402Exception) error;
+                  assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                  assertThat(exception.getMessage())
+                      .doesNotContain(REQUEST_ROUTE)
+                      .doesNotContain(REQUEST_METHOD);
+                });
+        assertThat(credentialStore.get(tokenIdHex)).isNull();
+
+        try (PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes))) {
+          credentialStore.store(
+              tokenIdHex, new L402Credential(incomplete, preimage, tokenIdHex), 3600);
+        }
+
+        assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .extracting(error -> ((L402Exception) error).getErrorCode())
+            .isEqualTo(ErrorCode.INVALID_SERVICE);
+        assertThat(credentialStore.get(tokenIdHex)).isNull();
+      }
+    }
+
+    @Test
+    @DisplayName("rejects tampered route or method without sensitive details")
+    void rejectsTamperedRouteOrMethodWithoutSensitiveDetails() {
+      List<List<Caveat>> tamperedCaveatSets =
+          List.of(
+              List.of(
+                  new Caveat("route", "/private/accounts/secret-42"),
+                  new Caveat("method", REQUEST_METHOD)),
+              List.of(new Caveat("route", REQUEST_ROUTE), new Caveat("method", "DELETE-SECRET")));
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      for (List<Caveat> caveats : tamperedCaveatSets) {
+        Macaroon tampered =
+            new Macaroon(macaroon.identifier(), macaroon.location(), caveats, macaroon.signature());
+
+        assertThatThrownBy(() -> validator.validate(authHeaderFor(tampered), boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .satisfies(
+                error -> {
+                  L402Exception exception = (L402Exception) error;
+                  assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
+                  assertThat(exception.getMessage())
+                      .doesNotContain("secret-42")
+                      .doesNotContain("DELETE-SECRET");
+                });
+      }
+    }
+
+    @Test
+    @DisplayName("keeps the same path distinct across GET, HEAD, and other methods")
+    void keepsSamePathGetHeadAndOtherMethodsDistinct() {
+      Macaroon getAndHead =
+          MacaroonMinter.mint(
+              rootKey,
+              identifier,
+              "https://example.com",
+              List.of(new Caveat("route", REQUEST_ROUTE), new Caveat("method", "GET,HEAD")));
+      String header = authHeaderFor(getAndHead);
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThat(
+              validator.validate(header, boundaryContext(REQUEST_ROUTE, "GET")).freshValidation())
+          .isTrue();
+      assertThat(
+              validator.validate(header, boundaryContext(REQUEST_ROUTE, "HEAD")).freshValidation())
+          .isFalse();
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext(REQUEST_ROUTE, "POST")))
+          .isInstanceOf(L402Exception.class)
+          .extracting(error -> ((L402Exception) error).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
+      assertThat(credentialStore.get(tokenIdHex)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("matches parameterized routes by canonical registered route identity")
+    void matchesParameterizedRoutesByCanonicalRegisteredRouteIdentity() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(
+              () -> validator.validate(validAuthHeader, boundaryContext("/widgets/42", "GET")))
+          .isInstanceOf(L402Exception.class)
+          .extracting(error -> ((L402Exception) error).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
+
+      assertThat(
+              validator
+                  .validate(validAuthHeader, boundaryContext(REQUEST_ROUTE, "GET"))
+                  .freshValidation())
+          .isTrue();
+    }
+
+    @Test
+    @DisplayName("falls back for same-token variants and preserves cache after variant failure")
+    void sameTokenVariantFallsBackToFullVerificationWithoutUnsafeEviction() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      validator.validate(validAuthHeader, boundaryContext());
+
+      byte[] invalidSignature = macaroon.signature();
+      invalidSignature[0] ^= (byte) 0x80;
+      Macaroon invalidVariant =
+          new Macaroon(
+              macaroon.identifier(), macaroon.location(), macaroon.caveats(), invalidSignature);
+
+      assertThatThrownBy(() -> validator.validate(authHeaderFor(invalidVariant), boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .extracting(error -> ((L402Exception) error).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_MACAROON);
+      L402Credential stillCached = credentialStore.get(tokenIdHex);
+      assertThat(stillCached).isNotNull();
+      try {
+        assertThat(stillCached.macaroon()).isEqualTo(macaroon);
+      } finally {
+        stillCached.destroy();
+      }
+
+      Caveat attenuation = new Caveat("method", REQUEST_METHOD);
+      List<Caveat> attenuatedCaveats = new ArrayList<>(macaroon.caveats());
+      attenuatedCaveats.add(attenuation);
+      byte[] attenuatedSignature =
+          MacaroonCrypto.hmac(
+              macaroon.signature(), attenuation.toString().getBytes(StandardCharsets.UTF_8));
+      Macaroon attenuated =
+          new Macaroon(
+              macaroon.identifier(), macaroon.location(), attenuatedCaveats, attenuatedSignature);
+
+      assertThat(validator.validate(authHeaderFor(attenuated), boundaryContext()).freshValidation())
+          .isTrue();
+    }
+
+    @Test
+    @DisplayName("rejects and evicts an exact cached variant missing a mandatory boundary")
+    void rejectsAndEvictsExactCachedVariantMissingMandatoryBoundary() {
+      Macaroon missingMethod =
+          MacaroonMinter.mint(
+              rootKey,
+              identifier,
+              "https://example.com",
+              List.of(new Caveat("route", REQUEST_ROUTE)));
+      try (PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes))) {
+        credentialStore.store(
+            tokenIdHex, new L402Credential(missingMethod, preimage, tokenIdHex), 3600);
+      }
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(() -> validator.validate(authHeaderFor(missingMethod), boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .extracting(error -> ((L402Exception) error).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
+      assertThat(credentialStore.get(tokenIdHex)).isNull();
     }
   }
 
@@ -537,7 +798,8 @@ class L402ValidatorTest {
       // Create a macaroon with an expired valid_until caveat
       long pastEpochSeconds = Instant.now().minusSeconds(3600).getEpochSecond();
       List<Caveat> caveats =
-          List.of(new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(pastEpochSeconds)));
+          boundaryCaveats(
+              new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(pastEpochSeconds)));
 
       // Re-mint with caveats
       Macaroon macaroonWithExpiry =
@@ -571,9 +833,9 @@ class L402ValidatorTest {
 
       L402Validator validator =
           new L402Validator(
-              rootKeyStore, credentialStore, List.of(validUntilVerifier), SERVICE_NAME);
+              rootKeyStore, credentialStore, boundaryVerifiers(validUntilVerifier), SERVICE_NAME);
 
-      assertThatThrownBy(() -> validator.validate(header))
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .extracting(e -> ((L402Exception) e).getErrorCode())
           .isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
@@ -600,9 +862,12 @@ class L402ValidatorTest {
 
       L402Validator validator =
           new L402Validator(
-              rootKeyStore, ttlCapturingStore, List.of(validUntilVerifier()), SERVICE_NAME);
+              rootKeyStore,
+              ttlCapturingStore,
+              boundaryVerifiers(validUntilVerifier()),
+              SERVICE_NAME);
 
-      validator.validate(header);
+      validator.validate(header, boundaryContext());
 
       // TTL should be approximately 90 seconds (120 - 30s safety margin),
       // definitely not the default 3600. Allow a few seconds of tolerance for test execution time.
@@ -619,9 +884,9 @@ class L402ValidatorTest {
       CredentialStore ttlCapturingStore = ttlCapturingStore(capturedTtl);
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, ttlCapturingStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, ttlCapturingStore, boundaryVerifiers(), SERVICE_NAME);
 
-      validator.validate(validAuthHeader);
+      validator.validate(validAuthHeader, boundaryContext());
 
       assertThat(capturedTtl.get()).isEqualTo(3600);
     }
@@ -644,9 +909,12 @@ class L402ValidatorTest {
 
       L402Validator validator =
           new L402Validator(
-              rootKeyStore, ttlCapturingStore, List.of(validUntilVerifier()), SERVICE_NAME);
+              rootKeyStore,
+              ttlCapturingStore,
+              boundaryVerifiers(validUntilVerifier()),
+              SERVICE_NAME);
 
-      validator.validate(header);
+      validator.validate(header, boundaryContext());
 
       // TTL should be approximately 30 seconds (minimum 60 - 30s safety margin),
       // not 120 or the default 3600.
@@ -688,8 +956,8 @@ class L402ValidatorTest {
           };
 
       L402Validator validator =
-          new L402Validator(trackingStore, credentialStore, List.of(), SERVICE_NAME);
-      validator.validate(validAuthHeader);
+          new L402Validator(trackingStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      validator.validate(validAuthHeader, boundaryContext());
 
       assertThat(issuedKeys).hasSize(1);
       assertThat(issuedKeys.peek().isDestroyed()).isTrue();
@@ -732,10 +1000,10 @@ class L402ValidatorTest {
           };
 
       L402Validator validator =
-          new L402Validator(trackingStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(trackingStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       try {
-        validator.validate(header);
+        validator.validate(header, boundaryContext());
       } catch (L402Exception expected) {
         // Expected — tampered signature
       }
@@ -755,7 +1023,7 @@ class L402ValidatorTest {
       // Create a macaroon with two capabilities caveats where the second EXPANDS access
       // (escalation: "search" -> "search,analyze,admin"), which should be detected
       List<Caveat> caveats =
-          List.of(
+          boundaryCaveats(
               new Caveat(SERVICE_NAME + "_capabilities", "search"),
               new Caveat(SERVICE_NAME + "_capabilities", "search,analyze,admin"));
       Macaroon escalatingMacaroon =
@@ -774,7 +1042,8 @@ class L402ValidatorTest {
 
       CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
+          new L402Validator(
+              rootKeyStore, credentialStore, boundaryVerifiers(capVerifier), SERVICE_NAME);
 
       // Provide a requested capability so the verifier can proceed past
       // the first caveat and detect escalation in the second caveat.
@@ -782,7 +1051,8 @@ class L402ValidatorTest {
           L402VerificationContext.builder()
               .serviceName(SERVICE_NAME)
               .currentTime(Instant.now())
-              .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
+              .requestMetadata(
+                  boundaryMetadata(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
               .build();
 
       assertThatThrownBy(() -> validator.validate(header, context))
@@ -807,13 +1077,15 @@ class L402ValidatorTest {
 
       CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
+          new L402Validator(
+              rootKeyStore, credentialStore, boundaryVerifiers(capVerifier), SERVICE_NAME);
 
       L402VerificationContext context =
           L402VerificationContext.builder()
               .serviceName(SERVICE_NAME)
               .currentTime(Instant.now())
-              .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
+              .requestMetadata(
+                  boundaryMetadata(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
               .build();
 
       L402Validator.ValidationResult result = validator.validate(header, context);
@@ -830,13 +1102,15 @@ class L402ValidatorTest {
 
       CapabilitiesCaveatVerifier capVerifier = new CapabilitiesCaveatVerifier(SERVICE_NAME, 50);
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(capVerifier), SERVICE_NAME);
+          new L402Validator(
+              rootKeyStore, credentialStore, boundaryVerifiers(capVerifier), SERVICE_NAME);
 
       L402VerificationContext context =
           L402VerificationContext.builder()
               .serviceName(SERVICE_NAME)
               .currentTime(Instant.now())
-              .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "admin"))
+              .requestMetadata(
+                  boundaryMetadata(VerificationContextKeys.REQUESTED_CAPABILITY, "admin"))
               .build();
 
       assertThatThrownBy(() -> validator.validate(header, context))
@@ -851,16 +1125,15 @@ class L402ValidatorTest {
     }
 
     @Test
-    @DisplayName("validate(String) backward compatible — delegates with default context")
-    void validateStringBackwardCompatible() {
+    @DisplayName("validate(String) fails closed without a request boundary context")
+    void validateStringFailsClosedWithoutRequestBoundaryContext() {
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      L402Validator.ValidationResult result = validator.validate(validAuthHeader);
-
-      assertThat(result).isNotNull();
-      assertThat(result.freshValidation()).isTrue();
-      assertThat(result.credential().tokenId()).isEqualTo(tokenIdHex);
+      assertThatThrownBy(() -> validator.validate(validAuthHeader))
+          .isInstanceOf(L402Exception.class)
+          .extracting(e -> ((L402Exception) e).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
     }
 
     @Test
@@ -891,14 +1164,16 @@ class L402ValidatorTest {
           new L402Validator(
               rootKeyStore,
               credentialStore,
-              List.of(capturingVerifier, new CapabilitiesCaveatVerifier(SERVICE_NAME, 50)),
+              boundaryVerifiers(
+                  capturingVerifier, new CapabilitiesCaveatVerifier(SERVICE_NAME, 50)),
               SERVICE_NAME);
 
       L402VerificationContext externalContext =
           L402VerificationContext.builder()
               .serviceName(SERVICE_NAME)
               .currentTime(Instant.now())
-              .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "custom-cap"))
+              .requestMetadata(
+                  boundaryMetadata(VerificationContextKeys.REQUESTED_CAPABILITY, "custom-cap"))
               .build();
 
       validator.validate(header, externalContext);
@@ -917,14 +1192,10 @@ class L402ValidatorTest {
     @DisplayName("validate with pre-parsed L402HeaderComponents returns fresh ValidationResult")
     void validateWithPreParsedComponentsReturnsFreshResult() {
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       L402HeaderComponents components = L402HeaderComponents.extractOrThrow(validAuthHeader);
-      L402VerificationContext context =
-          L402VerificationContext.builder()
-              .serviceName(SERVICE_NAME)
-              .currentTime(Instant.now())
-              .build();
+      L402VerificationContext context = boundaryContext();
 
       L402Validator.ValidationResult result = validator.validate(components, context);
 
@@ -990,12 +1261,68 @@ class L402ValidatorTest {
     };
   }
 
+  private List<CaveatVerifier> boundaryVerifiers(CaveatVerifier... additionalVerifiers) {
+    List<CaveatVerifier> verifiers = new ArrayList<>(2 + additionalVerifiers.length);
+    verifiers.add(new RouteCaveatVerifier(10));
+    verifiers.add(new MethodCaveatVerifier(10));
+    verifiers.addAll(List.of(additionalVerifiers));
+    return List.copyOf(verifiers);
+  }
+
+  private List<Caveat> boundaryCaveats(Caveat... additionalCaveats) {
+    List<Caveat> caveats = new ArrayList<>(2 + additionalCaveats.length);
+    caveats.add(new Caveat("route", REQUEST_ROUTE));
+    caveats.add(new Caveat("method", REQUEST_METHOD));
+    caveats.addAll(List.of(additionalCaveats));
+    return List.copyOf(caveats);
+  }
+
+  private L402VerificationContext boundaryContext() {
+    return boundaryContext(REQUEST_ROUTE, REQUEST_METHOD);
+  }
+
+  private L402VerificationContext boundaryContext(String route, String method) {
+    return L402VerificationContext.builder()
+        .serviceName(SERVICE_NAME)
+        .currentTime(Instant.now())
+        .requestMetadata(
+            Map.of(
+                VerificationContextKeys.REQUEST_ROUTE,
+                route,
+                VerificationContextKeys.REQUEST_METHOD,
+                method))
+        .build();
+  }
+
+  private Map<String, String> boundaryMetadata(String... additionalEntry) {
+    Map<String, String> metadata = new HashMap<>();
+    metadata.put(VerificationContextKeys.REQUEST_ROUTE, REQUEST_ROUTE);
+    metadata.put(VerificationContextKeys.REQUEST_METHOD, REQUEST_METHOD);
+    if (additionalEntry.length != 0) {
+      metadata.put(additionalEntry[0], additionalEntry[1]);
+    }
+    return Map.copyOf(metadata);
+  }
+
   /** Builds an L402 Authorization header from a macaroon minted with the given caveats. */
   private String buildAuthHeader(List<Caveat> caveats) {
-    Macaroon mac = MacaroonMinter.mint(rootKey, identifier, "https://example.com", caveats);
+    Macaroon mac =
+        MacaroonMinter.mint(
+            rootKey,
+            identifier,
+            "https://example.com",
+            boundaryCaveats(caveats.toArray(Caveat[]::new)));
+    return authHeaderFor(mac);
+  }
+
+  private String authHeaderFor(Macaroon mac) {
+    return authHeaderFor(mac, preimageBytes);
+  }
+
+  private String authHeaderFor(Macaroon mac, byte[] preimage) {
     byte[] serialized = MacaroonSerializer.serializeV2(mac);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-    String preimageHex = HEX.formatHex(preimageBytes);
+    String preimageHex = HEX.formatHex(preimage);
     return "L402 " + macaroonBase64 + ":" + preimageHex;
   }
 }

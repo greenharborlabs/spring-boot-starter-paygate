@@ -5,14 +5,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
+import com.greenharborlabs.paygate.core.macaroon.Caveat;
+import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -33,6 +40,8 @@ class PreimageValidationTest {
   private static final HexFormat HEX = HexFormat.of();
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final String SERVICE_NAME = "test-api";
+  private static final String REQUEST_ROUTE = "/paid-resource";
+  private static final String REQUEST_METHOD = "GET";
 
   private byte[] rootKey;
   private byte[] preimageBytes;
@@ -87,7 +96,7 @@ class PreimageValidationTest {
     tokenIdHex = HEX.formatHex(tokenIdBytes);
 
     MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
-    macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", List.of());
+    macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", boundaryCaveats());
     rootKeyMap.put(tokenIdHex, rootKey);
   }
 
@@ -95,6 +104,27 @@ class PreimageValidationTest {
     byte[] serialized = MacaroonSerializer.serializeV2(mac);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
     return "L402 " + macaroonBase64 + ":" + preimageHex;
+  }
+
+  private List<Caveat> boundaryCaveats() {
+    return List.of(new Caveat("route", REQUEST_ROUTE), new Caveat("method", REQUEST_METHOD));
+  }
+
+  private List<CaveatVerifier> boundaryVerifiers() {
+    return List.of(new RouteCaveatVerifier(10), new MethodCaveatVerifier(10));
+  }
+
+  private L402VerificationContext boundaryContext() {
+    return L402VerificationContext.builder()
+        .serviceName(SERVICE_NAME)
+        .currentTime(Instant.now())
+        .requestMetadata(
+            Map.of(
+                VerificationContextKeys.REQUEST_ROUTE,
+                REQUEST_ROUTE,
+                VerificationContextKeys.REQUEST_METHOD,
+                REQUEST_METHOD))
+        .build();
   }
 
   @Nested
@@ -107,9 +137,9 @@ class PreimageValidationTest {
       String header = buildAuthHeader(macaroon, HEX.formatHex(preimageBytes));
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      L402Validator.ValidationResult result = validator.validate(header);
+      L402Validator.ValidationResult result = validator.validate(header, boundaryContext());
 
       assertThat(result.credential()).isNotNull();
       assertThat(result.credential().tokenId()).isEqualTo(tokenIdHex);
@@ -132,9 +162,9 @@ class PreimageValidationTest {
       String header = buildAuthHeader(macaroon, HEX.formatHex(wrongPreimage));
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      assertThatThrownBy(() -> validator.validate(header))
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               e -> {
@@ -153,20 +183,22 @@ class PreimageValidationTest {
     @DisplayName("tampered macaroon with same token and preimage returns INVALID_MACAROON")
     void tamperedMacaroonOnCachedPathReturnsInvalidMacaroon() {
       String validHeader = buildAuthHeader(macaroon, HEX.formatHex(preimageBytes));
+      byte[] differentRootKey = new byte[32];
+      RANDOM.nextBytes(differentRootKey);
       Macaroon tamperedMacaroon =
-          new Macaroon(
-              macaroon.identifier(),
-              "https://attacker.example.com",
-              macaroon.caveats(),
-              macaroon.signature());
+          MacaroonMinter.mint(
+              differentRootKey,
+              new MacaroonIdentifier(0, paymentHash, tokenIdBytes),
+              "https://example.com",
+              boundaryCaveats());
       String tamperedHeader = buildAuthHeader(tamperedMacaroon, HEX.formatHex(preimageBytes));
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, List.of(), SERVICE_NAME);
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
-      validator.validate(validHeader);
+      validator.validate(validHeader, boundaryContext());
 
-      assertThatThrownBy(() -> validator.validate(tamperedHeader))
+      assertThatThrownBy(() -> validator.validate(tamperedHeader, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               e -> {

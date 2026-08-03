@@ -263,8 +263,14 @@ class AutoConfigurationTest {
             context -> {
               List<CaveatVerifier> verifiers =
                   (List<CaveatVerifier>) context.getBean("caveatVerifiers");
-              assertThat(verifiers).hasSize(1);
+              assertThat(verifiers).hasSize(3);
               assertThat(verifiers.getFirst()).isInstanceOf(ServicesCaveatVerifier.class);
+              assertThat(verifiers.get(1))
+                  .isInstanceOf(
+                      com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier.class);
+              assertThat(verifiers.get(2))
+                  .isInstanceOf(
+                      com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier.class);
             });
   }
 
@@ -738,7 +744,10 @@ class AutoConfigurationTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50));
+      return List.of(
+          new ServicesCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50));
     }
   }
 

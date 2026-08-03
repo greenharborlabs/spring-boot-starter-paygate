@@ -130,6 +130,8 @@ class PaygateSecurityFilterTest {
     List<CaveatVerifier> caveatVerifiers() {
       return List.of(
           new ServicesCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
           new ValidUntilCaveatVerifier("test-service"),
           new CapabilitiesCaveatVerifier("test-service", 50));
     }
@@ -411,6 +413,8 @@ class PaygateSecurityFilterTest {
       List<Caveat> caveats =
           List.of(
               new Caveat("services", SERVICE_NAME + ":0"),
+              new Caveat("route", PROTECTED_PATH),
+              new Caveat("method", "GET"),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntilEpoch)));
 
       // Mint a real macaroon using the known root key
@@ -453,8 +457,12 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      // Caveats without valid_until — only services caveat
-      List<Caveat> caveats = List.of(new Caveat("services", SERVICE_NAME + ":0"));
+      // Caveats without valid_until — only service and mandatory request-boundary caveats
+      List<Caveat> caveats =
+          List.of(
+              new Caveat("services", SERVICE_NAME + ":0"),
+              new Caveat("route", PROTECTED_PATH),
+              new Caveat("method", "GET"));
 
       MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
@@ -495,6 +503,8 @@ class PaygateSecurityFilterTest {
       List<Caveat> caveats =
           List.of(
               new Caveat("services", SERVICE_NAME + ":0"),
+              new Caveat("route", PROTECTED_PATH),
+              new Caveat("method", "GET"),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(laterEpoch)),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(earlierEpoch)));
 
@@ -742,12 +752,14 @@ class PaygateSecurityFilterTest {
       byte[] macaroonBytes = Base64.getDecoder().decode(macaroonB64);
       Macaroon macaroon = MacaroonSerializer.deserializeV2(macaroonBytes);
 
-      assertThat(macaroon.caveats()).hasSize(2);
+      assertThat(macaroon.caveats()).hasSize(4);
       assertThat(macaroon.caveats().get(0).key()).isEqualTo("services");
       assertThat(macaroon.caveats().get(0).value()).isEqualTo(SERVICE_NAME + ":0");
-      assertThat(macaroon.caveats().get(1).key()).isEqualTo(SERVICE_NAME + "_valid_until");
+      assertThat(macaroon.caveats().get(1)).isEqualTo(new Caveat("route", PROTECTED_PATH));
+      assertThat(macaroon.caveats().get(2)).isEqualTo(new Caveat("method", "GET"));
+      assertThat(macaroon.caveats().get(3).key()).isEqualTo(SERVICE_NAME + "_valid_until");
       // valid_until should be a numeric epoch seconds value in the future
-      long epochSeconds = Long.parseLong(macaroon.caveats().get(1).value());
+      long epochSeconds = Long.parseLong(macaroon.caveats().get(3).value());
       assertThat(Instant.ofEpochSecond(epochSeconds)).isAfter(Instant.now());
     }
 
@@ -1000,6 +1012,8 @@ class PaygateSecurityFilterTest {
     Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
     return List.of(
         new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", PROTECTED_PATH),
+        new Caveat("method", "GET"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
 
@@ -1007,6 +1021,8 @@ class PaygateSecurityFilterTest {
     Instant expired = Instant.now().minusSeconds(60);
     return List.of(
         new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", PROTECTED_PATH),
+        new Caveat("method", "GET"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(expired.getEpochSecond())));
   }
 
@@ -1014,6 +1030,8 @@ class PaygateSecurityFilterTest {
     Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
     return List.of(
         new Caveat("services", "wrong-service:0"),
+        new Caveat("route", PROTECTED_PATH),
+        new Caveat("method", "GET"),
         new Caveat("wrong-service_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
 
@@ -1021,6 +1039,8 @@ class PaygateSecurityFilterTest {
     Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
     return List.of(
         new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", CAPABILITY_PROTECTED_PATH),
+        new Caveat("method", "GET"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())),
         new Caveat(SERVICE_NAME + "_capabilities", capabilities));
   }
