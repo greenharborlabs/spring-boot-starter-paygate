@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
+import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.InMemoryRootKeyStore;
@@ -73,9 +74,12 @@ class CrossServiceTest {
     return "L402 " + macaroonBase64 + ":" + preimageHex;
   }
 
-  private List<CaveatVerifier> verifiers() {
+  private List<CaveatVerifier> verifiers(String serviceName) {
     return List.of(
-        new RouteCaveatVerifier(10), new MethodCaveatVerifier(10), new ServicesCaveatVerifier(50));
+        new RouteCaveatVerifier(10),
+        new MethodCaveatVerifier(10),
+        new ServicesCaveatVerifier(50),
+        new CapabilitiesCaveatVerifier(serviceName, 50));
   }
 
   private L402VerificationContext context(String serviceName) {
@@ -98,10 +102,13 @@ class CrossServiceTest {
     @Test
     @DisplayName("macaroon minted for serviceA is rejected when validated by serviceB")
     void macaroonForServiceAIsRejectedByServiceB() {
-      String header = buildAuthHeader(List.of(new Caveat("services", "serviceA")));
+      String header =
+          buildAuthHeader(
+              List.of(
+                  new Caveat("services", "serviceA"), new Caveat("serviceA_capabilities", "~")));
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, verifiers(), "serviceB");
+          new L402Validator(rootKeyStore, credentialStore, verifiers("serviceB"), "serviceB");
 
       assertThatThrownBy(() -> validator.validate(header, context("serviceB")))
           .isInstanceOf(L402Exception.class)
@@ -115,10 +122,13 @@ class CrossServiceTest {
     @Test
     @DisplayName("macaroon minted for serviceA is accepted when validated by serviceA")
     void macaroonForServiceAIsAcceptedByServiceA() {
-      String header = buildAuthHeader(List.of(new Caveat("services", "serviceA")));
+      String header =
+          buildAuthHeader(
+              List.of(
+                  new Caveat("services", "serviceA"), new Caveat("serviceA_capabilities", "~")));
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, verifiers(), "serviceA");
+          new L402Validator(rootKeyStore, credentialStore, verifiers("serviceA"), "serviceA");
 
       assertThatCode(() -> validator.validate(header, context("serviceA")))
           .doesNotThrowAnyException();
@@ -127,10 +137,15 @@ class CrossServiceTest {
     @Test
     @DisplayName("macaroon with multi-service caveat rejects unlisted service")
     void multiServiceCaveatRejectsUnlistedService() {
-      String header = buildAuthHeader(List.of(new Caveat("services", "serviceA,serviceB")));
+      String header =
+          buildAuthHeader(
+              List.of(
+                  new Caveat("services", "serviceA,serviceB"),
+                  new Caveat("serviceA_capabilities", "~"),
+                  new Caveat("serviceB_capabilities", "~")));
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, verifiers(), "serviceC");
+          new L402Validator(rootKeyStore, credentialStore, verifiers("serviceC"), "serviceC");
 
       assertThatThrownBy(() -> validator.validate(header, context("serviceC")))
           .isInstanceOf(L402Exception.class)
@@ -144,10 +159,15 @@ class CrossServiceTest {
     @Test
     @DisplayName("macaroon with multi-service caveat accepts listed service")
     void multiServiceCaveatAcceptsListedService() {
-      String header = buildAuthHeader(List.of(new Caveat("services", "serviceA,serviceB")));
+      String header =
+          buildAuthHeader(
+              List.of(
+                  new Caveat("services", "serviceA,serviceB"),
+                  new Caveat("serviceA_capabilities", "~"),
+                  new Caveat("serviceB_capabilities", "~")));
 
       L402Validator validator =
-          new L402Validator(rootKeyStore, credentialStore, verifiers(), "serviceB");
+          new L402Validator(rootKeyStore, credentialStore, verifiers("serviceB"), "serviceB");
 
       assertThatCode(() -> validator.validate(header, context("serviceB")))
           .doesNotThrowAnyException();

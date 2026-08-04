@@ -125,7 +125,9 @@ class BeanOverrideTest {
             new InMemoryCredentialStore(),
             List.of(
                 new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
-                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50)),
+                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+                new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+                    "custom-service", 50)),
             "custom-service");
 
     @Bean

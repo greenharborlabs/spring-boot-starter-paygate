@@ -112,7 +112,9 @@ class LsatChallengeSchemeTest {
     List<CaveatVerifier> caveatVerifiers() {
       return List.of(
           new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
-          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50));
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+              "test-service", 50));
     }
 
     @Bean

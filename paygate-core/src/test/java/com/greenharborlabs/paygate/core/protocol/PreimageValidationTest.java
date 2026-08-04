@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
+import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
@@ -107,11 +108,17 @@ class PreimageValidationTest {
   }
 
   private List<Caveat> boundaryCaveats() {
-    return List.of(new Caveat("route", REQUEST_ROUTE), new Caveat("method", REQUEST_METHOD));
+    return List.of(
+        new Caveat("route", REQUEST_ROUTE),
+        new Caveat("method", REQUEST_METHOD),
+        new Caveat(SERVICE_NAME + "_capabilities", "~"));
   }
 
   private List<CaveatVerifier> boundaryVerifiers() {
-    return List.of(new RouteCaveatVerifier(10), new MethodCaveatVerifier(10));
+    return List.of(
+        new RouteCaveatVerifier(10),
+        new MethodCaveatVerifier(10),
+        new CapabilitiesCaveatVerifier(SERVICE_NAME, 50));
   }
 
   private L402VerificationContext boundaryContext() {

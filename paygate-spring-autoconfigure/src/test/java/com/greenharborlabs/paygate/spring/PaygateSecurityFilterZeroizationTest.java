@@ -109,7 +109,9 @@ class PaygateSecurityFilterZeroizationTest {
             credentialStore,
             List.of(
                 new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
-                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50)),
+                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+                new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+                    SERVICE_NAME, 50)),
             SERVICE_NAME);
     var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
 
@@ -137,7 +139,9 @@ class PaygateSecurityFilterZeroizationTest {
             credentialStore,
             List.of(
                 new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
-                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50)),
+                new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+                new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+                    SERVICE_NAME, 50)),
             SERVICE_NAME);
     var l402Protocol = new L402Protocol(validator, SERVICE_NAME);
     var properties = new PaygateProperties();

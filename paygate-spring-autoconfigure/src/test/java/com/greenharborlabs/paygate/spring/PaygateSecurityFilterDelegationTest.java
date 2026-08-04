@@ -80,7 +80,7 @@ class PaygateSecurityFilterDelegationTest {
    */
   private void stubProtectedEndpointWithSuccessfulValidation(String method, String path) {
     var config = new PaygateEndpointConfig(method, path, 10L, 600L, "test", "", "");
-    when(registry.findConfig(any(), any())).thenReturn(config);
+    when(registry.resolve(any(), any())).thenReturn(new ResolvedEndpoint(config, path, method));
     when(protocol.canHandle(anyString())).thenReturn(true);
     when(protocol.scheme()).thenReturn("L402");
     when(protocol.parseCredential(anyString())).thenReturn(createStubCredential());

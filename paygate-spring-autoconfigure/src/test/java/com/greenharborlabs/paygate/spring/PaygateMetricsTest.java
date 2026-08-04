@@ -119,7 +119,9 @@ class PaygateMetricsTest {
     List<CaveatVerifier> caveatVerifiers() {
       return List.of(
           new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
-          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50));
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+              "test-service", 50));
     }
 
     @Bean
@@ -866,7 +868,9 @@ class PaygateMetricsTest {
             null,
             List.of(
                 new com.greenharborlabs.paygate.core.macaroon.Caveat("route", PROTECTED_PATH),
-                new com.greenharborlabs.paygate.core.macaroon.Caveat("method", "GET")));
+                new com.greenharborlabs.paygate.core.macaroon.Caveat("method", "GET"),
+                new com.greenharborlabs.paygate.core.macaroon.Caveat(
+                    "test-service_capabilities", "~")));
 
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);

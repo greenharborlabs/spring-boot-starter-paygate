@@ -229,6 +229,8 @@ class PaygateSecurityFilterRealStoreTest {
           new ServicesCaveatVerifier(50),
           new RouteCaveatVerifier(50),
           new MethodCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+              SERVICE_NAME, 50),
           new ValidUntilCaveatVerifier(SERVICE_NAME));
     }
 
@@ -395,6 +397,7 @@ class PaygateSecurityFilterRealStoreTest {
         if (includeBoundary) {
           caveats.add(new Caveat("route", routePattern));
           caveats.add(new Caveat("method", requestMethod));
+          caveats.add(new Caveat(SERVICE_NAME + "_capabilities", "~"));
         }
         caveats.add(
             new Caveat(

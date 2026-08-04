@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,7 +53,10 @@ class SchemeCaseInsensitivityConformanceTest {
             endpointRegistry);
     request = new MockHttpServletRequest("GET", "/api/protected");
     response = new MockHttpServletResponse();
-    when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
+    when(endpointRegistry.resolve(anyString(), anyString()))
+        .thenReturn(
+            new ResolvedEndpoint(
+                DEFAULT_CONFIG, DEFAULT_CONFIG.pathPattern(), DEFAULT_CONFIG.httpMethod()));
     when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
     SecurityContextHolder.clearContext();
   }
