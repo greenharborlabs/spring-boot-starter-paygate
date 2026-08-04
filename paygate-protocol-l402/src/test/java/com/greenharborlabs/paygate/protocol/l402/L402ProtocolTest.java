@@ -774,11 +774,12 @@ class L402ProtocolTest {
     }
 
     @Test
-    void errorMessageAndTokenIdArePreserved() {
+    void errorMessageIsSanitizedAndTokenIdIsPreserved() {
       String authHeader = buildValidAuthHeader("L402");
       PaymentCredential credential = protocol.parseCredential(authHeader);
+      String credentialMarker = "CREDENTIAL-DETAIL-SECRET-e0d68e3c";
 
-      doThrow(new L402Exception(ErrorCode.INVALID_PREIMAGE, "bad preimage", "tok-42"))
+      doThrow(new L402Exception(ErrorCode.INVALID_PREIMAGE, credentialMarker, "tok-42"))
           .when(validator)
           .validate(eq(authHeader), any());
 
@@ -787,7 +788,9 @@ class L402ProtocolTest {
           .satisfies(
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
-                assertThat(pve.getMessage()).isEqualTo("bad preimage");
+                assertThat(pve.getMessage())
+                    .isEqualTo("L402 credential proof is invalid")
+                    .doesNotContain(credentialMarker);
                 assertThat(pve.getTokenId()).isEqualTo("tok-42");
               });
     }

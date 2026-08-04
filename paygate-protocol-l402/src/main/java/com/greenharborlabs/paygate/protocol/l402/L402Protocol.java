@@ -193,6 +193,18 @@ public class L402Protocol implements PaymentProtocol {
               PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
           case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
         };
-    return new PaymentValidationException(mapped, e.getMessage(), e.getTokenId());
+    return new PaymentValidationException(
+        mapped, safeFailureMessage(e.getErrorCode()), e.getTokenId());
+  }
+
+  private static String safeFailureMessage(ErrorCode errorCode) {
+    return switch (errorCode) {
+      case MALFORMED_HEADER -> "Malformed L402 credential";
+      case INVALID_PREIMAGE -> "L402 credential proof is invalid";
+      case EXPIRED_CREDENTIAL -> "L402 credential has expired";
+      case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
+          "L402 credential validation failed";
+      case LIGHTNING_UNAVAILABLE -> "Lightning validation service is unavailable";
+    };
   }
 }

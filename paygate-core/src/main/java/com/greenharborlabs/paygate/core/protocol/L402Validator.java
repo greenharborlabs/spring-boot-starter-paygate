@@ -147,7 +147,12 @@ public final class L402Validator {
     Objects.requireNonNull(context, "context must not be null");
 
     // 1. Parse the pre-extracted header components
-    L402Credential credential = L402Credential.parse(components);
+    L402Credential credential;
+    try {
+      credential = L402Credential.parse(components);
+    } catch (L402Exception e) {
+      throw new L402Exception(e.getErrorCode(), "Malformed L402 credential", e.getTokenId());
+    }
     String tokenId = credential.tokenId();
     boolean returningCredential = false;
 
@@ -193,7 +198,10 @@ public final class L402Validator {
         try {
           effectiveCapabilities = verifyMacaroon(credential.macaroon(), rootKey, context);
         } catch (MacaroonVerificationException e) {
-          throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
+          throw new L402Exception(
+              mapReasonToErrorCode(e.getReason()),
+              safeValidationFailureMessage(e.getReason()),
+              tokenId);
         } finally {
           KeyMaterial.zeroize(rootKey);
         }
@@ -234,7 +242,10 @@ public final class L402Validator {
       verifyRequiredBoundaryCaveats(cached.macaroon().caveats());
     } catch (MacaroonVerificationException e) {
       credentialStore.revoke(tokenId);
-      throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
+      throw new L402Exception(
+          mapReasonToErrorCode(e.getReason()),
+          safeValidationFailureMessage(e.getReason()),
+          tokenId);
     }
     try {
       MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiersByKey, context);
@@ -243,7 +254,10 @@ public final class L402Validator {
           || e.getReason() == VerificationFailureReason.CAVEAT_ESCALATION) {
         credentialStore.revoke(tokenId);
       }
-      throw new L402Exception(mapReasonToErrorCode(e.getReason()), e.getMessage(), tokenId);
+      throw new L402Exception(
+          mapReasonToErrorCode(e.getReason()),
+          safeValidationFailureMessage(e.getReason()),
+          tokenId);
     }
 
     Set<String> effectiveCapabilities = extractFinalEffectiveCapabilities(cached.macaroon());
@@ -345,6 +359,18 @@ public final class L402Validator {
       case CAVEAT_NOT_MET -> ErrorCode.INVALID_SERVICE;
       case CREDENTIAL_EXPIRED -> ErrorCode.EXPIRED_CREDENTIAL;
       case SIGNATURE_INVALID, CAVEAT_ESCALATION -> ErrorCode.INVALID_MACAROON;
+    };
+  }
+
+  private static String safeValidationFailureMessage(VerificationFailureReason reason) {
+    if (reason == null) {
+      return "Credential validation failed";
+    }
+    return switch (reason) {
+      case CAVEAT_NOT_MET -> "Credential constraints were not satisfied";
+      case CREDENTIAL_EXPIRED -> "Credential has expired";
+      case SIGNATURE_INVALID -> "Credential signature verification failed";
+      case CAVEAT_ESCALATION -> "Credential attenuation is invalid";
     };
   }
 

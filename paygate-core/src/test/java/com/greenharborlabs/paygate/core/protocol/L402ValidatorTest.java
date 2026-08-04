@@ -303,7 +303,10 @@ class L402ValidatorTest {
               error -> {
                 L402Exception l402Exception = (L402Exception) error;
                 assertThat(l402Exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
-                assertThat(l402Exception.getMessage()).containsIgnoringCase("caveat escalation");
+                assertThat(l402Exception.getMessage())
+                    .isEqualTo("Credential attenuation is invalid")
+                    .doesNotContainIgnoringCase("caveat escalation")
+                    .doesNotContain("admin");
               });
       assertThat(credentialStore.get(tokenIdHex)).isNull();
 
@@ -347,7 +350,10 @@ class L402ValidatorTest {
               error -> {
                 L402Exception l402Exception = (L402Exception) error;
                 assertThat(l402Exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
-                assertThat(l402Exception.getMessage()).containsIgnoringCase("caveat escalation");
+                assertThat(l402Exception.getMessage())
+                    .isEqualTo("Credential attenuation is invalid")
+                    .doesNotContainIgnoringCase("caveat escalation")
+                    .doesNotContain("admin");
               });
       assertThat(credentialStore.get(tokenIdHex)).isNull();
     }
@@ -618,7 +624,8 @@ class L402ValidatorTest {
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
-                assertThat(l402Ex.getMessage()).contains("signature verification failed");
+                assertThat(l402Ex.getMessage())
+                    .isEqualTo("Credential signature verification failed");
                 assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
               });
     }
@@ -968,6 +975,7 @@ class L402ValidatorTest {
     @Test
     @DisplayName("throws EXPIRED_CREDENTIAL when valid_until caveat is in the past")
     void expiredCaveatReturnsExpiredCredential() throws NoSuchAlgorithmException {
+      String caveatDetailMarker = "CAVEAT-DETAIL-SECRET-a6677b41";
       // Create a macaroon with an expired valid_until caveat
       long pastEpochSeconds = Instant.now().minusSeconds(3600).getEpochSecond();
       List<Caveat> caveats =
@@ -998,8 +1006,7 @@ class L402ValidatorTest {
               Instant expiry = Instant.ofEpochSecond(expiryEpoch);
               if (!expiry.isAfter(context.getCurrentTime())) {
                 throw new MacaroonVerificationException(
-                    VerificationFailureReason.CREDENTIAL_EXPIRED,
-                    "Credential expired at " + expiry);
+                    VerificationFailureReason.CREDENTIAL_EXPIRED, caveatDetailMarker + expiry);
               }
             }
           };
@@ -1010,8 +1017,15 @@ class L402ValidatorTest {
 
       assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
-          .extracting(e -> ((L402Exception) e).getErrorCode())
-          .isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
+          .satisfies(
+              ex -> {
+                L402Exception l402Exception = (L402Exception) ex;
+                assertThat(l402Exception.getErrorCode()).isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
+                assertThat(l402Exception.getMessage())
+                    .isEqualTo("Credential has expired")
+                    .doesNotContain(caveatDetailMarker);
+                assertThat(l402Exception.getTokenId()).isEqualTo(tokenIdHex);
+              });
     }
   }
 
@@ -1234,7 +1248,10 @@ class L402ValidatorTest {
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
-                assertThat(l402Ex.getMessage()).containsIgnoringCase("caveat escalation");
+                assertThat(l402Ex.getMessage())
+                    .isEqualTo("Credential attenuation is invalid")
+                    .doesNotContainIgnoringCase("caveat escalation")
+                    .doesNotContain("search,analyze,admin");
                 assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
               });
 
@@ -1293,7 +1310,10 @@ class L402ValidatorTest {
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
-                assertThat(l402Ex.getMessage()).contains("admin");
+                assertThat(l402Ex.getMessage())
+                    .isEqualTo("Credential constraints were not satisfied")
+                    .doesNotContain("admin")
+                    .doesNotContain("search,analyze");
                 assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
               });
     }
