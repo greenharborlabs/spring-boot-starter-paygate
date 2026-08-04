@@ -499,6 +499,28 @@ class L402ValidatorTest {
   }
 
   @Nested
+  @DisplayName("malformed identifier")
+  class MalformedIdentifier {
+
+    @Test
+    @DisplayName("unsupported identifier version is exposed as a sanitized malformed credential")
+    void unsupportedIdentifierVersionIsSanitized() {
+      String header = authHeaderWithIdentifierVersion(macaroon, 0x3137);
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      L402Exception exception =
+          catchThrowableOfType(
+              L402Exception.class, () -> validator.validate(header, boundaryContext()));
+
+      assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_HEADER);
+      assertThat(exception).hasMessage("Malformed L402 credential").hasNoCause();
+      assertThat(exception.getTokenId()).isNull();
+      assertThat(exception.getMessage()).doesNotContain("Unsupported", "version", "12599", "3137");
+    }
+  }
+
+  @Nested
   @DisplayName("wrong preimage")
   class WrongPreimage {
 
@@ -1526,6 +1548,32 @@ class L402ValidatorTest {
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
     String preimageHex = HEX.formatHex(preimage);
     return "L402 " + macaroonBase64 + ":" + preimageHex;
+  }
+
+  private String authHeaderWithIdentifierVersion(Macaroon mac, int version) {
+    byte[] serialized = MacaroonSerializer.serializeV2(mac);
+    byte[] identifierBytes = mac.identifier();
+    int identifierOffset = findSubarray(serialized, identifierBytes);
+    assertThat(identifierOffset).isNotNegative();
+    serialized[identifierOffset] = (byte) (version >>> 8);
+    serialized[identifierOffset + 1] = (byte) version;
+    return "L402 "
+        + Base64.getEncoder().encodeToString(serialized)
+        + ":"
+        + HEX.formatHex(preimageBytes);
+  }
+
+  private static int findSubarray(byte[] bytes, byte[] target) {
+    outer:
+    for (int i = 0; i <= bytes.length - target.length; i++) {
+      for (int j = 0; j < target.length; j++) {
+        if (bytes[i + j] != target[j]) {
+          continue outer;
+        }
+      }
+      return i;
+    }
+    return -1;
   }
 
   private Macaroon attenuate(Macaroon issued, Caveat caveat) {

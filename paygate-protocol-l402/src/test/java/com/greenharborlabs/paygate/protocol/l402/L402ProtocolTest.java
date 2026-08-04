@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.protocol.l402;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -210,6 +211,21 @@ class L402ProtocolTest {
                 assertThat(pve.getErrorCode())
                     .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
               });
+    }
+
+    @Test
+    void unsupportedIdentifierVersionMapsToSanitizedMalformedCredential() {
+      String authHeader = buildAuthHeaderWithIdentifierVersion("L402", 0x3137);
+
+      PaymentValidationException exception =
+          catchThrowableOfType(
+              PaymentValidationException.class, () -> protocol.parseCredential(authHeader));
+
+      assertThat(exception.getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+      assertThat(exception).hasMessage("Malformed L402 credential").hasNoCause();
+      assertThat(exception.getTokenId()).isNull();
+      assertThat(exception.getMessage()).doesNotContain("Unsupported", "version", "12599", "3137");
     }
 
     @Test
@@ -987,6 +1003,43 @@ class L402ProtocolTest {
     String preimageHex = HEX.formatHex(preimage);
 
     return scheme + " " + base64 + ":" + preimageHex;
+  }
+
+  private String buildAuthHeaderWithIdentifierVersion(String scheme, int version) {
+    byte[] preimage = new byte[32];
+    Arrays.fill(preimage, (byte) 0x42);
+    byte[] paymentHash = sha256(preimage);
+    byte[] tokenId = new byte[32];
+    Arrays.fill(tokenId, (byte) 0x07);
+    byte[] rootKey = new byte[32];
+    Arrays.fill(rootKey, (byte) 0xFF);
+
+    MacaroonIdentifier id = new MacaroonIdentifier(0, paymentHash, tokenId);
+    var macaroon = MacaroonMinter.mint(rootKey, id, null, List.of());
+    byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
+    byte[] identifierBytes = macaroon.identifier();
+    int identifierOffset = findSubarray(serialized, identifierBytes);
+    assertThat(identifierOffset).isNotNegative();
+    serialized[identifierOffset] = (byte) (version >>> 8);
+    serialized[identifierOffset + 1] = (byte) version;
+    return scheme
+        + " "
+        + Base64.getEncoder().encodeToString(serialized)
+        + ":"
+        + HEX.formatHex(preimage);
+  }
+
+  private static int findSubarray(byte[] bytes, byte[] target) {
+    outer:
+    for (int i = 0; i <= bytes.length - target.length; i++) {
+      for (int j = 0; j < target.length; j++) {
+        if (bytes[i + j] != target[j]) {
+          continue outer;
+        }
+      }
+      return i;
+    }
+    return -1;
   }
 
   private static byte[] sha256(byte[] input) {

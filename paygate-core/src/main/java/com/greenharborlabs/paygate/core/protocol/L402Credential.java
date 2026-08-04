@@ -117,7 +117,13 @@ public record L402Credential(
           ErrorCode.MALFORMED_HEADER, "Invalid preimage hex: " + e.getMessage(), null);
     }
 
-    MacaroonIdentifier id = MacaroonIdentifier.decode(primaryMacaroon.identifier());
+    MacaroonIdentifier id;
+    try {
+      id = MacaroonIdentifier.decode(primaryMacaroon.identifier());
+    } catch (IllegalArgumentException e) {
+      preimage.destroy();
+      throw new L402Exception(ErrorCode.MALFORMED_HEADER, "Malformed L402 credential", null);
+    }
     String tokenId = HEX.formatHex(id.tokenId());
 
     return new L402Credential(primaryMacaroon, preimage, tokenId, additionalMacaroons);

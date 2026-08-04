@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.core.protocol;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import java.io.ByteArrayOutputStream;
 import java.security.SecureRandom;
@@ -74,6 +75,38 @@ class MalformedIdentifierTest {
     return "L402 " + macaroonBase64 + ":" + preimageHex;
   }
 
+  private String buildHeaderWithIdentifierVersion(int version) {
+    byte[] identifier = new byte[66];
+    identifier[0] = (byte) (version >>> 8);
+    identifier[1] = (byte) version;
+    RANDOM.nextBytes(identifier);
+    identifier[0] = (byte) (version >>> 8);
+    identifier[1] = (byte) version;
+
+    byte[] macaroonBytes = buildRawMacaroonBytes(identifier);
+    String macaroonBase64 = Base64.getEncoder().encodeToString(macaroonBytes);
+    byte[] preimage = new byte[32];
+    RANDOM.nextBytes(preimage);
+    return "L402 " + macaroonBase64 + ":" + HEX.formatHex(preimage);
+  }
+
+  private static byte[] buildRawMacaroonBytes(byte[] identifier) {
+    byte[] signature = new byte[32];
+    RANDOM.nextBytes(signature);
+
+    ByteArrayOutputStream buf = new ByteArrayOutputStream();
+    buf.write(0x02);
+    writeVarint(buf, 2);
+    writeVarint(buf, identifier.length);
+    buf.writeBytes(identifier);
+    buf.write(0x00);
+    buf.write(0x00);
+    writeVarint(buf, 6);
+    writeVarint(buf, 32);
+    buf.writeBytes(signature);
+    return buf.toByteArray();
+  }
+
   @ParameterizedTest(name = "identifier of {0} bytes is rejected as MALFORMED_HEADER")
   @ValueSource(ints = {10, 32, 65, 67, 100, 0, 1})
   @DisplayName("non-66-byte identifier throws MALFORMED_HEADER")
@@ -86,6 +119,29 @@ class MalformedIdentifierTest {
             e ->
                 assertThat(((L402Exception) e).getErrorCode())
                     .isEqualTo(ErrorCode.MALFORMED_HEADER));
+  }
+
+  @Test
+  @DisplayName("unsupported identifier version is sanitized by string parser")
+  void unsupportedIdentifierVersionIsSanitizedByStringParser() {
+    String header = buildHeaderWithIdentifierVersion(0x3137);
+
+    L402Exception exception =
+        catchThrowableOfType(L402Exception.class, () -> L402Credential.parse(header));
+
+    assertSanitizedMalformedCredential(exception);
+  }
+
+  @Test
+  @DisplayName("unsupported identifier version is sanitized by components parser")
+  void unsupportedIdentifierVersionIsSanitizedByComponentsParser() {
+    String header = buildHeaderWithIdentifierVersion(0x3137);
+    L402HeaderComponents components = L402HeaderComponents.extractOrThrow(header);
+
+    L402Exception exception =
+        catchThrowableOfType(L402Exception.class, () -> L402Credential.parse(components));
+
+    assertSanitizedMalformedCredential(exception);
   }
 
   @Test
@@ -131,5 +187,13 @@ class MalformedIdentifierTest {
     L402Credential credential = L402Credential.parse(header);
     assertThat(credential).isNotNull();
     assertThat(credential.tokenId()).isEqualTo(HEX.formatHex(tokenId));
+    credential.destroy();
+  }
+
+  private static void assertSanitizedMalformedCredential(L402Exception exception) {
+    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_HEADER);
+    assertThat(exception).hasMessage("Malformed L402 credential").hasNoCause();
+    assertThat(exception.getTokenId()).isNull();
+    assertThat(exception.getMessage()).doesNotContain("Unsupported", "version", "12599", "3137");
   }
 }
