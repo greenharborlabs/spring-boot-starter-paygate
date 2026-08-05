@@ -911,6 +911,16 @@ This library handles payment credentials and cryptographic tokens. The following
 - **Test mode is blocked in production** -- the `TestModeAutoConfiguration` throws at startup if `prod` or `production` profiles are active
 - **Fail-closed** -- any unexpected exception during validation produces HTTP 503, never leaking protected content
 
+### Request-Bound L402 Credentials
+
+First-party L402 macaroons are bound to the canonical registered route, the actual HTTP method, and an explicit capability ceiling. The route is the selected Spring mapping pattern, not merely the concrete request URI; a credential minted for another route or method is rejected on both fresh validation and cache hits.
+
+- A capability-less endpoint is represented by the authenticated `~` ceiling. Holders may only retain or narrow the issued ceiling; they cannot add a named capability, expand a named set, or mix `~` with names. Spring Security authorities are derived only from the final verified ceiling.
+- `HEAD` resolves an explicit `HEAD` policy first, then inherits the matching `GET` policy, then a wildcard policy. Inherited price, timeout, capability, and pricing strategy remain unchanged, but the credential is bound to `HEAD`; `GET` and `HEAD` credentials are not interchangeable.
+- Route lookup uses the application-relative request path. Context paths and applicable path-prefix servlet mappings are removed consistently, so the same controller mapping keeps the same credential route behind deployment prefixes.
+- Credentials issued before these boundaries were required are intentionally rejected when they omit `route`, `method`, or the capability ceiling. This deliberate compatibility break cannot be configured away; clients recover by obtaining a new challenge.
+- Diagnostics redact bearer material. Do not log full macaroons, payment preimages, `Authorization` headers, root keys, or detailed validation reasons; safe summaries expose only structural counts or lengths and non-secret identifiers.
+
 ### Recommendations for Production
 
 1. Use file-based root key storage with proper filesystem permissions

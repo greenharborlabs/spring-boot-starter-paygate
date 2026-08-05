@@ -331,11 +331,21 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 
 ### Request Flow
 
-1. **Match**: The filter checks if the request path and HTTP method match any `@PaymentRequired` endpoint in the `PaygateEndpointRegistry`. If no match, the request passes through untouched.
+1. **Match**: The filter resolves the application-relative request path and actual HTTP method against `PaygateEndpointRegistry`. The result includes the endpoint policy and canonical route pattern. Context paths and applicable path-prefix servlet mappings are excluded before lookup. If no match, the request passes through untouched.
 2. **Credential validation**: If the `Authorization` header contains an `L402` or `LSAT` prefix, the credential is validated locally via `L402Validator` (no Lightning network call needed). Valid credentials pass through; malformed headers get HTTP 400; expired or invalid credentials get the appropriate error status.
 3. **Health check**: If no valid credential is present, the Lightning backend's `isHealthy()` is checked. If the backend is down, the filter returns HTTP 503 (fail-closed).
 4. **Rate limit check**: Before creating an invoice, the filter checks the `PaygateRateLimiter`. If the client IP has exceeded the rate limit, HTTP 429 is returned with a `Retry-After: 1` header.
-5. **Invoice creation**: A root key is generated, a Lightning invoice is created, a macaroon is minted with service and expiry caveats, and HTTP 402 is returned with a `WWW-Authenticate` header containing the macaroon and invoice.
+5. **Invoice creation**: A root key is generated, a Lightning invoice is created, and the L402 macaroon is minted with service, canonical `route`, actual `method`, explicit capability ceiling, and expiry caveats. HTTP 402 is returned with a `WWW-Authenticate` header containing the macaroon and invoice.
+
+### Endpoint Resolution and Credential Boundaries
+
+Resolution is deterministic: exact paths precede patterns, Spring pattern specificity selects among patterns, and unresolved equal-specificity ambiguity fails closed. For `HEAD`, an explicit HEAD policy wins; otherwise the matching GET policy is inherited in full, followed by a wildcard policy. The actual method remains `HEAD`, so a GET-bound credential cannot be reused for HEAD. Other methods use their own bucket and then wildcard; `OPTIONS` does not inherit GET.
+
+The canonical registered pattern is bound separately from the concrete request path. This keeps route identity stable for root, context-path, servlet-mapped, and combined-prefix deployments. Malformed or ambiguous prefix/path state does not invoke the protected handler.
+
+Every first-party L402 macaroon has a capability ceiling. A blank endpoint capability mints `~` (the empty set); named ceilings may only be retained or narrowed by holder attenuation. Expansion, sentinel-to-name escalation, and mixed sentinel/name values are rejected. Credentials missing `route`, `method`, or the capability ceiling are intentionally invalid, including cache hits, and must be replaced through a new challenge.
+
+Error responses and diagnostics do not echo full macaroons, preimages, `Authorization` headers, root keys, or sensitive validation reasons. Log only permitted non-secret identifiers and redacted structural metadata.
 
 ### Fail-Closed Semantics
 

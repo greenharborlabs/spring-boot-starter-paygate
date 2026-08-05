@@ -322,6 +322,7 @@ Standard keys for request metadata entries in `L402VerificationContext`:
 | Constant | Value | Populated by |
 |----------|-------|--------------|
 | `REQUEST_PATH` | `request.path` | `PaygateSecurityFilter` (path from request URI) |
+| `REQUEST_ROUTE` | `request.route` | Enforcement integration (canonical registered route selected by the endpoint registry) |
 | `REQUEST_METHOD` | `request.method` | `PaygateSecurityFilter` (HTTP method) |
 | `REQUEST_CLIENT_IP` | `request.client_ip` | `PaygateSecurityFilter` (via `ClientIpResolver`) |
 | `REQUESTED_CAPABILITY` | `request.capability` | `PaygateSecurityFilter` (from endpoint config) |
@@ -560,19 +561,13 @@ The `parse()` method:
 Orchestrates the full credential validation pipeline:
 
 1. **Parse** the Authorization header into an `L402Credential`
-2. **Check cache** -- if a cached credential exists for this token ID:
-   - Verify the root key has not been revoked
-   - Verify the presented macaroon signature matches the cached signature (constant-time)
-   - Verify the presented preimage matches the cached preimage (constant-time)
-   - Re-verify time-based caveats against the current time
-   - Return the cached credential with `freshValidation=false`
-3. **Look up root key** by token ID from the `RootKeyStore`
-4. **Verify macaroon signature** using `MacaroonVerifier` (recomputes HMAC chain, runs all caveat verifiers)
-5. **Verify preimage** -- SHA-256(preimage) must equal the payment hash (constant-time comparison)
-6. **Cache the credential** with a TTL derived from `valid_until` caveats (minus 30-second safety margin), capped at the default TTL of 3600 seconds
-7. Return the credential with `freshValidation=true`
+2. **Verify proof of payment** -- decode the identifier and compare SHA-256(preimage) with its payment hash before consulting the cache
+3. **Check cache** -- an exact cached macaroon variant re-runs required-boundary and request-specific caveat checks, then returns with `freshValidation=false`
+4. **Fall back for attenuation** -- a different macaroon variant with the same token ID proceeds through full validation instead of failing solely because another variant is cached
+5. **Look up the root key**, recompute the signature chain, require the security-boundary caveats, and run all caveat verifiers
+6. **Cache after complete validation** with a TTL derived from `valid_until` caveats, then return with `freshValidation=true`
 
-The `ValidationResult` record wraps the credential with a `freshValidation` flag indicating whether it was freshly verified or served from cache.
+The `ValidationResult` record wraps the credential, a `freshValidation` flag, and the immutable final `effectiveCapabilities` set. Its two-argument compatibility constructor supplies an empty set.
 
 ### ErrorCode
 
@@ -640,6 +635,16 @@ All byte array fields in immutable types are defensively copied on construction 
 - Unknown caveats are skipped during verification to support cross-service delegation (fail-closed applies to Lightning backend connectivity and signature verification, not to unknown caveats)
 - Revoked root keys are detected both on fresh validation and on cache hits
 - Expired credentials in the cache are re-verified against the current time and evicted if expired
+
+### Required L402 Boundaries and Capability Ceilings
+
+When trusted request context supplies `REQUEST_ROUTE` and `REQUEST_METHOD`, `L402Validator` requires matching `route` and `method` caveats and their registered verifiers. The checks run for fresh verification and cache hits. A different concrete path may match the same route pattern, but a different canonical route or actual method is rejected. Thus a `HEAD` request that inherited a `GET` endpoint policy still requires `method=HEAD`; a `GET`-bound credential cannot authorize it.
+
+Every first-party credential also carries `{serviceName}_capabilities`. The reserved `~` value is an explicit empty ceiling. Repeated capability caveats are parsed in order and must narrow monotonically: named sets may be reduced (including to `~`), while expansion, `~`-to-name escalation, mixed sentinel/name values, and blank entries are rejected. `L402Validator.ValidationResult.effectiveCapabilities()` is the immutable final verified set and is the only L402 authority source.
+
+The request path supplied by Spring integrations is application-relative: deployment context paths and path-prefix servlet mappings are removed before normalization and route selection. Credentials lacking required `route`, `method`, or capability-ceiling caveats are intentionally rejected, including on cache hits; legacy clients must obtain a new challenge.
+
+Diagnostic text remains redacted. Core types and validation paths must not render full macaroons, preimages, authorization headers, root keys, or sensitive validation reasons.
 
 ### Path Traversal Protection
 

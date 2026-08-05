@@ -168,7 +168,7 @@ PaygateAuthenticationFilter (OncePerRequestFilter)
      |       |-- Delegates to L402Validator.validate() (includes CapabilitiesCaveatVerifier)
      |       |-- Returns authenticated PaygateAuthenticationToken with:
      |       |     - ROLE_L402 authority
-     |       |     - PAYGATE_CAPABILITY_* authorities (from capabilities caveat)
+     |       |     - PAYGATE_CAPABILITY_* authorities (from the final verified capability ceiling)
      |       |     - tokenId as principal
      |       |     - L402Credential as credentials
      |       |     - Caveat-derived attributes map
@@ -202,7 +202,7 @@ The token has two states:
 | `tokenId` | Hex-encoded 32-byte token identifier |
 | `serviceName` | Service name from configuration (`paygate.service-name`) |
 | `authenticated` | `true` |
-| `authorities` | `[ROLE_L402]` + `[PAYGATE_CAPABILITY_*]` for each capability in the `{serviceName}_capabilities` caveat |
+| `authorities` | `[ROLE_L402]` + `[PAYGATE_CAPABILITY_*]` for each capability in the final verified effective set |
 | `principal` | token ID string |
 | `credentials` | `L402Credential` object |
 | `attributes` | Map of caveat key-value pairs plus `tokenId` and `serviceName` |
@@ -455,7 +455,7 @@ When an endpoint is configured with a capability via `@PaymentRequired(capabilit
 myapi_capabilities = analyze
 ```
 
-Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@PaymentRequired` without `capability`, or `capability = ""`), no capabilities caveat is added.
+Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@PaymentRequired` without `capability`, or `capability = ""`), the macaroon carries `~`, the authenticated empty capability ceiling.
 
 ### How Capabilities Are Enforced
 
@@ -463,7 +463,7 @@ Capability enforcement happens at two levels:
 
 1. **Macaroon verification (core layer):** The `PaygateAuthenticationProvider` builds an `L402VerificationContext` with `requestMetadata` that includes the requested capability (via `VerificationContextKeys.REQUESTED_CAPABILITY`) resolved from the endpoint's `@PaymentRequired` configuration. The `CapabilitiesCaveatVerifier` reads the capability from the metadata map and checks that it is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
 
-2. **Spring Security authorization (security layer):** The `PaygateAuthenticationToken.authenticated()` factory method parses the `{serviceName}_capabilities` caveat and maps each capability to a `GrantedAuthority` named `PAYGATE_CAPABILITY_{name}`. These authorities are available to `@PreAuthorize` expressions and `authorizeHttpRequests` rules.
+2. **Spring Security authorization (security layer):** For L402, `PaygateAuthenticationToken.authenticated()` maps only `L402Validator.ValidationResult.effectiveCapabilities()` to `PAYGATE_CAPABILITY_{name}` authorities. That immutable set is derived from the final successfully verified ceiling, not from requested metadata, a cache, or the union of repeated caveats. These authorities are available to `@PreAuthorize` expressions and `authorizeHttpRequests` rules.
 
 ### SpEL Examples
 
@@ -484,13 +484,19 @@ public SearchResult search() { ... }
 public AnalysisResult analyzeAlt() { ... }
 ```
 
-### Backward Compatibility
+### Attenuation and Compatibility
 
-Capability enforcement is fully backward-compatible:
+The issued capability value is a ceiling. Holder attenuation may retain or narrow a named set, including narrowing it to `~`; it cannot expand the set, turn `~` into a named grant, or mix `~` with names. A final `~` produces no capability-derived authorities.
 
-- **Tokens without capabilities caveats** receive only `ROLE_L402`. No `PAYGATE_CAPABILITY_*` authorities are added. Existing tokens continue to work for endpoints that do not require a specific capability.
-- **Endpoints without a capability configured** (`@PaymentRequired` without `capability`) do not trigger capability verification. The `CapabilitiesCaveatVerifier` receives a `null` requested capability and passes without checking.
-- **Existing `hasRole('L402')` rules** are unaffected. Capability authorities are additive.
+Existing `hasRole('L402')` rules remain usable, but credential compatibility is intentionally stricter: previously issued credentials missing the capability ceiling, canonical `route`, or actual `method` are rejected even on cache hits. Clients recover by obtaining a new challenge; there is no fail-open compatibility switch.
+
+### Route, Method, and Deployment Prefixes
+
+The authentication filter, entry point, and auth-failure rate limiter share application-relative request-path resolution. Context paths and applicable path-prefix servlet mappings are removed before endpoint lookup, while the selected canonical route pattern is passed separately into validation.
+
+For an actual `HEAD` request, endpoint resolution uses explicit HEAD first, then inherits the matching GET policy, then wildcard. Inheritance includes price, timeout, capability, and pricing strategy, but the credential remains bound to `HEAD`; GET and HEAD credentials are not interchangeable. Ambiguous route selection fails closed.
+
+Authentication failures and diagnostic rendering redact credential material. Do not expose full macaroons, preimages, `Authorization` headers, root keys, or sensitive validation reasons; `L402Metadata` summaries contain only redaction labels, counts, and lengths.
 
 ---
 

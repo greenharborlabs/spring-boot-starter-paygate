@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **paygate-spring-autoconfigure** and **paygate-spring-security**: Bind L402 credentials to the canonical application-relative route and HTTP method, preventing replay across protected request boundaries.
+- **paygate-spring-autoconfigure** and **paygate-spring-security**: Resolve policy against the application-relative current dispatch so deployment prefixes cannot bypass payment enforcement.
+- **paygate-core**: Enforce immutable issuance ceilings during capability attenuation so delegated credentials cannot self-escalate beyond their originally issued capabilities.
+- **paygate-spring-autoconfigure** and **paygate-spring-security**: Apply protected `GET` payment policy to `HEAD` requests while keeping issued credentials bound to the actual `HEAD` method.
+- **paygate-spring-autoconfigure** and **paygate-spring-security**: Redact bearer credentials from diagnostic output.
+
+### Changed
+
+- **Compatibility**: Intentionally reject legacy L402 credentials that lack the required route, method, or capability-boundary caveats; affected clients must obtain newly issued credentials.
+
 ## [0.1.4] - 2026-07-01
 
 ### Security

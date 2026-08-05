@@ -136,7 +136,9 @@ The method:
 1. Decodes the hex token ID from the context and constructs a `MacaroonIdentifier` with version 0, the payment hash, and the token ID
 2. Builds a caveat list:
    - `services` caveat: `"{serviceName}:0"` (always present)
-   - `{serviceName}_capabilities` caveat: the requested capability (only if non-null and non-blank)
+   - `route` caveat: the canonical registered route pattern
+   - `method` caveat: the actual request method
+   - `{serviceName}_capabilities` caveat: the declared capability ceiling, or `~` for no capability
    - `{serviceName}_valid_until` caveat: Unix epoch timestamp of `now + timeoutSeconds`
 3. Mints the macaroon via `MacaroonMinter.mint()` using the root key from the context
 4. Serializes to V2 binary format via `MacaroonSerializer.serializeV2()` and encodes with **standard base64 with padding** (not base64url)
@@ -288,6 +290,16 @@ L402 macaroons use **standard base64 with padding** (`java.util.Base64.getEncode
 ### Immutable Metadata
 
 `L402Metadata` is an immutable record. The `additionalMacaroons` list is defensively copied via `List.copyOf()` in the compact constructor, preventing external mutation after construction.
+
+Its `toString()` is deliberately non-recursive and redacts the primary macaroon, additional macaroons, and raw `Authorization` header. It reports only the metadata type, redaction labels, additional-macaroon count, and raw-header length; diagnostics must not include credentials, preimages, root keys, or sensitive validation reasons.
+
+### Request Boundaries and Attenuation
+
+Challenge formatting fails closed unless the canonical route and actual method are present. A `HEAD` request can inherit the complete `GET` endpoint policy, but its macaroon is still minted with `method=HEAD`, so GET- and HEAD-bound credentials are not interchangeable. The route is application-relative and remains stable when the application is deployed under a context path or path-prefix servlet mapping.
+
+The capability caveat is an authenticated ceiling, not an additive grant. `~` means no capability; holder-added caveats may retain or narrow a named ceiling, including narrowing it to `~`, but cannot expand it or turn `~` into a named grant. Validation derives the effective capability set only after the entire attenuation chain succeeds.
+
+Previously issued L402 credentials without `route`, `method`, or the capability ceiling are intentionally rejected, including cached credentials. Accepting the legacy `LSAT` scheme name does not grandfather those unbound credentials; clients must obtain a new challenge.
 
 ### Fail Closed
 

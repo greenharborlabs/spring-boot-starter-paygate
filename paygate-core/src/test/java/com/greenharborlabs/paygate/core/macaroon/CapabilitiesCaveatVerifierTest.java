@@ -360,6 +360,29 @@ class CapabilitiesCaveatVerifierTest {
     }
 
     @Test
+    @DisplayName("rejects a differently cased capability as an escalation")
+    void rejectsDifferentlyCasedCapabilityAsEscalation() {
+      var previous = new Caveat("my-api_capabilities", "search");
+      var differentlyCased = new Caveat("my-api_capabilities", "SEARCH");
+      var context =
+          L402VerificationContext.builder()
+              .serviceName(SERVICE_NAME)
+              .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "SEARCH"))
+              .build();
+
+      assertThat(verifier.isMoreRestrictive(previous, differentlyCased)).isFalse();
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.verifyCaveats(
+                      List.of(previous, differentlyCased), List.of(verifier), context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .satisfies(
+              e ->
+                  assertThat(((MacaroonVerificationException) e).getReason())
+                      .isEqualTo(VerificationFailureReason.CAVEAT_ESCALATION));
+    }
+
+    @Test
     @DisplayName("allows only bounded monotonic narrowing across repeated caveats")
     void allowsOnlyBoundedMonotonicNarrowingAcrossRepeatedCaveats() {
       var context =

@@ -140,7 +140,7 @@ The `PaymentProtocol` interface is the primary extension point. Protocol impleme
 | Type | Kind | Description |
 |------|------|-------------|
 | `PaymentProtocol` | interface | SPI for payment protocol implementations. Defines the full lifecycle: header detection, credential parsing, challenge formatting, validation, and receipt creation. |
-| `ChallengeContext` | record | Protocol-agnostic data carrying all information needed to create a payment challenge: payment hash, token ID, bolt11 invoice, price, root key bytes, opaque data map, and digest. Produced by `PaygateChallengeService`, consumed by `PaymentProtocol.formatChallenge()`. |
+| `ChallengeContext` | record | Protocol-agnostic data carrying all information needed to create a payment challenge, including canonical route and actual request method boundary metadata. Produced by `PaygateChallengeService`, consumed by `PaymentProtocol.formatChallenge()`. |
 | `ChallengeResponse` | record | A protocol's formatted challenge output containing the `WWW-Authenticate` header value, the protocol scheme that produced it, and optional body data for the JSON response. |
 | `PaymentCredential` | record | Protocol-agnostic representation of a parsed payment credential: payment hash, preimage, token ID, source protocol scheme, optional payer identity (DID format from MPP), and protocol-specific metadata. |
 | `PaymentReceipt` | record | Data for the `Payment-Receipt` response header: status, HMAC-bound challenge ID, payment method, method-specific reference, amount in satoshis, RFC 3339 timestamp, and protocol scheme. |
@@ -164,6 +164,10 @@ MPP callers that cast `ProtocolMetadata` to `MppMetadata` should use `echoedChal
 | `rootKeyBytes` | `byte[]` | no | Root key for macaroon signing (defensively copied) |
 | `opaque` | `Map<String, String>` | no | Protocol-specific opaque data (immutable copy) |
 | `digest` | `String` | no | Content digest for challenge binding |
+| `routePattern` | `String` | L402 issuance | Canonical registered route pattern used to bind the credential |
+| `requestMethod` | `String` | L402 issuance | Actual HTTP request method used to bind the credential; an inherited GET policy still records `HEAD` for a HEAD request |
+
+The original eleven-argument `ChallengeContext` constructor remains available for non-L402 and receipt-only callers and leaves `routePattern` and `requestMethod` null. The canonical record constructor includes both fields, so they participate in record equality and hashing. L402 challenge creation requires valid boundary values and fails closed when they are absent.
 
 ### PaymentCredential Fields
 
@@ -239,6 +243,14 @@ Map fields (`ChallengeContext.opaque`, `ChallengeResponse.bodyData`) are wrapped
 
 - `ChallengeContext.toString()` returns `ChallengeContext[tokenId=..., priceSats=..., serviceName=...]` -- no payment hash or root key bytes
 - `PaymentCredential.toString()` returns `PaymentCredential[tokenId=..., sourceProtocolScheme=..., source=...]` -- no payment hash or preimage
+
+Protocol metadata must follow the same rule: diagnostic rendering may expose non-secret identifiers and structural metadata such as counts or lengths, but never full macaroons, preimages, `Authorization` headers, root keys, or sensitive validation reasons.
+
+### L402 Boundary Contract
+
+The API carries the canonical route and actual request method from endpoint resolution into protocol issuance. Implementations must keep those values distinct from the concrete request path and the policy method: a `HEAD` request may inherit a `GET` policy while remaining bound to `HEAD`. Deployment context paths and servlet-mapping prefixes are removed before the canonical route is selected.
+
+First-party L402 credentials also carry an explicit capability ceiling, using `~` for the empty set. Attenuation may only retain or narrow that verified ceiling. Credentials that predate the boundary contract and omit `route`, `method`, or the capability ceiling are intentionally invalid and must be replaced through a new challenge.
 
 ### Input Validation
 

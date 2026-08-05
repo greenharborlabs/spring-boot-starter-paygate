@@ -169,7 +169,7 @@ class CapabilityEnforcementIT {
                       authorizationHeader(substituted),
                       verificationContext(NAMED_CAPABILITIES_PATH, "analyze")))
           .isInstanceOf(L402Exception.class)
-          .hasMessageContaining("caveat escalation");
+          .hasMessage("Credential attenuation is invalid");
 
       var response = sendAuthenticated(client, NAMED_CAPABILITIES_PATH, substituted);
       assertThat(response.statusCode()).isNotEqualTo(200);
