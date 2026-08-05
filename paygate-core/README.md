@@ -138,7 +138,7 @@ paygate-core/
 | `L402Challenge` | record | Payment challenge with `toWwwAuthenticateHeader()` and `toJsonBody()` methods. |
 | `L402Credential` | record | Parsed L402/LSAT Authorization header with macaroon, preimage, and token ID. |
 | `L402Validator` | class | Full validation pipeline: parse header, check cache, verify signature, verify preimage, run caveat verifiers, cache on success. |
-| `ErrorCode` | enum | `INVALID_MACAROON(401)`, `INVALID_PREIMAGE(401)`, `EXPIRED_CREDENTIAL(401)`, `INVALID_SERVICE(401)`, `REVOKED_CREDENTIAL(401)`, `LIGHTNING_UNAVAILABLE(503)`, `MALFORMED_HEADER(402)`. |
+| `ErrorCode` | enum | `INVALID_MACAROON(401)`, `INVALID_PREIMAGE(401)`, `EXPIRED_CREDENTIAL(401)`, `INVALID_SERVICE(401)`, `MISSING_REQUEST_CONTEXT(401)`, `REVOKED_CREDENTIAL(401)`, `LIGHTNING_UNAVAILABLE(503)`, `MALFORMED_HEADER(400)`. |
 | `LightningBackend` | interface | Contract for Lightning implementations (`createInvoice`, `lookupInvoice`, `isHealthy`). |
 | `RootKeyStore` | interface | Contract for root key generation, retrieval, and revocation. |
 | `CredentialStore` | interface | Contract for caching validated credentials with TTL. |
@@ -252,7 +252,7 @@ public interface CaveatVerifier {
 }
 ```
 
-During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by key. If no verifier is found for a truly unregistered caveat key, that caveat is **skipped** -- verification continues without evaluating it. This supports L402 cross-service delegation for names this service does not understand. It does not make registered first-party boundary names optional: `route`, `method`, and the active `{serviceName}_capabilities` key are reserved and mandatory for `L402Validator`, so delegated credentials using those names are evaluated against this application's trusted boundary context. This differs from the original macaroons paper, which recommends failing closed on all unknown caveats. If your application requires strict rejection of truly unregistered keys, register a custom `CaveatVerifier` that rejects them.
+During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by its exact key. If no verifier is found for a truly unregistered caveat key, that caveat is **skipped** -- verification continues without evaluating it. This supports L402 cross-service delegation for names this service does not understand. It does not make registered first-party boundary names optional: `route`, `method`, and the active `{serviceName}_capabilities` key are reserved and mandatory for `L402Validator`, so delegated credentials using those names are evaluated against this application's trusted boundary context. This differs from the original macaroons paper, which recommends failing closed on all unknown caveats. `CaveatVerifier` registration is exact-key only; the current API does not provide a catch-all verifier for rejecting every unregistered key.
 
 ### Built-in Caveat Verifiers
 
@@ -579,9 +579,10 @@ Maps protocol-level error types to HTTP status codes:
 | `INVALID_PREIMAGE` | 401 | SHA-256(preimage) does not match payment hash |
 | `EXPIRED_CREDENTIAL` | 401 | `valid_until` caveat timestamp is in the past |
 | `INVALID_SERVICE` | 401 | Service name not found in `services` caveat |
+| `MISSING_REQUEST_CONTEXT` | 401 | Trusted request route or method metadata is absent for boundary-bound validation |
 | `REVOKED_CREDENTIAL` | 401 | Root key has been revoked or not found |
 | `LIGHTNING_UNAVAILABLE` | 503 | Lightning backend is unreachable |
-| `MALFORMED_HEADER` | 402 | Authorization header does not match L402/LSAT format |
+| `MALFORMED_HEADER` | 400 | Authorization header does not match L402/LSAT format |
 
 ---
 
