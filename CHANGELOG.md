@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Compatibility**: Intentionally reject legacy L402 credentials that lack the required route, method, or capability-boundary caveats; affected clients must obtain newly issued credentials.
+- **Compatibility**: Intentionally reject legacy L402 credentials that lack the required reserved `route`, `method`, or `{serviceName}_capabilities` caveats; affected clients must obtain newly issued credentials. The context-less `L402Validator.validate(String)` descriptor remains callable but fails closed for boundary-bound credentials, so integrations must use a context-bearing overload with trusted `REQUEST_ROUTE` and `REQUEST_METHOD` metadata.
+- **Delegation compatibility**: Pre-existing cross-application credentials that used generic `route`, `method`, or the active service capability key are now evaluated as this application's reserved first-party boundaries once those verifiers are registered; only truly unregistered caveat keys retain pass-through behavior.
+- **Route compatibility**: The retained `PaygateChallengeService` challenge overload derives route identity through the registration `PathPattern` parser helper. Signed route comparison remains exact, including whitespace and trailing slash; no new case or percent-encoding normalization is promised.
 
 ## [0.1.4] - 2026-07-01
 

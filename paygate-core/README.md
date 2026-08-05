@@ -252,7 +252,7 @@ public interface CaveatVerifier {
 }
 ```
 
-During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by key. If no verifier is found for a caveat, that caveat is **skipped** -- verification continues without evaluating it. This follows the L402 cross-service delegation model, where a macaroon may carry caveats intended for other services that this service does not understand. Note that this differs from the original macaroons paper, which recommends failing closed on unknown caveats. If your application requires strict unknown-caveat rejection, register a custom `CaveatVerifier` that rejects all unrecognized keys.
+During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by key. If no verifier is found for a truly unregistered caveat key, that caveat is **skipped** -- verification continues without evaluating it. This supports L402 cross-service delegation for names this service does not understand. It does not make registered first-party boundary names optional: `route`, `method`, and the active `{serviceName}_capabilities` key are reserved and mandatory for `L402Validator`, so delegated credentials using those names are evaluated against this application's trusted boundary context. This differs from the original macaroons paper, which recommends failing closed on all unknown caveats. If your application requires strict rejection of truly unregistered keys, register a custom `CaveatVerifier` that rejects them.
 
 ### Built-in Caveat Verifiers
 
@@ -632,17 +632,17 @@ All byte array fields in immutable types are defensively copied on construction 
 
 - If the Lightning backend is unreachable, `isHealthy()` returns `false` and the filter returns HTTP 503
 - Protected content is **never** served with HTTP 200 when the backend cannot be reached
-- Unknown caveats are skipped during verification to support cross-service delegation (fail-closed applies to Lightning backend connectivity and signature verification, not to unknown caveats)
+- Truly unregistered caveat keys are skipped to support cross-service delegation; registered `route`, `method`, and `{serviceName}_capabilities` keys are reserved mandatory first-party boundaries and fail closed when absent, unverifiable, or unsatisfied
 - Revoked root keys are detected both on fresh validation and on cache hits
 - Expired credentials in the cache are re-verified against the current time and evicted if expired
 
 ### Required L402 Boundaries and Capability Ceilings
 
-When trusted request context supplies `REQUEST_ROUTE` and `REQUEST_METHOD`, `L402Validator` requires matching `route` and `method` caveats and their registered verifiers. The checks run for fresh verification and cache hits. A different concrete path may match the same route pattern, but a different canonical route or actual method is rejected. Thus a `HEAD` request that inherited a `GET` endpoint policy still requires `method=HEAD`; a `GET`-bound credential cannot authorize it.
+`L402Validator` unconditionally requires matching signed `route` and `method` caveats, their registered verifiers, and trusted `REQUEST_ROUTE` and `REQUEST_METHOD` context for first-party validation. The same requirements apply on fresh verification and cache hits. The retained `validate(String)` descriptor cannot successfully validate an otherwise valid boundary-bound credential without request context; callers must use a context-bearing overload with the trusted canonical route and actual method. Missing context fails closed with a sanitized client-facing diagnostic. Callers recover by supplying trusted metadata, never by weakening caveat enforcement. A different concrete path may match the same route pattern, but a different canonical route or actual method is rejected. Thus a `HEAD` request that inherited a `GET` endpoint policy still requires `method=HEAD`; a `GET`-bound credential cannot authorize it.
 
 Every first-party credential also carries `{serviceName}_capabilities`. The reserved `~` value is an explicit empty ceiling. Repeated capability caveats are parsed in order and must narrow monotonically: named sets may be reduced (including to `~`), while expansion, `~`-to-name escalation, mixed sentinel/name values, and blank entries are rejected. `L402Validator.ValidationResult.effectiveCapabilities()` is the immutable final verified set and is the only L402 authority source.
 
-The request path supplied by Spring integrations is application-relative: deployment context paths and path-prefix servlet mappings are removed before normalization and route selection. Credentials lacking required `route`, `method`, or capability-ceiling caveats are intentionally rejected, including on cache hits; legacy clients must obtain a new challenge.
+The request path supplied by Spring integrations is application-relative: deployment context paths and path-prefix servlet mappings are removed before the project's existing path handling and route selection. The compatibility challenge overload derives route identity through the same Spring `PathPattern` parser helper used for endpoint registration. The registered route identity is signed and compared exactly; whitespace-altered signed values reject. Current behavior does not promise normalization of case, percent-encoding spelling, whitespace, or trailing slash. Credentials lacking required `route`, `method`, or capability-ceiling caveats are intentionally rejected, including on cache hits; legacy clients must obtain a new challenge.
 
 Diagnostic text remains redacted. Core types and validation paths must not render full macaroons, preimages, authorization headers, root keys, or sensitive validation reasons.
 
