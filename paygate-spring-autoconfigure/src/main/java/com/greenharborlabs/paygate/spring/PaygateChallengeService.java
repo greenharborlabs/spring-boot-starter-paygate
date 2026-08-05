@@ -125,7 +125,8 @@ public class PaygateChallengeService {
       HttpServletRequest request, PaygateEndpointConfig config, ChallengeOptions options)
       throws PaygateLightningUnavailableException, PaygateRateLimitedException {
     Objects.requireNonNull(config, "config must not be null");
-    return createChallenge(request, config, config.pathPattern(), options);
+    var routePattern = PaygateEndpointRegistry.parsePathPattern(config.pathPattern());
+    return createChallenge(request, config, routePattern.getPatternString(), options);
   }
 
   /**

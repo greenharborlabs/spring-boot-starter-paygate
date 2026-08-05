@@ -776,6 +776,48 @@ class L402ProtocolTest {
     }
 
     @Test
+    void missingRequestContextPreservesSpecificSafeMessage() {
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+
+      doThrow(
+              new L402Exception(
+                  ErrorCode.MISSING_REQUEST_CONTEXT,
+                  "unsafe route=/private method=DELETE",
+                  "tok-1"))
+          .when(validator)
+          .validate(eq(authHeader), any());
+
+      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              exception -> {
+                PaymentValidationException validationException =
+                    (PaymentValidationException) exception;
+                assertThat(validationException.getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+                assertThat(validationException.getMessage())
+                    .isEqualTo("Request route and method context are required");
+              });
+    }
+
+    @Test
+    void invalidServiceRemainsGenericallySanitized() {
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      String sensitiveDetail = "route=/private method=DELETE macaroon=secret preimage=secret";
+
+      doThrow(new L402Exception(ErrorCode.INVALID_SERVICE, sensitiveDetail, "tok-1"))
+          .when(validator)
+          .validate(eq(authHeader), any());
+
+      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+          .isInstanceOf(PaymentValidationException.class)
+          .hasMessage("L402 credential validation failed")
+          .hasMessageNotContaining(sensitiveDetail);
+    }
+
+    @Test
     void revokedCredentialMapsToInvalidChallengeBinding() {
       verifyErrorMapping(
           ErrorCode.REVOKED_CREDENTIAL,

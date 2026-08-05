@@ -125,6 +125,47 @@ class PaygateChallengeServiceTest {
 
       assertThat(ctx.digest()).isEqualTo("sha-256=:dGVzdA==:");
     }
+
+    @Test
+    @DisplayName("compatibility overload uses the registry route identity for accepted spellings")
+    void compatibilityOverloadUsesRegistryRouteIdentity() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      PaygateChallengeService service = createService(createTrackingRootKeyStore());
+      var routeCases =
+          List.of(
+              new RouteCase("literal", "/api/literal", "/api/literal"),
+              new RouteCase("URI template", "/api/items/{id}", "/api/items/42"),
+              new RouteCase("wildcard", "/api/files/*", "/api/files/report"),
+              new RouteCase("trailing slash", "/api/trailing/", "/api/trailing/"),
+              new RouteCase("surrounding whitespace", " /api/spaced ", " /api/spaced "),
+              new RouteCase("percent-encoding case", "/api/%2f", "/api/%2f"),
+              new RouteCase("path case", "/Api/Case", "/Api/Case"));
+
+      for (RouteCase routeCase : routeCases) {
+        var endpointConfig =
+            new PaygateEndpointConfig(
+                "GET", routeCase.pattern(), PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "");
+        var registry = new PaygateEndpointRegistry();
+        registry.register(endpointConfig);
+        var resolved = registry.resolve("GET", routeCase.requestPath());
+        var routeRequest = new MockHttpServletRequest("GET", routeCase.requestPath());
+
+        ChallengeContext context =
+            service.createChallenge(
+                routeRequest,
+                endpointConfig,
+                PaygateChallengeService.ChallengeOptions.enforceRateLimit());
+
+        assertThat(resolved)
+            .as("registry resolution for %s spelling", routeCase.name())
+            .isNotNull();
+        assertThat(context.routePattern())
+            .as("route identity for %s spelling", routeCase.name())
+            .isEqualTo(resolved.routePattern());
+      }
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -209,6 +250,34 @@ class PaygateChallengeServiceTest {
   @Nested
   @DisplayName("Lightning backend health")
   class LightningHealth {
+
+    @Test
+    @DisplayName("invalid compatibility route is rejected before challenge side effects")
+    void invalidCompatibilityRouteIsRejectedBeforeChallengeSideEffects() {
+      PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service =
+          new PaygateChallengeService(
+              trackingStore,
+              lightningBackend,
+              properties,
+              applicationContext,
+              null,
+              rateLimiter,
+              null,
+              null);
+      var invalidConfig =
+          new PaygateEndpointConfig(
+              "GET", "/api/{invalid", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "");
+
+      assertThatThrownBy(() -> service.createChallenge(request, invalidConfig))
+          .isInstanceOf(IllegalArgumentException.class);
+
+      verify(lightningBackend, never()).isHealthy();
+      verify(rateLimiter, never()).tryAcquire(anyString());
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
+    }
 
     @Test
     @DisplayName("throws PaygateLightningUnavailableException when backend is unhealthy")
@@ -853,6 +922,8 @@ class PaygateChallengeServiceTest {
         now,
         now.plus(1, ChronoUnit.HOURS));
   }
+
+  private record RouteCase(String name, String pattern, String requestPath) {}
 
   /**
    * RootKeyStore that captures the {@link SensitiveBytes} reference so tests can verify {@code

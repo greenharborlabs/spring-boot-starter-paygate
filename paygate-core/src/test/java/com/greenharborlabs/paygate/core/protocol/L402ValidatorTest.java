@@ -1348,8 +1348,56 @@ class L402ValidatorTest {
 
       assertThatThrownBy(() -> validator.validate(validAuthHeader))
           .isInstanceOf(L402Exception.class)
-          .extracting(e -> ((L402Exception) e).getErrorCode())
-          .isEqualTo(ErrorCode.INVALID_SERVICE);
+          .satisfies(
+              exception -> {
+                L402Exception l402Exception = (L402Exception) exception;
+                assertThat(l402Exception.getErrorCode())
+                    .isEqualTo(ErrorCode.MISSING_REQUEST_CONTEXT);
+                assertThat(l402Exception.getMessage())
+                    .isEqualTo("Request route and method context are required");
+              });
+    }
+
+    @Test
+    @DisplayName("missing, null, and blank route or method fail identically on fresh validation")
+    void incompleteRequestContextFailsOnFreshValidation() {
+      for (Map<String, String> metadata : incompleteRequestMetadata()) {
+        L402Validator validator =
+            new L402Validator(
+                rootKeyStore, new InMemoryCredentialStore(), boundaryVerifiers(), SERVICE_NAME);
+        L402VerificationContext context =
+            L402VerificationContext.builder()
+                .serviceName(SERVICE_NAME)
+                .currentTime(Instant.now())
+                .requestMetadata(metadata)
+                .build();
+
+        assertMissingRequestContext(() -> validator.validate(validAuthHeader, context));
+      }
+    }
+
+    @Test
+    @DisplayName("missing request context on a cache hit does not evict the valid cache entry")
+    void incompleteRequestContextFailsWithoutEvictingCachedCredential() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      L402Validator.ValidationResult fresh = validator.validate(validAuthHeader, boundaryContext());
+      fresh.credential().destroy();
+
+      for (Map<String, String> metadata : incompleteRequestMetadata()) {
+        L402VerificationContext incompleteContext =
+            L402VerificationContext.builder()
+                .serviceName(SERVICE_NAME)
+                .currentTime(Instant.now())
+                .requestMetadata(metadata)
+                .build();
+        assertMissingRequestContext(() -> validator.validate(validAuthHeader, incompleteContext));
+      }
+
+      L402Validator.ValidationResult cached =
+          validator.validate(validAuthHeader, boundaryContext());
+      assertThat(cached.freshValidation()).isFalse();
+      cached.credential().destroy();
     }
 
     @Test
@@ -1516,6 +1564,46 @@ class L402ValidatorTest {
                 VerificationContextKeys.REQUEST_METHOD,
                 method))
         .build();
+  }
+
+  private Map<String, String> requestMetadata(
+      String route, String method, boolean includeRoute, boolean includeMethod) {
+    Map<String, String> metadata = new HashMap<>();
+    if (includeRoute) {
+      metadata.put(VerificationContextKeys.REQUEST_ROUTE, route);
+    }
+    if (includeMethod) {
+      metadata.put(VerificationContextKeys.REQUEST_METHOD, method);
+    }
+    return metadata;
+  }
+
+  private List<Map<String, String>> incompleteRequestMetadata() {
+    return List.of(
+        requestMetadata(null, REQUEST_METHOD, false, true),
+        requestMetadata(null, REQUEST_METHOD, true, true),
+        requestMetadata("  ", REQUEST_METHOD, true, true),
+        requestMetadata(REQUEST_ROUTE, null, true, false),
+        requestMetadata(REQUEST_ROUTE, null, true, true),
+        requestMetadata(REQUEST_ROUTE, "\t", true, true));
+  }
+
+  private void assertMissingRequestContext(ThrowingValidation validation) {
+    assertThatThrownBy(validation::validate)
+        .isInstanceOf(L402Exception.class)
+        .satisfies(
+            exception -> {
+              L402Exception l402Exception = (L402Exception) exception;
+              assertThat(l402Exception.getErrorCode()).isEqualTo(ErrorCode.MISSING_REQUEST_CONTEXT);
+              assertThat(l402Exception.getMessage())
+                  .isEqualTo("Request route and method context are required")
+                  .doesNotContain(REQUEST_ROUTE, REQUEST_METHOD, validAuthHeader);
+            });
+  }
+
+  @FunctionalInterface
+  private interface ThrowingValidation {
+    void validate();
   }
 
   private Map<String, String> boundaryMetadata(String... additionalEntry) {

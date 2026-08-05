@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
@@ -140,6 +141,14 @@ public class L402Protocol implements PaymentProtocol {
     return new ChallengeResponse(wwwAuth, SCHEME, null);
   }
 
+  /**
+   * Validates an L402 credential for a trusted request boundary.
+   *
+   * @param credential the parsed L402 credential
+   * @param requestContext request metadata containing non-blank {@link
+   *     VerificationContextKeys#REQUEST_ROUTE} and {@link VerificationContextKeys#REQUEST_METHOD}
+   * @throws PaymentValidationException when validation fails
+   */
   @Override
   public void validate(PaymentCredential credential, Map<String, String> requestContext)
       throws PaymentValidationException {
@@ -189,6 +198,8 @@ public class L402Protocol implements PaymentProtocol {
           case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL;
           case INVALID_PREIMAGE -> PaymentValidationException.ErrorCode.INVALID_PREIMAGE;
           case EXPIRED_CREDENTIAL -> PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL;
+          case MISSING_REQUEST_CONTEXT ->
+              PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
           case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
               PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
           case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
@@ -202,6 +213,7 @@ public class L402Protocol implements PaymentProtocol {
       case MALFORMED_HEADER -> "Malformed L402 credential";
       case INVALID_PREIMAGE -> "L402 credential proof is invalid";
       case EXPIRED_CREDENTIAL -> "L402 credential has expired";
+      case MISSING_REQUEST_CONTEXT -> "Request route and method context are required";
       case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
           "L402 credential validation failed";
       case LIGHTNING_UNAVAILABLE -> "Lightning validation service is unavailable";

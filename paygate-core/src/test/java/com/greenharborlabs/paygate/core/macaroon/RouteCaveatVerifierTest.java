@@ -6,10 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 @DisplayName("RouteCaveatVerifier")
 class RouteCaveatVerifierTest {
@@ -49,6 +53,34 @@ class RouteCaveatVerifierTest {
 
       assertThatCode(() -> verifier.verify(caveat, contextWithRoute("/products/{id}")))
           .doesNotThrowAnyException();
+    }
+
+    @ParameterizedTest(name = "rejects {0} in the signed route")
+    @MethodSource("whitespaceAlteredRoutes")
+    @DisplayName("rejects whitespace-altered signed routes without disclosing route values")
+    void rejectsWhitespaceAlteredSignedRoutes(String description, String caveatRoute) {
+      var requestRoute = "/private/request-route-marker";
+
+      assertThat(CaveatValues.splitBounded(caveatRoute, 1, "route")).containsExactly(requestRoute);
+      assertThatThrownBy(
+              () ->
+                  verifier.verify(new Caveat("route", caveatRoute), contextWithRoute(requestRoute)))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .satisfies(
+              exception ->
+                  assertThat(((MacaroonVerificationException) exception).getReason())
+                      .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET))
+          .hasMessageNotContaining(caveatRoute)
+          .hasMessageNotContaining(requestRoute);
+    }
+
+    private static Stream<Arguments> whitespaceAlteredRoutes() {
+      var canonicalRoute = "/private/request-route-marker";
+      return Stream.of(
+          Arguments.of("leading space", " " + canonicalRoute),
+          Arguments.of("trailing space", canonicalRoute + " "),
+          Arguments.of("leading tab", "\t" + canonicalRoute),
+          Arguments.of("trailing newline", canonicalRoute + "\n"));
     }
 
     @Test

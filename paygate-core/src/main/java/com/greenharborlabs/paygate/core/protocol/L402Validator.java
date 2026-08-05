@@ -13,6 +13,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -34,6 +35,8 @@ public final class L402Validator {
   private static final long DEFAULT_TTL_SECONDS = 3600;
   private static final String ROUTE_CAVEAT_KEY = "route";
   private static final String METHOD_CAVEAT_KEY = "method";
+  private static final String MISSING_REQUEST_CONTEXT_MESSAGE =
+      "Request route and method context are required";
 
   private final RootKeyStore rootKeyStore;
   private final CredentialStore credentialStore;
@@ -106,7 +109,10 @@ public final class L402Validator {
 
   /**
    * Validates an L402 Authorization header using a default verification context built from the
-   * configured service name and the current time.
+   * configured service name and the current time. This compatibility overload does not provide the
+   * mandatory request route and method, so an otherwise valid credential fails with {@link
+   * ErrorCode#MISSING_REQUEST_CONTEXT}. First-party request validation must use {@link
+   * #validate(String, L402VerificationContext)}.
    *
    * @param authorizationHeader the raw Authorization header value
    * @return a {@link ValidationResult} containing the credential and freshness flag
@@ -125,7 +131,8 @@ public final class L402Validator {
    * Validates an L402 Authorization header using the provided verification context.
    *
    * @param authorizationHeader the raw Authorization header value
-   * @param context the verification context (service name, current time, capabilities, etc.)
+   * @param context the verification context; request metadata must contain non-blank {@link
+   *     VerificationContextKeys#REQUEST_ROUTE} and {@link VerificationContextKeys#REQUEST_METHOD}
    * @return a {@link ValidationResult} containing the credential and freshness flag
    * @throws L402Exception on any validation failure
    */
@@ -137,7 +144,8 @@ public final class L402Validator {
    * Validates pre-parsed L402 header components using the provided verification context.
    *
    * @param components the structurally validated header components
-   * @param context the verification context (service name, current time, capabilities, etc.)
+   * @param context the verification context; request metadata must contain non-blank {@link
+   *     VerificationContextKeys#REQUEST_ROUTE} and {@link VerificationContextKeys#REQUEST_METHOD}
    * @return a {@link ValidationResult} containing the credential and freshness flag
    * @throws L402Exception on any validation failure
    */
@@ -196,7 +204,7 @@ public final class L402Validator {
       try (rootKeySb) {
         byte[] rootKey = rootKeySb.value();
         try {
-          effectiveCapabilities = verifyMacaroon(credential.macaroon(), rootKey, context);
+          effectiveCapabilities = verifyMacaroon(credential.macaroon(), rootKey, context, tokenId);
         } catch (MacaroonVerificationException e) {
           throw new L402Exception(
               mapReasonToErrorCode(e.getReason()),
@@ -247,6 +255,7 @@ public final class L402Validator {
           safeValidationFailureMessage(e.getReason()),
           tokenId);
     }
+    requireRequestContext(context, tokenId);
     try {
       MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiersByKey, context);
     } catch (MacaroonVerificationException e) {
@@ -265,7 +274,7 @@ public final class L402Validator {
   }
 
   private Set<String> verifyMacaroon(
-      Macaroon macaroon, byte[] rootKey, L402VerificationContext context) {
+      Macaroon macaroon, byte[] rootKey, L402VerificationContext context, String tokenId) {
     byte[] derivedKey = MacaroonCrypto.deriveKey(rootKey);
     byte[] sig = null;
     try {
@@ -282,6 +291,7 @@ public final class L402Validator {
       }
 
       verifyRequiredBoundaryCaveats(macaroon.caveats());
+      requireRequestContext(context, tokenId);
       MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
       return extractFinalEffectiveCapabilities(macaroon);
     } finally {
@@ -295,6 +305,16 @@ public final class L402Validator {
       throw new IllegalArgumentException("Missing required " + key + " caveat verifier");
     }
     return verifier;
+  }
+
+  private static void requireRequestContext(L402VerificationContext context, String tokenId) {
+    Map<String, String> metadata = context.getRequestMetadata();
+    String route = metadata.get(VerificationContextKeys.REQUEST_ROUTE);
+    String method = metadata.get(VerificationContextKeys.REQUEST_METHOD);
+    if (route == null || route.isBlank() || method == null || method.isBlank()) {
+      throw new L402Exception(
+          ErrorCode.MISSING_REQUEST_CONTEXT, MISSING_REQUEST_CONTEXT_MESSAGE, tokenId);
+    }
   }
 
   private void verifyRequiredBoundaryCaveats(List<Caveat> caveats) {

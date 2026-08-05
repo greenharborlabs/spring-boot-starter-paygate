@@ -75,7 +75,7 @@ public class PaygateEndpointRegistry {
   public void register(PaygateEndpointConfig config) {
     config = normalizeCapabilities(config);
     var method = normalizeMethod(config.httpMethod());
-    var pattern = PATTERN_PARSER.parse(config.pathPattern());
+    var pattern = parsePathPattern(config.pathPattern());
     var canonicalPattern = pattern.getPatternString();
     var registered = new RegisteredEndpoint(config, pattern);
     registrationsByMethod.compute(
@@ -290,6 +290,10 @@ public class PaygateEndpointRegistry {
 
   private static String normalizeMethod(String method) {
     return method.toUpperCase(Locale.ROOT);
+  }
+
+  static PathPattern parsePathPattern(String pathPattern) {
+    return PATTERN_PARSER.parse(pathPattern);
   }
 
   private record RegisteredEndpoint(PaygateEndpointConfig config, PathPattern pattern) {}

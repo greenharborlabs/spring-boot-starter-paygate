@@ -383,6 +383,19 @@ class PaygateEndpointRegistryTest {
   }
 
   @Test
+  @DisplayName("registered route identity is defined by the shared parser helper")
+  void registeredRouteIdentityIsDefinedBySharedParserHelper() {
+    var config = new PaygateEndpointConfig("GET", "/api/items/{id}", 10, 600, "", "", "read");
+    var parsedPattern = PaygateEndpointRegistry.parsePathPattern(config.pathPattern());
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+
+    registry.register(config);
+
+    assertThat(registry.resolve("GET", "/api/items/42").routePattern())
+        .isEqualTo(parsedPattern.getPatternString());
+  }
+
+  @Test
   @DisplayName("OPTIONS does not inherit a GET policy")
   void optionsDoesNotFallBackToGet() {
     var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
