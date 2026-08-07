@@ -328,7 +328,7 @@ class L402ValidatorTest {
 
     @Test
     @DisplayName("holder cannot substitute capabilities outside an issued named ceiling")
-    void rejectsHolderSubstitutionOutsideNamedCeilingOnFreshPath() {
+    void rejectsCapabilityExpansionWithoutEffectiveAuthorities() {
       Macaroon issued =
           MacaroonMinter.mint(
               rootKey,
@@ -364,7 +364,7 @@ class L402ValidatorTest {
 
     @Test
     @DisplayName("fresh and cached validation return only the final narrowed named ceiling")
-    void returnsFinalNarrowedNamedCeilingOnFreshAndCachePaths() {
+    void acceptsRequestedCapabilityWithinFinalVerifiedCeiling() {
       String header =
           buildAuthHeader(
               List.of(
@@ -410,7 +410,7 @@ class L402ValidatorTest {
 
     @Test
     @DisplayName("missing capability ceiling rejects fresh and exact cached legacy credentials")
-    void rejectsMissingCapabilityCeilingOnFreshAndExactCachePaths() {
+    void rejectsLegacyCredentialMissingCapabilityCeilingOnFreshAndCachedPaths() {
       Macaroon legacy =
           MacaroonMinter.mint(
               rootKey,

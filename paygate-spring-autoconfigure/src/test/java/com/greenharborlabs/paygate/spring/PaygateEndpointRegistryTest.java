@@ -306,7 +306,7 @@ class PaygateEndpointRegistryTest {
 
   @Test
   @DisplayName("explicit HEAD policy takes precedence and remains distinct from GET")
-  void explicitHeadPolicyTakesPrecedenceOverGetAndWildcard() {
+  void prefersExplicitHeadAndFailsEqualSpecificityAmbiguityClosed() {
     var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
     registry.register(new PaygateEndpointConfig("HEAD", "/api/resource", 15, 600, "", "", "head"));
     registry.register(new PaygateEndpointConfig("GET", "/api/resource", 10, 600, "", "", "read"));
@@ -320,6 +320,16 @@ class PaygateEndpointRegistryTest {
     assertThat(head.policyMethod()).isEqualTo("HEAD");
     assertThat(get.config().capability()).isEqualTo("read");
     assertThat(get.policyMethod()).isEqualTo("GET");
+
+    var ambiguousRegistry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    ambiguousRegistry.register(
+        new PaygateEndpointConfig("GET", "/api/{left}", 10, 600, "", "", "read"));
+    ambiguousRegistry.register(
+        new PaygateEndpointConfig("GET", "/api/{right}", 10, 600, "", "", "read"));
+
+    assertThatThrownBy(() -> ambiguousRegistry.resolve("GET", "/api/value"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Ambiguous endpoint registrations");
   }
 
   @Test
@@ -348,18 +358,6 @@ class PaygateEndpointRegistryTest {
 
     assertThat(resolved.config().capability()).isEqualTo("specific");
     assertThat(resolved.routePattern()).isEqualTo("/api/items/{id}");
-  }
-
-  @Test
-  @DisplayName("equal-specificity patterns fail closed even with identical policies")
-  void equalSpecificityPatternsFailClosed() {
-    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
-    registry.register(new PaygateEndpointConfig("GET", "/api/{left}", 10, 600, "", "", "read"));
-    registry.register(new PaygateEndpointConfig("GET", "/api/{right}", 10, 600, "", "", "read"));
-
-    assertThatThrownBy(() -> registry.resolve("GET", "/api/value"))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("Ambiguous endpoint registrations");
   }
 
   @Test

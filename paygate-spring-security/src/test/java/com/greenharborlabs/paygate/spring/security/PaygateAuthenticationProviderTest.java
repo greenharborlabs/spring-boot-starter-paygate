@@ -296,7 +296,7 @@ class PaygateAuthenticationProviderTest {
     }
 
     @Test
-    void l402WithNoCapabilityCeilingDoesNotEmitCapabilityAuthorities() {
+    void acceptsNoCapabilityCredentialWithoutDerivedAuthority() {
       L402Credential credential =
           createTestCredential(List.of(new Caveat(SERVICE_NAME + "_capabilities", "read")));
       when(l402Validator.validate(
