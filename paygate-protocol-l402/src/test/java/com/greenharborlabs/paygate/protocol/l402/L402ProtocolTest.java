@@ -817,7 +817,7 @@ class L402ProtocolTest {
     void invalidServiceRemainsGenericallySanitized() {
       String authHeader = buildValidAuthHeader("L402");
       PaymentCredential credential = protocol.parseCredential(authHeader);
-      String sensitiveDetail = "route=/private method=DELETE macaroon=secret preimage=secret";
+      String sensitiveDetail = "SENSITIVE-VALIDATION-DETAIL-7f3c9a";
 
       doThrow(new L402Exception(ErrorCode.INVALID_SERVICE, sensitiveDetail, "tok-1"))
           .when(validator)
@@ -825,8 +825,17 @@ class L402ProtocolTest {
 
       assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
           .isInstanceOf(PaymentValidationException.class)
-          .hasMessage("L402 credential validation failed")
-          .hasMessageNotContaining(sensitiveDetail);
+          .satisfies(
+              error -> {
+                PaymentValidationException failure = (PaymentValidationException) error;
+                assertThat(failure.getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+                assertThat(failure.getHttpStatus()).isEqualTo(402);
+                assertThat(failure.getMessage())
+                    .isEqualTo("L402 credential validation failed")
+                    .doesNotContain(sensitiveDetail);
+                assertThat(failure.getTokenId()).isEqualTo("tok-1");
+              });
     }
 
     @Test

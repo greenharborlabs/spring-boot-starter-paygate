@@ -37,10 +37,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 @DisplayName("L402Validator")
 class L402ValidatorTest {
@@ -473,6 +477,62 @@ class L402ValidatorTest {
   @Nested
   @DisplayName("issuer-authenticated identifier schema")
   class IdentifierSchema {
+
+    static Stream<Arguments> authenticatedSchemaFailures() {
+      return Stream.of(
+          Arguments.of("identifier version 0", 0, boundaryCaveatsForSchemaTest()),
+          Arguments.of(
+              "missing route",
+              1,
+              List.of(
+                  new Caveat("method", REQUEST_METHOD),
+                  new Caveat(SERVICE_NAME + "_capabilities", "~"))),
+          Arguments.of(
+              "missing method",
+              1,
+              List.of(
+                  new Caveat("route", REQUEST_ROUTE),
+                  new Caveat(SERVICE_NAME + "_capabilities", "~"))),
+          Arguments.of(
+              "missing capability ceiling",
+              1,
+              List.of(new Caveat("route", REQUEST_ROUTE), new Caveat("method", REQUEST_METHOD))));
+    }
+
+    private static List<Caveat> boundaryCaveatsForSchemaTest() {
+      return List.of(
+          new Caveat("route", REQUEST_ROUTE),
+          new Caveat("method", REQUEST_METHOD),
+          new Caveat(SERVICE_NAME + "_capabilities", "~"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("authenticatedSchemaFailures")
+    @DisplayName("authenticated schema failures use the generic core contract")
+    void authenticatedSchemaFailuresUseGenericCoreContract(
+        String caseName, int identifierVersion, List<Caveat> caveats) {
+      Macaroon signedCredential =
+          MacaroonMinter.mint(
+              rootKey,
+              new MacaroonIdentifier(identifierVersion, paymentHash, tokenIdBytes),
+              "https://example.com",
+              caveats);
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(
+              () -> validator.validate(authHeaderFor(signedCredential), boundaryContext()))
+          .as(caseName)
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              error -> {
+                L402Exception failure = (L402Exception) error;
+                assertThat(failure.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                assertThat(failure.getErrorCode().getHttpStatus()).isEqualTo(401);
+                assertThat(failure.getMessage())
+                    .isEqualTo("Credential constraints were not satisfied");
+              });
+    }
 
     @Test
     @DisplayName("authentic version 0 credential shapes are rejected after signature verification")
@@ -1548,6 +1608,7 @@ class L402ValidatorTest {
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                assertThat(l402Ex.getErrorCode().getHttpStatus()).isEqualTo(401);
                 assertThat(l402Ex.getMessage())
                     .isEqualTo("Credential constraints were not satisfied")
                     .doesNotContain("admin")

@@ -252,12 +252,16 @@ When `L402Validator` throws an `L402Exception`, the `L402Protocol` maps the L402
 | `MALFORMED_HEADER` | `MALFORMED_CREDENTIAL` | Authorization header does not match L402/LSAT format |
 | `INVALID_PREIMAGE` | `INVALID_PREIMAGE` | SHA-256(preimage) does not match payment hash |
 | `EXPIRED_CREDENTIAL` | `EXPIRED_CREDENTIAL` | `valid_until` caveat timestamp is in the past |
-| `INVALID_MACAROON` | `INVALID_CHALLENGE_BINDING` | Macaroon signature verification failed |
-| `INVALID_SERVICE` | `INVALID_CHALLENGE_BINDING` | Service name not found in `services` caveat |
+| `INVALID_MACAROON` | `INVALID_CHALLENGE_BINDING` | Macaroon authenticity, structure, or attenuation validation failed |
+| `INVALID_SERVICE` | `INVALID_CHALLENGE_BINDING` | Authenticated identifier schema, request boundary, or service constraints were not satisfied |
 | `REVOKED_CREDENTIAL` | `INVALID_CHALLENGE_BINDING` | Root key has been revoked |
 | `LIGHTNING_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | Lightning backend is unreachable (503) |
 
-The original error message and token ID from the `L402Exception` are preserved in the mapped exception.
+The token ID from the `L402Exception` is preserved in the mapped exception. The adapter replaces
+core validation details with a fixed safe message for each mapped category; in particular,
+`INVALID_SERVICE` becomes `INVALID_CHALLENGE_BINDING` with HTTP 402 and exactly
+`L402 credential validation failed`. The underlying core contract remains `INVALID_SERVICE`, HTTP
+401, with exactly `Credential constraints were not satisfied`.
 
 ---
 
@@ -295,13 +299,24 @@ Its `toString()` is deliberately non-recursive and redacts the primary macaroon,
 
 ### Request Boundaries and Attenuation
 
+This tracked README is the canonical integration guidance for custom L402 issuers and adapters;
+ignored workspace specifications are planning artifacts only.
+
 Challenge formatting fails closed unless the canonical route and actual method are present. A `HEAD` request can inherit the complete `GET` endpoint policy, but its macaroon is still minted with `method=HEAD`, so GET- and HEAD-bound credentials are not interchangeable. The route is application-relative and remains stable when the application is deployed under a context path or path-prefix servlet mapping.
 
 The capability caveat is an authenticated ceiling, not an additive grant. `~` means no capability; holder-added caveats may retain or narrow a named ceiling, including narrowing it to `~`, but cannot expand it or turn `~` into a named grant. Validation derives the effective capability set only after the entire attenuation chain succeeds.
 
 Previously issued L402 credentials without `route`, `method`, or the capability ceiling are intentionally rejected, including cached credentials. Accepting the legacy `LSAT` scheme name does not grandfather those unbound credentials; clients must obtain a new challenge.
 
-Built-in issuance always uses identifier version 1 and the five caveats listed above. Custom issuers must do the same, beginning with `new MacaroonIdentifier(1, paymentHash, tokenId)`. A correctly signed identifier-v0 credential is rejected even if its holder appends matching route, method, and capability caveats; clients must obtain and pay a new challenge.
+Built-in issuance always uses identifier version 1 and the five caveats listed above, in that
+sequence. This sequence is a guarantee of the built-in issuer, not a universal caveat-position
+requirement for custom issuers. A custom issuer must begin with
+`new MacaroonIdentifier(1, paymentHash, tokenId)` and sign a canonical `route`, the actual `method`,
+the active service's `{serviceName}_capabilities` ceiling, and every caveat required by the
+verifiers registered with its validator. For applications that construct an `L402Validator`
+directly, `ServicesCaveatVerifier` and `ValidUntilCaveatVerifier` are caller-selected; include their
+caveats when those verifiers are registered. Registered verifiers determine required caveats, not
+a universal caveat position. A correctly signed identifier-v0 credential is rejected even if its holder appends matching route, method, and capability caveats; clients must obtain and pay a new challenge.
 
 This migration changes only the signed identifier version. The identifier remains 66 bytes (`[version:2 BE][paymentHash:32][tokenId:32]`), the HTTP challenge still advertises `version="0"`, and the macaroon still uses V2 binary encoding compatible with Go `go-macaroon` parsers.
 
@@ -393,10 +408,10 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions and **Mockito** for
 | `invalidPreimageMapsToInvalidPreimage` | `INVALID_PREIMAGE` maps to `INVALID_PREIMAGE` |
 | `expiredCredentialMapsToExpiredCredential` | `EXPIRED_CREDENTIAL` maps to `EXPIRED_CREDENTIAL` |
 | `invalidMacaroonMapsToInvalidChallengeBinding` | `INVALID_MACAROON` maps to `INVALID_CHALLENGE_BINDING` |
-| `invalidServiceMapsToInvalidChallengeBinding` | `INVALID_SERVICE` maps to `INVALID_CHALLENGE_BINDING` |
+| `invalidServiceRemainsGenericallySanitized` | Core `INVALID_SERVICE` maps to `INVALID_CHALLENGE_BINDING`/402 with a fixed message and preserved token ID |
 | `revokedCredentialMapsToInvalidChallengeBinding` | `REVOKED_CREDENTIAL` maps to `INVALID_CHALLENGE_BINDING` |
-| `lightningUnavailableMapsTOMalformedCredential` | `LIGHTNING_UNAVAILABLE` maps to `MALFORMED_CREDENTIAL` |
-| `errorMessageAndTokenIdArePreserved` | Original message and token ID survive the mapping |
+| `lightningUnavailableMapsToServiceUnavailable` | `LIGHTNING_UNAVAILABLE` maps to `SERVICE_UNAVAILABLE` |
+| `errorMessageIsSanitizedAndTokenIdIsPreserved` | Unsafe core detail is replaced while the token ID survives the mapping |
 
 ---
 

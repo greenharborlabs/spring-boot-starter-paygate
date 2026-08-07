@@ -623,7 +623,7 @@ This prevents timing side-channel attacks. The method is used for:
 
 ### No Secret Logging
 
-- `Macaroon.toString()` returns `Macaroon[identifierLength=66, location=..., caveatCount=N]` -- no signature or identifier bytes
+- `Macaroon.toString()` returns `Macaroon[identifierLength=66, caveatCount=N]` -- no location, signature, identifier bytes, or caveat values
 - `MacaroonIdentifier.toString()` returns only the structural version (for example, `MacaroonIdentifier[version=1]`) -- no payment hash or token ID
 - `L402Credential.toString()` returns `L402Credential[tokenId=...]` -- only the token ID, not the macaroon or preimage
 - `Invoice.toString()` returns `Invoice[bolt11=..., amountSats=..., status=...]` -- no payment hash or preimage
@@ -656,7 +656,7 @@ The request path supplied by Spring integrations is application-relative: deploy
 
 Authenticated identifier-v0 and missing-boundary failures deliberately share `INVALID_SERVICE` (HTTP 401) and the generic message `Credential constraints were not satisfied`; validation does not reveal which invariant failed.
 
-Macaroon location is unsigned and excluded from authorization and diagnostics. It remains part of `Macaroon.equals`, so presenting a same-token location-only variant takes the full-validation path and, on success, replaces the cache slot; presenting the original then repeats that behavior. Signature verification still protects every signed field.
+Macaroon location is an unsigned, authorization-neutral V2 serialization hint. The accessor and V2 round trip preserve it, but diagnostic rendering omits it entirely, including null and attacker-controlled values. Location remains part of `Macaroon.equals` and `hashCode`, so presenting a same-token location-only variant takes the full-validation path and, on success, replaces the cache slot; presenting the original then repeats that behavior. Signature verification still protects every signed field.
 
 Diagnostic text remains redacted. Core types and validation paths must not render full macaroons, preimages, authorization headers, root keys, or sensitive validation reasons.
 

@@ -92,8 +92,6 @@ public final class Macaroon {
   public String toString() {
     return "Macaroon[identifierLength="
         + identifier.length
-        + ", location="
-        + location
         + ", caveatCount="
         + caveats.size()
         + "]";

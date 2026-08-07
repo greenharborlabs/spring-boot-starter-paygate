@@ -223,13 +223,56 @@ class TamperDetectionIT {
               Map.entry(DIFFERENT_ROUTE, repeatedSearch),
               Map.entry(DIFFERENT_ROUTE, zeroCaveat))) {
         var response = sendAuthenticated(client, attack.getKey(), "GET", attack.getValue());
-        assertThat(response.statusCode()).isNotEqualTo(200);
-        assertThat(response.body())
-            .doesNotContain(attack.getValue().macaroonBase64())
-            .doesNotContain(attack.getValue().preimageHex());
+        assertThat(response.statusCode())
+            .as("legacy credential must be rejected")
+            .isNotEqualTo(200);
+        boolean containsMacaroon = response.body().contains(attack.getValue().macaroonBase64());
+        boolean containsPreimage = response.body().contains(attack.getValue().preimageHex());
+        assertCredentialMaterialNotDisclosed(containsMacaroon, containsPreimage);
       }
       assertThat(TestConfig.SecurityBoundaryController.INVOCATIONS).hasValue(0);
     }
+  }
+
+  @Test
+  @DisplayName("non-disclosure assertion diagnostics never reveal credential material")
+  void nonDisclosureAssertionDiagnosticsAreSecretSafe() {
+    String macaroonMarker = "macaroon-secret-marker";
+    String preimageMarker = "preimage-secret-marker";
+    String secretBearingBody =
+        "response-body-secret-marker:" + macaroonMarker + ":" + preimageMarker;
+
+    AssertionError failure = null;
+    try {
+      assertCredentialMaterialNotDisclosed(
+          secretBearingBody.contains(macaroonMarker), secretBearingBody.contains(preimageMarker));
+    } catch (AssertionError assertionError) {
+      failure = assertionError;
+    }
+
+    assertThat(failure != null)
+        .as("the diagnostic fixture must trigger the non-disclosure assertion")
+        .isTrue();
+    String diagnostic = failure.getMessage();
+    assertThat(diagnostic.contains(secretBearingBody))
+        .as("assertion diagnostic must not contain the response body")
+        .isFalse();
+    assertThat(diagnostic.contains(macaroonMarker))
+        .as("assertion diagnostic must not contain the macaroon value")
+        .isFalse();
+    assertThat(diagnostic.contains(preimageMarker))
+        .as("assertion diagnostic must not contain the preimage value")
+        .isFalse();
+  }
+
+  static void assertCredentialMaterialNotDisclosed(
+      boolean containsMacaroon, boolean containsPreimage) {
+    assertThat(containsMacaroon)
+        .as("response must not disclose macaroon credential material")
+        .isFalse();
+    assertThat(containsPreimage)
+        .as("response must not disclose payment preimage material")
+        .isFalse();
   }
 
   @Test
