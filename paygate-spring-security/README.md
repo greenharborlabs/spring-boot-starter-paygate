@@ -228,6 +228,10 @@ On authentication failure, the filter:
 3. Writes a JSON error body: `{"error": "L402 authentication failed"}`
 4. Short-circuits the filter chain (does not call `doFilter`)
 
+Endpoint-policy resolution failures are treated separately from authentication and Lightning
+failures: the filter clears the security context, returns a sanitized HTTP 500 JSON response, and
+does not invoke the authentication manager or downstream filter chain.
+
 ### PaygateAuthenticationProvider
 
 Implements `AuthenticationProvider`. Accepts only `PaygateAuthenticationToken` instances (returns `null` for other token types, per the Spring Security contract). For L402 credentials it delegates to `L402Validator`; for other supported schemes it delegates to the matching `PaymentProtocol`. Validation failures are wrapped in `BadCredentialsException`.
@@ -455,13 +459,13 @@ When an endpoint is configured with a capability via `@PaymentRequired(capabilit
 myapi_capabilities = analyze
 ```
 
-Multiple capabilities can be comma-separated (e.g., `"search,analyze"`). If no capability is configured on the endpoint (`@PaymentRequired` without `capability`, or `capability = ""`), the macaroon carries `~`, the authenticated empty capability ceiling.
+Multiple capabilities use **any-of (OR)** semantics. For example, `capability = "search,analyze"` accepts a final verified ceiling containing `search` OR `analyze`; it does not require both. A wholly null or blank endpoint declaration is normalized to no named capability, so `@PaymentRequired` without `capability` (or with `capability = ""`) mints `~`, the authenticated empty capability ceiling. Blank comma-separated segments such as `search,,analyze` are invalid, and `~` cannot be declared by an endpoint either alone or mixed with names.
 
 ### How Capabilities Are Enforced
 
 Capability enforcement happens at two levels:
 
-1. **Macaroon verification (core layer):** The `PaygateAuthenticationProvider` builds an `L402VerificationContext` with `requestMetadata` that includes the requested capability (via `VerificationContextKeys.REQUESTED_CAPABILITY`) resolved from the endpoint's `@PaymentRequired` configuration. The `CapabilitiesCaveatVerifier` reads the capability from the metadata map and checks that it is present in the macaroon's comma-separated capabilities list. If the capability is missing, validation fails with a `BadCredentialsException`.
+1. **Macaroon verification (core layer):** The `PaygateAuthenticationProvider` builds an `L402VerificationContext` with `requestMetadata` that includes the requested capability declaration (via `VerificationContextKeys.REQUESTED_CAPABILITY`) resolved from the endpoint's `@PaymentRequired` configuration. The `CapabilitiesCaveatVerifier` requires set overlap between the declaration and the final verified ceiling. Thus requested `search,analyze` succeeds for final `{search}` or `{analyze}`, but rejects `{export}` and `~`. If the sets are disjoint, validation fails with a `BadCredentialsException`.
 
 2. **Spring Security authorization (security layer):** For L402, `PaygateAuthenticationToken.authenticated()` maps only `L402Validator.ValidationResult.effectiveCapabilities()` to `PAYGATE_CAPABILITY_{name}` authorities. That immutable set is derived from the final successfully verified ceiling, not from requested metadata, a cache, or the union of repeated caveats. These authorities are available to `@PreAuthorize` expressions and `authorizeHttpRequests` rules.
 
@@ -478,15 +482,23 @@ public AnalysisResult analyze() { ... }
 @GetMapping("/api/v1/search")
 public SearchResult search() { ... }
 
+// Require both capabilities (all-of) with two explicit authority checks
+@PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_search') and hasAuthority('PAYGATE_CAPABILITY_analyze')")
+@GetMapping("/api/v1/search-and-analyze")
+public AnalysisResult searchAndAnalyze() { ... }
+
 // Check capability via attributes map (alternative)
 @PreAuthorize("hasRole('L402') and authentication.getAttribute('myapi_capabilities').contains('analyze')")
 @GetMapping("/api/v1/analyze-alt")
 public AnalysisResult analyzeAlt() { ... }
 ```
 
+The annotation/configuration list itself is not an all-of expression. Use explicit Spring Security
+authority checks, as above, when an operation requires both capabilities.
+
 ### Attenuation and Compatibility
 
-The issued capability value is a ceiling. Holder attenuation may retain or narrow a named set, including narrowing it to `~`; it cannot expand the set, turn `~` into a named grant, or mix `~` with names. A final `~` produces no capability-derived authorities.
+The issued capability value is a ceiling. Holder attenuation may retain or narrow a named set, including narrowing it to `~`; it cannot expand the set, turn `~` into a named grant, or mix `~` with names. Every signed ceiling is parsed and checked before use, so blank segments, mixed `~`/names, and malformed values fail closed. A final `~` cannot satisfy a named endpoint declaration and produces no capability-derived authorities.
 
 Existing `hasRole('L402')` rules remain usable, but credential compatibility is intentionally stricter: previously issued credentials missing the capability ceiling, canonical `route`, or actual `method` are rejected even on cache hits. Clients recover by obtaining a new challenge; there is no fail-open compatibility switch.
 
@@ -545,8 +557,9 @@ The entry point implements Spring Security's `AuthenticationEntryPoint` interfac
 1. Looks up the endpoint's L402 configuration from the `PaygateEndpointRegistry` (price, timeout, pricing strategy)
 2. Delegates to `PaygateChallengeService` to create a Lightning invoice and mint a macaroon
 3. Returns HTTP 402 with a `WWW-Authenticate: L402 macaroon="...", invoice="..."` header
-4. Falls back to 503 if the Lightning backend is unavailable (fail-closed)
-5. Returns 429 with `Retry-After` if the rate limiter rejects the request
+4. Returns a sanitized 500 without challenge generation if endpoint-policy resolution fails
+5. Falls back to 503 if the Lightning backend is unavailable (fail-closed)
+6. Returns 429 with `Retry-After` if the rate limiter rejects the request
 
 Register it in your `SecurityFilterChain`:
 

@@ -96,7 +96,7 @@ class PreimageValidationTest {
     RANDOM.nextBytes(tokenIdBytes);
     tokenIdHex = HEX.formatHex(tokenIdBytes);
 
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", boundaryCaveats());
     rootKeyMap.put(tokenIdHex, rootKey);
   }
@@ -195,7 +195,7 @@ class PreimageValidationTest {
       Macaroon tamperedMacaroon =
           MacaroonMinter.mint(
               differentRootKey,
-              new MacaroonIdentifier(0, paymentHash, tokenIdBytes),
+              new MacaroonIdentifier(1, paymentHash, tokenIdBytes),
               "https://example.com",
               boundaryCaveats());
       String tamperedHeader = buildAuthHeader(tamperedMacaroon, HEX.formatHex(preimageBytes));

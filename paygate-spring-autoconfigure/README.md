@@ -303,6 +303,14 @@ public QuoteResponse quote() { ... }
 
 **Attributes:** `priceSats`, `timeoutSeconds` (default `-1` for global default), `description`, `pricingStrategy`, `capability`.
 
+Capability lists use **any-of (OR)** semantics. For example,
+`@PaymentRequired(priceSats = 5, capability = "search,analyze")` accepts a credential whose final
+verified capability ceiling contains `search` OR `analyze`; the annotation is not an all-of
+expression. A wholly blank annotation value (or a null/wholly blank manually registered endpoint
+value) is normalized to no named capability and minted as `~`. In contrast, blank comma-separated
+segments such as `search,,analyze` are invalid. The reserved `~` cannot appear in an endpoint
+declaration, alone or mixed with names.
+
 `PaygateEndpointRegistry` scans for `@PaymentRequired` annotations during `scanAnnotatedEndpoints()`.
 
 ---
@@ -320,6 +328,7 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 | `writeMppError(response, exception, challenges)` | varies | MPP validation failure using RFC 9457 Problem Details format. Includes fresh challenges for 402 responses. |
 | `writeRateLimited(response)` | 429 | Rate limit exceeded. Includes `Retry-After: 1` header. |
 | `writeLightningUnavailable(response)` | 503 | Lightning backend is down. |
+| `writeInternalError(response)` | 500 | Sanitized response for endpoint-policy resolution failures. |
 | `writeReceipt(response, receipt)` | -- | Sets `Payment-Receipt` header with base64url-nopad encoded JSON receipt. |
 | `writeMethodUnsupported(response, message)` | 400 | Unsupported payment method (RFC 9457 Problem Details). |
 
@@ -343,7 +352,7 @@ Resolution is deterministic: exact paths precede patterns, Spring pattern specif
 
 The canonical registered pattern is bound separately from the concrete request path. This keeps route identity stable for root, context-path, servlet-mapped, and combined-prefix deployments. Malformed or ambiguous prefix/path state does not invoke the protected handler.
 
-Every first-party L402 macaroon has a capability ceiling. A blank endpoint capability mints `~` (the empty set); named ceilings may only be retained or narrowed by holder attenuation. Expansion, sentinel-to-name escalation, and mixed sentinel/name values are rejected. Credentials missing `route`, `method`, or the capability ceiling are intentionally invalid, including cache hits, and must be replaced through a new challenge.
+Every first-party L402 macaroon has a capability ceiling. A blank endpoint capability mints `~` (the empty set); named ceilings may only be retained or narrowed by holder attenuation. Endpoint satisfaction uses set overlap, so a `search,analyze` declaration accepts a final `{search}` or `{analyze}` ceiling, but rejects `{export}` and `~`. Expansion, sentinel-to-name escalation, blank segments, mixed sentinel/name values, and malformed signed ceiling values fail closed at registration or verification. Credentials missing `route`, `method`, or the capability ceiling are intentionally invalid, including cache hits, and must be replaced through a new challenge.
 
 Error responses and diagnostics do not echo full macaroons, preimages, `Authorization` headers, root keys, or sensitive validation reasons. Log only permitted non-secret identifiers and redacted structural metadata.
 
@@ -353,6 +362,7 @@ The filter follows a strict fail-closed security model:
 
 - Lightning backend unreachable: HTTP 503, never HTTP 200
 - Invoice creation failure: HTTP 503
+- Endpoint-policy resolution failure: HTTP 500; no challenge or protected handler is invoked
 - Unexpected validation error: HTTP 503
 - Protected content is never returned when the Lightning backend cannot verify payments
 
@@ -364,6 +374,7 @@ The filter follows a strict fail-closed security model:
 | 400 | Bad Request | Malformed `Authorization` header (unparseable L402/LSAT token) |
 | 402 | Payment Required | No credential; includes `WWW-Authenticate` header with macaroon and Lightning invoice |
 | 429 | Too Many Requests | Rate limit exceeded for challenge issuance |
+| 500 | Internal Server Error | Endpoint-policy resolution failed; response details are sanitized |
 | 503 | Service Unavailable | Lightning backend is down or invoice creation failed |
 
 ---

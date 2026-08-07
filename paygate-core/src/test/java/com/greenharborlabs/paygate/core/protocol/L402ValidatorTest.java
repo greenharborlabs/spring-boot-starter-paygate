@@ -181,7 +181,7 @@ class L402ValidatorTest {
     RANDOM.nextBytes(tokenIdBytes);
     tokenIdHex = HEX.formatHex(tokenIdBytes);
 
-    identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", boundaryCaveats());
 
     // Register the root key so the validator can look it up by tokenId
@@ -467,6 +467,219 @@ class L402ValidatorTest {
         assertThat(result.freshValidation()).isTrue();
         assertThat(result.credential().preimage().toHex()).isEqualTo(HEX.formatHex(preimageBytes));
       }
+    }
+  }
+
+  @Nested
+  @DisplayName("issuer-authenticated identifier schema")
+  class IdentifierSchema {
+
+    @Test
+    @DisplayName("authentic version 0 credential shapes are rejected after signature verification")
+    void rejectsAuthenticVersionZeroCredentialShapesAfterSignatureVerification() {
+      record LegacyCase(
+          String name, List<Caveat> issuerCaveats, List<Caveat> holderAppendedCaveats) {}
+
+      List<Caveat> matchingBoundaries = boundaryCaveats();
+      List<LegacyCase> cases =
+          List.of(
+              new LegacyCase("zero caveats", List.of(), List.of()),
+              new LegacyCase(
+                  "built-in legacy",
+                  List.of(
+                      new Caveat("services", SERVICE_NAME + ":0"),
+                      new Caveat("route", REQUEST_ROUTE),
+                      new Caveat("method", REQUEST_METHOD),
+                      new Caveat(SERVICE_NAME + "_capabilities", "~"),
+                      new Caveat(SERVICE_NAME + "_valid_until", "4102444800")),
+                  List.of()),
+              new LegacyCase("no-capability ceiling", matchingBoundaries, List.of()),
+              new LegacyCase(
+                  "named capability",
+                  boundaryCaveats(new Caveat(SERVICE_NAME + "_capabilities", "search,analyze")),
+                  List.of()),
+              new LegacyCase(
+                  "multi-service",
+                  List.of(
+                      new Caveat("services", SERVICE_NAME + ":0,other-api:0"),
+                      new Caveat("other-api_capabilities", "read"),
+                      new Caveat("route", REQUEST_ROUTE),
+                      new Caveat("method", REQUEST_METHOD),
+                      new Caveat(SERVICE_NAME + "_capabilities", "~")),
+                  List.of()),
+              new LegacyCase("holder-appended matching boundaries", List.of(), matchingBoundaries));
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      for (LegacyCase legacyCase : cases) {
+        Macaroon authentic =
+            MacaroonMinter.mint(
+                rootKey,
+                new MacaroonIdentifier(0, paymentHash, tokenIdBytes),
+                "https://example.com",
+                legacyCase.issuerCaveats());
+        for (Caveat appended : legacyCase.holderAppendedCaveats()) {
+          authentic = attenuate(authentic, appended);
+        }
+
+        byte[] invalidSignature = authentic.signature();
+        invalidSignature[0] ^= 1;
+        Macaroon tampered =
+            new Macaroon(
+                authentic.identifier(),
+                authentic.location(),
+                authentic.caveats(),
+                invalidSignature);
+        assertThatThrownBy(() -> validator.validate(authHeaderFor(tampered), boundaryContext()))
+            .as(legacyCase.name() + " authenticates before schema rejection")
+            .isInstanceOf(L402Exception.class)
+            .extracting(exception -> ((L402Exception) exception).getErrorCode())
+            .isEqualTo(ErrorCode.INVALID_MACAROON);
+
+        Macaroon signedLegacy = authentic;
+        assertThatThrownBy(() -> validator.validate(authHeaderFor(signedLegacy), boundaryContext()))
+            .as(legacyCase.name())
+            .isInstanceOf(L402Exception.class)
+            .extracting(exception -> ((L402Exception) exception).getErrorCode())
+            .isEqualTo(ErrorCode.INVALID_SERVICE);
+        assertThat(credentialStore.get(tokenIdHex)).as(legacyCase.name()).isNull();
+      }
+    }
+
+    @Test
+    @DisplayName("correctly signed version 0 is rejected only after proof and signature checks")
+    void rejectsFreshVersionZeroAfterProofAndSignatureChecks() {
+      Macaroon legacy =
+          MacaroonMinter.mint(
+              rootKey,
+              new MacaroonIdentifier(0, paymentHash, tokenIdBytes),
+              "https://example.com",
+              boundaryCaveats());
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(() -> validator.validate(authHeaderFor(legacy), boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              exception -> {
+                L402Exception failure = (L402Exception) exception;
+                assertThat(failure.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                assertThat(failure.getMessage())
+                    .isEqualTo("Credential constraints were not satisfied");
+              });
+
+      byte[] wrongPreimage = preimageBytes.clone();
+      wrongPreimage[0] ^= 1;
+      assertThatThrownBy(
+              () -> validator.validate(authHeaderFor(legacy, wrongPreimage), boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .extracting(exception -> ((L402Exception) exception).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_PREIMAGE);
+
+      byte[] invalidSignature = legacy.signature();
+      invalidSignature[0] ^= 1;
+      Macaroon tampered =
+          new Macaroon(legacy.identifier(), legacy.location(), legacy.caveats(), invalidSignature);
+      assertThatThrownBy(() -> validator.validate(authHeaderFor(tampered), boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .extracting(exception -> ((L402Exception) exception).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_MACAROON);
+      assertThat(credentialStore.get(tokenIdHex)).isNull();
+    }
+
+    @Test
+    @DisplayName("exact cached version 0 is rejected and evicted")
+    void rejectsAndEvictsExactCachedVersionZero() {
+      Macaroon legacy =
+          MacaroonMinter.mint(
+              rootKey,
+              new MacaroonIdentifier(0, paymentHash, tokenIdBytes),
+              "https://example.com",
+              boundaryCaveats());
+      String header = authHeaderFor(legacy);
+      try (PaymentPreimage preimage = PaymentPreimage.fromHex(HEX.formatHex(preimageBytes))) {
+        credentialStore.store(tokenIdHex, new L402Credential(legacy, preimage, tokenIdHex), 3600);
+      }
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .extracting(exception -> ((L402Exception) exception).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
+      assertThat(credentialStore.get(tokenIdHex)).isNull();
+    }
+
+    @Test
+    @DisplayName("changed version 0 variant takes fresh path without evicting cached version 1")
+    void changedVersionZeroDoesNotEvictCachedVersionOne() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      validator.validate(validAuthHeader, boundaryContext());
+      Macaroon legacy =
+          MacaroonMinter.mint(
+              rootKey,
+              new MacaroonIdentifier(0, paymentHash, tokenIdBytes),
+              "https://example.com",
+              boundaryCaveats());
+      Macaroon changedLegacy = attenuate(legacy, new Caveat("route", REQUEST_ROUTE));
+
+      assertThatThrownBy(() -> validator.validate(authHeaderFor(changedLegacy), boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .extracting(exception -> ((L402Exception) exception).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
+
+      L402Credential cached = credentialStore.get(tokenIdHex);
+      try {
+        assertThat(cached).isNotNull();
+        assertThat(cached.macaroon()).isEqualTo(macaroon);
+      } finally {
+        if (cached != null) {
+          cached.destroy();
+        }
+      }
+    }
+
+    @Test
+    @DisplayName("valid version 1 holder attenuation replaces the cached issued variant")
+    void validVersionOneAttenuationTakesFreshPathAndReplacesCacheEntry() {
+      Macaroon issued =
+          MacaroonMinter.mint(
+              rootKey,
+              identifier,
+              "https://example.com",
+              boundaryCaveats(new Caveat(SERVICE_NAME + "_capabilities", "search,analyze")));
+      String issuedHeader = authHeaderFor(issued);
+      L402VerificationContext context =
+          L402VerificationContext.builder()
+              .serviceName(SERVICE_NAME)
+              .currentTime(Instant.now())
+              .requestMetadata(
+                  boundaryMetadata(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
+              .build();
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      assertThat(validator.validate(issuedHeader, context).freshValidation()).isTrue();
+
+      Macaroon attenuated = attenuate(issued, new Caveat("route", REQUEST_ROUTE));
+      attenuated = attenuate(attenuated, new Caveat("method", REQUEST_METHOD));
+      attenuated = attenuate(attenuated, new Caveat(SERVICE_NAME + "_capabilities", "search"));
+      String attenuatedHeader = authHeaderFor(attenuated);
+
+      L402Validator.ValidationResult fresh = validator.validate(attenuatedHeader, context);
+      assertThat(fresh.freshValidation()).isTrue();
+      assertThat(fresh.effectiveCapabilities()).containsExactly("search");
+
+      L402Credential cached = credentialStore.get(tokenIdHex);
+      try {
+        assertThat(cached).isNotNull();
+        assertThat(cached.macaroon()).isEqualTo(attenuated).isNotEqualTo(issued);
+      } finally {
+        if (cached != null) {
+          cached.destroy();
+        }
+      }
+      assertThat(validator.validate(attenuatedHeader, context).freshValidation()).isFalse();
     }
   }
 

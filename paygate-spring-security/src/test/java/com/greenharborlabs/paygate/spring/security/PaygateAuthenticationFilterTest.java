@@ -572,17 +572,22 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void returns503WhenRegistryThrowsException() throws ServletException, IOException {
+  void returns500WhenRegistryThrowsException() throws ServletException, IOException {
     request.setMethod("GET");
     request.setRequestURI("/api/error-path");
     request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
 
     when(endpointRegistry.findConfig(anyString(), anyString()))
-        .thenThrow(new IllegalArgumentException("path normalization failed"));
+        .thenThrow(new IllegalArgumentException("secret policy detail"));
+    SecurityContextHolder.getContext().setAuthentication(authenticatedResult);
 
     filter.doFilter(request, response, filterChain);
 
-    assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .contains("INTERNAL_ERROR")
+        .doesNotContain("secret policy detail", "/api/error-path");
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(authenticationManager, never()).authenticate(any());
     verify(filterChain, never()).doFilter(request, response);

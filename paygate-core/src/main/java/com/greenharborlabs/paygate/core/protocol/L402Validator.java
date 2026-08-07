@@ -204,7 +204,8 @@ public final class L402Validator {
       try (rootKeySb) {
         byte[] rootKey = rootKeySb.value();
         try {
-          effectiveCapabilities = verifyMacaroon(credential.macaroon(), rootKey, context, tokenId);
+          effectiveCapabilities =
+              verifyMacaroon(credential.macaroon(), macId, rootKey, context, tokenId);
         } catch (MacaroonVerificationException e) {
           throw new L402Exception(
               mapReasonToErrorCode(e.getReason()),
@@ -245,15 +246,21 @@ public final class L402Validator {
       L402Credential credential, L402Credential cached, L402VerificationContext context) {
     String tokenId = credential.tokenId();
 
-    // Re-verify all caveats against the provided context (includes escalation detection)
+    // Recover the authenticated identifier only after the exact-variant equality guard in the
+    // caller. Legacy cached entries are rejected and evicted without affecting another variant.
     try {
+      MacaroonIdentifier cachedIdentifier =
+          MacaroonIdentifier.decode(cached.macaroon().identifier());
+      verifyCurrentIdentifierVersion(cachedIdentifier);
       verifyRequiredBoundaryCaveats(cached.macaroon().caveats());
-    } catch (MacaroonVerificationException e) {
+    } catch (IllegalArgumentException | MacaroonVerificationException e) {
       credentialStore.revoke(tokenId);
+      VerificationFailureReason reason =
+          e instanceof MacaroonVerificationException verificationException
+              ? verificationException.getReason()
+              : VerificationFailureReason.CAVEAT_NOT_MET;
       throw new L402Exception(
-          mapReasonToErrorCode(e.getReason()),
-          safeValidationFailureMessage(e.getReason()),
-          tokenId);
+          mapReasonToErrorCode(reason), safeValidationFailureMessage(reason), tokenId);
     }
     requireRequestContext(context, tokenId);
     try {
@@ -274,7 +281,11 @@ public final class L402Validator {
   }
 
   private Set<String> verifyMacaroon(
-      Macaroon macaroon, byte[] rootKey, L402VerificationContext context, String tokenId) {
+      Macaroon macaroon,
+      MacaroonIdentifier identifier,
+      byte[] rootKey,
+      L402VerificationContext context,
+      String tokenId) {
     byte[] derivedKey = MacaroonCrypto.deriveKey(rootKey);
     byte[] sig = null;
     try {
@@ -290,12 +301,20 @@ public final class L402Validator {
         throw new MacaroonVerificationException("signature verification failed");
       }
 
+      verifyCurrentIdentifierVersion(identifier);
       verifyRequiredBoundaryCaveats(macaroon.caveats());
       requireRequestContext(context, tokenId);
       MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
       return extractFinalEffectiveCapabilities(macaroon);
     } finally {
       KeyMaterial.zeroize(derivedKey, sig);
+    }
+  }
+
+  private static void verifyCurrentIdentifierVersion(MacaroonIdentifier identifier) {
+    if (identifier.version() != 1) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET, "Credential uses a legacy identifier schema");
     }
   }
 

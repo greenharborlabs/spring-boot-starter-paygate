@@ -41,6 +41,8 @@ import org.springframework.mock.web.MockHttpServletMapping;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @ExtendWith(MockitoExtension.class)
 class PaygateAuthenticationEntryPointTest {
@@ -375,6 +377,25 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
+  void writesSanitized500WhenEndpointResolutionFailsWithoutChallengeSideEffects() throws Exception {
+    when(endpointRegistry.resolve("GET", "/api/protected"))
+        .thenThrow(new IllegalStateException("secret policy detail"));
+    SecurityContextHolder.getContext()
+        .setAuthentication(new TestingAuthenticationToken("user", "secret"));
+
+    entryPoint.commence(request, response, new BadCredentialsException("credential secret"));
+
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .contains("INTERNAL_ERROR")
+        .doesNotContain("secret policy detail", "credential secret", "/api/protected");
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
+  }
+
+  @Test
   void writes503OnUnexpectedException() throws Exception {
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
     when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any()))
@@ -481,14 +502,14 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
-  void writes503WhenEndpointRegistryThrows() throws Exception {
+  void writes500WhenEndpointRegistryThrows() throws Exception {
     when(endpointRegistry.findConfig("GET", "/api/protected"))
         .thenThrow(new RuntimeException("Registry broken"));
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(503);
-    assertThat(response.getContentAsString()).contains("LIGHTNING_UNAVAILABLE");
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentAsString()).contains("INTERNAL_ERROR");
   }
 
   @Test

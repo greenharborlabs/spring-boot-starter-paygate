@@ -4,6 +4,7 @@ import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
+import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
@@ -19,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 
 /**
@@ -66,7 +68,20 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
         return;
       }
 
-      ResolvedEndpoint resolvedEndpoint = endpointRegistry.resolve(method, path);
+      ResolvedEndpoint resolvedEndpoint;
+      try {
+        resolvedEndpoint = endpointRegistry.resolve(method, path);
+      } catch (RuntimeException e) {
+        log.log(
+            System.Logger.Level.WARNING,
+            "Endpoint policy resolution failed for {0} {1}: {2}",
+            method,
+            LogSanitizer.sanitize(path),
+            e.getClass().getSimpleName());
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeInternalError(response);
+        return;
+      }
       if (resolvedEndpoint == null) {
         PaygateResponseWriter.writeUnauthorized(response);
         return;

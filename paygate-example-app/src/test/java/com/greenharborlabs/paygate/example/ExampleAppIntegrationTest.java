@@ -164,7 +164,7 @@ class ExampleAppIntegrationTest {
       // By constructing both the preimage and the macaroon ourselves we can present a
       // valid L402 credential while still exercising the full verification path.
       //
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon =
           MacaroonMinter.mint(
               rootKey,

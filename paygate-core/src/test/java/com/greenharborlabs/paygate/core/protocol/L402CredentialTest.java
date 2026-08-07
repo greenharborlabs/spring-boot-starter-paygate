@@ -47,7 +47,7 @@ class L402CredentialTest {
     tokenIdBytes = new byte[32];
     RANDOM.nextBytes(tokenIdBytes);
 
-    identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", List.of());
 
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
@@ -63,7 +63,7 @@ class L402CredentialTest {
     byte[] additionalTokenId = new byte[32];
     RANDOM.nextBytes(additionalTokenId);
     MacaroonIdentifier additionalId =
-        new MacaroonIdentifier(0, additionalPaymentHash, additionalTokenId);
+        new MacaroonIdentifier(1, additionalPaymentHash, additionalTokenId);
     Macaroon additionalMacaroon =
         MacaroonMinter.mint(additionalRootKey, additionalId, "https://example.com", List.of());
     return Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(additionalMacaroon));
@@ -88,6 +88,8 @@ class L402CredentialTest {
       assertThat(credential.tokenId()).isEqualTo(tokenIdHex);
       assertThat(credential.preimage().toHex()).isEqualTo(preimageHex);
       assertThat(credential.macaroon().identifier()).isEqualTo(macaroon.identifier());
+      assertThat(MacaroonIdentifier.decode(credential.macaroon().identifier()).version())
+          .isEqualTo(1);
       assertThat(credential.additionalMacaroons()).isEmpty();
     }
 

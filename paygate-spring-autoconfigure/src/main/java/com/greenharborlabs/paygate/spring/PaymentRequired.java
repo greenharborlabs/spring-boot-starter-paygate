@@ -37,8 +37,9 @@ public @interface PaymentRequired {
   String pricingStrategy() default "";
 
   /**
-   * Capability required for this endpoint. An empty string indicates no specific capability is
-   * required.
+   * Capability requirement for this endpoint. Comma-separated names use any-of (OR) semantics:
+   * {@code "search,analyze"} accepts a verified final ceiling containing either name. A wholly
+   * blank value indicates no named capability; blank list segments are invalid.
    */
   String capability() default "";
 }

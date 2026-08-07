@@ -202,6 +202,17 @@ class L402ProtocolTest {
     }
 
     @Test
+    void parsesIssuerAuthenticatedVersionOneCredential() {
+      String authHeader = buildValidAuthHeader("L402");
+
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      L402Metadata metadata = (L402Metadata) credential.metadata();
+
+      assertThat(MacaroonIdentifier.decode(metadata.macaroon().identifier()).version())
+          .isEqualTo(1);
+    }
+
+    @Test
     void throwsPaymentValidationExceptionForMalformedHeader() {
       assertThatThrownBy(() -> protocol.parseCredential("L402 not-valid"))
           .isInstanceOf(PaymentValidationException.class)
@@ -293,7 +304,8 @@ class L402ProtocolTest {
           .isEqualTo(response.wwwAuthenticateHeader());
       assertThat(extractQuotedValue(response.wwwAuthenticateHeader(), "token"))
           .isEqualTo(
-              "AgJCAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAIXc2VydmljZXM9dGVzdC1zZXJ2aWNlOjAAAhNyb3V0ZT0vd2lkZ2V0cy97aWR9AAILbWV0aG9kPVBPU1QAAh50ZXN0LXNlcnZpY2VfY2FwYWJpbGl0aWVzPXJlYWQAAiN0ZXN0LXNlcnZpY2VfdmFsaWRfdW50aWw9MTc2NzMyNjY0NQAABiBwdJIyRaGp/qak4kF9s2UFpVCqvWoV9CmhQU4Z6lCCSQ==");
+              "AgJCAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAIXc2VydmljZXM9dGVzdC1zZXJ2aWNlOjAAAhNyb3V0ZT0vd2lkZ2V0cy97aWR9AAILbWV0aG9kPVBPU1QAAh50ZXN0LXNlcnZpY2VfY2FwYWJpbGl0aWVzPXJlYWQAAiN0ZXN0LXNlcnZpY2VfdmFsaWRfdW50aWw9MTc2NzMyNjY0NQAABiADF6Jr/FXe0HDLAv9t3OJY7/cVEGNkapmCsorFxm3Wcg==");
+      assertThat(MacaroonIdentifier.decode(macaroon.identifier()).version()).isEqualTo(1);
       assertThat(macaroon.caveats())
           .extracting(caveat -> caveat.key() + "=" + caveat.value())
           .containsExactly(
@@ -1038,7 +1050,7 @@ class L402ProtocolTest {
     byte[] rootKey = new byte[32];
     Arrays.fill(rootKey, (byte) 0xFF);
 
-    MacaroonIdentifier id = new MacaroonIdentifier(0, paymentHash, tokenId);
+    MacaroonIdentifier id = new MacaroonIdentifier(1, paymentHash, tokenId);
     var macaroon = MacaroonMinter.mint(rootKey, id, null, List.of());
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String base64 = Base64.getEncoder().encodeToString(serialized);

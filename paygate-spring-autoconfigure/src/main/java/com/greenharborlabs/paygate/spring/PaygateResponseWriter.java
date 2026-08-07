@@ -94,6 +94,17 @@ public final class PaygateResponseWriter {
                 {"code": 503, "error": "LIGHTNING_UNAVAILABLE", "message": "Lightning backend is not available. Please try again later."}""");
   }
 
+  /** Writes a sanitized 500 response for internal application or configuration failures. */
+  public static void writeInternalError(HttpServletResponse response) throws IOException {
+    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+    response.setContentType("application/json");
+    response
+        .getWriter()
+        .write(
+            """
+                {"code": 500, "error": "INTERNAL_ERROR", "message": "An internal error occurred"}""");
+  }
+
   /** Writes a 400 response for malformed/invalid request URI input. */
   public static void writeMalformedUri(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);

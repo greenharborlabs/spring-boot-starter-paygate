@@ -328,7 +328,7 @@ class TamperDetectionIT {
             new Caveat(
                 SERVICE_NAME + "_valid_until",
                 String.valueOf(Instant.now().plusSeconds(300).getEpochSecond())));
-        var identifier = new MacaroonIdentifier(0, paymentHash, generated.tokenId());
+        var identifier = new MacaroonIdentifier(1, paymentHash, generated.tokenId());
         Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
         return new L402Credential(
             Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(macaroon)),

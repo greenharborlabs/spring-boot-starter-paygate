@@ -207,7 +207,7 @@ class SecurityExampleAppIntegrationTest {
     byte[] rootKey = genResult.rootKey().value();
     byte[] tokenId = genResult.tokenId();
 
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
     Macaroon macaroon =
         MacaroonMinter.mint(
             rootKey,

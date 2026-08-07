@@ -124,21 +124,28 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     }
 
     ResolvedEndpoint resolvedEndpoint;
-    PaygateEndpointConfig endpointConfig;
-    String capability;
     try {
       resolvedEndpoint = resolveEndpoint(request, normalizedPath);
-      if (resolvedEndpoint == null) {
-        filterChain.doFilter(request, response);
-        return;
-      }
-      endpointConfig = resolvedEndpoint.config();
-      capability = extractCapability(endpointConfig);
     } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Endpoint policy resolution failed for {0} {1}: {2}",
+          request.getMethod(),
+          LogSanitizer.sanitize(normalizedPath),
+          e.getClass().getSimpleName());
       SecurityContextHolder.clearContext();
-      PaygateResponseWriter.writeLightningUnavailable(response);
+      PaygateResponseWriter.writeInternalError(response);
       return;
     }
+    if (resolvedEndpoint == null) {
+      filterChain.doFilter(request, response);
+      return;
+    }
+
+    PaygateEndpointConfig endpointConfig;
+    String capability;
+    endpointConfig = resolvedEndpoint.config();
+    capability = extractCapability(endpointConfig);
 
     Map<String, String> requestMetadata;
     try {
@@ -231,21 +238,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
   /**
    * Resolves the endpoint for the current request by looking up the endpoint registry. Returns
-   * {@code null} if no endpoint is found for the given method and path. Re-throws {@link
-   * RuntimeException} to enforce fail-closed behavior.
+   * {@code null} if no endpoint is found for the given method and path.
    */
   private ResolvedEndpoint resolveEndpoint(HttpServletRequest request, String normalizedPath) {
-    try {
-      return endpointRegistry.resolve(request.getMethod(), normalizedPath);
-    } catch (RuntimeException e) {
-      log.log(
-          System.Logger.Level.WARNING,
-          "Failed to resolve endpoint config for {0} {1}; denying request",
-          request.getMethod(),
-          LogSanitizer.sanitize(request.getRequestURI()),
-          e);
-      throw e;
-    }
+    return endpointRegistry.resolve(request.getMethod(), normalizedPath);
   }
 
   private static String extractCapability(PaygateEndpointConfig config) {

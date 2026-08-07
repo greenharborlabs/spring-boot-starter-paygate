@@ -860,7 +860,7 @@ class PaygateMetricsTest {
     byte[] tokenId = new byte[32];
     new SecureRandom().nextBytes(tokenId);
 
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
     Macaroon macaroon =
         MacaroonMinter.mint(
             ROOT_KEY,
@@ -889,7 +889,7 @@ class PaygateMetricsTest {
     byte[] tokenId = new byte[32];
     new SecureRandom().nextBytes(tokenId);
 
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
     Macaroon macaroon =
         MacaroonMinter.mint(
             ROOT_KEY,

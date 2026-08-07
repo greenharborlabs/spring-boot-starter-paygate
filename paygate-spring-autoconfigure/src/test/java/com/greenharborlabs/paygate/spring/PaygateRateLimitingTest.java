@@ -958,7 +958,7 @@ class PaygateRateLimitingTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
       List<Caveat> caveats =
           List.of(

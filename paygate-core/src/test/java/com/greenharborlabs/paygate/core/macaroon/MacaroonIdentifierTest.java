@@ -7,6 +7,8 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class MacaroonIdentifierTest {
 
@@ -204,12 +206,22 @@ class MacaroonIdentifierTest {
   }
 
   @Test
-  @DisplayName("decode() rejects non-zero version as unsupported")
-  void decodeRejectsNonZeroVersion() {
+  @DisplayName("decode() round-trips issuer-authenticated version 1")
+  void decodeRoundTripsVersionOne() {
     byte[] raw = new byte[IDENTIFIER_LENGTH];
-    // version = 1 in big-endian
     raw[0] = 0x00;
     raw[1] = 0x01;
+
+    assertThat(MacaroonIdentifier.decode(raw).version()).isEqualTo(1);
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {2, 255, 256, 65535})
+  @DisplayName("decode() rejects versions 2 through 65535 as unsupported")
+  void decodeRejectsUnsupportedVersion(int version) {
+    byte[] raw = new byte[IDENTIFIER_LENGTH];
+    raw[0] = (byte) (version >>> 8);
+    raw[1] = (byte) version;
 
     assertThatThrownBy(() -> MacaroonIdentifier.decode(raw))
         .isInstanceOf(IllegalArgumentException.class)

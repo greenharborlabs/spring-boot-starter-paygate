@@ -55,10 +55,7 @@ public record MacaroonIdentifier(int version, byte[] paymentHash, byte[] tokenId
     return buf.array();
   }
 
-  /**
-   * Deserializes a 66-byte array into a {@link MacaroonIdentifier}. Only version 0 is currently
-   * supported.
-   */
+  /** Deserializes a 66-byte array into a structurally supported {@link MacaroonIdentifier}. */
   public static MacaroonIdentifier decode(byte[] data) {
     if (data == null) {
       throw new IllegalArgumentException("data must not be null");
@@ -69,7 +66,7 @@ public record MacaroonIdentifier(int version, byte[] paymentHash, byte[] tokenId
     }
     ByteBuffer buf = ByteBuffer.wrap(data);
     int version = Short.toUnsignedInt(buf.getShort());
-    if (version != 0) {
+    if (version > 1) {
       throw new IllegalArgumentException("Unsupported identifier version: " + version);
     }
     byte[] paymentHash = new byte[HASH_BYTES];

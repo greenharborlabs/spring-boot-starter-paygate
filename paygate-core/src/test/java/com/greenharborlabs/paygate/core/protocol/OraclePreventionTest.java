@@ -124,7 +124,7 @@ class OraclePreventionTest {
     RANDOM.nextBytes(tokenIdBytes);
     tokenIdHex = HEX.formatHex(tokenIdBytes);
 
-    identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     macaroon = MacaroonMinter.mint(rootKey, identifier, "https://example.com", boundaryCaveats());
 
     // Register the root key so the validator can look it up by tokenId

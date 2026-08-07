@@ -10,10 +10,12 @@ import java.util.Set;
  * sentinel representing no capabilities. Verification checks endpoint satisfaction against the
  * effective (final) caveat value.
  *
- * <p>A capability-less endpoint is satisfied only by {@code ~}. An endpoint declaring named
- * capabilities is satisfied when the final named set contains at least one declaration. Repeated
+ * <p>A capability-less endpoint is satisfied only by {@code ~}. A multi-valued endpoint declaration
+ * uses any-of (OR) semantics: {@code search,analyze} is satisfied when the final named set overlaps
+ * it by containing either name. A final {@code ~} cannot satisfy a named declaration. Repeated
  * caveats may retain or narrow a named set, including narrowing it to {@code ~}, but may never
- * expand it or turn {@code ~} into a named grant.
+ * expand it or turn {@code ~} into a named grant. Blank segments, mixed sentinel/name values, and
+ * malformed signed ceilings fail verification.
  */
 public class CapabilitiesCaveatVerifier implements CaveatVerifier {
 

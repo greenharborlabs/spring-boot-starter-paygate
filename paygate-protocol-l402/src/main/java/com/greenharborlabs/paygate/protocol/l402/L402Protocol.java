@@ -34,7 +34,7 @@ import java.util.Objects;
 public class L402Protocol implements PaymentProtocol {
 
   private static final String SCHEME = "L402";
-  private static final int MACAROON_IDENTIFIER_VERSION = 0;
+  private static final int MACAROON_IDENTIFIER_VERSION = 1;
 
   private final L402Validator validator;
   private final String serviceName;

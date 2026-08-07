@@ -391,7 +391,7 @@ class PaygateSecurityFilterRealStoreTest {
     try (RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey()) {
       byte[] rootKey = generationResult.rootKey().value();
       try {
-        var identifier = new MacaroonIdentifier(0, paymentHash, generationResult.tokenId());
+        var identifier = new MacaroonIdentifier(1, paymentHash, generationResult.tokenId());
         var caveats = new java.util.ArrayList<Caveat>();
         caveats.add(new Caveat("services", SERVICE_NAME + ":0"));
         if (includeBoundary) {

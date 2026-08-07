@@ -9,7 +9,8 @@ package com.greenharborlabs.paygate.spring;
  * @param timeoutSeconds credential TTL in seconds
  * @param description human-readable description
  * @param pricingStrategy name of the pricing strategy bean, or empty for fixed price
- * @param capability capability required for this endpoint, or empty for no specific capability
+ * @param capability any-of (OR) capability requirement; for example, {@code "search,analyze"}
+ *     accepts either name, while a null or wholly blank value means no named capability
  */
 public record PaygateEndpointConfig(
     String httpMethod,

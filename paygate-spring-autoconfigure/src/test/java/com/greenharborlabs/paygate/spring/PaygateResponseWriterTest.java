@@ -221,6 +221,20 @@ class PaygateResponseWriterTest {
   }
 
   @Test
+  @DisplayName("writeInternalError sets 500 status and a bounded sanitized JSON body")
+  void writeInternalError_setsStatusAndSanitizedBody() throws Exception {
+    PaygateResponseWriter.writeInternalError(response);
+
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 500, \"error\": \"INTERNAL_ERROR\", \"message\": \"An internal error occurred\"}")
+        .doesNotContain("secret", "policy", "path")
+        .hasSizeLessThan(256);
+  }
+
+  @Test
   @DisplayName("writeMalformedUri sets 400 status and MALFORMED_URI body")
   void writeMalformedUri_setsStatusAndBody() throws Exception {
     PaygateResponseWriter.writeMalformedUri(response);

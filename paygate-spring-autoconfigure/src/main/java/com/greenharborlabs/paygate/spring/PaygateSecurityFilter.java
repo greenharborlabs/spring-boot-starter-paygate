@@ -119,7 +119,7 @@ public class PaygateSecurityFilter implements Filter {
           method,
           safePath,
           e.getClass().getSimpleName());
-      PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+      PaygateResponseWriter.writeInternalError(httpResponse);
       recordRejected("_resolution_error", "unknown");
       return;
     }

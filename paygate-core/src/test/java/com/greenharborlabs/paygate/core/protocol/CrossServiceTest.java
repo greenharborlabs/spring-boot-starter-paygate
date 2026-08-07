@@ -63,7 +63,7 @@ class CrossServiceTest {
   }
 
   private String buildAuthHeader(List<Caveat> caveats) {
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     List<Caveat> boundedCaveats = new ArrayList<>(caveats);
     boundedCaveats.add(new Caveat("route", REQUEST_ROUTE));
     boundedCaveats.add(new Caveat("method", REQUEST_METHOD));
@@ -157,19 +157,23 @@ class CrossServiceTest {
     }
 
     @Test
-    @DisplayName("macaroon with multi-service caveat accepts listed service")
-    void multiServiceCaveatAcceptsListedService() {
+    @DisplayName("version 1 multi-service caveats validate independently in flexible order")
+    void multiServiceCaveatAcceptsEachListedService() {
       String header =
           buildAuthHeader(
               List.of(
+                  new Caveat("serviceB_capabilities", "~"),
                   new Caveat("services", "serviceA,serviceB"),
-                  new Caveat("serviceA_capabilities", "~"),
-                  new Caveat("serviceB_capabilities", "~")));
+                  new Caveat("serviceA_capabilities", "~")));
 
-      L402Validator validator =
+      L402Validator serviceAValidator =
+          new L402Validator(rootKeyStore, credentialStore, verifiers("serviceA"), "serviceA");
+      L402Validator serviceBValidator =
           new L402Validator(rootKeyStore, credentialStore, verifiers("serviceB"), "serviceB");
 
-      assertThatCode(() -> validator.validate(header, context("serviceB")))
+      assertThatCode(() -> serviceAValidator.validate(header, context("serviceA")))
+          .doesNotThrowAnyException();
+      assertThatCode(() -> serviceBValidator.validate(header, context("serviceB")))
           .doesNotThrowAnyException();
     }
   }

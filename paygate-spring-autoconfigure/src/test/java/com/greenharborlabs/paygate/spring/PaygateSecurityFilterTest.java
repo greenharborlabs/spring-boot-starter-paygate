@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -59,6 +64,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -108,6 +115,32 @@ class PaygateSecurityFilterTest {
   @Autowired private CapturingPaymentProtocol capturingPaymentProtocol;
 
   @Autowired private TestController testController;
+
+  @Test
+  @DisplayName("returns sanitized 500 when endpoint policy resolution fails")
+  void resolutionFailureReturnsInternalErrorWithoutSideEffects() throws Exception {
+    PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
+    PaygateChallengeService challengeService = mock(PaygateChallengeService.class);
+    jakarta.servlet.FilterChain chain = mock(jakarta.servlet.FilterChain.class);
+    when(registry.resolve("GET", "/items/1"))
+        .thenThrow(new IllegalStateException("secret policy detail"));
+    var filter =
+        new PaygateSecurityFilter(
+            registry, List.of(), challengeService, SERVICE_NAME, null, null, null, null);
+    var request = new MockHttpServletRequest("GET", "/items/1");
+    request.setRequestURI("/items/1");
+    var response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, chain);
+
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentAsString())
+        .contains("INTERNAL_ERROR")
+        .doesNotContain("secret policy detail", "/items/1");
+    verify(chain, never()).doFilter(any(), any());
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
+  }
 
   // -----------------------------------------------------------------------
   // Test application and configuration
@@ -545,7 +578,7 @@ class PaygateSecurityFilterTest {
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntilEpoch)));
 
       // Mint a real macaroon using the known root key
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
 
       // Serialize the macaroon to V2 binary and base64 encode
@@ -592,7 +625,7 @@ class PaygateSecurityFilterTest {
               new Caveat("method", "GET"),
               new Caveat(SERVICE_NAME + "_capabilities", "~"));
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -637,7 +670,7 @@ class PaygateSecurityFilterTest {
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(laterEpoch)),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(earlierEpoch)));
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -670,7 +703,7 @@ class PaygateSecurityFilterTest {
               new Caveat("services", SERVICE_NAME + ":0"),
               new Caveat(SERVICE_NAME + "_valid_until", "not-a-number"));
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
       PaymentCredential credential =
           new PaymentCredential(
@@ -707,7 +740,7 @@ class PaygateSecurityFilterTest {
               new Caveat(SERVICE_NAME + "_valid_until", "garbage"),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validEpoch)));
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
       PaymentCredential credential =
           new PaymentCredential(
@@ -784,7 +817,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, validCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -841,7 +874,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, validCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -903,7 +936,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, expiredCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -925,7 +958,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, wrongServiceCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -1205,7 +1238,7 @@ class PaygateSecurityFilterTest {
     byte[] tokenId = new byte[32];
     new SecureRandom().nextBytes(tokenId);
 
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
     Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);

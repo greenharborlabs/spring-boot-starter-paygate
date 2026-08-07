@@ -61,7 +61,7 @@ class RevocationTest {
     RANDOM.nextBytes(preimageBytes);
     paymentHash = MessageDigest.getInstance("SHA-256").digest(preimageBytes);
 
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, boundaryCaveats());
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);

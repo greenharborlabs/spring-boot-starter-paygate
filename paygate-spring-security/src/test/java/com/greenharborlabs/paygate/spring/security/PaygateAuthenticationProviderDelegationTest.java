@@ -450,7 +450,7 @@ class PaygateAuthenticationProviderDelegationTest {
     RNG.nextBytes(paymentHash);
     RNG.nextBytes(tokenIdBytes);
 
-    var identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    var identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     byte[] idBytes = MacaroonIdentifier.encode(identifier);
     byte[] sig = new byte[32];
     RNG.nextBytes(sig);
