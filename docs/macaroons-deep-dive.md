@@ -137,6 +137,10 @@ cryptographically -- it exists purely for the client's convenience in knowing
 where to send the token. In many implementations (including L402), the location
 is empty or omitted.
 
+Paygate never uses location for authorization or diagnostics. Location is part
+of Java object equality only, so a same-token location-only variant is a cache
+variant: it receives full validation and may replace the cached object.
+
 ### Identifier
 
 A public value that the verifying server uses to look up the **root key** --
@@ -328,6 +332,11 @@ The orchestrator computed this by:
 
 No server call. No token exchange. No OAuth dance. The sub-agent gets a valid
 but strictly weaker token.
+
+Attenuation appends signed restrictions to the existing HMAC chain. It cannot
+alter the already signed identifier version. Paygate-issued credentials use
+identifier v1; appending otherwise valid restrictions to a legacy v0 credential
+does not upgrade it and validation still rejects it.
 
 ### The Delegation Chain
 
@@ -1190,6 +1199,11 @@ public class MacaroonIdentifier {
 }
 ```
 
+Paygate's built-in issuer and custom issuers targeting the hardened validator
+must construct `new MacaroonIdentifier(1, paymentHash, tokenId)`. Version 1 does
+not change the 66-byte layout, Macaroon V2 wire encoding, or Go parser offsets;
+it is distinct from the HTTP challenge parameter `version="0"`.
+
 ### Preimage Verification
 
 ```java
@@ -1271,4 +1285,3 @@ Caveats for Decentralized Authorization in the Cloud," NDSS 2014.
 - **libmacaroons (C reference implementation)**: [https://github.com/rescrv/libmacaroons](https://github.com/rescrv/libmacaroons)
 - **jmacaroons (Java, stale but useful for reference)**: [https://github.com/nitram509/jmacaroons](https://github.com/nitram509/jmacaroons)
 - **LND macaroons guide**: [https://docs.lightning.engineering/the-lightning-network/l402/macaroons](https://docs.lightning.engineering/the-lightning-network/l402/macaroons)
-

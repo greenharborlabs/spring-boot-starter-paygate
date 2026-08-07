@@ -72,7 +72,7 @@ class GoInteropIT {
       byte[] rootKey = genResult.rootKey().value();
       byte[] tokenId = genResult.tokenId();
 
-      var identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      var identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       var caveats =
           List.of(
               new Caveat("service", "test-service"),
@@ -112,11 +112,14 @@ class GoInteropIT {
           .as("Second caveat readable")
           .contains("expires_at=2099-12-31T23:59:59Z");
 
-      // Verify the identifier hex contains the expected payment hash prefix
+      // Identifier v1 retains the 66-byte layout and unchanged field offsets.
       String expectedPaymentHashHex = HexFormat.of().formatHex(paymentHash);
+      String expectedTokenIdHex = HexFormat.of().formatHex(tokenId);
+      String expectedIdentifierHex = "0001" + expectedPaymentHashHex + expectedTokenIdHex;
+      assertThat(expectedIdentifierHex).hasSize(132);
       assertThat(output.stdout())
-          .as("Identifier hex contains payment hash")
-          .contains("ID (hex): 0000" + expectedPaymentHashHex);
+          .as("Identifier hex is v1 followed by payment hash and token ID")
+          .contains("ID (hex): " + expectedIdentifierHex);
     } finally {
       rootKeyStore.close();
     }

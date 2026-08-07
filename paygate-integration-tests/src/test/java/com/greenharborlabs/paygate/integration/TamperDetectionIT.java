@@ -74,6 +74,7 @@ class TamperDetectionIT {
   private static final String FIRST_ITEM_PATH = "/security-boundary/items/fixture-alpha";
   private static final String SECOND_ITEM_PATH = "/security-boundary/items/fixture-beta";
   private static final String DIFFERENT_ROUTE = "/security-boundary/expensive";
+  private static final String ADMIN_PATH = "/security-boundary/admin";
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
   @LocalServerPort private int port;
@@ -115,6 +116,13 @@ class TamperDetectionIT {
       @PaymentRequired(priceSats = 10, capability = "search,analyze")
       @GetMapping("/expensive")
       Map<String, String> expensive() {
+        INVOCATIONS.incrementAndGet();
+        return Map.of("status", "ok");
+      }
+
+      @PaymentRequired(priceSats = 10, capability = "admin")
+      @GetMapping("/admin")
+      Map<String, String> admin() {
         INVOCATIONS.incrementAndGet();
         return Map.of("status", "ok");
       }
@@ -170,6 +178,55 @@ class TamperDetectionIT {
         assertThat(sendAuthenticated(client, FIRST_ITEM_PATH, "GET", credential).statusCode())
             .as("credential missing %s must be rejected", omittedBoundary)
             .isNotEqualTo(200);
+      }
+      assertThat(TestConfig.SecurityBoundaryController.INVOCATIONS).hasValue(0);
+    }
+  }
+
+  @Test
+  @DisplayName("authentic legacy v0 holder-appended boundaries are rejected before handlers")
+  void legacyVersionZeroHolderAttenuationFailsClosed() throws Exception {
+    try (var client = HttpClient.newHttpClient()) {
+      L402Credential appendedAdmin =
+          mintLegacyCredential(
+              List.of(new Caveat("services", SERVICE_NAME + ":0"), validUntilCaveat()),
+              List.of(
+                  new Caveat("route", "/security-boundary/admin"),
+                  new Caveat("method", "GET"),
+                  new Caveat(SERVICE_NAME + "_capabilities", "admin")));
+      L402Credential repeatedSearch =
+          mintLegacyCredential(
+              List.of(
+                  new Caveat("services", SERVICE_NAME + ":0"),
+                  new Caveat(SERVICE_NAME + "_capabilities", "search"),
+                  validUntilCaveat()),
+              List.of(
+                  new Caveat("route", "/security-boundary/expensive"),
+                  new Caveat("method", "GET"),
+                  new Caveat(SERVICE_NAME + "_capabilities", "search")));
+      L402Credential zeroCaveat =
+          mintLegacyCredential(
+              List.of(),
+              List.of(
+                  new Caveat("route", "/security-boundary/expensive"),
+                  new Caveat("method", "GET"),
+                  new Caveat(SERVICE_NAME + "_capabilities", "search")));
+
+      assertThat(satisfiesOldPresenceOnlyDecision(appendedAdmin, ADMIN_PATH, "admin")).isTrue();
+      assertThat(satisfiesOldPresenceOnlyDecision(repeatedSearch, DIFFERENT_ROUTE, "search"))
+          .isTrue();
+      assertThat(satisfiesOldPresenceOnlyDecision(zeroCaveat, DIFFERENT_ROUTE, "search")).isTrue();
+
+      for (var attack :
+          List.of(
+              Map.entry(ADMIN_PATH, appendedAdmin),
+              Map.entry(DIFFERENT_ROUTE, repeatedSearch),
+              Map.entry(DIFFERENT_ROUTE, zeroCaveat))) {
+        var response = sendAuthenticated(client, attack.getKey(), "GET", attack.getValue());
+        assertThat(response.statusCode()).isNotEqualTo(200);
+        assertThat(response.body())
+            .doesNotContain(attack.getValue().macaroonBase64())
+            .doesNotContain(attack.getValue().preimageHex());
       }
       assertThat(TestConfig.SecurityBoundaryController.INVOCATIONS).hasValue(0);
     }
@@ -340,6 +397,71 @@ class TamperDetectionIT {
       MacaroonCrypto.zeroize(paymentHash);
       MacaroonCrypto.zeroize(preimage);
     }
+  }
+
+  private L402Credential mintLegacyCredential(
+      List<Caveat> issuerCaveats, List<Caveat> holderCaveats) throws Exception {
+    byte[] preimage = new byte[32];
+    java.util.Arrays.fill(preimage, (byte) 0x6B);
+    byte[] paymentHash = MessageDigest.getInstance("SHA-256").digest(preimage);
+    try (var generated = rootKeyStore.generateRootKey()) {
+      byte[] rootKey = generated.rootKey().value();
+      try {
+        Macaroon macaroon =
+            MacaroonMinter.mint(
+                rootKey,
+                new MacaroonIdentifier(0, paymentHash, generated.tokenId()),
+                null,
+                issuerCaveats);
+        for (Caveat caveat : holderCaveats) {
+          macaroon = attenuate(macaroon, caveat);
+        }
+        return new L402Credential(
+            Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(macaroon)),
+            HEX.formatHex(preimage));
+      } finally {
+        MacaroonCrypto.zeroize(rootKey);
+      }
+    } finally {
+      MacaroonCrypto.zeroize(paymentHash);
+      MacaroonCrypto.zeroize(preimage);
+    }
+  }
+
+  private static Caveat validUntilCaveat() {
+    return new Caveat(
+        SERVICE_NAME + "_valid_until",
+        String.valueOf(Instant.now().plusSeconds(300).getEpochSecond()));
+  }
+
+  private static Macaroon attenuate(Macaroon macaroon, Caveat caveat) {
+    var caveats = new ArrayList<>(macaroon.caveats());
+    caveats.add(caveat);
+    byte[] signature =
+        MacaroonCrypto.hmac(
+            macaroon.signature(), caveat.toString().getBytes(StandardCharsets.UTF_8));
+    try {
+      return new Macaroon(macaroon.identifier(), macaroon.location(), caveats, signature);
+    } finally {
+      MacaroonCrypto.zeroize(signature);
+    }
+  }
+
+  private static boolean satisfiesOldPresenceOnlyDecision(
+      L402Credential credential, String routePattern, String requestedCapability) {
+    Macaroon macaroon =
+        MacaroonSerializer.deserializeV2(Base64.getDecoder().decode(credential.macaroonBase64()));
+    boolean route =
+        macaroon.caveats().stream()
+            .anyMatch(c -> c.key().equals("route") && c.value().equals(routePattern));
+    boolean method =
+        macaroon.caveats().stream()
+            .anyMatch(c -> c.key().equals("method") && c.value().equals("GET"));
+    boolean capability =
+        macaroon.caveats().stream()
+            .filter(c -> c.key().equals(SERVICE_NAME + "_capabilities"))
+            .anyMatch(c -> List.of(c.value().split(",")).contains(requestedCapability));
+    return route && method && capability;
   }
 
   private static String authorizationHeader(L402Credential credential) {

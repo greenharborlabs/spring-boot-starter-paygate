@@ -935,6 +935,8 @@ First-party L402 macaroons are bound to the canonical registered route, the actu
 
 ## Compatibility
 
+New L402 challenges use signed identifier version 1. The identifier layout remains exactly 66 bytes (`[version:2 bytes BE][payment_hash:32][token_id:32]`), the HTTP `WWW-Authenticate` challenge continues to advertise `version="0"`, and credentials remain Macaroon V2 encoded and readable by Go `go-macaroon`. Previously issued identifier-v0 credentials are intentionally rejected during their remaining TTL even if holders append matching boundary caveats; clients must obtain and pay a new challenge, and custom issuers must mint `new MacaroonIdentifier(1, paymentHash, tokenId)`.
+
 | Component | Version |
 |-----------|---------|
 | Java | 25 (LTS) |

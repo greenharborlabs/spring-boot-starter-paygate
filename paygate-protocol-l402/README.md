@@ -133,7 +133,7 @@ Formats an HTTP 402 challenge response. This is the server-side operation that c
 
 The method:
 
-1. Decodes the hex token ID from the context and constructs a `MacaroonIdentifier` with version 0, the payment hash, and the token ID
+1. Decodes the hex token ID from the context and constructs a `MacaroonIdentifier` with signed identifier version 1, the payment hash, and the token ID
 2. Builds a caveat list:
    - `services` caveat: `"{serviceName}:0"` (always present)
    - `route` caveat: the canonical registered route pattern
@@ -300,6 +300,10 @@ Challenge formatting fails closed unless the canonical route and actual method a
 The capability caveat is an authenticated ceiling, not an additive grant. `~` means no capability; holder-added caveats may retain or narrow a named ceiling, including narrowing it to `~`, but cannot expand it or turn `~` into a named grant. Validation derives the effective capability set only after the entire attenuation chain succeeds.
 
 Previously issued L402 credentials without `route`, `method`, or the capability ceiling are intentionally rejected, including cached credentials. Accepting the legacy `LSAT` scheme name does not grandfather those unbound credentials; clients must obtain a new challenge.
+
+Built-in issuance always uses identifier version 1 and the five caveats listed above. Custom issuers must do the same, beginning with `new MacaroonIdentifier(1, paymentHash, tokenId)`. A correctly signed identifier-v0 credential is rejected even if its holder appends matching route, method, and capability caveats; clients must obtain and pay a new challenge.
+
+This migration changes only the signed identifier version. The identifier remains 66 bytes (`[version:2 BE][paymentHash:32][tokenId:32]`), the HTTP challenge still advertises `version="0"`, and the macaroon still uses V2 binary encoding compatible with Go `go-macaroon` parsers.
 
 ### Fail Closed
 

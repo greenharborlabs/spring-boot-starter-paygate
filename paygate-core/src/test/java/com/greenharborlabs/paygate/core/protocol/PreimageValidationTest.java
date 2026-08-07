@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -187,6 +188,37 @@ class PreimageValidationTest {
   class CachedCredential {
 
     @Test
+    @DisplayName("location-only variants take fresh validation and replace the cache slot")
+    void locationOnlyVariantsReplaceCacheWithoutExplicitRevocation() {
+      try (var trackingStore = new TrackingCredentialStore()) {
+        String originalHeader = buildAuthHeader(macaroon, HEX.formatHex(preimageBytes));
+        Macaroon relocated =
+            new Macaroon(
+                macaroon.identifier(),
+                "https://mirror.example.com",
+                macaroon.caveats(),
+                macaroon.signature());
+        String relocatedHeader = buildAuthHeader(relocated, HEX.formatHex(preimageBytes));
+        L402Validator validator =
+            new L402Validator(rootKeyStore, trackingStore, boundaryVerifiers(), SERVICE_NAME);
+
+        assertThat(validator.validate(originalHeader, boundaryContext()).freshValidation())
+            .isTrue();
+        assertThat(validator.validate(relocatedHeader, boundaryContext()).freshValidation())
+            .isTrue();
+        assertThat(trackingStore.storeCount()).isEqualTo(2);
+        assertThat(trackingStore.revokeCount()).isZero();
+        assertCachedVariant(trackingStore, relocated);
+
+        assertThat(validator.validate(originalHeader, boundaryContext()).freshValidation())
+            .isTrue();
+        assertThat(trackingStore.storeCount()).isEqualTo(3);
+        assertThat(trackingStore.revokeCount()).isZero();
+        assertCachedVariant(trackingStore, macaroon);
+      }
+    }
+
+    @Test
     @DisplayName("tampered macaroon with same token and preimage returns INVALID_MACAROON")
     void tamperedMacaroonOnCachedPathReturnsInvalidMacaroon() {
       String validHeader = buildAuthHeader(macaroon, HEX.formatHex(preimageBytes));
@@ -213,6 +245,59 @@ class PreimageValidationTest {
                 assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_MACAROON);
                 assertThat(ex.getTokenId()).isEqualTo(tokenIdHex);
               });
+    }
+  }
+
+  private void assertCachedVariant(CredentialStore store, Macaroon expected) {
+    var cached = store.get(tokenIdHex);
+    try {
+      assertThat(cached).isNotNull();
+      assertThat(cached.macaroon()).isEqualTo(expected);
+    } finally {
+      if (cached != null) {
+        cached.destroy();
+      }
+    }
+  }
+
+  private static final class TrackingCredentialStore implements CredentialStore, AutoCloseable {
+    private final InMemoryCredentialStore delegate = new InMemoryCredentialStore();
+    private final AtomicInteger stores = new AtomicInteger();
+    private final AtomicInteger revokes = new AtomicInteger();
+
+    @Override
+    public void store(String tokenId, L402Credential credential, long ttlSeconds) {
+      stores.incrementAndGet();
+      delegate.store(tokenId, credential, ttlSeconds);
+    }
+
+    @Override
+    public L402Credential get(String tokenId) {
+      return delegate.get(tokenId);
+    }
+
+    @Override
+    public void revoke(String tokenId) {
+      revokes.incrementAndGet();
+      delegate.revoke(tokenId);
+    }
+
+    @Override
+    public long activeCount() {
+      return delegate.activeCount();
+    }
+
+    int storeCount() {
+      return stores.get();
+    }
+
+    int revokeCount() {
+      return revokes.get();
+    }
+
+    @Override
+    public void close() {
+      delegate.close();
     }
   }
 }

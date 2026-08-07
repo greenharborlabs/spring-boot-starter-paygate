@@ -63,7 +63,12 @@ class CrossServiceTest {
   }
 
   private String buildAuthHeader(List<Caveat> caveats) {
-    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
+    return buildAuthHeader(1, caveats);
+  }
+
+  private String buildAuthHeader(int identifierVersion, List<Caveat> caveats) {
+    MacaroonIdentifier identifier =
+        new MacaroonIdentifier(identifierVersion, paymentHash, tokenIdBytes);
     List<Caveat> boundedCaveats = new ArrayList<>(caveats);
     boundedCaveats.add(new Caveat("route", REQUEST_ROUTE));
     boundedCaveats.add(new Caveat("method", REQUEST_METHOD));
@@ -175,6 +180,42 @@ class CrossServiceTest {
           .doesNotThrowAnyException();
       assertThatCode(() -> serviceBValidator.validate(header, context("serviceB")))
           .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("each active service requires its own ceiling and identifier version 1")
+    void multiServiceRequiresPerServiceCeilingAndVersionOne() {
+      List<Caveat> bothCeilings =
+          List.of(
+              new Caveat("services", "serviceA,serviceB"),
+              new Caveat("serviceB_capabilities", "~"),
+              new Caveat("serviceA_capabilities", "~"));
+      L402Validator serviceAValidator =
+          new L402Validator(rootKeyStore, credentialStore, verifiers("serviceA"), "serviceA");
+      L402Validator serviceBValidator =
+          new L402Validator(rootKeyStore, credentialStore, verifiers("serviceB"), "serviceB");
+
+      String missingServiceB =
+          buildAuthHeader(
+              List.of(
+                  new Caveat("services", "serviceA,serviceB"),
+                  new Caveat("serviceA_capabilities", "~")));
+      assertThatCode(() -> serviceAValidator.validate(missingServiceB, context("serviceA")))
+          .doesNotThrowAnyException();
+      assertThatThrownBy(() -> serviceBValidator.validate(missingServiceB, context("serviceB")))
+          .isInstanceOf(L402Exception.class)
+          .extracting(error -> ((L402Exception) error).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
+
+      String legacyV0 = buildAuthHeader(0, bothCeilings);
+      assertThatThrownBy(() -> serviceAValidator.validate(legacyV0, context("serviceA")))
+          .isInstanceOf(L402Exception.class)
+          .extracting(error -> ((L402Exception) error).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
+      assertThatThrownBy(() -> serviceBValidator.validate(legacyV0, context("serviceB")))
+          .isInstanceOf(L402Exception.class)
+          .extracting(error -> ((L402Exception) error).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_SERVICE);
     }
   }
 }

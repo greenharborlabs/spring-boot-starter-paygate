@@ -564,6 +564,7 @@ class L402ValidatorTest {
               exception -> {
                 L402Exception failure = (L402Exception) exception;
                 assertThat(failure.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                assertThat(failure.getErrorCode().getHttpStatus()).isEqualTo(401);
                 assertThat(failure.getMessage())
                     .isEqualTo("Credential constraints were not satisfied");
               });
@@ -1042,7 +1043,9 @@ class L402ValidatorTest {
                 error -> {
                   L402Exception exception = (L402Exception) error;
                   assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_SERVICE);
+                  assertThat(exception.getErrorCode().getHttpStatus()).isEqualTo(401);
                   assertThat(exception.getMessage())
+                      .isEqualTo("Credential constraints were not satisfied")
                       .doesNotContain(REQUEST_ROUTE)
                       .doesNotContain(REQUEST_METHOD);
                 });

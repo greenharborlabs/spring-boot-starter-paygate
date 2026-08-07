@@ -196,14 +196,14 @@ The macaroon identifier is a fixed 66-byte binary blob:
 ```
 Offset  Length  Field
 ------  ------  -----
-0       2       version    (uint16, big-endian) -- currently always 0
+0       2       version    (uint16, big-endian) -- v1 for newly issued credentials
 2       32      paymentHash (SHA-256 hash of the payment preimage)
 34      32      tokenId     (random 32-byte key ID for root key lookup)
 ```
 
 Total: 66 bytes.
 
-The `MacaroonIdentifier` record provides `encode()` and `decode()` methods for converting between the structured representation and the 66-byte binary form. The `decode()` method rejects any version other than 0.
+The `MacaroonIdentifier` record provides `encode()` and `decode()` methods for converting between the structured representation and the 66-byte binary form. It structurally decodes supported v0 and v1 identifiers; `L402Validator` accepts only authenticated v1 credentials.
 
 ### Key Derivation
 
@@ -567,6 +567,15 @@ Orchestrates the full credential validation pipeline:
 5. **Look up the root key**, recompute the signature chain, require the security-boundary caveats, and run all caveat verifiers
 6. **Cache after complete validation** with a TTL derived from `valid_until` caveats, then return with `freshValidation=true`
 
+Custom issuers should construct the identifier explicitly:
+
+```java
+var identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
+var macaroon = MacaroonMinter.mint(rootKey, identifier, location, caveats);
+```
+
+Public direct-validator callers choose which service and expiry verifiers to register; `L402Validator` does not universally add `ServicesCaveatVerifier` or `ValidUntilCaveatVerifier` for them. They must register the verifiers required by their issuer contract. Identifier v0 is rejected after proof-of-payment and signature checks even when a holder has appended otherwise valid boundaries.
+
 The `ValidationResult` record wraps the credential, a `freshValidation` flag, and the immutable final `effectiveCapabilities` set. Its two-argument compatibility constructor supplies an empty set.
 
 ### ErrorCode
@@ -615,7 +624,7 @@ This prevents timing side-channel attacks. The method is used for:
 ### No Secret Logging
 
 - `Macaroon.toString()` returns `Macaroon[identifierLength=66, location=..., caveatCount=N]` -- no signature or identifier bytes
-- `MacaroonIdentifier.toString()` returns `MacaroonIdentifier[version=0]` -- no payment hash or token ID
+- `MacaroonIdentifier.toString()` returns only the structural version (for example, `MacaroonIdentifier[version=1]`) -- no payment hash or token ID
 - `L402Credential.toString()` returns `L402Credential[tokenId=...]` -- only the token ID, not the macaroon or preimage
 - `Invoice.toString()` returns `Invoice[bolt11=..., amountSats=..., status=...]` -- no payment hash or preimage
 
@@ -644,6 +653,10 @@ All byte array fields in immutable types are defensively copied on construction 
 Every first-party credential also carries `{serviceName}_capabilities`. The reserved `~` value is an explicit empty ceiling. Repeated capability caveats are parsed in order and must narrow monotonically: named sets may be reduced (including to `~`), while expansion, `~`-to-name escalation, mixed sentinel/name values, and blank entries are rejected. `L402Validator.ValidationResult.effectiveCapabilities()` is the immutable final verified set and is the only L402 authority source.
 
 The request path supplied by Spring integrations is application-relative: deployment context paths and path-prefix servlet mappings are removed before the project's existing path handling and route selection. The compatibility challenge overload derives route identity through the same Spring `PathPattern` parser helper used for endpoint registration. The registered route identity is signed and compared exactly; whitespace-altered signed values reject. Current behavior does not promise normalization of case, percent-encoding spelling, whitespace, or trailing slash. Credentials lacking required `route`, `method`, or capability-ceiling caveats are intentionally rejected, including on cache hits; legacy clients must obtain a new challenge.
+
+Authenticated identifier-v0 and missing-boundary failures deliberately share `INVALID_SERVICE` (HTTP 401) and the generic message `Credential constraints were not satisfied`; validation does not reveal which invariant failed.
+
+Macaroon location is unsigned and excluded from authorization and diagnostics. It remains part of `Macaroon.equals`, so presenting a same-token location-only variant takes the full-validation path and, on success, replaces the cache slot; presenting the original then repeats that behavior. Signature verification still protects every signed field.
 
 Diagnostic text remains redacted. Core types and validation paths must not render full macaroons, preimages, authorization headers, root keys, or sensitive validation reasons.
 
