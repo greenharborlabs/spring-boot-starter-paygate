@@ -398,14 +398,11 @@ public class PaygateSecurityFilter implements Filter {
       recordCaveatRejected(LogSanitizer.sanitize(e.getMessage() != null ? e.getMessage() : ""));
     }
     consumeRateLimitPenalty(httpRequest);
-    String safeMessage = LogSanitizer.sanitize(e.getMessage());
+    // Exception messages can be supplied by protocol providers and may contain request credentials.
+    // Do not include the exception (or any of its content) in production logs.
     log.log(
         System.Logger.Level.WARNING,
-        "Unexpected error during {0} validation for {1} {2}: {3}",
-        protocol.scheme(),
-        method,
-        safePath,
-        safeMessage);
+        "Unexpected credential validation error; failing closed with service unavailable");
     if (!httpResponse.isCommitted()) {
       PaygateResponseWriter.writeLightningUnavailable(httpResponse);
     }

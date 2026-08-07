@@ -27,6 +27,9 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -436,6 +439,25 @@ class PaygateAuthenticationFilterTest {
             "{\"code\": 503, \"error\": \"LIGHTNING_UNAVAILABLE\", \"message\": \"Lightning backend is not available. Please try again later.\"}");
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(filterChain, never()).doFilter(request, response);
+  }
+
+  @Test
+  void doesNotLogCredentialMarkersFromUnexpectedAuthenticationExceptions()
+      throws ServletException, IOException {
+    String credentialMarker = "SPRING_SECURITY_SECRET_MACAROON_MARKER";
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any()))
+        .thenThrow(new RuntimeException(credentialMarker));
+
+    try (var logCapture = LogCapture.attach(PaygateAuthenticationFilter.class.getName())) {
+      filter.doFilter(request, response, filterChain);
+
+      assertThat(response.getStatus()).isEqualTo(503);
+      assertThat(logCapture.contents())
+          .contains(
+              "Payment authentication encountered an unexpected error; failing closed with service unavailable")
+          .doesNotContain(credentialMarker);
+    }
   }
 
   @Test
@@ -1127,5 +1149,44 @@ class PaygateAuthenticationFilterTest {
     assertThat(capturedContext.rootKeyBytes()).isNull();
     assertThat(capturedContext.opaque()).isNull();
     assertThat(capturedContext.digest()).isNull();
+  }
+
+  private static final class LogCapture extends Handler implements AutoCloseable {
+    private final Logger logger;
+    private final List<LogRecord> records = new java.util.ArrayList<>();
+
+    private LogCapture(Logger logger) {
+      this.logger = logger;
+    }
+
+    static LogCapture attach(String loggerName) {
+      Logger logger = Logger.getLogger(loggerName);
+      var capture = new LogCapture(logger);
+      logger.addHandler(capture);
+      return capture;
+    }
+
+    @Override
+    public void publish(LogRecord record) {
+      records.add(record);
+    }
+
+    @Override
+    public void flush() {}
+
+    @Override
+    public void close() {
+      logger.removeHandler(this);
+    }
+
+    String contents() {
+      return records.stream()
+          .map(
+              record ->
+                  record.getMessage()
+                      + java.util.Arrays.toString(record.getParameters())
+                      + record.getThrown())
+          .collect(java.util.stream.Collectors.joining("\n"));
+    }
   }
 }

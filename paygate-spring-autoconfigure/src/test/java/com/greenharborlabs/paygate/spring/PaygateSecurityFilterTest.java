@@ -52,6 +52,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -140,6 +143,24 @@ class PaygateSecurityFilterTest {
     verify(chain, never()).doFilter(any(), any());
     verify(challengeService, never()).acquireChallengeRateLimit(any());
     verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
+  }
+
+  @Test
+  @DisplayName("does not log credential markers from unexpected validation exceptions")
+  void unexpectedValidationFailureDoesNotLogCredentialMarker() throws Exception {
+    String credentialMarker = "AUTOCONFIG_SECRET_MACAROON_MARKER";
+    capturingPaymentProtocol.throwUnexpectedValidationFailure(credentialMarker);
+
+    try (var logCapture = LogCapture.attach(PaygateSecurityFilter.class.getName())) {
+      mockMvc
+          .perform(get(PROTECTED_PATH).header("Authorization", "Payment " + credentialMarker))
+          .andExpect(status().isServiceUnavailable());
+
+      assertThat(logCapture.contents())
+          .contains(
+              "Unexpected credential validation error; failing closed with service unavailable")
+          .doesNotContain(credentialMarker);
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -297,6 +318,8 @@ class PaygateSecurityFilterTest {
 
   static class CapturingPaymentProtocol implements PaymentProtocol {
     private final AtomicReference<ChallengeContext> lastChallengeContext = new AtomicReference<>();
+    private final AtomicReference<RuntimeException> unexpectedValidationFailure =
+        new AtomicReference<>();
 
     @Override
     public String scheme() {
@@ -305,12 +328,16 @@ class PaygateSecurityFilterTest {
 
     @Override
     public boolean canHandle(String authorizationHeader) {
-      return false;
+      return unexpectedValidationFailure.get() != null;
     }
 
     @Override
     public PaymentCredential parseCredential(String authorizationHeader)
         throws PaymentValidationException {
+      RuntimeException failure = unexpectedValidationFailure.get();
+      if (failure != null) {
+        throw failure;
+      }
       throw new PaymentValidationException(
           PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL,
           "Payment credentials are not parsed in this boundary test",
@@ -337,10 +364,54 @@ class PaygateSecurityFilterTest {
 
     void reset() {
       lastChallengeContext.set(null);
+      unexpectedValidationFailure.set(null);
+    }
+
+    void throwUnexpectedValidationFailure(String credentialMarker) {
+      unexpectedValidationFailure.set(new IllegalStateException(credentialMarker));
     }
 
     ChallengeContext lastChallengeContext() {
       return lastChallengeContext.get();
+    }
+  }
+
+  private static final class LogCapture extends Handler implements AutoCloseable {
+    private final Logger logger;
+    private final List<LogRecord> records = new java.util.ArrayList<>();
+
+    private LogCapture(Logger logger) {
+      this.logger = logger;
+    }
+
+    static LogCapture attach(String loggerName) {
+      Logger logger = Logger.getLogger(loggerName);
+      var capture = new LogCapture(logger);
+      logger.addHandler(capture);
+      return capture;
+    }
+
+    @Override
+    public void publish(LogRecord record) {
+      records.add(record);
+    }
+
+    @Override
+    public void flush() {}
+
+    @Override
+    public void close() {
+      logger.removeHandler(this);
+    }
+
+    String contents() {
+      return records.stream()
+          .map(
+              record ->
+                  record.getMessage()
+                      + java.util.Arrays.toString(record.getParameters())
+                      + record.getThrown())
+          .collect(java.util.stream.Collectors.joining("\n"));
     }
   }
 

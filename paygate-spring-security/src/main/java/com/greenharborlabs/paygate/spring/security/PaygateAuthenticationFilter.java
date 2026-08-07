@@ -179,7 +179,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       return;
     } catch (RuntimeException e) {
       log.log(
-          System.Logger.Level.WARNING, "Payment authentication encountered an unexpected error", e);
+          System.Logger.Level.WARNING,
+          "Payment authentication encountered an unexpected error; failing closed with service unavailable");
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeLightningUnavailable(response);
       return;
