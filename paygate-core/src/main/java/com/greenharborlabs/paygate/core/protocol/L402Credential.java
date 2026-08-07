@@ -178,8 +178,7 @@ public record L402Credential(
     try {
       return MacaroonSerializer.deserializeV2(macaroonBytes);
     } catch (IllegalArgumentException e) {
-      throw new L402Exception(
-          ErrorCode.MALFORMED_HEADER, "Invalid macaroon data: " + e.getMessage(), null);
+      throw new L402Exception(ErrorCode.MALFORMED_HEADER, "Invalid macaroon data", null);
     }
   }
 

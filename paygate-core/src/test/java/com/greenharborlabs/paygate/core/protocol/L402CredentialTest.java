@@ -8,6 +8,7 @@ import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -219,6 +220,39 @@ class L402CredentialTest {
           .isInstanceOf(L402Exception.class)
           .extracting(e -> ((L402Exception) e).getErrorCode())
           .isEqualTo(ErrorCode.MALFORMED_HEADER);
+    }
+
+    @Test
+    @DisplayName("does not expose malformed macaroon caveat contents in parse errors")
+    void doesNotExposeMalformedMacaroonCaveatContents() {
+      String marker = "attacker-controlled-caveat-marker";
+      byte[] caveat = marker.getBytes(StandardCharsets.UTF_8);
+      byte[] malformedMacaroon = new byte[8 + caveat.length];
+      int position = 0;
+      malformedMacaroon[position++] = 0x02;
+      malformedMacaroon[position++] = 0x02;
+      malformedMacaroon[position++] = 0x01;
+      malformedMacaroon[position++] = 0x01;
+      malformedMacaroon[position++] = 0x00;
+      malformedMacaroon[position++] = 0x02;
+      malformedMacaroon[position++] = (byte) caveat.length;
+      System.arraycopy(caveat, 0, malformedMacaroon, position, caveat.length);
+      position += caveat.length;
+      malformedMacaroon[position] = 0x00;
+
+      String encodedMacaroon = Base64.getEncoder().encodeToString(malformedMacaroon);
+      String header = "L402 " + encodedMacaroon + ":" + preimageHex;
+
+      assertThatThrownBy(() -> L402Credential.parse(header))
+          .isInstanceOf(L402Exception.class)
+          .hasNoCause()
+          .hasMessageNotContaining(marker)
+          .hasMessageNotContaining(encodedMacaroon)
+          .hasMessageNotContaining(header)
+          .satisfies(
+              exception ->
+                  assertThat(((L402Exception) exception).getErrorCode())
+                      .isEqualTo(ErrorCode.MALFORMED_HEADER));
     }
 
     @Test
