@@ -10,11 +10,13 @@ specs/
 .specify/
 # Ignore generated local agent integrations
 .agents/
+# Ignore local Factory skill integrations
+.factory/
 # Ignore local orchestration resume checkpoints
 .orchestrate/
 # Ignore the entire claude directory and all its contents
 .claude/
-.vscode/settings.json
+.vscode/
 
 # IDE
 .idea/
