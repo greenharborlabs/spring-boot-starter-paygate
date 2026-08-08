@@ -38,7 +38,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Maven:**
@@ -47,14 +47,14 @@ implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
 If you need to depend on `paygate-api` directly (for example, to implement a custom `PaymentProtocol`):
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-api:0.1.0")
+implementation("com.greenharborlabs:paygate-api:0.1.4")
 ```
 
 ### Build Dependencies
@@ -145,7 +145,7 @@ The `PaymentProtocol` interface is the primary extension point. Protocol impleme
 | `PaymentCredential` | record | Protocol-agnostic representation of a parsed payment credential: payment hash, preimage, token ID, source protocol scheme, optional payer identity (DID format from MPP), and protocol-specific metadata. |
 | `PaymentReceipt` | record | Data for the `Payment-Receipt` response header: status, HMAC-bound challenge ID, payment method, method-specific reference, amount in satoshis, RFC 3339 timestamp, and protocol scheme. |
 | `ProtocolMetadata` | marker interface | Carried by `PaymentCredential` to hold protocol-specific fields that the core framework does not need to understand. Each protocol module provides its own implementation (e.g., `L402Metadata`, `MppMetadata`). Consumers that know the concrete protocol can cast to the expected subtype. |
-| `PaymentValidationException` | class | Runtime exception thrown when credential validation fails. Carries an `ErrorCode` that determines the HTTP status code and RFC 9457 problem type URI. Optionally carries a `tokenId` for logging (safe to log, unlike the full credential). |
+| `PaymentValidationException` | class | Runtime exception thrown when credential validation fails. Carries an `ErrorCode` that determines the HTTP status code and RFC 9457 problem type URI. It may carry a token ID for internal correlation; production logs should use only a short token-ID prefix. |
 
 MPP callers that cast `ProtocolMetadata` to `MppMetadata` should use `echoedChallenge()` and `source()`. `MppMetadata.rawCredentialJson()` and the three-argument canonical constructor were removed so decoded credentials do not retain `payload.preimage` after parsing.
 
@@ -205,8 +205,9 @@ The original eleven-argument `ChallengeContext` constructor remains available fo
 | `INVALID_CHALLENGE_BINDING` | 402 | `https://paymentauth.org/problems/verification-failed` | HMAC challenge binding verification failed (MPP) |
 | `EXPIRED_CREDENTIAL` | 402 | `https://paymentauth.org/problems/verification-failed` | Credential has expired |
 | `METHOD_UNSUPPORTED` | 400 | `https://paymentauth.org/problems/method-unsupported` | Requested payment method is not supported |
+| `SERVICE_UNAVAILABLE` | 503 | `https://paymentauth.org/problems/service-unavailable` | A required backend or validation service is unavailable |
 
-All error codes map to 4xx status codes. The problem type URIs follow the RFC 9457 pattern for structured error responses.
+Validation failures map to 4xx responses; backend availability failures map to 503. The problem type URIs follow the RFC 9457 pattern for structured error responses.
 
 ---
 

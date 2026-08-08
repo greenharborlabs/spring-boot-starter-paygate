@@ -27,7 +27,7 @@ Adding this starter transitively pulls in:
 | `paygate-core` | Macaroon V2 minting and verification, `LightningBackend` interface, credential stores, root key management |
 | `paygate-api` | Protocol abstraction API (zero external dependencies) |
 | `paygate-protocol-l402` | L402 protocol implementation |
-| `paygate-protocol-mpp` | MPP (Message Payment Protocol) implementation |
+| `paygate-protocol-mpp` | MPP (Modern Payment Protocol) implementation |
 | `paygate-spring-autoconfigure` | Spring Boot auto-configuration: `PaygateSecurityFilter`, properties binding, health indicator, Caffeine caching, Micrometer metrics |
 
 This starter does **not** include a Lightning backend module. You must add one separately -- see [Choosing a Lightning Backend](#choosing-a-lightning-backend) below.
@@ -36,18 +36,18 @@ This starter does **not** include a Lightning backend module. You must add one s
 
 ## Installation
 
-Add the starter to your project. The group ID is `com.greenharborlabs` and the current version is `0.1.0`.
+Add the starter to your project. The group ID is `com.greenharborlabs`; the latest Maven Central release is `0.1.4`.
 
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Gradle (Groovy DSL):**
 
 ```groovy
-implementation 'com.greenharborlabs:paygate-spring-boot-starter:0.1.0'
+implementation 'com.greenharborlabs:paygate-spring-boot-starter:0.1.4'
 ```
 
 **Maven:**
@@ -56,7 +56,7 @@ implementation 'com.greenharborlabs:paygate-spring-boot-starter:0.1.0'
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
@@ -68,8 +68,8 @@ implementation 'com.greenharborlabs:paygate-spring-boot-starter:0.1.0'
 
     ```kotlin
     // build.gradle.kts
-    implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
-    implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")  // or paygate-lightning-lnd
+    implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
+    implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.4")  // or paygate-lightning-lnd
     ```
 
 2. Configure your `application.yml`:
@@ -124,12 +124,12 @@ preimage without running a separate payer node.
 
 ```kotlin
 // Option A: LNbits backend
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.4")
 
 // Option B: LND backend
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
+implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.4")
 ```
 
 Both backends implement the same `LightningBackend` interface. Switching between them requires only changing dependencies and configuration properties -- no application code changes.
@@ -144,7 +144,7 @@ All properties live under the `paygate.*` prefix. The starter auto-configures de
 |----------|---------|-------------|
 | `paygate.enabled` | `false` | Master switch. Must be `true` to activate L402 protection. |
 | `paygate.backend` | -- | `lnbits` or `lnd`. Determines which backend module is used. |
-| `paygate.service-name` | -- | Service name embedded in macaroon caveats. |
+| `paygate.service-name` | -- | Logical service identity. The L402 beans use `default` when this property is unset. |
 | `paygate.default-price-sats` | `10` | Default price in satoshis when `@PaymentRequired` does not specify one. |
 | `paygate.default-timeout-seconds` | `3600` | Default credential validity period (1 hour). |
 | `paygate.root-key-store` | `file` | Root key storage: `file` (persistent) or `memory` (ephemeral). |
@@ -177,7 +177,7 @@ These modules provide additional capabilities and can be added alongside the sta
 
 | Module | Purpose | Dependency |
 |--------|---------|------------|
-| `paygate-spring-security` | Spring Security integration for L402 authentication | `com.greenharborlabs:paygate-spring-security:0.1.0` |
+| `paygate-spring-security` | Spring Security integration for L402 authentication | `com.greenharborlabs:paygate-spring-security:0.1.4` |
 
 The starter does not pull in `paygate-spring-security` automatically. In `paygate.security-mode=auto`, unrelated Spring Security dependencies keep the standalone servlet filter active until this optional module is added.
 
@@ -185,9 +185,9 @@ Optional libraries detected by auto-configuration:
 
 | Library | Effect When Present |
 |---------|-------------------|
-| [Caffeine](https://github.com/ben-manes/caffeine) | Used for credential caching (recommended, included by Spring Boot) |
+| [Caffeine](https://github.com/ben-manes/caffeine) | Enables Caffeine-backed credential and capability caches; otherwise in-memory core stores are used. Add it explicitly if your dependency graph does not already provide it. |
 | [Micrometer](https://micrometer.io/) | Exposes L402 metrics (challenge count, verification count, latency) |
-| [Spring Boot Actuator](https://docs.spring.io/spring-boot/reference/actuator/) | Adds `/actuator/health/lightning` endpoint for backend health checks |
+| [Spring Boot Actuator](https://docs.spring.io/spring-boot/reference/actuator/) | Can expose the opt-in `/actuator/paygate` endpoint when `paygate.actuator.enabled=true`; `PaygateLightningHealthIndicator` is available for applications that want to register it as a health contributor. |
 
 ---
 
@@ -204,6 +204,7 @@ Optional libraries detected by auto-configuration:
 | `paygate-spring-autoconfigure` | [README](../paygate-spring-autoconfigure/README.md) | Auto-configuration, properties, filters, health indicators |
 | `paygate-spring-security` | [README](../paygate-spring-security/README.md) | Spring Security integration |
 | `paygate-example-app` | [README](../paygate-example-app/README.md) | Working reference application |
+| `paygate-example-app-spring-security` | [README](../paygate-example-app-spring-security/README.md) | Spring Security reference application |
 
 ---
 

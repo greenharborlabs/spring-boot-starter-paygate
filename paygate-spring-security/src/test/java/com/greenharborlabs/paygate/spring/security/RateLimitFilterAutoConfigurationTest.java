@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.spring.CapabilityCache;
 import com.greenharborlabs.paygate.spring.PaygateAutoConfiguration;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -71,6 +72,28 @@ class RateLimitFilterAutoConfigurationTest {
   void rateLimitFilterNotCreatedWhenRateLimiterAbsent() {
     minimalContextRunner.run(
         context -> assertThat(context).doesNotHaveBean(PaygateAuthFailureRateLimitFilter.class));
+  }
+
+  @Test
+  @DisplayName("default capability resolver starts without a CapabilityCache")
+  void defaultCapabilityResolverCreatedWithoutCapabilityCache() {
+    minimalContextRunner.run(
+        context -> {
+          assertThat(context).hasSingleBean(CapabilityResolver.class);
+          assertThat(context).doesNotHaveBean(CapabilityCache.class);
+        });
+  }
+
+  @Test
+  @DisplayName("default capability resolver starts with a CapabilityCache")
+  void defaultCapabilityResolverCreatedWithCapabilityCache() {
+    minimalContextRunner
+        .withBean(CapabilityCache.class, () -> mock(CapabilityCache.class))
+        .run(
+            context -> {
+              assertThat(context).hasSingleBean(CapabilityResolver.class);
+              assertThat(context).hasSingleBean(CapabilityCache.class);
+            });
   }
 
   static class StubLightningBackend implements LightningBackend {

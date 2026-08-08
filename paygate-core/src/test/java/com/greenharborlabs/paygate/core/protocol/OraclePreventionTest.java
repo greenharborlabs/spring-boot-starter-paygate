@@ -182,6 +182,7 @@ class OraclePreventionTest {
     void rootKeyStoreNotConsultedOnPreimageFailure() {
       // Spy RootKeyStore that records whether getRootKey() was ever called
       AtomicBoolean getRootKeyCalled = new AtomicBoolean(false);
+      AtomicBoolean credentialStoreCalled = new AtomicBoolean(false);
       RootKeyStore spyStore =
           new RootKeyStore() {
             @Override
@@ -200,11 +201,37 @@ class OraclePreventionTest {
               rootKeyStore.revokeRootKey(keyId);
             }
           };
+      CredentialStore spyCredentialStore =
+          new CredentialStore() {
+            @Override
+            public void store(String tokenId, L402Credential credential, long ttlSeconds) {
+              credentialStoreCalled.set(true);
+              credentialStore.store(tokenId, credential, ttlSeconds);
+            }
+
+            @Override
+            public L402Credential get(String tokenId) {
+              credentialStoreCalled.set(true);
+              return credentialStore.get(tokenId);
+            }
+
+            @Override
+            public void revoke(String tokenId) {
+              credentialStoreCalled.set(true);
+              credentialStore.revoke(tokenId);
+            }
+
+            @Override
+            public long activeCount() {
+              credentialStoreCalled.set(true);
+              return credentialStore.activeCount();
+            }
+          };
 
       String header = buildHeader(macaroon, wrongPreimageHex());
 
       L402Validator validator =
-          new L402Validator(spyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+          new L402Validator(spyStore, spyCredentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
           .isInstanceOf(L402Exception.class)
@@ -217,6 +244,9 @@ class OraclePreventionTest {
       // The root key store must never have been consulted — preimage failed first
       assertThat(getRootKeyCalled.get())
           .as("getRootKey() should not be called when preimage fails")
+          .isFalse();
+      assertThat(credentialStoreCalled.get())
+          .as("credential store should not be called when preimage fails")
           .isFalse();
     }
 

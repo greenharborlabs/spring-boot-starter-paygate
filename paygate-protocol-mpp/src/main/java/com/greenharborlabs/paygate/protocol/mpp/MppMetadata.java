@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Protocol-specific metadata for an MPP (402 Multi-Part Payment) credential.
+ * Protocol-specific metadata for an MPP (Modern Payment Protocol) credential.
  *
  * @param echoedChallenge the challenge parameters echoed back by the client (defensively copied)
  * @param source optional identifier for the credential source (may be {@code null})

@@ -1,206 +1,93 @@
 # Agent Macaroon Delegation Guide
 
-How AI agents (and any multi-tier client) obtain, use, and delegate L402 macaroons
-to sub-agents with attenuated permissions.
+This guide describes the delegation behavior implemented by Paygate's first-party L402 flow. It is aimed at clients that already possess a paid L402 credential and want to attenuate it before handing it to another process or agent.
 
-## Overview
+## Obtain and use an L402 credential
 
-L402 combines HTTP 402 responses with macaroon-based credentials and Lightning
-invoices. The critical property for agent workflows is that macaroons support
-**attenuation** -- anyone holding a macaroon can add restrictions (caveats) to it
-before passing it along, but **nobody can remove caveats**. This enables
-least-privilege delegation without any server interaction.
+A protected request returns `402 Payment Required` with a signed macaroon and a Lightning invoice in the `WWW-Authenticate` challenge. The client pays the invoice to obtain the 32-byte preimage, then retries with:
 
-## Step 1: Obtain a Macaroon
-
-An agent calls a paygate-protected endpoint and receives a 402 challenge:
-
-```
-Agent-A  ->  GET /products
-         <-  402 Payment Required
-             WWW-Authenticate: L402 macaroon="abc123...", invoice="lnbc5000n1..."
+```http
+Authorization: L402 <base64-macaroon>:<64-character-hex-preimage>
 ```
 
-The response contains:
-- An **unsigned macaroon** with server-minted caveats (capabilities, expiry, etc.)
-- A **Lightning invoice** the agent must pay
+The macaroon is issued before payment; the payment preimage is the proof that unlocks it. Both values are bearer credentials and must be protected from logs, URLs, analytics, and untrusted storage.
 
-The macaroon is cryptographically useless until the invoice is paid. Agent-A pays
-the 5000 sats via Lightning, obtaining a **preimage** as proof of payment.
+## Boundaries on newly issued credentials
 
-## Step 2: Use the Macaroon
+Paygate issues identifier-v1 macaroons with these first-party caveats, in order:
 
-Agent-A replays the request with the macaroon and preimage:
-
-```
-Agent-A  ->  GET /products
-             Authorization: L402 abc123...:preimage_hex
-         <-  200 OK
+```text
+services=<service-name>:0
+route=<canonical-registered-route>
+method=<actual-http-method>
+<service-name>_capabilities=<comma-separated-ceiling-or-~>
+<service-name>_valid_until=<epoch-second>
 ```
 
-The server verifies:
-1. The macaroon signature chain is valid (originated from this server's root key)
-2. The preimage matches the payment hash embedded in the macaroon identifier
-3. All caveats are satisfied
+- `route` is the exact canonical route selected by `PaygateEndpointRegistry`, not necessarily the literal request path.
+- `method` is the actual request method. A HEAD request that inherits GET policy is still bound to HEAD.
+- The capability value is an authorization ceiling. `~` means an authenticated empty capability set.
+- `valid_until` is a Unix epoch second, not an ISO-8601 string.
 
-## Step 3: Understand Caveats
+The server validates in this security-sensitive order: parse, decode the identifier, verify the payment preimage, require the root key, inspect the credential cache, then either re-check cached caveats or perform full signature verification. A wrong preimage therefore cannot use root-key or cache behavior as a signature oracle.
 
-The macaroon the server minted contains **first-party caveats** -- restrictions the
-server checks on every request. These come from the endpoint configuration:
+## Holder attenuation
 
-```yaml
-paygate:
-  endpoints:
-    - path: /products/**
-      price-sats: 5000
-      timeout-seconds: 3600
-      capabilities:
-        - products:read
+A holder can append a first-party caveat without knowing the root key. The new signature is:
+
+```text
+new_signature = HMAC-SHA256(key=current_signature, data="key=value")
 ```
 
-The resulting macaroon contains caveats like:
+The appended caveat and new signature form a different macaroon variant. Keep the identifier, location, and existing caveats unchanged; append the new caveat at the end. Paygate does not currently expose a high-level client attenuation helper, so client libraries must perform this operation with a Macaroon V2-compatible implementation and serialize the result with standard Base64 for the L402 header.
 
-```
-service = my-api
-expires_at = 2026-03-21T19:00:00Z
-capabilities = products:read
-```
+Attenuation can only preserve or narrow authority:
 
-**The macaroon is NOT tied to a single request.** It is valid for any request that
-satisfies all its caveats. In this example, Agent-A can call `GET /products`
-repeatedly for the next hour with no additional payment.
+- `services`: the new service set must be a subset of the previous set.
+- `method`: the new method set must be a subset of the previous set.
+- `<service>_capabilities`: the new set must be a subset; named capabilities may narrow to `~`, but `~` cannot expand to a named grant.
+- `<service>_valid_until`: the new epoch second must be no later than the previous value.
+- `route`: an appended value must equal the already-issued canonical route.
+- `path`: an optional holder constraint may narrow request paths with supported glob syntax.
+- `client_ip`: an optional holder constraint may narrow use to an IP address or CIDR.
 
-## Step 4: Delegate to Sub-Agents (Attenuation)
+Malformed registered caveats and authority-expanding repetitions fail closed. Delegation-oriented verification skips unregistered caveat keys, so a custom caveat has no enforcement effect until the application registers a matching `CaveatVerifier`. First-party HTTP request validation must use `L402Validator`, which additionally requires Paygate's route, method, capability, identifier-v1, preimage, root-key, and cache policy boundaries.
 
-This is where macaroons differentiate themselves from API keys. Agent-A can
-**attenuate** the macaroon -- add stricter caveats -- and hand it to a sub-agent.
-The cryptographic operation is:
+## Practical delegation examples
 
-```
-new_signature = HMAC-SHA256(previous_signature, new_caveat)
-```
+An orchestrator holding a credential issued with `orders,products` can delegate a products-only variant by appending:
 
-Any L402 client library can do this locally. No server interaction required.
-
-### Example: Orchestrator delegates to two sub-agents
-
-```
-Orchestrator Agent (pays 5000 sats)
-  gets macaroon: [service=my-api, capabilities=products:read;orders:read, expires=1hr]
-
-  |-- Research Agent (attenuated copy)
-  |     added caveats: [capabilities=products:read, expires_at=+15min]
-  |     -> can call GET /products, GET /products/{id}
-  |     -> CANNOT call /orders (capability removed)
-  |     -> expires after 15 minutes (tighter than the original 1hr)
-  |
-  |-- Order Agent (attenuated copy)
-        added caveats: [capabilities=orders:read, expires_at=+30min]
-        -> can call GET /orders
-        -> CANNOT read /products
-        -> expires after 30 minutes
+```text
+<service-name>_capabilities=products
 ```
 
-One payment. Three different permission scopes. No trust required between agents --
-the HMAC signature chain is cryptographically enforced. A sub-agent **cannot**
-escalate its own permissions because it cannot forge the chain without the original
-signing key.
+It can further restrict that variant to reads and a short lifetime:
 
-### Attenuation rules
-
-- **Anyone** can add caveats to a macaroon they hold
-- **Nobody** can remove or weaken existing caveats
-- The server checks **all** caveats; the tightest constraint wins
-- Attenuated macaroons are fully self-contained (no server round-trip to delegate)
-
-## Supported Caveat Types
-
-Caveats the paygate server recognizes and enforces:
-
-| Caveat | Format | Description | Stateless? |
-|--------|--------|-------------|------------|
-| `service` | `service = <name>` | Must match the configured service name | Yes |
-| `expires_at` | `expires_at = <ISO-8601>` | Macaroon expires at this time | Yes |
-| `capabilities` | `capabilities = <cap1>;...` | Required capabilities for the endpoint | Yes |
-| `path` | `path = /products/**` | Restrict to a URL path pattern | Yes |
-| `max_uses` | `max_uses = 10` | Limit total request count | No (server-side counter) |
-
-**Stateless** caveats are verified purely from the macaroon + request data.
-**Stateful** caveats (like `max_uses`) require the server to track usage against
-the token ID.
-
-## Access Control Models
-
-These caveats can be combined to implement different access models:
-
-### Time-bound access
-
-The default model. Pay once, access until expiry.
-
-```
-expires_at = 2026-03-21T20:00:00Z
-capabilities = products:read
+```text
+method=GET
+<service-name>_valid_until=1786221000
 ```
 
-### Metered access (call count)
+These examples are illustrative. The expiry must be an epoch second no later than the issued expiry, and the delegated request must still match the original route and all earlier caveats. Paygate does not implement stateful caveats such as `max_uses` or `max_amount_sats`; applications that need them must design, register, and operate their own fail-closed verifier and state store.
 
-Pay for a fixed number of requests. Requires server-side tracking.
+## Cache and revocation behavior
 
-```
-max_uses = 10
-capabilities = products:read
-```
+Exact cached variants skip HMAC recomputation but still require proof-of-payment, an authoritative root-key lookup, and request-specific caveat verification. Removing a token's root key revokes both fresh and cached variants; the cache entry is also evicted best-effort. A request that obtained a defensive root-key copy immediately before concurrent revocation may complete, while any validation whose root-key lookup occurs after revocation fails.
 
-### Scoped delegation
+Attenuated variants undergo full verification and may replace the single cached variant for that token ID. A failing different variant does not evict a separately cached valid variant merely because the signatures differ.
 
-Restrict a sub-agent to a subset of endpoints.
+## Security checklist
 
-```
-capabilities = products:read
-path = /products/electronics/**
-expires_at = 2026-03-21T16:30:00Z
-```
+- Never give a sub-agent broader capabilities or a later expiry than it needs.
+- Never send a macaroon or preimage in a query string.
+- Use TLS and avoid logging `Authorization` or `WWW-Authenticate` credential material.
+- Preserve the original caveat order and use the exact `key=value` spelling when updating the signature chain.
+- Treat a delegated macaroon and its payment preimage as a bearer credential pair.
+- Obtain a fresh challenge after revocation or after compatibility changes invalidate an older credential.
 
-### Budget delegation
+## Further reading
 
-Allow a sub-agent to encounter nested paywalls up to a spending limit.
-
-```
-max_amount_sats = 500
-capabilities = products:read
-```
-
-## Security Properties
-
-- **No shared secrets between agents** -- delegation uses public cryptographic
-  attenuation, not secret sharing
-- **Least privilege by default** -- each sub-agent gets only the permissions it needs
-- **Revocation** -- the server can revoke any macaroon by token ID if needed
-- **Fail closed** -- if the Lightning backend is unreachable, the server returns 503,
-  never 200
-- **Constant-time verification** -- all secret comparisons use XOR accumulation,
-  never `Arrays.equals`
-
-## Client-Side Example (Pseudocode)
-
-```java
-// Agent-A obtains macaroon via L402 flow
-L402Credential credential = l402Client.payAndObtain("https://api.example.com/products");
-
-// Agent-A attenuates for sub-agent with read-only, 15-min scope
-Macaroon delegated = credential.macaroon()
-    .addFirstPartyCaveat("capabilities = products:read")
-    .addFirstPartyCaveat("expires_at = " + Instant.now().plus(Duration.ofMinutes(15)));
-
-// Hand the attenuated macaroon + original preimage to the sub-agent
-SubAgent researchAgent = new SubAgent(delegated, credential.preimage());
-
-// Sub-agent uses it directly -- no additional payment needed
-researchAgent.call("GET", "https://api.example.com/products");
-```
-
-## Further Reading
-
-- [L402 Protocol Specification](https://lsat.tech)
-- [Macaroons: Cookies with Contextual Caveats](https://research.google/pubs/pub41892/)
-- [BOLT #11: Invoice Protocol](https://github.com/lightning/bolts/blob/master/11-payment-encoding.md)
+- [Macaroons deep dive](macaroons-deep-dive.md)
+- [Core module caveat and validator reference](../paygate-core/README.md)
+- [Spring auto-configuration and route identity](../paygate-spring-autoconfigure/README.md)
+- [L402 protocol adapter](../paygate-protocol-l402/README.md)

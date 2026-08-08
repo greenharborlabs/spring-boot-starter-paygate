@@ -50,7 +50,7 @@ All beans are guarded with `@ConditionalOnMissingBean`, so you can override any 
 
 ## Dual-Protocol Auto-Configuration
 
-The auto-configuration supports two payment protocols that can run simultaneously: L402 and MPP (Message Payment Protocol). Protocol beans are created by nested `@Configuration` classes inside `PaygateAutoConfiguration`.
+The auto-configuration supports two payment protocols that can run simultaneously: L402 and MPP (Modern Payment Protocol). Protocol beans are created by nested `@Configuration` classes inside `PaygateAutoConfiguration`.
 
 ### L402ProtocolConfiguration
 
@@ -95,6 +95,10 @@ Startup fails with `IllegalStateException` if any validation fails.
 | `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present; `true` requires secret; `false` disables |
 | `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 UTF-8 bytes. |
 | `paygate.protocols.mpp.previous-challenge-binding-secret` | `string` | -- | Optional previous HMAC secret for key rotation. Minimum 32 UTF-8 bytes when set. New challenges are still signed with `challenge-binding-secret`. |
+| `paygate.protocols.mpp.max-credential-bytes` | `int` | `65536` | Maximum raw credential size before parsing. |
+| `paygate.protocols.mpp.max-json-depth` | `int` | `5` | Maximum JSON nesting depth. |
+| `paygate.protocols.mpp.max-string-length` | `int` | `8192` | Maximum length of an individual parsed string. |
+| `paygate.protocols.mpp.max-keys-per-object` | `int` | `32` | Maximum keys allowed in one parsed JSON object. |
 
 ### Delegation Caveat Properties
 
@@ -120,6 +124,9 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.default-timeout-seconds` | `long` | `3600` | Default invoice expiry in seconds. |
 | `paygate.test-mode` | `boolean` | `false` | Enables test mode with an in-memory Lightning backend. Must not be used in production. See [Test Mode](#test-mode). |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Whether to read `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. See [Rate Limiting](#rate-limiting). |
+| `paygate.security-mode` | `string` | `"auto"` | Selects `auto`, `servlet`, or `spring-security` enforcement. |
+| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Advanced opt-out for the Spring Security filter-chain startup guard when enforcement is deliberately wired elsewhere. |
+| `paygate.actuator.enabled` | `boolean` | `false` | Registers the sensitive `/actuator/paygate` endpoint when Actuator is present and the endpoint is exposed. |
 
 ### Root Key Store Properties
 
@@ -148,6 +155,14 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 |----------|------|---------|-------------|
 | `paygate.health-cache.enabled` | `boolean` | `true` | Whether to cache `isHealthy()` results from the Lightning backend. |
 | `paygate.health-cache.ttl-seconds` | `int` | `5` | How long health check results are cached, in seconds. |
+
+### Lightning and Metrics Properties
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paygate.lightning.timeout-seconds` | `int` | `5` | Global Lightning call timeout; backend-specific request/deadline properties override it. |
+| `paygate.metrics.max-endpoint-cardinality` | `int` | `100` | Maximum distinct endpoint tags before overflow bucketing. |
+| `paygate.metrics.overflow-tag-value` | `string` | `"_other"` | Endpoint tag value used after the cardinality cap is reached. |
 
 ### LNbits Backend Properties
 
@@ -280,6 +295,10 @@ The `~` prefix in `paygate.root-key-store-path` is expanded to `System.getProper
 
 Validated L402 credentials are cached to avoid re-verifying macaroon signatures and re-querying the Lightning backend on every request with the same credential.
 
+Cache reuse never overrides root-key revocation. After proof-of-payment succeeds, `L402Validator` performs a root-key lookup before reading the credential cache. Exact variants still skip HMAC/signature recomputation and return `freshValidation=false`, but every successful cache hit now pays the cost of one root-key-store lookup. A missing or failed lookup best-effort evicts the token's cache slot and returns the same sanitized `REVOKED_CREDENTIAL` failure.
+
+A request that obtained its defensive root-key copy before concurrent revocation may complete. Any request whose authoritative lookup occurs after revocation fails, and later requests cannot reuse a stale cache entry. The Spring revocation listener eagerly evicts entries to reduce stale residency; the per-request root-key check is the correctness boundary.
+
 | Caffeine on classpath? | Implementation | Behavior |
 |------------------------|----------------|----------|
 | Yes | `CaffeineCredentialStore` | Per-entry TTL based on the credential's `valid_until` caveat. Bounded by `paygate.credential-cache-max-size`. |
@@ -352,9 +371,25 @@ Resolution is deterministic: exact paths precede patterns, Spring pattern specif
 
 The canonical registered pattern is bound separately from the concrete request path. This keeps route identity stable for root, context-path, servlet-mapped, and combined-prefix deployments. Malformed or ambiguous prefix/path state does not invoke the protected handler.
 
+Code that already resolved endpoint policy through `PaygateEndpointRegistry` should call a `PaygateChallengeService.createChallenge(..., ResolvedEndpoint)` overload. The retained config-based overloads sign the exact parsed spelling of `PaygateEndpointConfig.pathPattern()`: a manually constructed `/api/orders/` configuration can mismatch the registered `/api/orders` identity. That mismatch intentionally fails closed, so the credential is rejected and the client is re-challenged.
+
 Every first-party L402 macaroon has a capability ceiling. A blank endpoint capability mints `~` (the empty set); named ceilings may only be retained or narrowed by holder attenuation. Endpoint satisfaction uses set overlap, so a `search,analyze` declaration accepts a final `{search}` or `{analyze}` ceiling, but rejects `{export}` and `~`. Expansion, sentinel-to-name escalation, blank segments, mixed sentinel/name values, and malformed signed ceiling values fail closed at registration or verification. Credentials missing `route`, `method`, or the capability ceiling are intentionally invalid, including cache hits, and must be replaced through a new challenge.
 
 Error responses and diagnostics do not echo full macaroons, preimages, `Authorization` headers, root keys, or sensitive validation reasons. Log only permitted non-secret identifiers and redacted structural metadata.
+
+### 0.1.5 resolver constructor migration
+
+The unused service-name constructor argument has been removed from the Spring Security fallback resolver:
+
+```java
+// Before
+new DefaultCapabilityResolver(cache, serviceName);
+
+// 0.1.5+
+new DefaultCapabilityResolver(cache);
+```
+
+This is an intentional source and binary break for direct constructor callers. Service identity comes from `CapabilityResolutionContext`. The `paygate.service-name` property remains supported by challenge, authentication, and validation components; only the resolver bean no longer receives it.
 
 ### Fail-Closed Semantics
 
@@ -446,9 +481,18 @@ To disable health caching, set `paygate.health-cache.enabled=false`.
 
 ## Health Indicator (Actuator)
 
-When Spring Boot Actuator is on the classpath, `PaygateActuatorAutoConfiguration` registers an `PaygateLightningHealthIndicator` that reports the Lightning backend status in the `/actuator/health` endpoint.
+`PaygateLightningHealthIndicator` is provided as a reusable health contributor, but it is not registered automatically. Applications that want Lightning status in `/actuator/health` should declare it as a bean and choose an appropriate cache TTL.
 
-The health indicator caches its own result using the `paygate.health-cache.ttl-seconds` value (in milliseconds) to avoid redundant checks during actuator scrapes.
+```java
+@Bean
+PaygateLightningHealthIndicator paygateLightningHealthIndicator(
+        LightningBackend backend, PaygateProperties properties) {
+    return new PaygateLightningHealthIndicator(
+            backend, properties.getHealthCache().getTtlSeconds() * 1_000L);
+}
+```
+
+The health indicator caches its own result for the TTL passed to its constructor. The example above reuses `paygate.health-cache.ttl-seconds`.
 
 | Health Status | Condition |
 |---------------|-----------|
@@ -817,7 +861,7 @@ Tests use Spring Boot's `WebApplicationContextRunner` to spin up the auto-config
 | `PaygateSecurityFilterTest` | Full filter flow: pass-through for unprotected paths, 402 challenge, credential validation, 503 on backend failure, header sanitization |
 | `PaygateSecurityFilterRealStoreTest` | End-to-end filter test with real `FileBasedRootKeyStore` |
 | `FailClosedTest` | HTTP 503 when Lightning backend is unhealthy; protected content never leaks |
-| `L402RateLimitingTest` | Rate limiting integration with the security filter; 429 responses |
+| `PaygateRateLimitingTest` | Rate limiting integration with the security filter; 429 responses |
 | `TokenBucketRateLimiterTest` | Token bucket algorithm: burst, refill, stale cleanup, max buckets cap |
 | `TestModeConfigTest` | `TestModeLightningBackend` is created when `paygate.test-mode=true`; not created when `false` |
 | `TestModeLightningBackendTest` | Dummy invoice creation, always-settled lookup, preimage/hash consistency |

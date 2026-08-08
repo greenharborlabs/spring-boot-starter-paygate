@@ -66,6 +66,13 @@ public class PaygateChallengeService {
   /**
    * Creates a protocol-agnostic challenge context for the given request and endpoint configuration.
    *
+   * <p><strong>Route identity warning:</strong> This compatibility overload signs the exact route
+   * spelling produced by parsing {@link PaygateEndpointConfig#pathPattern()}. A manually
+   * constructed configuration using {@code /api/orders/}, for example, can fail against a
+   * registered {@code /api/orders} route. Callers that resolved policy through {@link
+   * PaygateEndpointRegistry} should pass its {@link ResolvedEndpoint} instead. A spelling mismatch
+   * intentionally fails closed and causes credential rejection and re-challenge.
+   *
    * <p>Performs the following steps:
    *
    * <ol>
@@ -109,6 +116,13 @@ public class PaygateChallengeService {
 
   /**
    * Creates a protocol-agnostic challenge context with explicit Spring integration options.
+   *
+   * <p><strong>Route identity warning:</strong> This compatibility overload signs the exact route
+   * spelling produced by parsing {@link PaygateEndpointConfig#pathPattern()}. A manually
+   * constructed configuration using {@code /api/orders/}, for example, can fail against a
+   * registered {@code /api/orders} route. Callers that resolved policy through {@link
+   * PaygateEndpointRegistry} should pass its {@link ResolvedEndpoint} instead. A spelling mismatch
+   * intentionally fails closed and causes credential rejection and re-challenge.
    *
    * <p>This overload is public only so sibling Spring modules can coordinate request-body digest
    * capture with challenge rate limiting. It is internal-to-Spring integration behavior and does

@@ -25,7 +25,7 @@ LND (Lightning Network Daemon) is the most widely deployed Lightning Network imp
 ## Prerequisites
 
 - **Java 25** (LTS)
-- **A running LND node** (v0.15+ recommended) with gRPC enabled
+- **A running LND node** with gRPC enabled. The repository's Docker integration environments currently exercise LND `v0.18.4-beta`.
 - **TLS certificate** (`tls.cert`) -- LND generates this on startup (typically at `~/.lnd/tls.cert`)
 - **Macaroon file** -- an `invoice.macaroon` or `admin.macaroon` (typically at `~/.lnd/data/chain/bitcoin/mainnet/`)
 
@@ -60,8 +60,8 @@ Add this module alongside the starter. You must include both the starter (which 
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
+implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.4")
 ```
 
 **Maven:**
@@ -70,12 +70,12 @@ implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-lightning-lnd</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
@@ -420,7 +420,7 @@ From the project root:
 
 ### Test Architecture
 
-Tests use **gRPC in-process transport** (`grpc-testing` and `grpc-inprocess`) to simulate LND's gRPC service without requiring a real LND node or network connections. A `FakeLightningService` extends the generated `LightningGrpc.LightningImplBase` and returns configurable responses.
+Tests use **gRPC in-process transport** (`grpc-inprocess`) to simulate LND's gRPC service without requiring a real LND node or network connections. Individual tests provide small `LightningGrpc.LightningImplBase` implementations with controlled responses.
 
 This approach:
 
@@ -435,13 +435,12 @@ This approach:
 
 | Test Case | What It Verifies |
 |-----------|-----------------|
-| `createInvoice_callsAddInvoice` | Correct `AddInvoice` RPC with `value`, `memo`, and `expiry=3600`; response mapped to `Invoice` with `PENDING` status; `createdAt` and `expiresAt` timestamps are reasonable |
-| `lookupInvoice_callsLookupInvoice` | Correct `LookupInvoice` RPC with payment hash; `OPEN` state mapped to `PENDING` status |
-| `lookupInvoice_settledInvoice_returnsSettledStatus` | `SETTLED` state mapped to `SETTLED` status with preimage extracted |
-| `isHealthy_returnsTrue_whenSynced` | `GetInfo` with `synced_to_chain=true` produces `true` |
-| `isHealthy_returnsFalse_whenNotSynced` | `GetInfo` with `synced_to_chain=false` produces `false` |
-| `isHealthy_returnsFalse_whenRpcFails` | `UNAVAILABLE` gRPC error produces `false` (no exception thrown) |
-| `implementsLightningBackendInterface` | `LndBackend` is an instance of `LightningBackend` (compile-time and runtime check) |
+| `createInvoice_returnsInvoiceOnSuccess` | Successful `AddInvoice` response mapping |
+| `lookupInvoice_returnsInvoiceOnSuccess` | Successful `LookupInvoice` response mapping, including state and preimage handling |
+| `createInvoice_wrapsStatusRuntimeExceptionInLndException` | gRPC failures are translated to the backend exception model |
+| `createInvoice_throwsLndTimeoutExceptionOnDeadlineExceeded` | Deadline failures use the specific timeout exception |
+| `isHealthy_returnsFalseOnGrpcFailure` | Health checks fail closed without propagating backend exceptions |
+| `close_shutsDownAndTerminatesChannel` | Backend shutdown closes its managed channel |
 
 ### Writing Your Own Tests
 
@@ -513,7 +512,6 @@ The following test-scoped dependencies are used:
 
 | Dependency | Purpose |
 |------------|---------|
-| `io.grpc:grpc-testing` | gRPC test utilities and helpers |
 | `io.grpc:grpc-inprocess` | In-process gRPC transport (no network, no TLS) |
 | `org.junit.jupiter:junit-jupiter` | JUnit 5 test framework |
 | `org.assertj:assertj-core` | Fluent assertion library |
@@ -627,7 +625,7 @@ Returns general information about the LND node.
 - [LND API Documentation](https://api.lightning.community/)
 - [LND gRPC API Reference (lightning.proto)](https://api.lightning.community/#lnd-grpc-api-reference)
 - [LND Installation Guide](https://docs.lightning.engineering/lightning-network-tools/lnd/run-lnd)
-- [LND Macaroons Guide](https://docs.lightning.engineering/the-lightning-network/lnd/macaroons)
+- [LND Macaroons Guide](https://docs.lightning.engineering/lightning-network-tools/lnd/macaroons)
 - [L402 Protocol Specification](https://docs.lightning.engineering/the-lightning-network/l402)
 
 ---

@@ -42,7 +42,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Maven:**
@@ -51,14 +51,14 @@ implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
 If you need to depend on `paygate-core` directly (for example, to implement a custom `LightningBackend` or `RootKeyStore`):
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-core:0.1.0")
+implementation("com.greenharborlabs:paygate-core:0.1.4")
 ```
 
 ### Build Dependencies
@@ -130,14 +130,14 @@ paygate-core/
 | `Caveat` | record | First-party caveat as `key=value`. Serialized to UTF-8 bytes for HMAC chain input. |
 | `MacaroonCrypto` | utility class | `deriveKey()`, `hmac()`, `constantTimeEquals()`, `bindForRequest()`. |
 | `MacaroonMinter` | utility class | Creates new macaroons by computing the HMAC-SHA256 signature chain. |
-| `MacaroonVerifier` | utility class | Recomputes the signature chain and delegates caveat verification to registered `CaveatVerifier` instances. |
+| `MacaroonVerifier` | utility class | Generic HMAC-chain and configured-caveat verification. It is not a complete first-party L402 validator. |
 | `MacaroonSerializer` | utility class | V2 binary format serialization and deserialization, compatible with Go `go-macaroon`. |
 | `Varint` | utility class | Unsigned LEB128 encoding/decoding for V2 format field types and payload lengths. |
 | `Invoice` | record | Lightning invoice with payment hash, bolt11, amount, status, optional preimage, and timestamps. |
 | `PaymentPreimage` | record | 32-byte preimage with `matchesHash()` (SHA-256 + constant-time comparison) and hex conversion. |
 | `L402Challenge` | record | Payment challenge with `toWwwAuthenticateHeader()` and `toJsonBody()` methods. |
 | `L402Credential` | record | Parsed L402/LSAT Authorization header with macaroon, preimage, and token ID. |
-| `L402Validator` | class | Full validation pipeline: parse header, check cache, verify signature, verify preimage, run caveat verifiers, cache on success. |
+| `L402Validator` | class | Full first-party validation pipeline: parse, decode, verify preimage, require the root key, inspect the cache, verify signatures/caveats when needed, and cache on success. |
 | `ErrorCode` | enum | `INVALID_MACAROON(401)`, `INVALID_PREIMAGE(401)`, `EXPIRED_CREDENTIAL(401)`, `INVALID_SERVICE(401)`, `MISSING_REQUEST_CONTEXT(401)`, `REVOKED_CREDENTIAL(401)`, `LIGHTNING_UNAVAILABLE(503)`, `MALFORMED_HEADER(400)`. |
 | `LightningBackend` | interface | Contract for Lightning implementations (`createInvoice`, `lookupInvoice`, `isHealthy`). |
 | `RootKeyStore` | interface | Contract for root key generation, retrieval, and revocation. |
@@ -253,6 +253,8 @@ public interface CaveatVerifier {
 ```
 
 During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by its exact key. If no verifier is found for a truly unregistered caveat key, that caveat is **skipped** -- verification continues without evaluating it. This supports L402 cross-service delegation for names this service does not understand. It does not make registered first-party boundary names optional: `route`, `method`, and the active `{serviceName}_capabilities` key are reserved and mandatory for `L402Validator`, so delegated credentials using those names are evaluated against this application's trusted boundary context. This differs from the original macaroons paper, which recommends failing closed on all unknown caveats. `CaveatVerifier` registration is exact-key only; the current API does not provide a catch-all verifier for rejecting every unregistered key.
+
+`MacaroonVerifier` is deliberately generic: it authenticates the HMAC chain and evaluates only configured caveat verifiers. It does not verify payment preimages, require identifier v1, unconditionally require the complete first-party L402 boundary set, or apply credential-cache policy. Direct first-party L402 integrations must use `L402Validator`. Callers intentionally using the generic verifier must authenticate the signature with `verify(...)` and separately enforce their issuer schema and every caveat their policy requires.
 
 ### Built-in Caveat Verifiers
 
@@ -502,6 +504,10 @@ public interface RootKeyStore {
 
 The `CredentialStore` interface caches validated L402 credentials to avoid re-verifying the full macaroon signature chain on every request.
 
+The cache is a performance optimization, not a revocation authority. After proof-of-payment succeeds, `L402Validator` performs an authoritative root-key lookup before every cache read. An exact cached variant can then skip HMAC recomputation while still re-evaluating request-specific caveats. This adds one root-key-store lookup to every successful cache hit. Missing or failed root-key lookup returns a sanitized `REVOKED_CREDENTIAL` and best-effort evicts the token's cache slot; cached authority is never used as a fallback.
+
+Revocation has a narrow concurrency boundary: a validation that obtained its defensive root-key copy before concurrent revocation may complete. A validation whose lookup occurs after revocation fails, and subsequent requests cannot reuse a stale cache entry. Spring's revocation listener remains an eager-eviction optimization rather than the correctness boundary.
+
 ```java
 public interface CredentialStore {
     void store(String tokenId, L402Credential credential, long ttlSeconds);
@@ -562,9 +568,9 @@ Orchestrates the full credential validation pipeline:
 
 1. **Parse** the Authorization header into an `L402Credential`
 2. **Verify proof of payment** -- decode the identifier and compare SHA-256(preimage) with its payment hash before consulting the cache
-3. **Check cache** -- an exact cached macaroon variant re-runs required-boundary and request-specific caveat checks, then returns with `freshValidation=false`
-4. **Fall back for attenuation** -- a different macaroon variant with the same token ID proceeds through full validation instead of failing solely because another variant is cached
-5. **Look up the root key**, recompute the signature chain, require the security-boundary caveats, and run all caveat verifiers
+3. **Require the root key** -- authoritative lookup happens before cache inspection; missing or failed lookup best-effort evicts the cache slot and fails as `REVOKED_CREDENTIAL`
+4. **Check cache** -- an exact cached macaroon variant skips HMAC recomputation, re-runs required-boundary and request-specific caveat checks, and returns with `freshValidation=false`
+5. **Fall back for attenuation** -- a different macaroon variant with the same token ID reuses the loaded root key for full signature and caveat validation instead of failing solely because another variant is cached
 6. **Cache after complete validation** with a TTL derived from `valid_until` caveats, then return with `freshValidation=true`
 
 Custom issuers should construct the identifier explicitly:
@@ -652,7 +658,7 @@ All byte array fields in immutable types are defensively copied on construction 
 
 Every first-party credential also carries `{serviceName}_capabilities`. The reserved `~` value is an explicit empty ceiling. Repeated capability caveats are parsed in order and must narrow monotonically: named sets may be reduced (including to `~`), while expansion, `~`-to-name escalation, mixed sentinel/name values, and blank entries are rejected. `L402Validator.ValidationResult.effectiveCapabilities()` is the immutable final verified set and is the only L402 authority source.
 
-The request path supplied by Spring integrations is application-relative: deployment context paths and path-prefix servlet mappings are removed before the project's existing path handling and route selection. The compatibility challenge overload derives route identity through the same Spring `PathPattern` parser helper used for endpoint registration. The registered route identity is signed and compared exactly; whitespace-altered signed values reject. Current behavior does not promise normalization of case, percent-encoding spelling, whitespace, or trailing slash. Credentials lacking required `route`, `method`, or capability-ceiling caveats are intentionally rejected, including on cache hits; legacy clients must obtain a new challenge.
+The request path supplied by Spring integrations is application-relative: deployment context paths and path-prefix servlet mappings are removed before the project's existing path handling and route selection. The config-based compatibility challenge overload signs the exact parsed spelling of `PaygateEndpointConfig.pathPattern()`. A manually constructed `/api/orders/` configuration can therefore mismatch a registered `/api/orders` route. Callers that resolved policy through the registry should pass `ResolvedEndpoint`. The registered route identity is signed and compared exactly; a mismatch intentionally rejects and re-challenges. Current behavior does not promise normalization of case, percent-encoding spelling, whitespace, or trailing slash. Credentials lacking required `route`, `method`, or capability-ceiling caveats are intentionally rejected, including on cache hits; legacy clients must obtain a new challenge.
 
 Authenticated identifier-v0 and missing-boundary failures deliberately share `INVALID_SERVICE` (HTTP 401) and the generic message `Credential constraints were not satisfied`; validation does not reveal which invariant failed.
 

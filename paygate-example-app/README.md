@@ -2,7 +2,7 @@
 
 A reference Spring Boot application demonstrating how to use `spring-boot-starter-paygate` to protect API endpoints with Lightning payments using dual-protocol support (L402 + MPP).
 
-This application runs in **test mode** by default, so no real Lightning node is required. You can exercise the complete payment flow -- challenge, payment, and credential presentation -- entirely on your local machine.
+This application includes a **dev profile** that enables test mode, so no real Lightning node is required for the walkthrough. Activate that profile explicitly for a local Gradle run; the provided Docker Compose configuration activates it for you.
 
 ---
 
@@ -36,7 +36,7 @@ This application runs in **test mode** by default, so no real Lightning node is 
 - **curl** (or any HTTP client) for testing the endpoints
 - **Docker** and **Docker Compose** (optional, for containerized runs)
 
-No Lightning node or wallet is required. The application ships with test mode enabled.
+No Lightning node or wallet is required when the `dev` profile is active.
 
 ---
 
@@ -47,7 +47,7 @@ L402 is an HTTP-native payment protocol. When a client requests a protected reso
 1. The server responds with **HTTP 402 Payment Required** and a `WWW-Authenticate` header containing a **macaroon** (an authorization token) and a Lightning **invoice**.
 2. The client pays the invoice via the Lightning Network and receives a **preimage** (proof of payment).
 3. The client re-requests the resource, presenting the macaroon and preimage together in the `Authorization` header.
-4. The server verifies the macaroon signature and checks that `SHA-256(preimage) == paymentHash` embedded in the macaroon. If both check out, access is granted.
+4. The server first checks that `SHA-256(preimage) == paymentHash`, then requires the root key and verifies the macaroon (or reuses an exact cached signature result). If every boundary check passes, access is granted.
 
 ```
 Client                              Server
@@ -85,7 +85,7 @@ To enable end-to-end testing with curl, the test backend includes the preimage i
 
 ### Safety guard
 
-`TestModeLightningBackend` refuses to start if any active Spring profile is `production` or `prod`, throwing an `IllegalStateException` to prevent accidental use in production.
+Test mode requires an active `test`, `dev`, `local`, or `development` profile. It also refuses to start if any active profile is `production` or `prod` (case-insensitive), even when an allowed profile is present.
 
 ---
 
@@ -96,7 +96,7 @@ To enable end-to-end testing with curl, the test backend includes the preimage i
 From the **project root** (not from inside `paygate-example-app/`):
 
 ```bash
-./gradlew :paygate-example-app:bootRun
+./gradlew :paygate-example-app:bootRun --args='--spring.profiles.active=dev'
 ```
 
 The `gradlew` wrapper lives in the project root. The `:paygate-example-app:` prefix tells Gradle which submodule to run.
@@ -344,8 +344,6 @@ The example uses this configuration (`src/main/resources/application.yml`):
 spring:
   application:
     name: paygate-example-app
-  profiles:
-    active: dev
 
 server:
   port: 8080
@@ -368,7 +366,7 @@ paygate:
       challenge-binding-secret: dev-only-mpp-test-secret-do-not-use-in-production
 ```
 
-> **Note:** Test mode is enabled via the `dev` profile in `application-dev.yml`, not in the base `application.yml`. The `dev` profile is activated by default via `spring.profiles.active: dev` above.
+> **Note:** Test mode is enabled only by `application-dev.yml`. Activate `dev` explicitly for local Gradle runs. The root Docker Compose file sets `SPRING_PROFILES_ACTIVE=dev`.
 
 ### Dual-Protocol Behavior
 

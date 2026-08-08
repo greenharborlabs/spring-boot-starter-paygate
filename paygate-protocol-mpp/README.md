@@ -1,6 +1,6 @@
 # paygate-protocol-mpp
 
-The MPP (Message Payment Protocol) implementation for the `spring-boot-starter-paygate` project. This is a **pure Java module with zero external dependencies** -- it depends only on `paygate-api` (which is itself JDK-only) and uses only JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.time`).
+The MPP (Modern Payment Protocol) implementation for the `spring-boot-starter-paygate` project. This is a **pure Java module with zero external dependencies** -- it depends only on `paygate-api` (which is itself JDK-only) and uses only JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.time`).
 
 **KEY CONSTRAINT:** This module has **NO dependency on `paygate-core`**. It is an entirely independent protocol implementation that shares only the `paygate-api` abstraction layer with the L402 protocol module. This architectural separation ensures that MPP can evolve independently and that applications can include one or both protocol modules without pulling in unnecessary dependencies.
 
@@ -40,7 +40,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Maven:**
@@ -49,14 +49,14 @@ implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
 If you need to depend on `paygate-protocol-mpp` directly:
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-protocol-mpp:0.1.0")
+implementation("com.greenharborlabs:paygate-protocol-mpp:0.1.4")
 ```
 
 ### Build Dependencies
@@ -462,7 +462,7 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions. No external JSON l
 | Parses valid credential with null source | Null source handling |
 | Parses valid credential with absent source | Missing source handling |
 | Extracts echoed challenge as map with all fields | Challenge extraction |
-| Metadata contains raw JSON and source | Metadata completeness |
+| Metadata contains echoed challenge and source but no raw JSON | Metadata completeness without retaining preimage-bearing input |
 | Rejects invalid base64url encoding | Input validation |
 | Rejects invalid JSON | Parse error handling |
 | Rejects trailing content | Strict JSON parsing |

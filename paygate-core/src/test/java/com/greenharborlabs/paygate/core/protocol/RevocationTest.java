@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
@@ -26,6 +28,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -133,35 +136,127 @@ class RevocationTest {
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.REVOKED_CREDENTIAL);
-                assertThat(l402Ex.getMessage()).contains("No root key found");
+                assertThat(l402Ex.getMessage()).isEqualTo("Credential has been revoked");
               });
     }
 
     @Test
-    @DisplayName("validation succeeds before revocation but fails after credential store eviction")
+    @DisplayName("root-key-only revocation rejects exact replay and clears its cache slot")
     void validBeforeRevocationFailsAfter() {
       L402Validator validator =
           new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
 
       // Succeeds before revocation (credential gets cached)
-      assertThatCode(() -> validator.validate(authHeader, boundaryContext()))
-          .doesNotThrowAnyException();
+      L402Validator.ValidationResult initial = validator.validate(authHeader, boundaryContext());
+      initial.credential().destroy();
+      assertThat(credentialStore.activeCount()).isEqualTo(1);
 
-      // Revoke: both root key and credential store must be cleared.
-      // The validator no longer re-checks root key on the cached path for performance;
-      // callers revoking keys should also evict from the credential store.
+      // Revoke only the authoritative root key. The validator must reject the exact cache hit and
+      // best-effort clear the stale cache slot itself.
       String tokenIdHex = HEX.formatHex(tokenIdBytes);
-      credentialStore.revoke(tokenIdHex);
       rootKeyStore.revokeRootKey(tokenIdBytes);
 
-      // Fails after revocation — falls through to full validation which finds no root key
       assertThatThrownBy(() -> validator.validate(authHeader, boundaryContext()))
           .isInstanceOf(L402Exception.class)
           .satisfies(
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.REVOKED_CREDENTIAL);
+                assertThat(l402Ex.getMessage()).isEqualTo("Credential has been revoked");
               });
+      assertThat(credentialStore.get(tokenIdHex)).isNull();
+    }
+
+    @Test
+    @DisplayName("root key lookup failure never falls back to an exact cached credential")
+    void rootKeyLookupFailureRejectsAndEvictsCachedCredential() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      L402Validator.ValidationResult initial = validator.validate(authHeader, boundaryContext());
+      initial.credential().destroy();
+
+      RootKeyStore failingRootKeyStore =
+          new RootKeyStore() {
+            @Override
+            public GenerationResult generateRootKey() {
+              return rootKeyStore.generateRootKey();
+            }
+
+            @Override
+            public SensitiveBytes getRootKey(byte[] keyId) {
+              throw new IllegalStateException("ROOT-KEY-LOOKUP-DETAIL");
+            }
+
+            @Override
+            public void revokeRootKey(byte[] keyId) {
+              rootKeyStore.revokeRootKey(keyId);
+            }
+          };
+      L402Validator failingValidator =
+          new L402Validator(
+              failingRootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(() -> failingValidator.validate(authHeader, boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              ex -> {
+                L402Exception l402Ex = (L402Exception) ex;
+                assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.REVOKED_CREDENTIAL);
+                assertThat(l402Ex.getMessage())
+                    .isEqualTo("Credential has been revoked")
+                    .doesNotContain("ROOT-KEY-LOOKUP-DETAIL");
+              });
+      assertThat(credentialStore.get(HEX.formatHex(tokenIdBytes))).isNull();
+    }
+
+    @Test
+    @DisplayName("cache eviction failure does not mask sanitized revocation failure")
+    void cacheEvictionFailureDoesNotMaskRevocation() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      L402Validator.ValidationResult initial = validator.validate(authHeader, boundaryContext());
+      initial.credential().destroy();
+      rootKeyStore.revokeRootKey(tokenIdBytes);
+
+      AtomicBoolean cacheRead = new AtomicBoolean(false);
+      CredentialStore failingCredentialStore =
+          new CredentialStore() {
+            @Override
+            public void store(String tokenId, L402Credential credential, long ttlSeconds) {
+              credentialStore.store(tokenId, credential, ttlSeconds);
+            }
+
+            @Override
+            public L402Credential get(String tokenId) {
+              cacheRead.set(true);
+              return credentialStore.get(tokenId);
+            }
+
+            @Override
+            public void revoke(String tokenId) {
+              throw new IllegalStateException("CACHE-EVICTION-DETAIL");
+            }
+
+            @Override
+            public long activeCount() {
+              return credentialStore.activeCount();
+            }
+          };
+      L402Validator failingValidator =
+          new L402Validator(
+              rootKeyStore, failingCredentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(() -> failingValidator.validate(authHeader, boundaryContext()))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              ex -> {
+                L402Exception l402Ex = (L402Exception) ex;
+                assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.REVOKED_CREDENTIAL);
+                assertThat(l402Ex.getMessage())
+                    .isEqualTo("Credential has been revoked")
+                    .doesNotContain("CACHE-EVICTION-DETAIL");
+              });
+      assertThat(cacheRead).isFalse();
     }
   }
 }

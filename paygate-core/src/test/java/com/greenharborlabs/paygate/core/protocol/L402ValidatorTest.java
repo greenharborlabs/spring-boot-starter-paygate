@@ -848,6 +848,29 @@ class L402ValidatorTest {
     }
 
     @Test
+    @DisplayName("exact cache hit requires root-key existence but skips HMAC recomputation")
+    void exactCacheHitUsesRootKeyOnlyAsExistenceCheck() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      L402Validator.ValidationResult initial =
+          validator.validate(validAuthHeader, boundaryContext());
+      initial.credential().destroy();
+
+      byte[] replacementKey = new byte[32];
+      RANDOM.nextBytes(replacementKey);
+      rootKeyMap.put(tokenIdHex, replacementKey);
+
+      L402Validator.ValidationResult cached =
+          validator.validate(validAuthHeader, boundaryContext());
+      try {
+        assertThat(cached.freshValidation()).isFalse();
+        assertThat(cached.credential().macaroon()).isEqualTo(macaroon);
+      } finally {
+        cached.credential().destroy();
+      }
+    }
+
+    @Test
     @DisplayName("cache-hit validation result remains usable after cache revocation")
     void cacheHitValidationResultRemainsUsableAfterCacheRevocation() {
       try (var realStore = new InMemoryCredentialStore(100, 0)) {
@@ -875,7 +898,7 @@ class L402ValidatorTest {
           new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
       validator.validate(validAuthHeader, boundaryContext());
 
-      // Revoke via credential store (simulates what revokeRootKey callers should do)
+      // Eagerly revoke the cache and authoritative root key.
       credentialStore.revoke(tokenIdHex);
       // Also revoke the root key so full re-validation fails
       rootKeyStore.revokeRootKey(tokenIdBytes);
@@ -887,7 +910,7 @@ class L402ValidatorTest {
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
                 assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.REVOKED_CREDENTIAL);
-                assertThat(l402Ex.getMessage()).contains("No root key found");
+                assertThat(l402Ex.getMessage()).isEqualTo("Credential has been revoked");
                 assertThat(l402Ex.getTokenId()).isEqualTo(tokenIdHex);
               });
     }
@@ -1442,10 +1465,13 @@ class L402ValidatorTest {
 
       L402Validator validator =
           new L402Validator(trackingStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
-      validator.validate(validAuthHeader, boundaryContext());
+      L402Validator.ValidationResult fresh = validator.validate(validAuthHeader, boundaryContext());
+      fresh.credential().destroy();
+      L402Validator.ValidationResult cached =
+          validator.validate(validAuthHeader, boundaryContext());
+      cached.credential().destroy();
 
-      assertThat(issuedKeys).hasSize(1);
-      assertThat(issuedKeys.peek().isDestroyed()).isTrue();
+      assertThat(issuedKeys).hasSize(2).allMatch(key -> key.isDestroyed());
     }
 
     @Test

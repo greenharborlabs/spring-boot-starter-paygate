@@ -2,7 +2,7 @@
 
 A reference Spring Boot application demonstrating how to integrate `spring-boot-starter-paygate` with **Spring Security** to protect API endpoints with Lightning payments using dual-protocol support (L402 + MPP).
 
-This application runs in **test mode** by default, so no real Lightning node is required. You can exercise the complete payment flow -- challenge, payment, credential presentation, and authorization -- entirely on your local machine.
+This application includes a **dev profile** that enables test mode, so no real Lightning node is required for the walkthrough. Activate that profile explicitly for a local run.
 
 For the servlet filter approach (without Spring Security), see the sibling module [`paygate-example-app`](../paygate-example-app/).
 
@@ -21,7 +21,7 @@ For the servlet filter approach (without Spring Security), see the sibling modul
 - [Authorization Model](#authorization-model)
   - [ROLE_PAYMENT -- Universal Payment Role](#role_payment----universal-payment-role)
   - [ROLE_L402 -- Protocol-Specific Role](#role_l402----protocol-specific-role)
-  - [PAYGATE_CAPABILITY_* -- Capability-Based Authorization](#paygate_capability----capability-based-authorization)
+  - [PAYGATE_CAPABILITY_* -- Capability-Based Authorization](#paygate_capability_----capability-based-authorization)
   - [Authorization Summary](#authorization-summary)
 - [Endpoints](#endpoints)
 - [Configuration](#configuration)
@@ -79,7 +79,7 @@ Choose the servlet filter approach for simple "pay to access" use cases. Choose 
 - **Java 25** (LTS)
 - **curl** (or any HTTP client) for testing the endpoints
 
-No Lightning node or wallet is required. The application ships with test mode enabled.
+No Lightning node or wallet is required when the `dev` profile is active.
 
 ---
 
@@ -88,7 +88,7 @@ No Lightning node or wallet is required. The application ships with test mode en
 From the **project root** (not from inside this module's directory):
 
 ```bash
-./gradlew :paygate-example-app-spring-security:bootRun
+./gradlew :paygate-example-app-spring-security:bootRun --args='--spring.profiles.active=dev'
 ```
 
 The application starts on `http://localhost:8081`.
@@ -304,8 +304,6 @@ The `capability` attribute on `@PaymentRequired` tells the validator to check th
 spring:
   application:
     name: paygate-example-app-spring-security
-  profiles:
-    active: dev
 
 server:
   port: 8081
@@ -331,7 +329,7 @@ paygate:
       challenge-binding-secret: dev-only-mpp-test-secret-do-not-use-in-production
 ```
 
-The `dev` profile is active by default. It enables test mode (no real Lightning node needed) and provides a development-only MPP challenge binding secret.
+The `dev` profile enables test mode (no real Lightning node needed) and provides a development-only MPP challenge binding secret. It is not active unless you select it, for example with `--spring.profiles.active=dev`.
 
 ### Key Properties
 

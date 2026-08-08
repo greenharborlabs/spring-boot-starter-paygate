@@ -17,7 +17,7 @@ release flow intentionally keeps GitHub PR merge approval as a manual stop point
   - `GPG_SIGNING_KEY` -- ASCII-armored GPG private key
   - `GPG_SIGNING_PASSWORD` -- passphrase for the GPG key
 - [ ] `main` currently has a snapshot version in `gradle.properties`, such as
-  `version=0.1.2-SNAPSHOT`.
+  `version=X.Y.Z-SNAPSHOT`.
 
 ## Phase 1: Prepare And Merge The Release PR
 
@@ -143,7 +143,7 @@ The release workflow should:
 
 - Verify the tag is on `main`.
 - Verify the release version matches the tag.
-- Build all modules.
+- Build every module in the default build. The opt-in integration module is covered by CI and by the recommended local `releaseReadiness -Pintegration` gate.
 - Verify publishing secrets.
 - Publish to Sonatype and release to Maven Central.
 - Generate and attach SBOMs.

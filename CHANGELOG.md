@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **H-1 — paygate-core**: Enforce immutable issuance ceilings during capability attenuation so delegated credentials cannot self-escalate beyond their originally issued capabilities.
 - **H-2 — paygate-spring-autoconfigure** and **paygate-spring-security**: Apply protected `GET` payment policy to `HEAD` requests while keeping issued credentials bound to the actual `HEAD` method.
 - **H-3 — paygate-spring-autoconfigure** and **paygate-spring-security**: Redact bearer credentials from diagnostic output.
+- **Credential cache revocation — paygate-core**: Require authoritative root-key existence after proof-of-payment and before every credential-cache read. Exact cache hits still skip signature recomputation; missing or failed root-key lookup best-effort evicts the stale slot and returns a sanitized `REVOKED_CREDENTIAL`.
 
 ### Changed
 
@@ -21,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unsigned location semantics**: Macaroon location remains an authorization-neutral V2 serialization hint and participates in object equality, hashing, and cache variant replacement, while `Macaroon.toString()` now omits null, ordinary, and attacker-controlled location values from diagnostics.
 - **Compatibility**: Intentionally reject legacy L402 credentials that lack the required reserved `route`, `method`, or `{serviceName}_capabilities` caveats; affected clients must obtain newly issued credentials. The context-less `L402Validator.validate(String)` descriptor remains callable but fails closed for boundary-bound credentials, so integrations must use a context-bearing overload with trusted `REQUEST_ROUTE` and `REQUEST_METHOD` metadata. The public `ErrorCode` enum now includes `MISSING_REQUEST_CONTEXT` (HTTP 401); downstream exhaustive source switches must be updated and recompiled when upgrading.
 - **Delegation compatibility**: Pre-existing cross-application credentials that used generic `route`, `method`, or the active service capability key are now evaluated as this application's reserved first-party boundaries once those verifiers are registered; only truly unregistered caveat keys retain pass-through behavior.
-- **Route compatibility**: The retained `PaygateChallengeService` challenge overload derives route identity through the registration `PathPattern` parser helper. Signed route comparison remains exact, including whitespace and trailing slash; no new case or percent-encoding normalization is promised.
+- **Route compatibility**: The retained config-based `PaygateChallengeService` challenge overloads sign the exact parsed spelling of `PaygateEndpointConfig.pathPattern()`. Manually constructing `/api/orders/` when the registered route is `/api/orders` intentionally fails closed; registry-based callers should pass `ResolvedEndpoint`. Signed route comparison remains exact, and no new case, percent-encoding, whitespace, or trailing-slash normalization is promised.
+- **Generic verifier contract**: `MacaroonVerifier` authenticates an HMAC chain and evaluates configured caveats, but does not verify payment preimages, require identifier v1 or the complete first-party boundary set, or apply cache policy. Direct first-party L402 integrations must use `L402Validator`.
+- **Spring Security resolver migration**: Replace `new DefaultCapabilityResolver(cache, serviceName)` with `new DefaultCapabilityResolver(cache)`. This intentional constructor break removes a dead argument; service identity remains in `CapabilityResolutionContext`, and `paygate.service-name` remains supported by authentication and validation components.
 
 ## [0.1.4] - 2026-07-01
 

@@ -7,7 +7,8 @@ import java.util.Objects;
  *
  * <p>Each instance carries an {@link ErrorCode} that determines the HTTP status code and RFC 9457
  * problem type URI for the error response. The optional {@code tokenId} identifies the specific
- * credential that failed validation (safe to log, unlike the full credential value).
+ * credential that failed validation. Logs should use only a short token-ID prefix and must never
+ * include the full credential value.
  */
 public class PaymentValidationException extends RuntimeException {
 

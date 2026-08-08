@@ -14,9 +14,12 @@ All tests boot the example application on a random port using `@SpringBootTest(w
 |-------|-------------|
 | `LnbitsHappyPathIT` | Full L402 happy path in test mode: unauthenticated request receives 402 challenge, extracts macaroon and test preimage, presents L402 credential, and receives 200 with premium content. Also verifies unprotected endpoints remain accessible and 402 response body structure. |
 | `DualProtocolIntegrationTest` | Dual-protocol (L402 + MPP) integration: verifies both `WWW-Authenticate` headers appear on 402, both protocols share a single Lightning invoice, full L402 flow grants access, and full MPP flow grants access with a `Payment-Receipt` header. Includes a nested test class for L402-only backward compatibility when no MPP secret is configured. |
+| `CapabilityEnforcementIT` | Servlet-mode capability ceilings, route/method boundaries, attenuation, and rejection of missing or incompatible capabilities. |
 | `FailClosedIT` | Fail-closed security property: when the Lightning backend is unhealthy or throws on invoice creation, protected endpoints return 503 (never 200). Uses a controllable stub backend to simulate failure conditions. Verifies unprotected endpoints remain accessible during backend outages. |
 | `TamperDetectionIT` | Tamper detection: verifies that tampered macaroons, wrong preimages, and malformed Authorization headers are rejected with appropriate 4xx status codes. Exercises HMAC signature verification in the full request pipeline. |
 | `GoInteropIT` | Go interoperability: mints Macaroon V2 in Java and shells out to the Go `go-macaroon` library to verify byte-level deserialization compatibility. Tests macaroons with caveats, without location, and without caveats. Skips gracefully when the Go toolchain is unavailable. |
+| `DualProtocolSpringSecurityIT` | Spring Security challenge, L402, MPP, receipt, and authorization behavior. |
+| `ProtocolAgnosticCapabilityIT` | Spring Security capability authorities for protocol-agnostic credentials. |
 
 ---
 

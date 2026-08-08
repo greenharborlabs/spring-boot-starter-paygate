@@ -41,7 +41,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Maven:**
@@ -50,14 +50,14 @@ implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
 If you need to depend on `paygate-protocol-l402` directly:
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-protocol-l402:0.1.0")
+implementation("com.greenharborlabs:paygate-protocol-l402:0.1.4")
 ```
 
 ### Build Dependencies
@@ -97,9 +97,10 @@ The central class in this module. It implements `PaymentProtocol` and adapts the
 
 ```java
 public L402Protocol(L402Validator validator, String serviceName)
+public L402Protocol(L402Validator validator, String serviceName, Clock clock)
 ```
 
-Both parameters are required and must not be null. The `validator` is the `paygate-core` validation pipeline; `serviceName` is embedded in macaroon caveats during challenge formatting and used for service verification during validation.
+All supplied parameters are required and must not be null. The two-argument overload uses `Clock.systemUTC()`; the clock overload supports deterministic issuance and expiry tests. The `validator` is the `paygate-core` validation pipeline, and `serviceName` is embedded in macaroon caveats during challenge formatting and used during validation.
 
 #### `scheme()`
 
@@ -360,7 +361,6 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions and **Mockito** for
 | Test Case | What It Verifies |
 |-----------|-----------------|
 | `trueForL402OrLsatPrefix` | Accepts `L402 `, `LSAT `, `l402 `, `lsat ` prefixes (case-insensitive) |
-| `trueForVariousCaseVariations` | Accepts mixed-case variations and minimal headers |
 | `falseForNull` | Returns `false` for null input |
 | `falseForShortStrings` | Returns `false` for strings shorter than 5 characters |
 | `falseForNonL402Schemes` | Returns `false` for `Bearer`, `Basic`, `Payment`, and similar prefixes |
@@ -385,7 +385,7 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions and **Mockito** for
 | `macaroonInHeaderIsValidBase64` | The base64 macaroon decodes without error |
 | `challengeIncludesServicesCaveat` | Macaroon contains `services={serviceName}:0` caveat |
 | `challengeIncludesCapabilityCaveatWhenPresent` | Macaroon contains `{serviceName}_capabilities` caveat when capability is specified |
-| `challengeOmitsCapabilityCaveatWhenNull` | Capability caveat is absent when capability is null |
+| `challengeIncludesNoCapabilityCeilingWhenNull` | Null capability is authenticated explicitly with the `~` empty capability ceiling |
 | `challengeIncludesValidUntilCaveat` | Macaroon contains `{serviceName}_valid_until` caveat with a future epoch timestamp |
 | `rejectsBolt11WithControlCharacters` | BOLT11 containing `\r\n` throws `IllegalArgumentException` |
 | `tokenAndMacaroonFieldsAreIdentical` | The `token` and `macaroon` field values in the header are identical |

@@ -1,16 +1,29 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Generic HMAC-chain and configured-caveat verification utilities.
+ *
+ * <p>This class does not verify payment preimages, require identifier version 1, unconditionally
+ * require the first-party L402 boundary caveats, or apply credential-cache policy. Direct
+ * first-party L402 integrations must use {@link L402Validator}. Intentional generic-verifier users
+ * must authenticate the signature and separately enforce their issuer schema and every required
+ * caveat; unregistered caveat keys are skipped for delegation compatibility.
+ */
 public final class MacaroonVerifier {
 
   private MacaroonVerifier() {}
 
   /**
    * Verifies a macaroon's HMAC chain signature and evaluates registered caveat verifiers.
+   *
+   * <p>This is generic macaroon verification, not complete first-party L402 credential validation.
+   * See the class documentation for the policy checks intentionally outside this method.
    *
    * <p>Unknown caveats are skipped per the L402 macaroons.md spec to support cross-application
    * delegation. Only caveats with a registered verifier are evaluated. The HMAC chain always

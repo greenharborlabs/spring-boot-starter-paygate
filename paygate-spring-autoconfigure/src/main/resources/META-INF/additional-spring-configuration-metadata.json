@@ -124,7 +124,7 @@
     {
       "name": "paygate.lnbits.api-key",
       "type": "java.lang.String",
-      "description": "LNbits admin API key for invoice creation and payment lookup. Required when paygate.backend=lnbits. Keep this value secret."
+      "description": "LNbits Invoice/read API key for invoice creation and payment lookup. Required when paygate.backend=lnbits. Keep this value secret."
     },
     {
       "name": "paygate.lnd.host",
@@ -193,7 +193,7 @@
     {
       "name": "paygate.protocols.mpp.enabled",
       "type": "java.lang.String",
-      "description": "Whether the MPP (Message Payment Protocol) is enabled. 'auto' enables MPP when challenge-binding-secret is configured, 'true' forces MPP on (fails fast if secret is missing), 'false' disables MPP entirely.",
+      "description": "Whether the MPP (Modern Payment Protocol) is enabled. 'auto' enables MPP when challenge-binding-secret is configured, 'true' forces MPP on (fails fast if secret is missing), 'false' disables MPP entirely.",
       "defaultValue": "auto"
     },
     {

@@ -50,9 +50,8 @@ public class PaygateSecurityAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean(CapabilityResolver.class)
   public CapabilityResolver defaultCapabilityResolver(
-      @Autowired(required = false) CapabilityCache capabilityCache,
-      @Value("${paygate.service-name:default}") String serviceName) {
-    return new DefaultCapabilityResolver(capabilityCache, serviceName);
+      @Autowired(required = false) CapabilityCache capabilityCache) {
+    return new DefaultCapabilityResolver(capabilityCache);
   }
 
   @Bean

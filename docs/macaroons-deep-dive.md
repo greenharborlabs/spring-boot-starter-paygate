@@ -204,14 +204,15 @@ Let us walk through creating a macaroon with two caveats using concrete
 
 ```
 Root Key (K):   4f2379139f...  (32 bytes, server secret)
+Derived Key (DK): HMAC("macaroons-key-generator", K)
 Identifier (I): "key-001"
 ```
 
 **Step 1: Compute the initial signature**
 
 ```
-sig_0 = HMAC(key=K, message=I)
-      = HMAC("4f2379139f...", "key-001")
+sig_0 = HMAC(key=DK, message=I)
+      = HMAC("derived-key...", "key-001")
       = "e3d936ee94..."                     (32 bytes)
 ```
 
@@ -247,7 +248,10 @@ Here is the full flow as a diagram:
   Root Key (K)
        |
        v
-  HMAC(K, "key-001")  ──────────────────>  sig_0
+  HMAC("macaroons-key-generator", K) ──> Derived Key (DK)
+                                               |
+                                               v
+  HMAC(DK, "key-001")  ─────────────────>  sig_0
                                               |
                                               v
                          HMAC(sig_0, "account = 12345")  ──>  sig_1
@@ -398,10 +402,13 @@ First-Party Caveat Examples:
   "services = my_api:0"       Server checks: is the requested service in the list?
 ```
 
-First-party caveats are simple strings. The server must implement a
-**verifier function** for each caveat type it supports. During verification,
-the server evaluates every caveat against the current request context. If any
-caveat fails, the entire macaroon is rejected.
+First-party caveats are simple strings. The server implements a **verifier
+function** for each caveat type it enforces. Paygate's generic
+`MacaroonVerifier` evaluates registered keys and skips unregistered keys to
+support cross-application delegation. `L402Validator` separately requires and
+evaluates the first-party `route`, `method`, and active service capability
+boundaries. If any registered or required caveat fails, the credential is
+rejected.
 
 ### Third-Party Caveats
 
@@ -484,7 +491,8 @@ function verifyMacaroon(macaroon, rootKey, requestContext):
     // === Phase 1: Signature Verification ===
     // Reconstruct the HMAC chain from the root key
 
-    computedSig = HMAC(rootKey, macaroon.identifier)
+    derivedKey = HMAC("macaroons-key-generator", rootKey)
+    computedSig = HMAC(derivedKey, macaroon.identifier)
 
     for each caveat in macaroon.caveats:
         computedSig = HMAC(computedSig, caveat)
@@ -493,19 +501,21 @@ function verifyMacaroon(macaroon, rootKey, requestContext):
         return REJECT("signature mismatch -- macaroon was tampered with
                         or not issued by this server")
 
-    // === Phase 2: Caveat Satisfaction ===
-    // Every caveat must evaluate to TRUE agaveat(key, value, requestContext)
-
-        if NOT satisfied:
-            return REJECT("caveat not satisfied: " + caveat)
-
-    return ACCEPTainst the request
-
+    // === Phase 2: Configured Caveat Satisfaction ===
     for each caveat in macaroon.caveats:
-        key, value = parseCaveat(caveat)   // split on "="
+        verifier = configuredVerifierFor(caveat.key)
+        if verifier is absent:
+            continue  // delegation-oriented pass-through
+        verifier.verify(caveat, requestContext)
 
-        satisfied = evaluateC
+    return ACCEPT
 ```
+
+That pseudocode describes the generic verifier only. A direct first-party L402
+integration must use `L402Validator`, which also verifies the payment preimage,
+requires identifier v1 and the mandatory boundary caveats, and applies the
+credential-cache policy. Generic-verifier callers must separately enforce their
+issuer schema and all required caveats.
 
 ### Walkthrough with Concrete Values
 
@@ -522,7 +532,9 @@ Macaroon:
 **Phase 1 execution:**
 
 ```
-Step 1:  sig = HMAC("4f2379139f...", "token-001")
+Step 0:  derived = HMAC("macaroons-key-generator", "4f2379139f...")
+
+Step 1:  sig = HMAC(derived, "token-001")
          sig = "e3d936ee94..."
 
 Step 2:  sig = HMAC("e3d936ee94...", "services = my_api:0")
@@ -585,20 +597,27 @@ L402 Verification Flow:
   |     - version                                |
   |     - payment_hash                           |
   |     - token_id                               |
-  |  4. Look up root key using token_id          |
-  |  5. Verify HMAC chain (Phase 1 above)        |
-  |  6. Verify all caveats (Phase 2 above)       |
-  |  7. Decode preimage from hex                 |
-  |  8. Compute SHA256(preimage)                 |
-  |  9. Compare with payment_hash from step 3    |
-  |     If match: payment is confirmed           |
-  |     If no match: REJECT                      |
+  |  4. Verify SHA256(preimage) against the       |
+  |     payment_hash before touching either store |
+  |  5. Require root key using token_id           |
+  |  6. Inspect the exact-variant cache            |
+  |  7. Cache hit: re-check required caveats and   |
+  |     skip HMAC recomputation                    |
+  |  8. Cache miss/variant: verify HMAC chain,     |
+  |     identifier v1, and required caveats        |
   +---------------------------------------------+
 ```
 
-Step 9 is the cryptographic binding between the macaroon and the Lightning
-payment. Without a valid preimage, the macaroon is useless -- even if the
-signature and caveats are valid.
+Step 4 is the cryptographic binding between the macaroon and the Lightning
+payment. Its position before root-key and credential-store access prevents
+callers without proof-of-payment from probing either store. The per-request
+root-key lookup makes revocation authoritative even for exact cache hits.
+
+An exact cache hit still avoids HMAC-chain recomputation, but now costs one
+root-key-store lookup. A request that obtained its defensive key copy before a
+concurrent revocation may finish; a request whose lookup occurs after
+revocation fails, and later requests cannot reuse the stale cache slot. Eager
+cache eviction by Spring is an optimization, not the revocation authority.
 
 ---
 
@@ -661,10 +680,10 @@ L402 Payment Binding:
     |---------------------------------------------->|
     |                                               |
     |  9. Server verifies:                           |
-    |     a. Macaroon signature (HMAC chain)         |
-    |     b. All caveats satisfied                   |
-    |     c. SHA256(preimage) == payment_hash         |
-    |        from macaroon identifier                |
+    |     a. SHA256(preimage) == payment_hash         |
+    |     b. Root key still exists                   |
+    |     c. Cached caveats, or the full HMAC chain  |
+    |        and required first-party caveats        |
     |                                               |
     |  10. Serve the protected resource              |
     |<----------------------------------------------|
@@ -714,8 +733,11 @@ Total: 66 bytes
 
 **Version (2 bytes, uint16, big-endian)**
 
-The protocol version. Currently `0`. This field allows the identifier format
-to evolve in future versions of the L402 specification.
+Paygate structurally decodes identifier versions 0 and 1 because both use this
+66-byte layout. Newly issued credentials use v1, and `L402Validator` requires
+authenticated v1 for first-party policy. The generic `MacaroonVerifier` does
+not interpret or require an identifier version. Identifier version is distinct
+from the HTTP challenge parameter `version="0"`.
 
 **Payment Hash (32 bytes)**
 
@@ -795,9 +817,9 @@ services are comma-separated:
 services = lightning_loop:0,lightning_pool:1
 ```
 
-A macaroon without a services caveat is unrestricted in which services it
-can access (within the scope of the server's domain). Adding a services
-caveat restricts access to only the listed services.
+Whether `services` is mandatory belongs to the issuer schema. Paygate's direct
+`L402Validator` callers choose whether to register and require service/expiry
+policy, while the Spring configuration registers its first-party policy.
 
 ### Capabilities Caveat
 
@@ -808,9 +830,11 @@ Restricts what operations are available within a service. The key is
 lightning_loop_capabilities = loop_out,loop_in
 ```
 
-If this caveat is absent for a given service, all capabilities of that
-service are available. When present, only the listed capabilities are
-allowed.
+For Paygate first-party L402 credentials, the active
+`{service_name}_capabilities` caveat is mandatory. The reserved `~` value is an
+explicit empty capability ceiling; absence is not interpreted as unrestricted
+authority. When present, named values define the issued ceiling and later
+occurrences may only narrow it.
 
 Multiple capabilities caveats for the same service must be progressively
 more restrictive (each subsequent caveat must be a subset of the previous):
@@ -1001,21 +1025,22 @@ parent. This is the formal property that makes delegation safe.
 | bypass            | paying by guessing or brute-forcing the         | 2^256 search space makes this    |
 |                   | preimage.                                       | infeasible.                      |
 +-------------------+-------------------------------------------------+----------------------------------+
-| Caveat confusion  | Poorly designed caveat verifiers that accept     | Implement strict caveat parsing. |
-|                   | unexpected values or fail open.                 | Unknown caveats MUST cause       |
-|                   |                                                 | rejection, not be ignored.       |
+| Caveat confusion  | Poorly designed issuer schemas or verifiers      | Implement strict parsing and     |
+|                   | omit a required authorization boundary.         | explicitly require every issuer  |
+|                   |                                                 | boundary.                        |
 +-------------------+-------------------------------------------------+----------------------------------+
 ```
 
-### Critical Rule: Unknown Caveats MUST Fail Closed
+### Unknown Caveats and Required Issuer Policy
 
-If the server encounters a caveat key it does not recognize, it MUST reject
-the macaroon. Never ignore unknown caveats. The reason: an attenuator may have
-added a caveat expecting it to be enforced. If the server silently ignores it,
-the attenuation is ineffective and the token grants more access than intended.
-
-This is a common implementation mistake. Your caveat verifier should have a
-default case that returns `false` for any unrecognized key.
+Paygate intentionally skips unregistered caveat keys in `MacaroonVerifier` so
+credentials can carry restrictions for another application in a delegation
+chain. The signature still authenticates those caveat bytes. Skipping an
+unregistered key must not make the local issuer schema optional:
+`L402Validator` independently requires `route`, `method`, and the active
+service capability ceiling, and evaluates registered keys against trusted
+request context. Integrations using `MacaroonVerifier` directly must define and
+enforce their own required-key set after authenticating the HMAC chain.
 
 ### Bearer Token Limitations
 
@@ -1094,7 +1119,7 @@ public class HmacEngine {
 
 This single method is used for:
 
-- Minting: chaining from root key through identifier and caveats.
+- Minting: deriving the signing key, then chaining through identifier and caveats.
 - Verification: reconstructing the chain and comparing signatures.
 - Attenuation: extending the chain with new caveats.
 
@@ -1109,8 +1134,11 @@ public class MacaroonMinter {
                          List<String> caveats) {
         byte[] idBytes = identifier.toBytes();  // 66-byte L402 identifier
 
+        byte[] derivedKey = HmacEngine.hmac(
+            "macaroons-key-generator".getBytes(UTF_8), rootKey);
+
         // Start the HMAC chain
-        byte[] sig = HmacEngine.hmac(rootKey, idBytes);
+        byte[] sig = HmacEngine.hmac(derivedKey, idBytes);
 
         // Extend chain through each caveat
         for (String caveat : caveats) {
@@ -1125,42 +1153,14 @@ public class MacaroonMinter {
 ### MacaroonVerifier: The Verification Algorithm
 
 ```java
-public class MacaroonVerifier {
-
-    private final Map<String, CaveatVerifier> verifiers;
-
-    public boolean verify(Macaroon macaroon, byte[] rootKey,
-                          RequestContext context) {
-        // Phase 1: Signature verification
-        byte[] computedSig = HmacEngine.hmac(rootKey, macaroon.identifier());
-
-        for (String caveat : macaroon.caveats()) {
-            computedSig = HmacEngine.hmac(computedSig,
-                                          caveat.getBytes(UTF_8));
-        }
-
-        if (!MessageDigest.isEqual(computedSig, macaroon.signature())) {
-            return false;  // tampered or not issued by this server
-        }
-
-        // Phase 2: Caveat satisfaction
-        for (String caveat : macaroon.caveats()) {
-            String[] parts = caveat.split(" = ", 2);
-            if (parts.length != 2) return false;
-
-            String key = parts[0].trim();
-            String value = parts[1].trim();
-
-            CaveatVerifier verifier = verifiers.get(key);
-            if (verifier == null) return false;  // UNKNOWN CAVEATS FAIL CLOSED
-
-            if (!verifier.verify(value, context)) return false;
-        }
-
-        return true;
-    }
-}
+MacaroonVerifier.verify(macaroon, rootKey, caveatVerifiers, context);
 ```
+
+This generic call authenticates the HMAC chain and evaluates registered caveat
+keys, including monotonic restriction for repeated keys. It does not verify a
+payment preimage, require identifier v1, require Paygate's complete
+first-party boundary set, or consult the credential cache. Use
+`L402Validator` for direct first-party L402 validation.
 
 ### L402 Identifier: Parsing the Binary Structure
 
@@ -1261,16 +1261,18 @@ L402Filter (servlet filter or Spring Security filter)
      +-- Decode preimage from hex
      |
      +-- Parse L402 identifier from macaroon
-     +-- Look up root key by token_id
+     +-- Verify payment preimage before store access
+     +-- Require root key by token_id
+     +-- Inspect exact-variant credential cache
      |
-     +-- MacaroonVerifier.verify(macaroon, rootKey, requestContext)
-     +-- PreimageVerifier.verify(preimage, paymentHash)
+     +-- Exact hit: re-check required request caveats
+     +-- Otherwise: verify HMAC chain, v1 policy, and required caveats
      |
      +-- If valid: continue filter chain (serve the resource)
      +-- If invalid: return 402 with new macaroon + invoice
 ```
 
-The `@L402Protected` annotation on controller methods triggers this filter,
+The `@PaymentRequired` annotation on controller methods triggers this filter,
 with configuration specifying the price and which caveat verifiers apply.
 
 ---

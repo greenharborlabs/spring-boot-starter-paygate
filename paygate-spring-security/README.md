@@ -1,6 +1,6 @@
 # paygate-spring-security
 
-Optional [Spring Security](https://spring.io/projects/spring-security) integration for the `spring-boot-starter-paygate` project. This module bridges L402 payment authentication into Spring Security's filter chain, providing an `AuthenticationFilter`, `AuthenticationProvider`, and `AuthenticationToken` that let you protect endpoints using standard Spring Security patterns -- `SecurityFilterChain`, `@PreAuthorize`, role-based access, and the `SecurityContextHolder`.
+Optional [Spring Security](https://spring.io/projects/spring-security) integration for the `spring-boot-starter-paygate` project. This module bridges L402 and other registered `PaymentProtocol` credentials into Spring Security's filter chain, providing a request filter, `AuthenticationProvider`, and `AuthenticationToken` that let you protect endpoints using standard Spring Security patterns -- `SecurityFilterChain`, `@PreAuthorize`, role-based access, and the `SecurityContextHolder`.
 
 If you do not use Spring Security, you do not need this module. The base `paygate-spring-autoconfigure` module provides a standalone servlet `Filter` (`PaygateSecurityFilter`) and `@PaymentRequired` annotation that work without Spring Security on the classpath.
 
@@ -55,9 +55,9 @@ Add this module alongside the starter and a Lightning backend. The starter pulls
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:paygate-spring-security:0.1.0")
-implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0") // or paygate-lightning-lnd
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
+implementation("com.greenharborlabs:paygate-spring-security:0.1.4")
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.4") // or paygate-lightning-lnd
 ```
 
 **Maven:**
@@ -66,17 +66,17 @@ implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0") // or payga
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-security</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-lightning-lnbits</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
@@ -106,7 +106,7 @@ paygate-spring-security/
     PaygateAuthFailureRateLimitFilter.java    Optional auth-failure rate-limiting filter
     PaygateSecurityAutoConfiguration.java     Registers beans when Spring Security is present
     CapabilityResolver.java                   Capability resolution strategy interface
-    DefaultCapabilityResolver.java            Default resolver backed by endpoint metadata
+    DefaultCapabilityResolver.java            Non-L402 resolver backed by cache and request metadata
     CapabilityResolutionContext.java          Immutable context for capability resolution
   src/main/resources/META-INF/spring/
     org.springframework.boot.autoconfigure.AutoConfiguration.imports
@@ -150,9 +150,9 @@ PaygateAuthFailureRateLimitFilter (OncePerRequestFilter, optional)
      v
 PaygateAuthenticationFilter (OncePerRequestFilter)
      |
-     |-- No "Authorization: L402 ..." header? --> continue filter chain (other filters handle it)
+     |-- No recognized payment Authorization header? --> continue filter chain
      |
-     |-- Header present, matches L402/LSAT pattern?
+     |-- Header matches L402/LSAT or another registered PaymentProtocol?
      |       |
      |       v
      |   Resolve capability from PaygateEndpointRegistry (if configured)
@@ -167,7 +167,7 @@ PaygateAuthenticationFilter (OncePerRequestFilter)
      |       |-- Builds L402VerificationContext with requestMetadata (including capability)
      |       |-- Delegates to L402Validator.validate() (includes CapabilitiesCaveatVerifier)
      |       |-- Returns authenticated PaygateAuthenticationToken with:
-     |       |     - ROLE_L402 authority
+     |       |     - ROLE_PAYMENT authority (plus ROLE_L402 for L402)
      |       |     - PAYGATE_CAPABILITY_* authorities (from the final verified capability ceiling)
      |       |     - tokenId as principal
      |       |     - L402Credential as credentials
@@ -183,18 +183,19 @@ PaygateAuthenticationFilter (OncePerRequestFilter)
 
 The token has two states:
 
-**Unauthenticated** (created by the filter from the raw header):
+**Unauthenticated** (created by the filter from a recognized header):
 
 | Property | Value |
 |----------|-------|
-| `rawMacaroon` | Base64-encoded macaroon string from the header |
-| `rawPreimage` | 64-character hex preimage from the header |
+| `components` | Parsed `L402HeaderComponents` for L402/LSAT, otherwise `null` |
+| `authorizationHeader` | Raw header for a non-L402 `PaymentProtocol`, otherwise `null` |
+| `requestMetadata` | Immutable path, route, method, client-IP, digest, and capability metadata available for this request |
 | `authenticated` | `false` |
 | `authorities` | empty |
-| `principal` | raw macaroon string |
-| `credentials` | `"<macaroon>:<preimage>"` concatenation |
+| `principal` | `[unauthenticated]` |
+| `credentials` | `[REDACTED]` |
 
-**Authenticated** (returned by the provider after validation):
+**Authenticated L402** (returned by the provider after validation):
 
 | Property | Value |
 |----------|-------|
@@ -202,10 +203,12 @@ The token has two states:
 | `tokenId` | Hex-encoded 32-byte token identifier |
 | `serviceName` | Service name from configuration (`paygate.service-name`) |
 | `authenticated` | `true` |
-| `authorities` | `[ROLE_L402]` + `[PAYGATE_CAPABILITY_*]` for each capability in the final verified effective set |
+| `authorities` | `[ROLE_PAYMENT, ROLE_L402]` + `[L402_CAPABILITY_*]` and `[PAYGATE_CAPABILITY_*]` for each capability in the final verified effective set |
 | `principal` | token ID string |
 | `credentials` | `L402Credential` object |
 | `attributes` | Map of caveat key-value pairs plus `tokenId` and `serviceName` |
+
+Authenticated non-L402 protocols carry a `PaymentCredential`, always receive `ROLE_PAYMENT`, and expose `protocolScheme` plus any safe protocol attributes. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
 #### Security: Attribute Overwrite Protection
 
@@ -245,12 +248,12 @@ Implements `AuthenticationProvider`. Accepts only `PaygateAuthenticationToken` i
 1. `EnableWebSecurity` and `L402Validator` classes are on the classpath (`@ConditionalOnClass`)
 2. An `L402Validator` bean exists in the application context (`@ConditionalOnBean`)
 
-It registers up to five beans plus a startup guard:
+It registers up to five beans. A separate auto-configuration supplies the startup guard:
 
 | Bean | Condition | Description |
 |------|-----------|-------------|
 | `CapabilityResolver` (`DefaultCapabilityResolver`) | `@ConditionalOnMissingBean` | Resolves endpoint capability requirements for authority mapping (`PAYGATE_CAPABILITY_*`). |
-| `PaygateAuthenticationProvider` | `@ConditionalOnMissingBean` | Validates payment tokens using the `L402Validator` and `paygate.service-name` property |
+| `PaygateAuthenticationProvider` | `@ConditionalOnMissingBean` | Validates L402 and other registered payment tokens using `paygate.service-name` |
 | `PaygateAuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
 | `PaygateAuthFailureRateLimitFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(PaygateRateLimiter.class)` | Rate limits auth attempts with pre-check and post-failure penalty. Only created when rate limiting is enabled. |
 | `PaygateAuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
@@ -264,8 +267,8 @@ All of these beans are guarded with `@ConditionalOnMissingBean`. To customize be
 
 ```java
 @Bean
-public PaygateAuthenticationProvider l402AuthenticationProvider(L402Validator validator) {
-    return new PaygateAuthenticationProvider(validator, "custom-service-name");
+public CapabilityResolver capabilityResolver() {
+    return context -> Set.of();
 }
 ```
 
@@ -406,7 +409,7 @@ public class PremiumController {
 
 The `attributes` map on an authenticated token contains:
 
-- All caveat key-value pairs from the macaroon (e.g., `service`, `valid_until`, custom caveats)
+- All caveat key-value pairs from the macaroon (for example `services`, `route`, `method`, and `<service>_valid_until`)
 - `tokenId` -- the hex-encoded 32-byte token identifier (overwrite-protected)
 - `serviceName` -- the configured service name (overwrite-protected, omitted if null)
 
@@ -629,10 +632,10 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `extractsMultiTokenHeaderAndAuthenticates` | Comma-separated multi-token macaroon: extracted as single raw value, authenticates |
 | `skipsWhenMultiTokenExceedsMaxLength` | Oversized multi-token macaroon: filter chain continues without authentication attempt |
 | `passesCapabilityFromRegistryToToken` | Capability from `PaygateEndpointRegistry` is set on the unauthenticated token |
-| `passesNullCapabilityWhenConfigNotFound` | No registry config: null capability (permissive) |
+| `skipsAuthWhenConfigNotFound` | No registered paid endpoint: authentication is skipped |
 | `passesNullCapabilityWhenConfigHasEmptyCapability` | Empty capability string: null capability (permissive) |
 | `passesNullCapabilityWhenConfigHasBlankCapability` | Blank capability string: null capability (permissive) |
-| `passesNullCapabilityWhenRegistryThrowsException` | Registry exception: null capability, authentication proceeds |
+| `returns500WhenRegistryThrowsException` | Registry failure: sanitized 500 and no authentication attempt |
 | `passesNullCapabilityWhenConfigHasNullCapability` | Null capability in config: null capability (permissive) |
 
 `PaygateAuthenticationProviderTest` covers:
@@ -645,7 +648,7 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `returnsNullForNonPaygateAuthentication` | Non-L402 tokens return `null` (Spring Security contract) |
 | `authenticatesValidL402Token` | Valid token: authenticated with `ROLE_L402`, correct tokenId, serviceName, caveat attributes |
 | `throwsBadCredentialsOnValidationFailure` | `L402Exception` wrapped in `BadCredentialsException` with original cause preserved |
-| `throwsBadCredentialsWhenRawCredentialsMissing` | Already-authenticated token (no raw credentials) rejected |
+| `throwsBadCredentialsWhenComponentsMissing` | L402 token without parsed components is rejected |
 | `allowsNullServiceName` | Null service name is accepted, `serviceName` attribute omitted |
 | `passesRequestedCapabilityThroughToValidatorContext` | Requested capability from token is forwarded to `L402VerificationContext` |
 | `passesNullCapabilityWhenNotSpecified` | Null capability when token has no requested capability |
@@ -655,22 +658,21 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 
 | Test Case | What It Verifies |
 |-----------|-----------------|
-| `unauthenticatedTokenHoldsRawCredentials` | Unauthenticated state: raw values stored, no tokenId/serviceName/authorities |
+| `unauthenticatedTokenHoldsComponents` | Unauthenticated state: parsed header components and request metadata are retained |
 | `unauthenticatedTokenRedactsSensitiveValues` | Unauthenticated token redacts raw credentials in `getPrincipal()` and `getCredentials()` |
-| `unauthenticatedTokenRejectsNullMacaroon` | Null guard on macaroon |
-| `unauthenticatedTokenRejectsNullPreimage` | Null guard on preimage |
+| `unauthenticatedTokenRejectsNullComponents` | Null guard on parsed L402 header components |
 | `authenticatedTokenExposesCredentialDetails` | Authenticated state: correct tokenId, serviceName, principal, credential |
 | `authenticatedTokenHasL402Authority` | `ROLE_L402` authority present |
 | `authenticatedTokenExtractsCaveatAttributes` | Caveat key-value pairs extracted into attributes map |
 | `builtInAttributesCannotBeOverwrittenByCaveats` | Attacker-controlled caveat keys `tokenId`/`serviceName` overwritten by trusted values |
 | `authenticatedTokenWithNullServiceName` | Null service name omitted from attributes map |
 | `authenticatedTokenMapsCapabilitiesToAuthorities` | Capabilities caveat parsed into `PAYGATE_CAPABILITY_*` authorities |
-| `authenticatedTokenWithNoCapabilitiesCaveatHasOnlyRoleL402` | No capabilities caveat: only `ROLE_L402` authority |
+| `authenticatedTokenWithNoCapabilitiesCaveatHasOnlyRoleL402` | No explicit capabilities: base `ROLE_PAYMENT` and `ROLE_L402` authorities only |
 | `caveatRejectsEmptyCapabilitiesValue` | Caveat constructor rejects empty capabilities value |
-| `authenticatedTokenDeduplicatesCapabilities` | Duplicate capabilities in one caveat deduplicated |
-| `authenticatedTokenHandlesMalformedCapabilitiesValue` | Trailing commas and whitespace in capabilities handled |
-| `authenticatedTokenWithNullServiceNameSkipsCapabilityExtraction` | Null service name: no capability extraction attempted |
-| `authenticatedTokenDeduplicatesAcrossMultipleCapabilityCaveats` | Multiple capabilities caveats are merged and deduplicated into `PAYGATE_CAPABILITY_*` authorities |
+| `authenticatedTokenAddsSingleCapabilityOnce` | Explicit capability authorities are emitted once |
+| `authenticatedTokenWithNullServiceNameStillUsesExplicitCapabilities` | Explicit verified capabilities do not depend on a configured service name |
+| `l402DualEmitCaveatAndExplicitCapabilityProducesBothPrefixes` | L402 compatibility and Paygate capability authority prefixes are both emitted from the verified set |
+| `l402TwoArgDoesNotEmitCapabilityAuthoritiesWithoutResolvedCapabilities` | Raw caveat text alone is not treated as an authority source |
 
 ### Writing Your Own Tests
 

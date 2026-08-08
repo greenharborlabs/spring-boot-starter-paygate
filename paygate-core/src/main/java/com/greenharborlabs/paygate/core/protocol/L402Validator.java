@@ -23,8 +23,9 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Orchestrates L402 credential validation: parse header, check cache, verify preimage, verify
- * macaroon signature, run caveat verifiers, and cache on success.
+ * Orchestrates L402 credential validation: parse the header, decode the identifier, verify the
+ * preimage, require the root key, inspect the cache, verify the macaroon when needed, and cache on
+ * success.
  *
  * <p><strong>SECURITY INVARIANT:</strong> Preimage (proof-of-payment) MUST be verified before
  * macaroon signature on all paths. This prevents oracle attacks where an adversary without
@@ -32,11 +33,13 @@ import java.util.Set;
  */
 public final class L402Validator {
 
+  private static final System.Logger log = System.getLogger(L402Validator.class.getName());
   private static final long DEFAULT_TTL_SECONDS = 3600;
   private static final String ROUTE_CAVEAT_KEY = "route";
   private static final String METHOD_CAVEAT_KEY = "method";
   private static final String MISSING_REQUEST_CONTEXT_MESSAGE =
       "Request route and method context are required";
+  private static final String REVOKED_CREDENTIAL_MESSAGE = "Credential has been revoked";
 
   private final RootKeyStore rootKeyStore;
   private final CredentialStore credentialStore;
@@ -170,63 +173,86 @@ public final class L402Validator {
       //    macaroon/signature oracle for callers that do not possess the payment preimage.
       MacaroonIdentifier macId = MacaroonIdentifier.decode(credential.macaroon().identifier());
       byte[] tokenIdBytes = macId.tokenId();
-      verifyPreimage(credential, macId);
+      try {
+        verifyPreimage(credential, macId);
 
-      // 3. Check credential cache — verify presented credential matches cached, re-verify caveats.
-      //    Root key existence is NOT re-checked here: the credential was fully validated
-      //    (including root key + HMAC) before it entered the cache. If a root key is revoked,
-      //    the revoking code should proactively call credentialStore.revoke() to evict it.
-      L402Credential cached = credentialStore.get(tokenId);
-      if (cached != null) {
+        // 3. Require authoritative root-key state before consulting the credential cache. A cache
+        //    hit may reuse prior signature verification, but it may never outlive root-key
+        //    revocation. Proof-of-payment remains first so neither store becomes an oracle.
+        SensitiveBytes rootKeySb;
         try {
-          // A token ID identifies a cache slot, not an immutable macaroon variant. Only reuse the
-          // exact cached variant; a changed or attenuated variant must take the full verification
-          // path below. Failure there must not evict this independently valid cached credential.
-          if (credential.macaroon().equals(cached.macaroon())
-              && credential.additionalMacaroons().equals(cached.additionalMacaroons())) {
-            return verifyCachedCredential(credential, cached, context);
-          }
-        } finally {
-          cached.destroy();
-        }
-      }
-
-      // 4. Look up root key
-      SensitiveBytes rootKeySb = rootKeyStore.getRootKey(tokenIdBytes);
-      if (rootKeySb == null) {
-        throw new L402Exception(
-            ErrorCode.REVOKED_CREDENTIAL, "No root key found for token", tokenId);
-      }
-
-      // 5. Verify macaroon signature and caveats using the provided context
-      Instant now = context.getCurrentTime();
-      Set<String> effectiveCapabilities;
-      try (rootKeySb) {
-        byte[] rootKey = rootKeySb.value();
-        try {
-          effectiveCapabilities =
-              verifyMacaroon(credential.macaroon(), macId, rootKey, context, tokenId);
-        } catch (MacaroonVerificationException e) {
+          rootKeySb = rootKeyStore.getRootKey(tokenIdBytes);
+        } catch (RuntimeException e) {
+          revokeCachedCredentialAfterRootKeyFailure(tokenId);
           throw new L402Exception(
-              mapReasonToErrorCode(e.getReason()),
-              safeValidationFailureMessage(e.getReason()),
-              tokenId);
-        } finally {
-          KeyMaterial.zeroize(rootKey);
+              ErrorCode.REVOKED_CREDENTIAL, REVOKED_CREDENTIAL_MESSAGE, tokenId);
         }
+        if (rootKeySb == null) {
+          revokeCachedCredentialAfterRootKeyFailure(tokenId);
+          throw new L402Exception(
+              ErrorCode.REVOKED_CREDENTIAL, REVOKED_CREDENTIAL_MESSAGE, tokenId);
+        }
+
+        // The defensive key copy spans cache inspection and fresh validation. Exact hits use it
+        // only as an existence check; all exits still close it.
+        try (rootKeySb) {
+          // 4. Check credential cache — exact variants reuse signature verification and re-run
+          //    request-specific caveats. A token ID identifies a cache slot, not an immutable
+          //    variant, so changed or attenuated variants continue through full verification.
+          L402Credential cached = credentialStore.get(tokenId);
+          if (cached != null) {
+            try {
+              if (credential.macaroon().equals(cached.macaroon())
+                  && credential.additionalMacaroons().equals(cached.additionalMacaroons())) {
+                return verifyCachedCredential(credential, cached, context);
+              }
+            } finally {
+              cached.destroy();
+            }
+          }
+
+          // 5. Reuse the already loaded root key for full signature and caveat validation.
+          Instant now = context.getCurrentTime();
+          Set<String> effectiveCapabilities;
+          byte[] rootKey = rootKeySb.value();
+          try {
+            effectiveCapabilities =
+                verifyMacaroon(credential.macaroon(), macId, rootKey, context, tokenId);
+          } catch (MacaroonVerificationException e) {
+            throw new L402Exception(
+                mapReasonToErrorCode(e.getReason()),
+                safeValidationFailureMessage(e.getReason()),
+                tokenId);
+          } finally {
+            KeyMaterial.zeroize(rootKey);
+          }
+
+          // 6. Cache only after complete signature/caveat validation and return the verified final
+          //    capability ceiling.
+          long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
+          credentialStore.store(tokenId, credential, cacheTtl);
+
+          returningCredential = true;
+          return new ValidationResult(credential, true, effectiveCapabilities);
+        }
+      } finally {
+        KeyMaterial.zeroize(tokenIdBytes);
       }
-
-      // 6. Cache only after complete signature/caveat validation and return the verified final
-      //    capability ceiling.
-      long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
-      credentialStore.store(tokenId, credential, cacheTtl);
-
-      returningCredential = true;
-      return new ValidationResult(credential, true, effectiveCapabilities);
     } finally {
       if (!returningCredential) {
         credential.destroy();
       }
+    }
+  }
+
+  private void revokeCachedCredentialAfterRootKeyFailure(String tokenId) {
+    try {
+      credentialStore.revoke(tokenId);
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Credential cache eviction failed after root-key lookup failure ({0})",
+          e.getClass().getName());
     }
   }
 

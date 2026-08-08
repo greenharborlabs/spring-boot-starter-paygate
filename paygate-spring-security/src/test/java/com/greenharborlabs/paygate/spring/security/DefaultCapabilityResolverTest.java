@@ -64,7 +64,7 @@ class DefaultCapabilityResolverTest {
     @Test
     @DisplayName("returns empty set immediately when tokenId is null")
     void returnsEmptyForNullTokenId() {
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context = new CapabilityResolutionContext(null, SERVICE_NAME, null, Map.of());
 
       Set<String> result = resolver.resolve(context);
@@ -83,7 +83,7 @@ class DefaultCapabilityResolverTest {
     @DisplayName("returns cached capability when cache hit")
     void returnsCachedCapability() {
       when(capabilityCache.get(TOKEN_ID)).thenReturn("read");
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context = new CapabilityResolutionContext(TOKEN_ID, SERVICE_NAME, null, Map.of());
 
       Set<String> result = resolver.resolve(context);
@@ -94,7 +94,7 @@ class DefaultCapabilityResolverTest {
     @Test
     @DisplayName("skips cache when CapabilityCache is null")
     void skipsCacheWhenNull() {
-      var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(
               TOKEN_ID,
@@ -112,7 +112,7 @@ class DefaultCapabilityResolverTest {
     @DisplayName("falls through when cache returns null")
     void fallsThroughOnCacheMiss() {
       when(capabilityCache.get(TOKEN_ID)).thenReturn(null);
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context =
           new CapabilityResolutionContext(
               TOKEN_ID,
@@ -129,7 +129,7 @@ class DefaultCapabilityResolverTest {
     @DisplayName("falls through when cache throws RuntimeException")
     void fallsThroughOnCacheException() {
       when(capabilityCache.get(TOKEN_ID)).thenThrow(new RuntimeException("cache unavailable"));
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context =
           new CapabilityResolutionContext(
               TOKEN_ID,
@@ -154,7 +154,7 @@ class DefaultCapabilityResolverTest {
     void ignoresRawCapabilityCaveat() {
       var credential =
           credentialWithCaveats(List.of(new Caveat(SERVICE_NAME + "_capabilities", "read")));
-      var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(credential.tokenId(), SERVICE_NAME, credential, Map.of());
 
@@ -169,7 +169,7 @@ class DefaultCapabilityResolverTest {
       var credential =
           credentialWithCaveats(
               List.of(new Caveat(SERVICE_NAME + "_capabilities", "read,write,admin")));
-      var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(credential.tokenId(), SERVICE_NAME, credential, Map.of());
 
@@ -186,7 +186,7 @@ class DefaultCapabilityResolverTest {
               List.of(
                   new Caveat(SERVICE_NAME + "_capabilities", "read"),
                   new Caveat(SERVICE_NAME + "_capabilities", "write")));
-      var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(credential.tokenId(), SERVICE_NAME, credential, Map.of());
 
@@ -198,7 +198,7 @@ class DefaultCapabilityResolverTest {
     @Test
     @DisplayName("preserves metadata fallback when l402Credential is null")
     void skipsWhenNoCredential() {
-      var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(
               TOKEN_ID,
@@ -216,7 +216,7 @@ class DefaultCapabilityResolverTest {
     void ignoresMetadataForL402WhenServiceNameNull() {
       var credential =
           credentialWithCaveats(List.of(new Caveat(SERVICE_NAME + "_capabilities", "read")));
-      var resolver = new DefaultCapabilityResolver(null, null);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(
               credential.tokenId(),
@@ -237,7 +237,7 @@ class DefaultCapabilityResolverTest {
               List.of(
                   new Caveat("other_capabilities", "read"),
                   new Caveat("expires_at", "2099-01-01")));
-      var resolver = new DefaultCapabilityResolver(null, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(
               credential.tokenId(),
@@ -256,7 +256,7 @@ class DefaultCapabilityResolverTest {
       var credential =
           credentialWithCaveats(
               List.of(new Caveat(SERVICE_NAME + "_capabilities", "raw-capability")));
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context =
           new CapabilityResolutionContext(
               credential.tokenId(),
@@ -280,7 +280,7 @@ class DefaultCapabilityResolverTest {
     @Test
     @DisplayName("returns capability from request metadata")
     void returnsFromMetadata() {
-      var resolver = new DefaultCapabilityResolver(null, null);
+      var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(
               TOKEN_ID, null, null, Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"));
@@ -293,7 +293,7 @@ class DefaultCapabilityResolverTest {
     @Test
     @DisplayName("returns empty when metadata has no requested capability")
     void returnsEmptyWhenNoMetadata() {
-      var resolver = new DefaultCapabilityResolver(null, null);
+      var resolver = new DefaultCapabilityResolver(null);
       var context = new CapabilityResolutionContext(TOKEN_ID, null, null, Map.of());
 
       Set<String> result = resolver.resolve(context);
@@ -313,7 +313,7 @@ class DefaultCapabilityResolverTest {
     void l402BypassesAllFallbackStrategies() {
       var credential =
           credentialWithCaveats(List.of(new Caveat(SERVICE_NAME + "_capabilities", "caveat-cap")));
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context =
           new CapabilityResolutionContext(
               credential.tokenId(),
@@ -331,7 +331,7 @@ class DefaultCapabilityResolverTest {
     @DisplayName("cache still takes priority over metadata for non-L402 protocols")
     void cacheWinsOverMetadataForNonL402() {
       when(capabilityCache.get(TOKEN_ID)).thenReturn("cached-cap");
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context =
           new CapabilityResolutionContext(
               TOKEN_ID,
@@ -348,7 +348,7 @@ class DefaultCapabilityResolverTest {
     @DisplayName("returns empty when all strategies produce nothing")
     void allStrategiesEmpty() {
       when(capabilityCache.get(TOKEN_ID)).thenReturn(null);
-      var resolver = new DefaultCapabilityResolver(capabilityCache, SERVICE_NAME);
+      var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context = new CapabilityResolutionContext(TOKEN_ID, SERVICE_NAME, null, Map.of());
 
       Set<String> result = resolver.resolve(context);

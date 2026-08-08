@@ -23,7 +23,7 @@ public final class DefaultCapabilityResolver implements CapabilityResolver {
 
   private final CapabilityCache capabilityCache;
 
-  public DefaultCapabilityResolver(CapabilityCache capabilityCache, String serviceName) {
+  public DefaultCapabilityResolver(CapabilityCache capabilityCache) {
     this.capabilityCache = capabilityCache;
   }
 
