@@ -20,6 +20,8 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import java.nio.charset.StandardCharsets;
@@ -131,14 +133,18 @@ class L402ValidatorTest {
   class MandatoryBoundaryVerifierRegistration {
 
     @Test
-    @DisplayName("constructor rejects a missing route or method verifier")
-    void constructorRejectsMissingRouteOrMethodVerifier() {
+    @DisplayName("constructor rejects each missing mandatory boundary verifier")
+    void constructorRejectsMissingMandatoryBoundaryVerifier() {
       assertThatThrownBy(
               () ->
                   new L402Validator(
                       rootKeyStore,
                       credentialStore,
-                      List.of(new MethodCaveatVerifier(10)),
+                      List.of(
+                          new ServicesCaveatVerifier(10),
+                          new MethodCaveatVerifier(10),
+                          new CapabilitiesCaveatVerifier(SERVICE_NAME, 10),
+                          new ValidUntilCaveatVerifier(SERVICE_NAME)),
                       SERVICE_NAME))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("route");
@@ -148,10 +154,42 @@ class L402ValidatorTest {
                   new L402Validator(
                       rootKeyStore,
                       credentialStore,
-                      List.of(new RouteCaveatVerifier(10)),
+                      List.of(
+                          new ServicesCaveatVerifier(10),
+                          new RouteCaveatVerifier(10),
+                          new CapabilitiesCaveatVerifier(SERVICE_NAME, 10),
+                          new ValidUntilCaveatVerifier(SERVICE_NAME)),
                       SERVICE_NAME))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("method");
+
+      assertThatThrownBy(
+              () ->
+                  new L402Validator(
+                      rootKeyStore,
+                      credentialStore,
+                      List.of(
+                          new RouteCaveatVerifier(10),
+                          new MethodCaveatVerifier(10),
+                          new CapabilitiesCaveatVerifier(SERVICE_NAME, 10),
+                          new ValidUntilCaveatVerifier(SERVICE_NAME)),
+                      SERVICE_NAME))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("services");
+
+      assertThatThrownBy(
+              () ->
+                  new L402Validator(
+                      rootKeyStore,
+                      credentialStore,
+                      List.of(
+                          new ServicesCaveatVerifier(10),
+                          new RouteCaveatVerifier(10),
+                          new MethodCaveatVerifier(10),
+                          new CapabilitiesCaveatVerifier(SERVICE_NAME, 10)),
+                      SERVICE_NAME))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(SERVICE_NAME + "_valid_until");
     }
 
     @Test
@@ -162,7 +200,11 @@ class L402ValidatorTest {
                   new L402Validator(
                       rootKeyStore,
                       credentialStore,
-                      List.of(new RouteCaveatVerifier(10), new MethodCaveatVerifier(10)),
+                      List.of(
+                          new ServicesCaveatVerifier(10),
+                          new RouteCaveatVerifier(10),
+                          new MethodCaveatVerifier(10),
+                          new ValidUntilCaveatVerifier(SERVICE_NAME)),
                       SERVICE_NAME))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining(SERVICE_NAME + "_capabilities");
@@ -871,6 +913,108 @@ class L402ValidatorTest {
     }
 
     @Test
+    @DisplayName("cached credential is rejected and evicted when its root key disappears")
+    void cachedCredentialIsRejectedWhenRootKeyIsDeletedWithoutStoreEvent() {
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      try (L402Credential ignored =
+          validator.validate(validAuthHeader, boundaryContext()).credential()) {
+        rootKeyStore.revokeRootKey(tokenIdBytes);
+
+        assertThatThrownBy(() -> validator.validate(validAuthHeader, boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .extracting(error -> ((L402Exception) error).getErrorCode())
+            .isEqualTo(ErrorCode.REVOKED_CREDENTIAL);
+      }
+
+      assertThat(credentialStore.get(tokenIdHex)).isNull();
+    }
+
+    @Test
+    @DisplayName("transient root-key store failures reject safely without evicting a cache hit")
+    void transientRootKeyStoreFailureRetainsCachedCredential() {
+      L402Validator primingValidator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      try (L402Credential ignored =
+          primingValidator.validate(validAuthHeader, boundaryContext()).credential()) {
+        RootKeyStore unavailableStore =
+            new RootKeyStore() {
+              @Override
+              public GenerationResult generateRootKey() {
+                return rootKeyStore.generateRootKey();
+              }
+
+              @Override
+              public com.greenharborlabs.paygate.api.crypto.SensitiveBytes getRootKey(
+                  byte[] keyId) {
+                throw new IllegalStateException("root key store unavailable");
+              }
+
+              @Override
+              public void revokeRootKey(byte[] keyId) {
+                rootKeyStore.revokeRootKey(keyId);
+              }
+            };
+        L402Validator validator =
+            new L402Validator(unavailableStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+        assertThatThrownBy(() -> validator.validate(validAuthHeader, boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .extracting(error -> ((L402Exception) error).getErrorCode())
+            .isEqualTo(ErrorCode.LIGHTNING_UNAVAILABLE);
+      }
+
+      try (L402Credential retained = credentialStore.get(tokenIdHex)) {
+        assertThat(retained).isNotNull();
+        assertThat(retained.macaroon()).isEqualTo(macaroon);
+      }
+    }
+
+    @Test
+    @DisplayName("transient credential-cache failures reject safely without invalidating the entry")
+    void transientCredentialStoreFailureRetainsCachedCredential() {
+      L402Validator primingValidator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      try (L402Credential ignored =
+          primingValidator.validate(validAuthHeader, boundaryContext()).credential()) {
+        CredentialStore unavailableStore =
+            new CredentialStore() {
+              @Override
+              public void store(String tokenId, L402Credential credential, long ttlSeconds) {
+                credentialStore.store(tokenId, credential, ttlSeconds);
+              }
+
+              @Override
+              public L402Credential get(String tokenId) {
+                throw new IllegalStateException("credential cache unavailable");
+              }
+
+              @Override
+              public void revoke(String tokenId) {
+                credentialStore.revoke(tokenId);
+              }
+
+              @Override
+              public long activeCount() {
+                return credentialStore.activeCount();
+              }
+            };
+        L402Validator validator =
+            new L402Validator(rootKeyStore, unavailableStore, boundaryVerifiers(), SERVICE_NAME);
+
+        assertThatThrownBy(() -> validator.validate(validAuthHeader, boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .extracting(error -> ((L402Exception) error).getErrorCode())
+            .isEqualTo(ErrorCode.LIGHTNING_UNAVAILABLE);
+      }
+
+      try (L402Credential retained = credentialStore.get(tokenIdHex)) {
+        assertThat(retained).isNotNull();
+        assertThat(retained.macaroon()).isEqualTo(macaroon);
+      }
+    }
+
+    @Test
     @DisplayName("cache-hit validation result remains usable after cache revocation")
     void cacheHitValidationResultRemainsUsableAfterCacheRevocation() {
       try (var realStore = new InMemoryCredentialStore(100, 0)) {
@@ -1185,9 +1329,13 @@ class L402ValidatorTest {
               identifier,
               "https://example.com",
               List.of(
+                  new Caveat("services", SERVICE_NAME + ":0"),
                   new Caveat("route", REQUEST_ROUTE),
                   new Caveat("method", "GET,HEAD"),
-                  new Caveat(SERVICE_NAME + "_capabilities", "~")));
+                  new Caveat(SERVICE_NAME + "_capabilities", "~"),
+                  new Caveat(
+                      SERVICE_NAME + "_valid_until",
+                      Long.toString(Instant.now().plusSeconds(3600).getEpochSecond()))));
       String header = authHeaderFor(getAndHead);
       L402Validator validator =
           new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
@@ -1386,8 +1534,8 @@ class L402ValidatorTest {
     }
 
     @Test
-    @DisplayName("uses default TTL when no valid_until caveat is present")
-    void noValidUntilUsesDefaultTtl() {
+    @DisplayName("uses the mandatory valid_until caveat to bound the cache TTL")
+    void mandatoryValidUntilBoundsCacheTtl() {
       AtomicLong capturedTtl = new AtomicLong(-1);
       CredentialStore ttlCapturingStore = ttlCapturingStore(capturedTtl);
 
@@ -1396,7 +1544,7 @@ class L402ValidatorTest {
 
       validator.validate(validAuthHeader, boundaryContext());
 
-      assertThat(capturedTtl.get()).isEqualTo(3600);
+      assertThat(capturedTtl.get()).isBetween(3565L, 3570L);
     }
 
     @Test
@@ -1829,24 +1977,37 @@ class L402ValidatorTest {
   }
 
   private List<CaveatVerifier> boundaryVerifiers(CaveatVerifier... additionalVerifiers) {
-    List<CaveatVerifier> verifiers = new ArrayList<>(3 + additionalVerifiers.length);
+    List<CaveatVerifier> verifiers = new ArrayList<>(5 + additionalVerifiers.length);
+    verifiers.add(new ServicesCaveatVerifier(10));
     verifiers.add(new RouteCaveatVerifier(10));
     verifiers.add(new MethodCaveatVerifier(10));
     if (List.of(additionalVerifiers).stream()
         .noneMatch(verifier -> (SERVICE_NAME + "_capabilities").equals(verifier.getKey()))) {
       verifiers.add(new CapabilitiesCaveatVerifier(SERVICE_NAME, 50));
     }
+    if (List.of(additionalVerifiers).stream()
+        .noneMatch(verifier -> (SERVICE_NAME + "_valid_until").equals(verifier.getKey()))) {
+      verifiers.add(new ValidUntilCaveatVerifier(SERVICE_NAME));
+    }
     verifiers.addAll(List.of(additionalVerifiers));
     return List.copyOf(verifiers);
   }
 
   private List<Caveat> boundaryCaveats(Caveat... additionalCaveats) {
-    List<Caveat> caveats = new ArrayList<>(3 + additionalCaveats.length);
+    List<Caveat> caveats = new ArrayList<>(5 + additionalCaveats.length);
+    caveats.add(new Caveat("services", SERVICE_NAME + ":0"));
     caveats.add(new Caveat("route", REQUEST_ROUTE));
     caveats.add(new Caveat("method", REQUEST_METHOD));
     if (List.of(additionalCaveats).stream()
         .noneMatch(caveat -> (SERVICE_NAME + "_capabilities").equals(caveat.key()))) {
       caveats.add(new Caveat(SERVICE_NAME + "_capabilities", "~"));
+    }
+    if (List.of(additionalCaveats).stream()
+        .noneMatch(caveat -> (SERVICE_NAME + "_valid_until").equals(caveat.key()))) {
+      caveats.add(
+          new Caveat(
+              SERVICE_NAME + "_valid_until",
+              Long.toString(Instant.now().plusSeconds(3600).getEpochSecond())));
     }
     caveats.addAll(List.of(additionalCaveats));
     return List.copyOf(caveats);

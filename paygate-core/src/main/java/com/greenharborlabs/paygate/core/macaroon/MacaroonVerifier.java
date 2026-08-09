@@ -9,13 +9,17 @@ import java.util.Map;
 /**
  * Generic HMAC-chain and configured-caveat verification utilities.
  *
- * <p>This class does not verify payment preimages, require identifier version 1, unconditionally
- * require the first-party L402 boundary caveats, or apply credential-cache policy. Direct
+ * <p>This class does not verify payment preimages, require an identifier version, or apply
+ * credential-cache policy. When callers register the complete first-party L402 verifier profile, it
+ * requires the issuer's service, route, method, capability, and expiry boundaries. Direct
  * first-party L402 integrations must use {@link L402Validator}. Intentional generic-verifier users
- * must authenticate the signature and separately enforce their issuer schema and every required
- * caveat; unregistered caveat keys are skipped for delegation compatibility.
+ * may register their own schema; unregistered caveat keys are skipped for delegation compatibility.
  */
 public final class MacaroonVerifier {
+
+  private static final String SERVICES_CAVEAT_KEY = "services";
+  private static final String ROUTE_CAVEAT_KEY = "route";
+  private static final String METHOD_CAVEAT_KEY = "method";
 
   private MacaroonVerifier() {}
 
@@ -105,6 +109,8 @@ public final class MacaroonVerifier {
       List<Caveat> caveats,
       Map<String, CaveatVerifier> verifiersByKey,
       L402VerificationContext context) {
+    requireMandatoryL402Boundaries(caveats, verifiersByKey, context);
+
     Map<String, Caveat> lastSeenByKey = new HashMap<>();
     Map<String, Caveat> finalEvaluationByKey = new HashMap<>();
     for (Caveat caveat : caveats) {
@@ -150,6 +156,59 @@ public final class MacaroonVerifier {
                 + "'");
       }
     }
+  }
+
+  /**
+   * Requires every issuer boundary when the caller has configured the complete first-party L402
+   * verifier profile. Generic macaroon consumers remain free to register only their own caveat
+   * schema, while L402 callers cannot turn an omitted caveat into an unconstrained grant.
+   */
+  private static void requireMandatoryL402Boundaries(
+      List<Caveat> caveats,
+      Map<String, CaveatVerifier> verifiersByKey,
+      L402VerificationContext context) {
+    String serviceName = context.getServiceName();
+    if (serviceName == null || serviceName.isBlank()) {
+      return;
+    }
+
+    String capabilitiesKey = serviceName + "_capabilities";
+    String validUntilKey = serviceName + "_valid_until";
+    if (!hasCompleteFirstPartyL402Profile(verifiersByKey, capabilitiesKey, validUntilKey)) {
+      return;
+    }
+
+    boolean hasServices = false;
+    boolean hasRoute = false;
+    boolean hasMethod = false;
+    boolean hasCapabilities = false;
+    boolean hasValidUntil = false;
+    for (Caveat caveat : caveats) {
+      hasServices |= SERVICES_CAVEAT_KEY.equals(caveat.key());
+      hasRoute |= ROUTE_CAVEAT_KEY.equals(caveat.key());
+      hasMethod |= METHOD_CAVEAT_KEY.equals(caveat.key());
+      hasCapabilities |= capabilitiesKey.equals(caveat.key());
+      hasValidUntil |= validUntilKey.equals(caveat.key());
+    }
+
+    if (!hasServices || !hasRoute || !hasMethod || !hasCapabilities || !hasValidUntil) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET,
+          "Credential is missing a required issuer boundary caveat");
+    }
+  }
+
+  private static boolean hasCompleteFirstPartyL402Profile(
+      Map<String, CaveatVerifier> verifiersByKey, String capabilitiesKey, String validUntilKey) {
+    return verifiersByKey
+        .keySet()
+        .containsAll(
+            List.of(
+                SERVICES_CAVEAT_KEY,
+                ROUTE_CAVEAT_KEY,
+                METHOD_CAVEAT_KEY,
+                capabilitiesKey,
+                validUntilKey));
   }
 
   /**

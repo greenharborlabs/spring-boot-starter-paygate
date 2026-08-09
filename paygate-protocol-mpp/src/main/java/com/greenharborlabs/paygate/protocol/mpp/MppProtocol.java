@@ -7,10 +7,13 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.PaymentValidationException.ErrorCode;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -36,11 +39,16 @@ public final class MppProtocol implements PaymentProtocol {
   private static final String SCHEME_PREFIX = "payment ";
   private static final String REQUEST_DIGEST_KEY = "request.digest";
   private static final int MIN_SECRET_LENGTH = 32;
+  private static final Duration MIN_CHALLENGE_LIFETIME =
+      Duration.ofSeconds(SecurityBounds.MIN_LIFETIME_SECONDS);
+  private static final Duration MAX_CHALLENGE_LIFETIME =
+      Duration.ofSeconds(SecurityBounds.MAX_LIFETIME_SECONDS);
   private static final HexFormat HEX = HexFormat.of();
 
   private final SensitiveBytes challengeBindingSecret;
   private final SensitiveBytes previousChallengeBindingSecret;
   private final MppParserLimits parserLimits;
+  private final Clock clock;
 
   /**
    * Creates a new MPP protocol instance with default parser limits.
@@ -50,7 +58,18 @@ public final class MppProtocol implements PaymentProtocol {
    * @throws IllegalArgumentException if secret is shorter than 32 bytes
    */
   public MppProtocol(SensitiveBytes challengeBindingSecret) {
-    this(challengeBindingSecret, MppParserLimits.defaults(), null);
+    this(challengeBindingSecret, MppParserLimits.defaults(), null, Clock.systemUTC());
+  }
+
+  /**
+   * Creates a new MPP protocol instance with a clock used for challenge creation and expiry
+   * validation.
+   *
+   * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
+   * @param clock time source for challenge creation and expiry validation
+   */
+  public MppProtocol(SensitiveBytes challengeBindingSecret, Clock clock) {
+    this(challengeBindingSecret, MppParserLimits.defaults(), null, clock);
   }
 
   /**
@@ -62,7 +81,7 @@ public final class MppProtocol implements PaymentProtocol {
    * @throws IllegalArgumentException if secret is shorter than 32 bytes
    */
   public MppProtocol(SensitiveBytes challengeBindingSecret, MppParserLimits parserLimits) {
-    this(challengeBindingSecret, parserLimits, null);
+    this(challengeBindingSecret, parserLimits, null, Clock.systemUTC());
   }
 
   /**
@@ -77,7 +96,11 @@ public final class MppProtocol implements PaymentProtocol {
    */
   public MppProtocol(
       SensitiveBytes challengeBindingSecret, SensitiveBytes previousChallengeBindingSecret) {
-    this(challengeBindingSecret, MppParserLimits.defaults(), previousChallengeBindingSecret);
+    this(
+        challengeBindingSecret,
+        MppParserLimits.defaults(),
+        previousChallengeBindingSecret,
+        Clock.systemUTC());
   }
 
   /**
@@ -95,13 +118,35 @@ public final class MppProtocol implements PaymentProtocol {
       SensitiveBytes challengeBindingSecret,
       MppParserLimits parserLimits,
       SensitiveBytes previousChallengeBindingSecret) {
+    this(challengeBindingSecret, parserLimits, previousChallengeBindingSecret, Clock.systemUTC());
+  }
+
+  /**
+   * Creates a new MPP protocol instance with custom parser limits, optional key rotation, and an
+   * explicit time source.
+   *
+   * @param challengeBindingSecret current HMAC secret for challenge binding (minimum 32 bytes)
+   * @param parserLimits limits for JSON parser resource exhaustion protection
+   * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
+   *     bytes), or null
+   * @param clock time source for challenge creation and expiry validation
+   * @throws NullPointerException if challengeBindingSecret, parserLimits, or clock is null
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes
+   */
+  public MppProtocol(
+      SensitiveBytes challengeBindingSecret,
+      MppParserLimits parserLimits,
+      SensitiveBytes previousChallengeBindingSecret,
+      Clock clock) {
     Objects.requireNonNull(challengeBindingSecret, "challengeBindingSecret must not be null");
     Objects.requireNonNull(parserLimits, "parserLimits must not be null");
+    Objects.requireNonNull(clock, "clock must not be null");
     validateSecretLength("challengeBindingSecret", challengeBindingSecret);
     validateSecretLength("previousChallengeBindingSecret", previousChallengeBindingSecret);
     this.challengeBindingSecret = challengeBindingSecret;
     this.previousChallengeBindingSecret = previousChallengeBindingSecret;
     this.parserLimits = parserLimits;
+    this.clock = clock;
   }
 
   @Override
@@ -165,7 +210,7 @@ public final class MppProtocol implements PaymentProtocol {
 
     // RFC 3339 expires
     String expires =
-        DateTimeFormatter.ISO_INSTANT.format(Instant.now().plusSeconds(context.timeoutSeconds()));
+        DateTimeFormatter.ISO_INSTANT.format(clock.instant().plusSeconds(context.timeoutSeconds()));
 
     // Handle opaque
     String opaqueB64 = null;
@@ -325,19 +370,30 @@ public final class MppProtocol implements PaymentProtocol {
             ErrorCode.INVALID, "Challenge binding verification failed", credential.tokenId());
       }
 
-      // 3. Expiry check
-      if (expires != null) {
-        Instant expiresInstant;
-        try {
-          expiresInstant = Instant.parse(expires);
-        } catch (DateTimeParseException e) {
-          throw new PaymentValidationException(
-              ErrorCode.INVALID, "Invalid expires timestamp format", credential.tokenId());
-        }
-        if (Instant.now().isAfter(expiresInstant)) {
-          throw new PaymentValidationException(
-              ErrorCode.INVALID, "Credential has expired", credential.tokenId());
-        }
+      // 3. Expiry check. Expiry is HMAC-bound above and is mandatory for replay protection.
+      if (expires == null || expires.isBlank()) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID, "Credential expiry is required", credential.tokenId());
+      }
+      Instant expiresInstant;
+      try {
+        expiresInstant = Instant.parse(expires);
+      } catch (DateTimeParseException e) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID, "Invalid expires timestamp format", credential.tokenId());
+      }
+      Instant now = clock.instant();
+      if (expiresInstant.isBefore(now)) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID, "Credential has expired", credential.tokenId());
+      }
+      Duration lifetime = Duration.between(now, expiresInstant);
+      if (lifetime.compareTo(MIN_CHALLENGE_LIFETIME) < 0
+          || lifetime.compareTo(MAX_CHALLENGE_LIFETIME) > 0) {
+        throw new PaymentValidationException(
+            ErrorCode.INVALID,
+            "Credential expiry is outside supported lifetime",
+            credential.tokenId());
       }
 
       // 4. Defense-in-depth: method must be "lightning"

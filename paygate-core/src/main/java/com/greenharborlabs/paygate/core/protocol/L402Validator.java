@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.core.protocol;
 
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
+import com.greenharborlabs.paygate.core.credential.EvictionReason;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
@@ -37,6 +38,7 @@ public final class L402Validator {
   private static final long DEFAULT_TTL_SECONDS = 3600;
   private static final String ROUTE_CAVEAT_KEY = "route";
   private static final String METHOD_CAVEAT_KEY = "method";
+  private static final String SERVICES_CAVEAT_KEY = "services";
   private static final String MISSING_REQUEST_CONTEXT_MESSAGE =
       "Request route and method context are required";
   private static final String REVOKED_CREDENTIAL_MESSAGE = "Credential has been revoked";
@@ -61,6 +63,7 @@ public final class L402Validator {
     List<CaveatVerifier> verifiers =
         List.copyOf(Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
     this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(verifiers);
+    requireBoundaryVerifier(SERVICES_CAVEAT_KEY);
     requireBoundaryVerifier(ROUTE_CAVEAT_KEY);
     requireBoundaryVerifier(METHOD_CAVEAT_KEY);
     CaveatVerifier capabilityVerifier = requireBoundaryVerifier(capabilityCaveatKey);
@@ -69,6 +72,7 @@ public final class L402Validator {
           "Required capability caveat verifier must be a CapabilitiesCaveatVerifier");
     }
     this.capabilitiesCaveatVerifier = typedVerifier;
+    requireBoundaryVerifier(serviceName + "_valid_until");
   }
 
   /**
@@ -183,12 +187,13 @@ public final class L402Validator {
         try {
           rootKeySb = rootKeyStore.getRootKey(tokenIdBytes);
         } catch (RuntimeException e) {
-          revokeCachedCredentialAfterRootKeyFailure(tokenId);
           throw new L402Exception(
-              ErrorCode.REVOKED_CREDENTIAL, REVOKED_CREDENTIAL_MESSAGE, tokenId);
+              ErrorCode.LIGHTNING_UNAVAILABLE,
+              "Credential validation is temporarily unavailable",
+              tokenId);
         }
         if (rootKeySb == null) {
-          revokeCachedCredentialAfterRootKeyFailure(tokenId);
+          applyCacheInvalidity(tokenId, EvictionReason.Invalidity.PERMANENT);
           throw new L402Exception(
               ErrorCode.REVOKED_CREDENTIAL, REVOKED_CREDENTIAL_MESSAGE, tokenId);
         }
@@ -199,7 +204,15 @@ public final class L402Validator {
           // 4. Check credential cache — exact variants reuse signature verification and re-run
           //    request-specific caveats. A token ID identifies a cache slot, not an immutable
           //    variant, so changed or attenuated variants continue through full verification.
-          L402Credential cached = credentialStore.get(tokenId);
+          L402Credential cached;
+          try {
+            cached = credentialStore.get(tokenId);
+          } catch (RuntimeException e) {
+            throw new L402Exception(
+                ErrorCode.LIGHTNING_UNAVAILABLE,
+                "Credential validation is temporarily unavailable",
+                tokenId);
+          }
           if (cached != null) {
             try {
               if (credential.macaroon().equals(cached.macaroon())
@@ -245,13 +258,16 @@ public final class L402Validator {
     }
   }
 
-  private void revokeCachedCredentialAfterRootKeyFailure(String tokenId) {
+  private void applyCacheInvalidity(String tokenId, EvictionReason.Invalidity invalidity) {
+    if (invalidity != EvictionReason.Invalidity.PERMANENT) {
+      return;
+    }
     try {
       credentialStore.revoke(tokenId);
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
-          "Credential cache eviction failed after root-key lookup failure ({0})",
+          "Credential cache eviction failed after permanent invalidity ({0})",
           e.getClass().getName());
     }
   }
@@ -280,7 +296,7 @@ public final class L402Validator {
       verifyCurrentIdentifierVersion(cachedIdentifier);
       verifyRequiredBoundaryCaveats(cached.macaroon().caveats());
     } catch (IllegalArgumentException | MacaroonVerificationException e) {
-      credentialStore.revoke(tokenId);
+      applyCacheInvalidity(tokenId, EvictionReason.Invalidity.PERMANENT);
       VerificationFailureReason reason =
           e instanceof MacaroonVerificationException verificationException
               ? verificationException.getReason()
@@ -294,7 +310,7 @@ public final class L402Validator {
     } catch (MacaroonVerificationException e) {
       if (e.getReason() == VerificationFailureReason.CREDENTIAL_EXPIRED
           || e.getReason() == VerificationFailureReason.CAVEAT_ESCALATION) {
-        credentialStore.revoke(tokenId);
+        applyCacheInvalidity(tokenId, EvictionReason.Invalidity.PERMANENT);
       }
       throw new L402Exception(
           mapReasonToErrorCode(e.getReason()),
@@ -363,18 +379,23 @@ public final class L402Validator {
   }
 
   private void verifyRequiredBoundaryCaveats(List<Caveat> caveats) {
+    boolean hasServices = false;
     boolean hasRoute = false;
     boolean hasMethod = false;
     boolean hasCapabilityCeiling = false;
+    boolean hasValidUntil = false;
+    String validUntilCaveatKey = serviceName + "_valid_until";
     for (Caveat caveat : caveats) {
+      hasServices |= SERVICES_CAVEAT_KEY.equals(caveat.key());
       hasRoute |= ROUTE_CAVEAT_KEY.equals(caveat.key());
       hasMethod |= METHOD_CAVEAT_KEY.equals(caveat.key());
       hasCapabilityCeiling |= capabilityCaveatKey.equals(caveat.key());
+      hasValidUntil |= validUntilCaveatKey.equals(caveat.key());
     }
-    if (!hasRoute || !hasMethod || !hasCapabilityCeiling) {
+    if (!hasServices || !hasRoute || !hasMethod || !hasCapabilityCeiling || !hasValidUntil) {
       throw new MacaroonVerificationException(
           VerificationFailureReason.CAVEAT_NOT_MET,
-          "Credential is missing a required request boundary caveat");
+          "Credential is missing a required issuer boundary caveat");
     }
   }
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.HexFormat;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -76,6 +77,29 @@ class MacaroonIdentifierTest {
 
     assertThat(Arrays.copyOfRange(encoded, 2, 34)).isEqualTo(paymentHash);
     assertThat(Arrays.copyOfRange(encoded, 34, 66)).isEqualTo(tokenId);
+  }
+
+  @Test
+  @DisplayName("version 0 preserves the exact 66-byte Go L402 identifier layout")
+  void versionZeroMatchesGoL402IdentifierVector() {
+    byte[] paymentHash =
+        HexFormat.of().parseHex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    byte[] tokenId =
+        HexFormat.of().parseHex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    byte[] expected =
+        HexFormat.of()
+            .parseHex(
+                "0000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+    byte[] encoded =
+        MacaroonIdentifier.encode(new MacaroonIdentifier(CURRENT_VERSION, paymentHash, tokenId));
+    MacaroonIdentifier decoded = MacaroonIdentifier.decode(expected);
+
+    assertThat(encoded).hasSize(IDENTIFIER_LENGTH).isEqualTo(expected);
+    assertThat(decoded.version()).isZero();
+    assertThat(decoded.paymentHash()).isEqualTo(paymentHash);
+    assertThat(decoded.tokenId()).isEqualTo(tokenId);
   }
 
   // --- Decode round-trips ---
@@ -206,18 +230,20 @@ class MacaroonIdentifierTest {
   }
 
   @Test
-  @DisplayName("decode() round-trips issuer-authenticated version 1")
+  @DisplayName("decode(encode(id)) round-trips current version 1 identifiers")
   void decodeRoundTripsVersionOne() {
-    byte[] raw = new byte[IDENTIFIER_LENGTH];
-    raw[0] = 0x00;
-    raw[1] = 0x01;
+    byte[] paymentHash = randomBytes(32);
+    byte[] tokenId = randomBytes(32);
+    MacaroonIdentifier original = new MacaroonIdentifier(1, paymentHash, tokenId);
 
-    assertThat(MacaroonIdentifier.decode(raw).version()).isEqualTo(1);
+    MacaroonIdentifier decoded = MacaroonIdentifier.decode(MacaroonIdentifier.encode(original));
+
+    assertThat(decoded).isEqualTo(original);
   }
 
   @ParameterizedTest
   @ValueSource(ints = {2, 255, 256, 65535})
-  @DisplayName("decode() rejects versions 2 through 65535 as unsupported")
+  @DisplayName("decode() rejects unknown versions as malformed input")
   void decodeRejectsUnsupportedVersion(int version) {
     byte[] raw = new byte[IDENTIFIER_LENGTH];
     raw[0] = (byte) (version >>> 8);
@@ -225,7 +251,7 @@ class MacaroonIdentifierTest {
 
     assertThatThrownBy(() -> MacaroonIdentifier.decode(raw))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("version");
+        .hasMessage("Unsupported identifier version: " + version);
   }
 
   // --- Decode: wrong-length input ---
