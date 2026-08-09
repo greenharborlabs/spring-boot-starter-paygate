@@ -16,6 +16,7 @@ import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -197,6 +198,22 @@ class PaygateChallengeServiceTest {
       assertThat(response.getStatus()).isEqualTo(402);
       verify(lightningBackend, times(1)).createInvoice(anyLong(), anyString());
       assertThat(trackingStore.generateRootKeyInvocations).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("undeliverable challenge root key can be revoked after protocol formatting fails")
+    void discardChallengeRevokesUndeliverableRootKey() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      var trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+
+      ChallengeContext context = service.createChallenge(request, config);
+      service.discardChallenge(context);
+
+      assertThat(trackingStore.lastRevokedTokenId)
+          .isEqualTo(HexFormat.of().parseHex(context.tokenId()));
     }
 
     @Test
@@ -407,6 +424,27 @@ class PaygateChallengeServiceTest {
   class PricingStrategy {
 
     @Test
+    @DisplayName("rejects configured prices outside the inclusive security range")
+    void rejectsOutOfRangeConfiguredPrice() {
+      assertThatThrownBy(
+              () ->
+                  new PaygateEndpointConfig(
+                      "GET", "/api/protected", 0, TIMEOUT_SECONDS, DESCRIPTION, "", ""))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () ->
+                  new PaygateEndpointConfig(
+                      "GET",
+                      "/api/protected",
+                      SecurityBounds.MAX_PRICE_SATS + 1,
+                      TIMEOUT_SECONDS,
+                      DESCRIPTION,
+                      "",
+                      ""))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("uses pricing strategy bean when configured and found")
     void usesPricingStrategyBean() throws Exception {
       when(lightningBackend.isHealthy()).thenReturn(true);
@@ -517,6 +555,63 @@ class PaygateChallengeServiceTest {
       assertThat(trackingStore.generateRootKeyInvocations)
           .as("Root key generation must not happen when pricing resolution fails")
           .isZero();
+    }
+
+    @Test
+    @DisplayName("rejects an out-of-range dynamic price before Lightning or root-key allocation")
+    void rejectsOutOfRangeDynamicPriceBeforeSideEffects() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      PaygatePricingStrategy strategy = (req, defaultPrice) -> SecurityBounds.MAX_PRICE_SATS + 1;
+      when(applicationContext.getBean("invalidStrategy", PaygatePricingStrategy.class))
+          .thenReturn(strategy);
+
+      PaygateEndpointConfig configWithStrategy =
+          new PaygateEndpointConfig(
+              "GET",
+              "/api/protected",
+              PRICE_SATS,
+              TIMEOUT_SECONDS,
+              DESCRIPTION,
+              "invalidStrategy",
+              "");
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+
+      assertThatThrownBy(() -> service.createChallenge(request, configWithStrategy))
+          .isInstanceOf(PaygateLightningUnavailableException.class)
+          .hasCauseInstanceOf(IllegalArgumentException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
+    }
+
+    @Test
+    @DisplayName("rejects checked-arithmetic dynamic pricing failures before side effects")
+    void rejectsCheckedArithmeticDynamicPriceBeforeSideEffects() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      PaygatePricingStrategy strategy = (req, defaultPrice) -> Math.addExact(Long.MAX_VALUE, 1);
+      when(applicationContext.getBean("overflowingStrategy", PaygatePricingStrategy.class))
+          .thenReturn(strategy);
+
+      PaygateEndpointConfig configWithStrategy =
+          new PaygateEndpointConfig(
+              "GET",
+              "/api/protected",
+              PRICE_SATS,
+              TIMEOUT_SECONDS,
+              DESCRIPTION,
+              "overflowingStrategy",
+              "");
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+
+      assertThatThrownBy(() -> service.createChallenge(request, configWithStrategy))
+          .isInstanceOf(PaygateLightningUnavailableException.class)
+          .hasCauseInstanceOf(IllegalArgumentException.class)
+          .hasRootCauseInstanceOf(ArithmeticException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
     }
   }
 
@@ -1008,6 +1103,7 @@ class PaygateChallengeServiceTest {
 
     volatile SensitiveBytes lastSensitiveBytes;
     volatile byte[] lastRawKeyArray;
+    volatile byte[] lastRevokedTokenId;
     int generateRootKeyInvocations;
 
     @Override
@@ -1034,7 +1130,7 @@ class PaygateChallengeServiceTest {
 
     @Override
     public void revokeRootKey(byte[] keyId) {
-      // no-op
+      this.lastRevokedTokenId = keyId.clone();
     }
   }
 }

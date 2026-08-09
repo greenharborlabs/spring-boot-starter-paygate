@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
@@ -217,7 +218,9 @@ public class PaygateChallengeService {
     }
     try {
       String clientIp =
-          clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+          clientIpResolver != null
+              ? clientIpResolver.resolveRateLimitIdentity(request)
+              : request.getRemoteAddr();
       if (!limiter.tryAcquire(clientIp)) {
         throw new PaygateRateLimitedException("Rate limit exceeded for client");
       }
@@ -264,8 +267,9 @@ public class PaygateChallengeService {
       String requestMethod)
       throws PaygateLightningUnavailableException {
 
-    // Resolve effective price before creating any root key material.
+    // Resolve and validate the effective price before any persistent or network side effect.
     long effectivePrice = resolvePrice(request, config);
+    validatePrice(effectivePrice);
 
     // Create Lightning invoice before root key generation so invoice failures do not allocate
     // sensitive key material.
@@ -283,69 +287,77 @@ public class PaygateChallengeService {
       byte[] rootKey = generationResult.rootKey().value();
       try {
         byte[] tokenId = generationResult.tokenId();
-
-        // Record invoice creation in earnings tracker
+        boolean contextCreated = false;
         try {
-          if (earningsTracker != null) {
-            earningsTracker.recordInvoiceCreated();
-          }
-        } catch (Exception e) {
-          log.log(
-              System.Logger.Level.WARNING,
-              "Failed to record invoice creation in earnings tracker: {0}",
-              e.getMessage());
-        }
-
-        // Build opaque map for test preimage if present
-        Map<String, String> opaque = null;
-        byte[] invoicePreimage = invoice.preimage();
-        if (invoicePreimage != null) {
-          opaque = new LinkedHashMap<>();
-          opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
-        }
-
-        String tokenIdHex = HexFormat.of().formatHex(tokenId);
-        String requestDigest = RequestDigestSupport.digestAttribute(request);
-
-        // Clone rootKey so ChallengeContext has its own copy before we zeroize
-        byte[] rootKeyClone = rootKey.clone();
-        try {
-          var challengeContext =
-              new ChallengeContext(
-                  invoice.paymentHash(),
-                  tokenIdHex,
-                  invoice.bolt11(),
-                  effectivePrice,
-                  config.description(),
-                  serviceName,
-                  config.timeoutSeconds(),
-                  config.capability(),
-                  rootKeyClone,
-                  opaque,
-                  requestDigest,
-                  routePattern,
-                  requestMethod,
-                  request.getQueryString(),
-                  request.getQueryString() != null);
-
-          // Populate capability cache after successful invoice creation
-          if (capabilityCache != null
-              && config.capability() != null
-              && !config.capability().isEmpty()) {
-            try {
-              capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
-            } catch (RuntimeException e) {
-              log.log(
-                  System.Logger.Level.WARNING,
-                  "Failed to store capability in cache for token {0}: {1}",
-                  tokenIdHex,
-                  e.getMessage());
+          // Record invoice creation in earnings tracker
+          try {
+            if (earningsTracker != null) {
+              earningsTracker.recordInvoiceCreated();
             }
+          } catch (Exception e) {
+            log.log(
+                System.Logger.Level.WARNING,
+                "Failed to record invoice creation in earnings tracker: {0}",
+                e.getMessage());
           }
 
-          return challengeContext;
+          // Build opaque map for test preimage if present
+          Map<String, String> opaque = null;
+          byte[] invoicePreimage = invoice.preimage();
+          if (invoicePreimage != null) {
+            opaque = new LinkedHashMap<>();
+            opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
+          }
+
+          String tokenIdHex = HexFormat.of().formatHex(tokenId);
+          String requestDigest = RequestDigestSupport.digestAttribute(request);
+
+          // Clone rootKey so ChallengeContext has its own copy before we zeroize
+          byte[] rootKeyClone = rootKey.clone();
+          try {
+            var challengeContext =
+                new ChallengeContext(
+                    invoice.paymentHash(),
+                    tokenIdHex,
+                    invoice.bolt11(),
+                    effectivePrice,
+                    config.description(),
+                    serviceName,
+                    config.timeoutSeconds(),
+                    config.capability(),
+                    rootKeyClone,
+                    opaque,
+                    requestDigest,
+                    routePattern,
+                    requestMethod,
+                    request.getQueryString(),
+                    request.getQueryString() != null);
+
+            // Populate capability cache after successful invoice creation
+            if (capabilityCache != null
+                && config.capability() != null
+                && !config.capability().isEmpty()) {
+              try {
+                capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
+              } catch (RuntimeException e) {
+                log.log(
+                    System.Logger.Level.WARNING,
+                    "Failed to store capability in cache for token {0}: {1}",
+                    tokenIdHex,
+                    e.getMessage());
+              }
+            }
+
+            contextCreated = true;
+            return challengeContext;
+          } finally {
+            KeyMaterial.zeroize(rootKeyClone);
+          }
         } finally {
-          KeyMaterial.zeroize(rootKeyClone);
+          if (!contextCreated) {
+            revokeGeneratedRootKey(tokenId);
+          }
+          KeyMaterial.zeroize(tokenId);
         }
       } finally {
         KeyMaterial.zeroize(rootKey);
@@ -381,6 +393,51 @@ public class PaygateChallengeService {
         return config.priceSats();
       }
     }
-    return strategy.calculatePrice(request, config.priceSats());
+    try {
+      return strategy.calculatePrice(request, config.priceSats());
+    } catch (ArithmeticException e) {
+      // Dynamic pricing implementations commonly use Math.*Exact. Treat arithmetic failure as an
+      // invalid price calculation and let the outer fail-closed path return 503 before minting.
+      throw new IllegalArgumentException("Dynamic price calculation failed", e);
+    }
+  }
+
+  private static void validatePrice(long priceSats) {
+    if (!SecurityBounds.isValidPrice(priceSats)) {
+      throw new IllegalArgumentException(
+          "Resolved price must be between "
+              + SecurityBounds.MIN_PRICE_SATS
+              + " and "
+              + SecurityBounds.MAX_PRICE_SATS);
+    }
+  }
+
+  /**
+   * Revokes challenge state that could not be safely delivered to the client.
+   *
+   * <p>This is public for the servlet and Spring Security integrations to call after every enabled
+   * protocol declined or failed to format a challenge. It intentionally accepts the
+   * service-produced context rather than a token ID supplied by a request.
+   */
+  public void discardChallenge(ChallengeContext challengeContext) {
+    Objects.requireNonNull(challengeContext, "challengeContext must not be null");
+    byte[] tokenId = HexFormat.of().parseHex(challengeContext.tokenId());
+    try {
+      revokeGeneratedRootKey(tokenId);
+    } finally {
+      KeyMaterial.zeroize(tokenId);
+    }
+  }
+
+  private void revokeGeneratedRootKey(byte[] tokenId) {
+    try {
+      rootKeyStore.revokeRootKey(tokenId);
+    } catch (RuntimeException e) {
+      // Retaining unusable credentials is safer than surfacing an internal root-key-store detail.
+      log.log(
+          System.Logger.Level.WARNING,
+          "Failed to revoke undeliverable challenge root key; failing request closed: {0}",
+          e.getClass().getSimpleName());
+    }
   }
 }

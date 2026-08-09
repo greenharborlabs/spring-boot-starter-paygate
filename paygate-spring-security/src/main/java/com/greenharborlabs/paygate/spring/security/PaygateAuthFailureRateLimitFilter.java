@@ -141,7 +141,7 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
    */
   private boolean tryAcquireRateLimit(HttpServletRequest request) {
     try {
-      return rateLimiter.tryAcquire(resolveClientIp(request));
+      return rateLimiter.tryAcquire(resolveRateLimitIdentity(request));
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -153,7 +153,7 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
 
   private void consumeRateLimitPenalty(HttpServletRequest request) {
     try {
-      rateLimiter.tryAcquire(resolveClientIp(request));
+      rateLimiter.tryAcquire(resolveRateLimitIdentity(request));
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -162,8 +162,10 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
     }
   }
 
-  private String resolveClientIp(HttpServletRequest request) {
-    return clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+  private String resolveRateLimitIdentity(HttpServletRequest request) {
+    return clientIpResolver != null
+        ? clientIpResolver.resolveRateLimitIdentity(request)
+        : request.getRemoteAddr();
   }
 
   private boolean matchesAnyProtocol(String authHeader) {

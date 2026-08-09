@@ -491,6 +491,23 @@ class MppProtocolTest {
       assertThatThrownBy(() -> protocol.parseCredential(null))
           .isInstanceOf(NullPointerException.class);
     }
+
+    @Test
+    void mapsMalformedParserInputToSafeMalformedFailure() {
+      String bearerMarker = "mpp-bearer-secret-9c4a7e";
+
+      assertThatThrownBy(() -> protocol.parseCredential("Payment " + bearerMarker))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              error -> {
+                PaymentValidationException failure = (PaymentValidationException) error;
+                assertThat(failure.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+                assertThat(failure.getMessage())
+                    .isEqualTo("Payment validation failed: MALFORMED")
+                    .doesNotContain(bearerMarker);
+                assertThat(failure.getCause()).isNull();
+              });
+    }
   }
 
   // --- validate() ---
@@ -594,6 +611,7 @@ class MppProtocolTest {
                   assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
                   assertThat(pve.getMessage()).isEqualTo("Payment validation failed: INVALID");
                   assertThat(pve.getCause()).isNull();
+                  assertThat(pve.getMessage()).doesNotContain(invalidValue);
                 });
       }
     }

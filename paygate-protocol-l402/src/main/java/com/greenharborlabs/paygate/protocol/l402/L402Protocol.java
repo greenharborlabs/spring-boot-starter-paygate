@@ -92,6 +92,10 @@ public class L402Protocol implements PaymentProtocol {
       }
     } catch (L402Exception e) {
       throw mapL402Exception(e);
+    } catch (RuntimeException e) {
+      // A failure while handling attacker-controlled header data is malformed input, never an
+      // implementation detail that can escape to a response.
+      throw malformedCredential();
     }
   }
 
@@ -174,6 +178,10 @@ public class L402Protocol implements PaymentProtocol {
       result = validator.validate(metadata.rawAuthorizationHeader(), context);
     } catch (L402Exception e) {
       throw mapL402Exception(e);
+    } catch (RuntimeException e) {
+      // Validator implementation failures cannot be attributed safely to the credential. Treat
+      // them as transient service failures and keep both the cause and header out of the response.
+      throw unavailableValidationService();
     } finally {
       if (result != null && result.credential() != null) {
         result.credential().destroy();
@@ -204,6 +212,17 @@ public class L402Protocol implements PaymentProtocol {
         };
     return new PaymentValidationException(
         mapped, safeFailureMessage(e.getErrorCode()), e.getTokenId());
+  }
+
+  private static PaymentValidationException malformedCredential() {
+    return new PaymentValidationException(
+        PaymentValidationException.ErrorCode.MALFORMED, "Malformed L402 credential");
+  }
+
+  private static PaymentValidationException unavailableValidationService() {
+    return new PaymentValidationException(
+        PaymentValidationException.ErrorCode.UNAVAILABLE,
+        "Lightning validation service is unavailable");
   }
 
   private static String safeFailureMessage(ErrorCode errorCode) {

@@ -152,6 +152,38 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
+  void rejectsPresentedUnsupportedCredentialWithoutCreatingChallengeState() throws Exception {
+    request.addHeader("Authorization", "Bearer opaque-credential");
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry, never()).resolve(any(String.class), any(String.class));
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
+  @Test
+  void rejectsBlankPresentedCredentialWithoutCreatingChallengeState() throws Exception {
+    request.addHeader("Authorization", "   ");
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry, never()).resolve(any(String.class), any(String.class));
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
+  @Test
   void headChallengeUsesInheritedGetPolicyCanonicalRouteAndActualHeadMethod() throws Exception {
     request.setMethod("HEAD");
     request.setRequestURI("/shop/api/orders/42");
@@ -576,7 +608,29 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
-  void emptyProtocolListProducesNoWwwAuthenticateHeader() throws Exception {
+  void oneFormatterFailurePreservesAnotherUsableChallenge() throws Exception {
+    PaymentProtocol successfulProtocol = mock(PaymentProtocol.class);
+    when(successfulProtocol.formatChallenge(any()))
+        .thenReturn(new ChallengeResponse("L402 usable", "L402", Map.of()));
+    PaymentProtocol failingProtocol = mock(PaymentProtocol.class);
+    when(failingProtocol.formatChallenge(any())).thenThrow(new IllegalStateException("secret"));
+    var multiEntryPoint =
+        new PaygateAuthenticationEntryPoint(
+            challengeService, endpointRegistry, List.of(successfulProtocol, failingProtocol));
+
+    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
+
+    multiEntryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getHeaders("WWW-Authenticate")).containsExactly("L402 usable");
+    assertThat(response.getContentAsString()).doesNotContain("secret");
+    verify(challengeService, never()).discardChallenge(any());
+  }
+
+  @Test
+  void noSafeChallengeDiscardsGeneratedStateAndReturnsUnavailable() throws Exception {
     var emptyEntryPoint =
         new PaygateAuthenticationEntryPoint(challengeService, endpointRegistry, List.of());
 
@@ -585,8 +639,9 @@ class PaygateAuthenticationEntryPointTest {
 
     emptyEntryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getStatus()).isEqualTo(503);
     assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+    verify(challengeService).discardChallenge(TEST_CONTEXT);
   }
 
   private static final class ThrowingBodyRequest extends MockHttpServletRequest {

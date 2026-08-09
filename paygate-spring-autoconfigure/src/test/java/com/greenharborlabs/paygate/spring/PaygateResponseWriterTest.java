@@ -297,6 +297,8 @@ class PaygateResponseWriterTest {
 
     assertThat(response.getStatus()).isEqualTo(429);
     assertThat(response.getHeader("Retry-After")).isEqualTo("1");
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -311,6 +313,8 @@ class PaygateResponseWriterTest {
     PaygateResponseWriter.writeLightningUnavailable(response);
 
     assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -337,6 +341,8 @@ class PaygateResponseWriterTest {
     PaygateResponseWriter.writeMalformedUri(response);
 
     assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -349,6 +355,8 @@ class PaygateResponseWriterTest {
     PaygateResponseWriter.writeRequestBodyTooLarge(response);
 
     assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(

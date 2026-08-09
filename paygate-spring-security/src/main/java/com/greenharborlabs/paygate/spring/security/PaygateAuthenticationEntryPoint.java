@@ -34,6 +34,7 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
 
   private static final System.Logger log =
       System.getLogger(PaygateAuthenticationEntryPoint.class.getName());
+  private static final String AUTHORIZATION_HEADER = "Authorization";
   private final PaygateChallengeService challengeService;
   private final PaygateEndpointRegistry endpointRegistry;
   private final List<PaymentProtocol> protocols;
@@ -58,6 +59,14 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       AuthenticationException authException)
       throws IOException {
     try {
+      // The entry point is only allowed to mint challenge state for an absent credential. The
+      // authentication filter handles recognized payment credentials; a header reaching here is
+      // therefore unsupported or malformed and must not trigger invoice or root-key work.
+      if (request.getHeader(AUTHORIZATION_HEADER) != null) {
+        PaygateResponseWriter.writeMethodUnsupported(response, "Unsupported payment credential");
+        return;
+      }
+
       String method = request.getMethod();
       String path;
       try {
@@ -101,7 +110,22 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
               PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
       List<ChallengeResponse> challenges = new ArrayList<>();
       for (PaymentProtocol protocol : protocols) {
-        challenges.add(protocol.formatChallenge(challengeContext));
+        try {
+          ChallengeResponse challenge = protocol.formatChallenge(challengeContext);
+          if (challenge != null) {
+            challenges.add(challenge);
+          }
+        } catch (RuntimeException e) {
+          // Do not expose formatter details; another protocol may still issue a usable challenge.
+          log.log(
+              System.Logger.Level.WARNING,
+              "Payment challenge formatter failed; attempting remaining enabled protocols");
+        }
+      }
+      if (challenges.isEmpty()) {
+        challengeService.discardChallenge(challengeContext);
+        PaygateResponseWriter.writeLightningUnavailable(response);
+        return;
       }
       PaygateResponseWriter.writePaymentRequired(response, challengeContext, challenges);
 

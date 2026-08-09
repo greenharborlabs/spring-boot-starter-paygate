@@ -34,7 +34,7 @@ public final class PaygateResponseWriter {
   public static void writeMalformedHeader(
       HttpServletResponse response, String message, String tokenId) throws IOException {
     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     String tokenDetail = tokenId != null ? tokenId : "";
     response
         .getWriter()
@@ -55,8 +55,9 @@ public final class PaygateResponseWriter {
   public static void writeValidationError(
       HttpServletResponse response, ErrorCode errorCode, String message, String tokenId)
       throws IOException {
-    response.setStatus(errorCode.getHttpStatus());
-    response.setContentType("application/json");
+    int status = validationStatus(errorCode);
+    response.setStatus(status);
+    setSafeErrorHeaders(response, "application/json");
     String tokenDetail = tokenId != null ? tokenId : "";
     String clientMessage = "Invalid L402 credential";
     response
@@ -65,7 +66,7 @@ public final class PaygateResponseWriter {
             """
                 {"code": %d, "error": "%s", "message": "%s", "details": {"token_id": "%s"}}"""
                 .formatted(
-                    errorCode.getHttpStatus(),
+                    status,
                     errorCode.name(),
                     JsonEscaper.escape(clientMessage),
                     JsonEscaper.escape(tokenDetail)));
@@ -75,7 +76,7 @@ public final class PaygateResponseWriter {
   public static void writeRateLimited(HttpServletResponse response) throws IOException {
     response.setStatus(429);
     response.setHeader("Retry-After", "1");
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -86,7 +87,7 @@ public final class PaygateResponseWriter {
   /** Writes a 503 Service Unavailable response when the Lightning backend is down. */
   public static void writeLightningUnavailable(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -108,14 +109,14 @@ public final class PaygateResponseWriter {
   /** Writes a 400 response for malformed/invalid request URI input. */
   public static void writeMalformedUri(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response.getWriter().write(MALFORMED_URI_BODY);
   }
 
   /** Writes a 400 response when request-body digest binding input exceeds configured bounds. */
   public static void writeRequestBodyTooLarge(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -161,6 +162,7 @@ public final class PaygateResponseWriter {
       throws IOException {
     response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
     response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
     for (ChallengeResponse challenge : challenges) {
       response.addHeader("WWW-Authenticate", challenge.wwwAuthenticateHeader());
     }
@@ -272,6 +274,7 @@ public final class PaygateResponseWriter {
     int status = exception.getHttpStatus();
     response.setStatus(status);
     response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
 
     if (status == HttpServletResponse.SC_PAYMENT_REQUIRED && challenges != null) {
       for (ChallengeResponse challenge : challenges) {
@@ -325,5 +328,23 @@ public final class PaygateResponseWriter {
       case Boolean b -> sb.append(b);
       default -> sb.append('"').append(JsonEscaper.escape(value.toString())).append('"');
     }
+  }
+
+  /** Applies headers required for client-safe error responses. */
+  private static void setSafeErrorHeaders(HttpServletResponse response, String contentType) {
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setContentType(contentType);
+  }
+
+  /**
+   * Maps legacy protocol validation categories to the public credential failure status contract.
+   */
+  private static int validationStatus(ErrorCode errorCode) {
+    return switch (errorCode) {
+      case MALFORMED_HEADER -> HttpServletResponse.SC_BAD_REQUEST;
+      case LIGHTNING_UNAVAILABLE -> HttpServletResponse.SC_SERVICE_UNAVAILABLE;
+      default -> HttpServletResponse.SC_PAYMENT_REQUIRED;
+    };
   }
 }

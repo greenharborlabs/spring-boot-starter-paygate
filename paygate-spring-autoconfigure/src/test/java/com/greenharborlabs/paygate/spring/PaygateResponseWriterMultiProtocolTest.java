@@ -99,6 +99,7 @@ class PaygateResponseWriterMultiProtocolTest {
     PaygateResponseWriter.writePaymentRequired(response, context, challenges);
 
     assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
   }
 
   // --- Test 3: writePaymentRequired JSON body contains protocols map ---

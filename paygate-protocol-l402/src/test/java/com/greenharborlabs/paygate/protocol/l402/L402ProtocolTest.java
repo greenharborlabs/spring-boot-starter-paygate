@@ -225,6 +225,21 @@ class L402ProtocolTest {
     }
 
     @Test
+    void malformedHeaderDoesNotExposePresentedBearerMaterial() {
+      String bearerMarker = "BEARER-MATERIAL-SECRET-6e9cb";
+
+      PaymentValidationException exception =
+          catchThrowableOfType(
+              PaymentValidationException.class,
+              () -> protocol.parseCredential("L402 " + bearerMarker));
+
+      assertThat(exception.getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
+      assertThat(exception).hasMessage("Payment validation failed: MALFORMED").hasNoCause();
+      assertThat(exception.getMessage()).doesNotContain(bearerMarker);
+    }
+
+    @Test
     void unsupportedIdentifierVersionMapsToSanitizedMalformedCredential() {
       String authHeader = buildAuthHeaderWithIdentifierVersion("L402", 0x3137);
 
@@ -844,6 +859,26 @@ class L402ProtocolTest {
     void lightningUnavailableMapsToServiceUnavailable() {
       verifyErrorMapping(
           ErrorCode.LIGHTNING_UNAVAILABLE, PaymentValidationException.ErrorCode.UNAVAILABLE);
+    }
+
+    @Test
+    void unexpectedValidatorFailureMapsToSanitizedUnavailable() {
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      String sensitiveDetail = "VALIDATOR-FAILURE-SECRET-24d1c";
+
+      doThrow(new IllegalStateException(sensitiveDetail))
+          .when(validator)
+          .validate(eq(authHeader), any());
+
+      PaymentValidationException exception =
+          catchThrowableOfType(
+              PaymentValidationException.class, () -> protocol.validate(credential, Map.of()));
+
+      assertThat(exception.getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.UNAVAILABLE);
+      assertThat(exception).hasMessage("Payment validation failed: UNAVAILABLE").hasNoCause();
+      assertThat(exception.getMessage()).doesNotContain(sensitiveDetail, authHeader);
     }
 
     @Test

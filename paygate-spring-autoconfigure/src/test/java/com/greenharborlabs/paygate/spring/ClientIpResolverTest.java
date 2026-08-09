@@ -42,6 +42,33 @@ class ClientIpResolverTest {
     }
 
     @Test
+    @DisplayName("an IPv6 /0 rate identity masks every address to zero")
+    void ipv6ZeroPrefixMasksEveryAddress() {
+      var resolver = resolverWithIpv6Prefix(0);
+
+      assertThat(resolveRateLimitIdentity(resolver, requestFrom("2001:db8:abcd:1234::1")))
+          .isEqualTo("0:0:0:0:0:0:0:0");
+    }
+
+    @Test
+    @DisplayName("an IPv6 /128 rate identity retains the complete canonical address")
+    void ipv6FullPrefixRetainsCompleteAddress() {
+      var resolver = resolverWithIpv6Prefix(128);
+
+      assertThat(resolveRateLimitIdentity(resolver, requestFrom("2001:db8:abcd:1234::1")))
+          .isEqualTo("2001:db8:abcd:1234:0:0:0:1");
+    }
+
+    @Test
+    @DisplayName("a non-byte-aligned IPv6 prefix clears only trailing bits in its boundary byte")
+    void nonByteAlignedIpv6PrefixMasksBoundaryByte() {
+      var resolver = resolverWithIpv6Prefix(61);
+
+      assertThat(resolveRateLimitIdentity(resolver, requestFrom("2001:db8:abcd:1234:9abc::1")))
+          .isEqualTo("2001:db8:abcd:1230:0:0:0:0");
+    }
+
+    @Test
     @DisplayName("IPv4 identity remains the exact canonical /32 address")
     void ipv4IdentityRemainsExactCanonicalAddress() {
       var resolver = new ClientIpResolver(false, List.of());

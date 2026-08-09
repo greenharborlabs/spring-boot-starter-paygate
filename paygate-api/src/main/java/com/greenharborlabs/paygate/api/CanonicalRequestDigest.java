@@ -16,8 +16,9 @@ import java.util.Objects;
  */
 public final class CanonicalRequestDigest {
 
-  /** Maximum request body size accepted for challenge binding. */
-  public static final int MAX_BODY_BYTES = 8 * 1024;
+  /** Largest request body size accepted for challenge binding configuration. */
+  public static final int MAX_BODY_BYTES =
+      Math.toIntExact(SecurityBounds.MAX_REQUEST_BODY_SIZE_BYTES);
 
   private static final byte[] VERSION =
       "paygate-request-digest-v1".getBytes(StandardCharsets.US_ASCII);

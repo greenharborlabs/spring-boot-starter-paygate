@@ -170,7 +170,16 @@ public final class MppProtocol implements PaymentProtocol {
     // Strip "Payment " prefix (case-insensitive match already done via canHandle)
     String blob = authorizationHeader.substring(SCHEME_PREFIX.length());
 
-    PaymentCredential credential = MppCredentialParser.parse(blob, parserLimits);
+    PaymentCredential credential;
+    try {
+      credential = MppCredentialParser.parse(blob, parserLimits);
+    } catch (PaymentValidationException e) {
+      // Parser diagnostics may contain attacker-controlled input. Retain only its classification.
+      throw mapFailure(e.getErrorCode(), e.getTokenId());
+    } catch (IllegalArgumentException e) {
+      // Treat unexpected input-decoding failures as malformed credentials, never as server errors.
+      throw mapFailure(ErrorCode.MALFORMED, null);
+    }
 
     // Verify method is "lightning"
     if (credential.metadata() instanceof MppMetadata mppMetadata) {
@@ -362,8 +371,7 @@ public final class MppProtocol implements PaymentProtocol {
                   previousChallengeBindingSecret);
         }
       } catch (IllegalArgumentException e) {
-        throw new PaymentValidationException(
-            ErrorCode.INVALID, "Challenge binding verification failed", e);
+        throw mapFailure(ErrorCode.INVALID, credential.tokenId());
       }
       if (!(hmacCurrentSecretValid || hmacPreviousSecretValid)) {
         throw new PaymentValidationException(
@@ -431,6 +439,16 @@ public final class MppProtocol implements PaymentProtocol {
       }
     }
     return value;
+  }
+
+  /**
+   * Produces a protocol-agnostic validation failure without retaining parser or validation detail.
+   *
+   * <p>MPP credentials are bearer material. In particular, parser exception text can include a
+   * supplied credential fragment, so callers must receive only the stable shared taxonomy.
+   */
+  private static PaymentValidationException mapFailure(ErrorCode errorCode, String tokenId) {
+    return new PaymentValidationException(errorCode, "MPP credential validation failed", tokenId);
   }
 
   private static void validateSecretLength(String fieldName, SensitiveBytes secret) {

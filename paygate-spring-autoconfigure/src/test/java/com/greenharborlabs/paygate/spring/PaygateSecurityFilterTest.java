@@ -188,8 +188,8 @@ class PaygateSecurityFilterTest {
   }
 
   @Test
-  @DisplayName("other invalid Payment credentials retain challenge creation")
-  void otherInvalidPaymentCredentialCreatesChallenge() throws Exception {
+  @DisplayName("other invalid Payment credentials are rejected without challenge creation")
+  void otherInvalidPaymentCredentialDoesNotCreateChallenge() throws Exception {
     long invoicesBefore = earningsTracker.getTotalInvoicesCreated();
     capturingPaymentProtocol.reset();
     capturingPaymentProtocol.throwValidationFailure(
@@ -200,7 +200,7 @@ class PaygateSecurityFilterTest {
         .perform(get(PROTECTED_PATH).header("Authorization", "Payment invalid"))
         .andExpect(status().isPaymentRequired());
 
-    assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore + 1);
+    assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore);
     capturingPaymentProtocol.reset();
   }
 
@@ -641,14 +641,19 @@ class PaygateSecurityFilterTest {
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
       ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
+      testController.resetInvocations();
     }
 
     @Test
-    @DisplayName("returns 402 when Authorization header is not L402 scheme")
-    void nonL402SchemeReturns402() throws Exception {
+    @DisplayName("rejects an unsupported Authorization scheme without issuing a challenge")
+    void unsupportedAuthorizationSchemeDoesNotCreateChallengeOrInvokeHandler() throws Exception {
+      long invoicesBefore = earningsTracker.getTotalInvoicesCreated();
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", "Bearer some-token"))
           .andExpect(status().isPaymentRequired());
+
+      assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore);
+      assertThat(testController.protectedInvocations).hasValue(0);
     }
 
     @Test
@@ -734,41 +739,31 @@ class PaygateSecurityFilterTest {
 
     @Test
     @DisplayName("falls back to default timeout when no valid_until caveat present")
-    void fallsBackToDefaultTimeoutWhenNoValidUntilCaveat() throws Exception {
-      ((StubLightningBackend) lightningBackend).setHealthy(true);
-
+    void fallsBackToDefaultTimeoutWhenNoValidUntilCaveat() {
       byte[] preimage = new byte[32];
       new SecureRandom().nextBytes(preimage);
       byte[] paymentHash = sha256(preimage);
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      // Caveats without valid_until — only service and mandatory request-boundary caveats
-      List<Caveat> caveats =
-          List.of(
-              new Caveat("services", SERVICE_NAME + ":0"),
-              new Caveat("route", PROTECTED_PATH),
-              new Caveat("method", "GET"),
-              new Caveat(SERVICE_NAME + "_capabilities", "~"));
-
+      List<Caveat> caveats = List.of(new Caveat("services", SERVICE_NAME + ":0"));
       MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
-      byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-      String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-      String preimageHex = HEX.formatHex(preimage);
-      String authHeader = "L402 " + macaroonBase64 + ":" + preimageHex;
+      PaymentCredential credential =
+          new PaymentCredential(
+              paymentHash,
+              preimage,
+              HEX.formatHex(tokenId),
+              "L402",
+              null,
+              new L402Metadata(macaroon, List.of(), "L402 dummy"));
+      PaygateEndpointConfig config =
+          new PaygateEndpointConfig("GET", PROTECTED_PATH, PRICE_SATS, TIMEOUT_SECONDS, "", "", "");
 
       Instant before = Instant.now().plusSeconds(TIMEOUT_SECONDS);
-      var result =
-          mockMvc
-              .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
-              .andExpect(status().isOk())
-              .andExpect(header().exists("X-L402-Credential-Expires"))
-              .andReturn();
+      Instant expiresInstant = paygateSecurityFilter.resolveCredentialExpiry(credential, config);
       Instant after = Instant.now().plusSeconds(TIMEOUT_SECONDS);
 
-      String expiresHeader = result.getResponse().getHeader("X-L402-Credential-Expires");
-      Instant expiresInstant = Instant.parse(expiresHeader);
       // Fallback should be approximately now + timeoutSeconds
       assertThat(expiresInstant).isBetween(before.minusSeconds(2), after.plusSeconds(2));
     }

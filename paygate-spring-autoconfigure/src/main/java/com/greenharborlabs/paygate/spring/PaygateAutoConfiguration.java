@@ -209,7 +209,9 @@ public class PaygateAutoConfiguration {
   @ConditionalOnMissingBean
   public ClientIpResolver clientIpResolver(PaygateProperties properties) {
     return new ClientIpResolver(
-        properties.isTrustForwardedHeaders(), properties.getTrustedProxyAddresses());
+        properties.isTrustForwardedHeaders(),
+        properties.getTrustedProxyAddresses(),
+        properties.getRateLimit().getIpv6PrefixLength());
   }
 
   @Bean
@@ -516,7 +518,8 @@ public class PaygateAutoConfiguration {
         clientIpResolver,
         paygateMetrics,
         paygateEarningsTracker,
-        paygateRateLimiter);
+        paygateRateLimiter,
+        properties.getRequestBody().getMaxBytes());
   }
 
   @Bean
