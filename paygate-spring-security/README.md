@@ -222,7 +222,7 @@ Extends `OncePerRequestFilter`. Parses the `Authorization` header using the patt
 (?:LSAT|L402) ([^:]+):([a-fA-F0-9]{64})
 ```
 
-This accepts both the current `L402` scheme and the legacy `LSAT` scheme. The preimage must be exactly 64 hex characters (case-insensitive). If the header is absent, blank, or does not match this pattern, the filter passes the request through without setting authentication -- allowing other Spring Security filters to handle it.
+This accepts both the current `L402` scheme and the legacy `LSAT` scheme. The preimage must be exactly 64 hex characters (case-insensitive). On an unprotected route, an absent, blank, or unrelated authorization header passes through without setting Paygate authentication, allowing other Spring Security mechanisms to handle it. On every registered paid route, missing or unrelated credentials are rejected by Paygate before downstream authorization; a `permitAll` rule cannot waive payment.
 
 On authentication failure, the filter:
 
@@ -259,7 +259,7 @@ It registers up to five beans. A separate auto-configuration supplies the startu
 | `PaygateAuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
 | `PaygateSpringSecurityFilterChainGuard` | Spring Security mode + `FilterChainProxy` on classpath | Fails startup if no `PaygateAuthenticationFilter` is present in the effective filter chain. |
 
-The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). Startup fails closed when the effective chain does not contain `PaygateAuthenticationFilter`. If you intentionally enforce Paygate through custom filter wiring that the guard cannot inspect, set `paygate.spring-security.custom-filter-chain-acknowledged=true`.
+The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). Startup validates every effective chain serving paid routes: it requires the Paygate filter, requires it before downstream authorization, checks rate-limit ordering when used, and requires `ERROR` redispatch coverage. It also prevents the security-chain-owned filter from being registered a second time as a container servlet filter. These failures are fail-closed. If you intentionally enforce Paygate through custom filter wiring that the guard cannot inspect, set `paygate.spring-security.custom-filter-chain-acknowledged=true`.
 
 ### Overriding Auto-Configured Beans
 
@@ -507,7 +507,7 @@ Existing `hasRole('L402')` rules remain usable, but credential compatibility is 
 
 ### Route, Method, and Deployment Prefixes
 
-The authentication filter, entry point, and auth-failure rate limiter share application-relative request-path resolution. Context paths and applicable path-prefix servlet mappings are removed before endpoint lookup, while the selected canonical route pattern is passed separately into validation.
+The authentication filter, entry point, and auth-failure rate limiter share application-relative request-path resolution. Context paths and applicable path-prefix servlet mappings are removed before endpoint lookup, while the selected canonical route pattern is passed separately into validation. Registered routes use the same Spring MVC request-mapping conditions and comparison semantics as servlet mode, including decoded application-relative path segments and the configured path parser. Ambiguous paid policies or detectable unsupported paid mapping sources fail closed with startup or resolution diagnostics.
 
 For an actual `HEAD` request, endpoint resolution uses explicit HEAD first, then inherits the matching GET policy, then wildcard. Inheritance includes price, timeout, capability, and pricing strategy, but the credential remains bound to `HEAD`; GET and HEAD credentials are not interchangeable. Ambiguous route selection fails closed.
 
@@ -541,7 +541,7 @@ The servlet filter and Spring Security paths are mutually exclusive. The `paygat
 | `servlet` | Always active | Disabled, even if Spring Security is on the classpath |
 | `spring-security` | Disabled | Always active. Fails at startup if Spring Security or `paygate-spring-security` is not on the classpath. |
 
-Only one mode is active at a time. This prevents conflicts where both the servlet filter and the Spring Security filter chain attempt to handle the same request.
+Only one documented enforcement path is active per deployment. Servlet mode uses the container `PaygateSecurityFilter` and its final MVC interceptor; Spring Security mode uses `PaygateAuthenticationFilter` and the configured security chain. This prevents both paths from processing the same request.
 
 When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthenticationFilter` in your `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. If the filter is absent, startup fails closed unless `paygate.spring-security.custom-filter-chain-acknowledged=true` is set.
 

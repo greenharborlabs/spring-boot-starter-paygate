@@ -21,12 +21,15 @@ import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.lightning.lnd.LndChannelFactory;
 import com.greenharborlabs.paygate.lightning.lnd.LndConfig;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
+import jakarta.servlet.DispatcherType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -47,6 +50,10 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.core.type.AnnotatedTypeMetadata;
+import org.springframework.web.servlet.HandlerExecutionChain;
+import org.springframework.web.servlet.HandlerMapping;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
@@ -439,14 +446,78 @@ public class PaygateAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
-  public PaygateEndpointRegistry paygateEndpointRegistry(
-      @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping,
-      PaygateProperties properties) {
-    var registry =
-        new PaygateEndpointRegistry(
-            properties.getDefaultTimeoutSeconds(), properties.getCaveat().getMaxValuesPerCaveat());
-    registry.scanAnnotatedEndpoints(handlerMapping);
-    return registry;
+  public PaygateEndpointRegistry paygateEndpointRegistry(PaygateProperties properties) {
+    return new PaygateEndpointRegistry(
+        properties.getDefaultTimeoutSeconds(), properties.getCaveat().getMaxValuesPerCaveat());
+  }
+
+  /** Scans mappings only after MVC has completed constructing its configuration graph. */
+  @Bean
+  SmartInitializingSingleton paygateEndpointRegistryScanner(
+      PaygateEndpointRegistry registry, Map<String, HandlerMapping> handlerMappings) {
+    return () -> {
+      int sourceOrder = 0;
+      for (var entry : handlerMappings.entrySet()) {
+        HandlerMapping handlerMapping = entry.getValue();
+        if (handlerMapping instanceof RequestMappingHandlerMapping requestMappingHandlerMapping) {
+          registry.scanAnnotatedEndpoints(requestMappingHandlerMapping, sourceOrder++);
+        } else {
+          rejectUnsupportedPaidHandlerSource(entry.getKey(), handlerMapping);
+        }
+      }
+    };
+  }
+
+  private static void rejectUnsupportedPaidHandlerSource(
+      String beanName, HandlerMapping handlerMapping) {
+    try {
+      var request =
+          (jakarta.servlet.http.HttpServletRequest)
+              java.lang.reflect.Proxy.newProxyInstance(
+                  PaygateAutoConfiguration.class.getClassLoader(),
+                  new Class<?>[] {jakarta.servlet.http.HttpServletRequest.class},
+                  (proxy, method, args) -> {
+                    if (method.getName().equals("getMethod")) return "GET";
+                    if (method.getName().equals("getRequestURI")) return "/";
+                    Class<?> type = method.getReturnType();
+                    if (type == boolean.class) return false;
+                    if (type.isPrimitive()) return 0;
+                    return null;
+                  });
+      HandlerExecutionChain chain = handlerMapping.getHandler(request);
+      if (chain != null
+          && chain.getHandler()
+              instanceof org.springframework.web.method.HandlerMethod handlerMethod
+          && handlerMethod.getMethodAnnotation(PaymentRequired.class) != null) {
+        throw new IllegalStateException(
+            "unsupported HandlerMapping bean '" + beanName + "' returned a paid handler");
+      }
+    } catch (IllegalStateException e) {
+      throw e;
+    } catch (Exception e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Unable to inspect unsupported HandlerMapping {0}; paid handlers from it are not supported",
+          beanName);
+    }
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(PaygateHandlerInterceptor.class)
+  public PaygateHandlerInterceptor paygateHandlerInterceptor(PaygateEndpointRegistry registry) {
+    return new PaygateHandlerInterceptor(registry);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(name = "paygateHandlerInterceptorConfigurer")
+  public WebMvcConfigurer paygateHandlerInterceptorConfigurer(
+      PaygateHandlerInterceptor paygateHandlerInterceptor) {
+    return new WebMvcConfigurer() {
+      @Override
+      public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(paygateHandlerInterceptor).order(Ordered.LOWEST_PRECEDENCE);
+      }
+    };
   }
 
   @Configuration(proxyBeanMethods = false)
@@ -529,6 +600,8 @@ public class PaygateAutoConfiguration {
     var registration = new FilterRegistrationBean<>(paygateSecurityFilter);
     registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
     registration.addUrlPatterns("/*");
+    registration.setDispatcherTypes(
+        DispatcherType.REQUEST, DispatcherType.ASYNC, DispatcherType.FORWARD, DispatcherType.ERROR);
     return registration;
   }
 

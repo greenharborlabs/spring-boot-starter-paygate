@@ -17,6 +17,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Instant;
@@ -49,6 +50,10 @@ public class PaygateSecurityFilter implements Filter {
   private static final System.Logger log = System.getLogger(PaygateSecurityFilter.class.getName());
 
   private static final String AUTHORIZATION_HEADER = "Authorization";
+  private static final String SUCCESSFUL_PAID_HANDLER_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPaidHandler";
+  private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
 
   private final PaygateEndpointRegistry registry;
   private final List<PaymentProtocol> protocols;
@@ -137,7 +142,7 @@ public class PaygateSecurityFilter implements Filter {
     // 1. Check if this endpoint is protected
     ResolvedEndpoint resolvedEndpoint;
     try {
-      resolvedEndpoint = registry.resolve(method, path);
+      resolvedEndpoint = registry.resolve(requestForResolvedPath(httpRequest, path));
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -150,6 +155,11 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
     if (resolvedEndpoint == null) {
+      chain.doFilter(request, response);
+      return;
+    }
+
+    if (hasSuccessfulDecisionFor(httpRequest, resolvedEndpoint)) {
       chain.doFilter(request, response);
       return;
     }
@@ -342,6 +352,8 @@ public class PaygateSecurityFilter implements Filter {
               RequestDigestSupport.isMppProtocol(protocol));
       protocol.validate(credential, requestContext);
 
+      markSuccessfulDecision(httpRequest, resolvedEndpoint);
+
       log.log(
           System.Logger.Level.DEBUG, "{0} credential validated successfully", protocol.scheme());
 
@@ -365,6 +377,39 @@ public class PaygateSecurityFilter implements Filter {
     } catch (Exception e) {
       recordCaveatVerifyDuration(verifyStart);
       handleUnexpectedValidationError(e, protocol, httpRequest, httpResponse, method, safePath);
+    }
+  }
+
+  private static HttpServletRequest requestForResolvedPath(
+      HttpServletRequest request, String path) {
+    return new HttpServletRequestWrapper(request) {
+      @Override
+      public String getRequestURI() {
+        return path;
+      }
+
+      @Override
+      public String getContextPath() {
+        return "";
+      }
+
+      @Override
+      public String getServletPath() {
+        return "";
+      }
+    };
+  }
+
+  private static boolean hasSuccessfulDecisionFor(
+      HttpServletRequest request, ResolvedEndpoint endpoint) {
+    return endpoint.equals(request.getAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE));
+  }
+
+  private static void markSuccessfulDecision(
+      HttpServletRequest request, ResolvedEndpoint endpoint) {
+    request.setAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, endpoint);
+    if (endpoint.handlerMethod() != null) {
+      request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, endpoint.handlerMethod());
     }
   }
 

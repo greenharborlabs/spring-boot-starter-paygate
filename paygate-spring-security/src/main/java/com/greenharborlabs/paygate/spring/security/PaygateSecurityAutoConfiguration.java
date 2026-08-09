@@ -16,6 +16,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -76,6 +77,21 @@ public class PaygateSecurityAutoConfiguration {
       @Value("${paygate.service-name:default}") String serviceName) {
     return new PaygateAuthenticationFilter(
         authenticationManager, protocols, paygateEndpointRegistry, clientIpResolver, serviceName);
+  }
+
+  /**
+   * Keeps Spring Boot from also registering the security-chain filter with the servlet container.
+   * The application must place this filter in its {@code SecurityFilterChain}; registering it in
+   * both locations would execute payment authentication twice.
+   */
+  @Bean
+  @ConditionalOnBean(PaygateAuthenticationFilter.class)
+  public FilterRegistrationBean<PaygateAuthenticationFilter>
+      paygateAuthenticationFilterDisabledRegistration(
+          PaygateAuthenticationFilter paygateAuthenticationFilter) {
+    var registration = new FilterRegistrationBean<>(paygateAuthenticationFilter);
+    registration.setEnabled(false);
+    return registration;
   }
 
   @Bean

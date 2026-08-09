@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.spring;
 
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.server.PathContainer;
 import org.springframework.web.util.ServletRequestPathUtils;
 
 /** Resolves the current servlet dispatch to its normalized application-relative path. */
@@ -18,7 +19,19 @@ public final class ApplicationRelativeRequestResolver {
    * @throws IllegalArgumentException when the request path and deployment prefixes are inconsistent
    */
   public static String resolve(HttpServletRequest request) {
-    String path = ServletRequestPathUtils.parse(request).pathWithinApplication().value();
-    return PathNormalizer.normalize(path);
+    var pathWithinApplication = ServletRequestPathUtils.parse(request).pathWithinApplication();
+    var decodedPath = new StringBuilder(pathWithinApplication.value().length());
+    for (PathContainer.Element element : pathWithinApplication.elements()) {
+      if (element instanceof PathContainer.PathSegment segment) {
+        String value = segment.valueToMatch();
+        if (value.indexOf('/') >= 0) {
+          throw new IllegalArgumentException("Encoded path separator in request path");
+        }
+        decodedPath.append(value);
+      } else {
+        decodedPath.append(element.value());
+      }
+    }
+    return PathNormalizer.normalize(decodedPath.toString());
   }
 }

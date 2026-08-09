@@ -112,6 +112,7 @@ class PaygateAuthenticationFilterTest {
     org.mockito.Mockito.lenient()
         .when(endpointRegistry.findConfig("GET", "/api/unregistered"))
         .thenReturn(null);
+    when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(null);
 
     filter.doFilter(request, response, filterChain);
 
@@ -144,6 +145,7 @@ class PaygateAuthenticationFilterTest {
     org.mockito.Mockito.lenient()
         .when(endpointRegistry.findConfig("GET", "/api/unregistered"))
         .thenReturn(null);
+    when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(null);
 
     filter.doFilter(request, response, filterChain);
 
@@ -159,6 +161,7 @@ class PaygateAuthenticationFilterTest {
     org.mockito.Mockito.lenient()
         .when(endpointRegistry.findConfig("GET", "/api/unregistered"))
         .thenReturn(null);
+    when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(null);
 
     filter.doFilter(request, response, filterChain);
 
@@ -416,14 +419,12 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenPreimageNotHex() throws ServletException, IOException {
+  void rejectsMalformedPreimageForRegisteredPaidRoute() throws ServletException, IOException {
     request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":not-hex");
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain)
-        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
-    verify(authenticationManager, never()).authenticate(any());
+    assertRejectedWithoutAuthentication();
   }
 
   @Test
@@ -462,13 +463,12 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenMacaroonEmpty() throws ServletException, IOException {
+  void rejectsEmptyMacaroonForRegisteredPaidRoute() throws ServletException, IOException {
     request.addHeader("Authorization", "L402 :" + VALID_PREIMAGE);
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
-    verify(authenticationManager, never()).authenticate(any());
+    assertRejectedWithoutAuthentication();
   }
 
   @Test
@@ -508,24 +508,22 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenMacaroonExceedsMaxLength() throws ServletException, IOException {
+  void rejectsOversizedMacaroonForRegisteredPaidRoute() throws ServletException, IOException {
     String oversizedMacaroon = "A".repeat(8193);
     request.addHeader("Authorization", "L402 " + oversizedMacaroon + ":" + VALID_PREIMAGE);
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
-    verify(authenticationManager, never()).authenticate(any());
+    assertRejectedWithoutAuthentication();
   }
 
   @Test
-  void skipsWhenMacaroonContainsInvalidCharacters() throws ServletException, IOException {
+  void rejectsMalformedMacaroonForRegisteredPaidRoute() throws ServletException, IOException {
     request.addHeader("Authorization", "L402 mac:with:colons:" + VALID_PREIMAGE);
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
-    verify(authenticationManager, never()).authenticate(any());
+    assertRejectedWithoutAuthentication();
   }
 
   @Test
@@ -549,14 +547,13 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenMultiTokenExceedsMaxLength() throws ServletException, IOException {
+  void rejectsOversizedMultiTokenForRegisteredPaidRoute() throws ServletException, IOException {
     String oversizedTokens = "A".repeat(4000) + "," + "B".repeat(4193);
     request.addHeader("Authorization", "L402 " + oversizedTokens + ":" + VALID_PREIMAGE);
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain).doFilter(request, response);
-    verify(authenticationManager, never()).authenticate(any());
+    assertRejectedWithoutAuthentication();
   }
 
   // --- Capability lookup tests ---
@@ -852,7 +849,8 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenNoProtocolMatchesHeader() throws ServletException, IOException {
+  void rejectsUnrecognizedCredentialSchemeForRegisteredPaidRoute()
+      throws ServletException, IOException {
     filter =
         new PaygateAuthenticationFilter(
             authenticationManager, List.of(mockMppProtocol()), endpointRegistry);
@@ -861,10 +859,7 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(filterChain)
-        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
-    verify(authenticationManager, never()).authenticate(any());
-    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    assertRejectedWithoutAuthentication();
   }
 
   @Test
@@ -1196,6 +1191,14 @@ class PaygateAuthenticationFilterTest {
     assertThat(capturedContext.rootKeyBytes()).isNull();
     assertThat(capturedContext.opaque()).isNull();
     assertThat(capturedContext.digest()).isNull();
+  }
+
+  private void assertRejectedWithoutAuthentication() throws IOException, ServletException {
+    assertThat(response.getStatus()).isEqualTo(401);
+    assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain, never()).doFilter(any(), any());
   }
 
   private static final class LogCapture extends Handler implements AutoCloseable {

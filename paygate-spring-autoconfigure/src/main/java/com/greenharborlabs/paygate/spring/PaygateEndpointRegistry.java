@@ -1,17 +1,17 @@
 package com.greenharborlabs.paygate.spring;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.springframework.http.server.PathContainer;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.springframework.web.util.pattern.PathPattern;
@@ -36,8 +36,7 @@ public class PaygateEndpointRegistry {
 
   private final long defaultTimeoutSeconds;
   private final int maxValuesPerCaveat;
-  private final Map<String, Map<String, RegisteredEndpoint>> registrationsByMethod =
-      new ConcurrentHashMap<>();
+  private final List<RegisteredEndpoint> registrations = new CopyOnWriteArrayList<>();
 
   /**
    * Creates a registry that resolves the {@code -1} sentinel timeout to the given default.
@@ -77,19 +76,9 @@ public class PaygateEndpointRegistry {
     var method = normalizeMethod(config.httpMethod());
     var pattern = parsePathPattern(config.pathPattern());
     var canonicalPattern = pattern.getPatternString();
-    var registered = new RegisteredEndpoint(config, pattern);
-    registrationsByMethod.compute(
-        method,
-        (_, current) -> {
-          if (current != null && current.containsKey(canonicalPattern)) {
-            throw new IllegalArgumentException(
-                "Duplicate endpoint registration for " + method + " " + canonicalPattern);
-          }
-          var updated =
-              current == null ? new HashMap<String, RegisteredEndpoint>() : new HashMap<>(current);
-          updated.put(canonicalPattern, registered);
-          return Map.copyOf(updated);
-        });
+    ensureNoConflictingIdentity(method, canonicalPattern, config);
+    registrations.add(
+        new RegisteredEndpoint(config, method, pattern, null, null, null, Integer.MAX_VALUE));
   }
 
   private PaygateEndpointConfig normalizeCapabilities(PaygateEndpointConfig config) {
@@ -181,19 +170,9 @@ public class PaygateEndpointRegistry {
   }
 
   private ResolvedEndpoint resolveBucket(String method, String path, PathContainer pathContainer) {
-    var registrations = registrationsByMethod.get(method);
-    if (registrations == null) {
-      return null;
-    }
-
-    var exact = registrations.get(path);
-    if (exact != null) {
-      return toResolvedEndpoint(method, exact);
-    }
-
     var matches = new ArrayList<RegisteredEndpoint>();
-    for (RegisteredEndpoint candidate : registrations.values()) {
-      if (candidate.pattern().matches(pathContainer)) {
+    for (RegisteredEndpoint candidate : registrations) {
+      if (method.equals(candidate.policyMethod()) && candidate.pattern().matches(pathContainer)) {
         matches.add(candidate);
       }
     }
@@ -216,28 +195,86 @@ public class PaygateEndpointRegistry {
               + " and "
               + matches.get(1).pattern().getPatternString());
     }
-    return toResolvedEndpoint(method, selected);
+    return selected.config() == null ? null : toResolvedEndpoint(method, selected);
   }
 
   private ResolvedEndpoint toResolvedEndpoint(String method, RegisteredEndpoint registered) {
     return new ResolvedEndpoint(
-        registered.config(), registered.pattern().getPatternString(), method);
+        registered.config(),
+        registered.pattern().getPatternString(),
+        method,
+        registered.mappingInfo(),
+        registered.handlerMethod(),
+        registered.sourceMapping(),
+        registered.sourceOrder(),
+        registered.pattern());
   }
 
   /**
-   * Scans all handler methods annotated with {@link PaymentRequired} and registers them.
+   * Resolves a policy using Spring MVC's complete request-mapping matching and comparison rules.
+   * This includes request parameters, headers, media types, version, and custom conditions.
+   *
+   * @param request the inbound servlet request
+   * @return the selected endpoint, or {@code null} if no protected mapping matches
+   */
+  public ResolvedEndpoint resolve(HttpServletRequest request) {
+    var matches = new ArrayList<RegisteredEndpoint>();
+    for (RegisteredEndpoint candidate : registrations) {
+      var mappingInfo = candidate.mappingInfo();
+      if (mappingInfo == null) {
+        if (candidate.policyMethod().equals(normalizeMethod(request.getMethod()))
+            && candidate.pattern().matches(PathContainer.parsePath(request.getRequestURI()))) {
+          matches.add(candidate);
+        }
+      } else if (mappingInfo.getMatchingCondition(request) != null) {
+        matches.add(candidate);
+      }
+    }
+    if (matches.isEmpty()) {
+      return null;
+    }
+    matches.sort(
+        (left, right) -> {
+          if (left.mappingInfo() != null && right.mappingInfo() != null) {
+            return left.mappingInfo().compareTo(right.mappingInfo(), request);
+          }
+          return PathPattern.SPECIFICITY_COMPARATOR.compare(left.pattern(), right.pattern());
+        });
+    var selected = matches.getFirst();
+    if (matches.size() > 1
+        && compareForRequest(selected, matches.get(1), request) == 0
+        && !java.util.Objects.equals(selected.config(), matches.get(1).config())) {
+      throw new IllegalStateException("Ambiguous payment policies for request mapping");
+    }
+    if (selected.config() == null) {
+      return null;
+    }
+    return toResolvedEndpoint(selected.policyMethod(), selected);
+  }
+
+  private static int compareForRequest(
+      RegisteredEndpoint left, RegisteredEndpoint right, HttpServletRequest request) {
+    if (left.mappingInfo() != null && right.mappingInfo() != null) {
+      return left.mappingInfo().compareTo(right.mappingInfo(), request);
+    }
+    return PathPattern.SPECIFICITY_COMPARATOR.compare(left.pattern(), right.pattern());
+  }
+
+  /**
+   * Catalogs all handler methods and associates payment policy with those annotated with {@link
+   * PaymentRequired}.
    *
    * @param handlerMapping the Spring MVC request mapping handler mapping
    */
   public void scanAnnotatedEndpoints(RequestMappingHandlerMapping handlerMapping) {
-    Map<RequestMappingInfo, HandlerMethod> methods = handlerMapping.getHandlerMethods();
-    for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : methods.entrySet()) {
+    scanAnnotatedEndpoints(handlerMapping, Integer.MAX_VALUE);
+  }
+
+  /** Scans a supported MVC mapping source, retaining its complete mapping metadata. */
+  public void scanAnnotatedEndpoints(RequestMappingHandlerMapping handlerMapping, int sourceOrder) {
+    for (var entry : handlerMapping.getHandlerMethods().entrySet()) {
       HandlerMethod handlerMethod = entry.getValue();
       PaymentRequired paymentRequired = handlerMethod.getMethodAnnotation(PaymentRequired.class);
-
-      if (paymentRequired == null) {
-        continue;
-      }
 
       RequestMappingInfo mappingInfo = entry.getKey();
       Set<String> patterns = mappingInfo.getDirectPaths();
@@ -249,12 +286,80 @@ public class PaygateEndpointRegistry {
           mappingInfo.getMethodsCondition().getMethods();
 
       for (String pattern : patterns) {
+        PathPattern parsedPattern = patternFrom(mappingInfo, pattern);
         if (httpMethods.isEmpty()) {
-          register(toConfig("*", pattern, paymentRequired));
+          registerMappedEndpoint(
+              paymentRequired == null ? null : toConfig("*", pattern, paymentRequired),
+              "*",
+              pattern,
+              mappingInfo,
+              handlerMethod,
+              handlerMapping,
+              sourceOrder,
+              parsedPattern);
         } else {
           for (org.springframework.web.bind.annotation.RequestMethod httpMethod : httpMethods) {
-            register(toConfig(httpMethod.name(), pattern, paymentRequired));
+            registerMappedEndpoint(
+                paymentRequired == null
+                    ? null
+                    : toConfig(httpMethod.name(), pattern, paymentRequired),
+                httpMethod.name(),
+                pattern,
+                mappingInfo,
+                handlerMethod,
+                handlerMapping,
+                sourceOrder,
+                parsedPattern);
           }
+        }
+      }
+    }
+  }
+
+  private void registerMappedEndpoint(
+      PaygateEndpointConfig config,
+      String policyMethod,
+      String routePattern,
+      RequestMappingInfo mappingInfo,
+      HandlerMethod handlerMethod,
+      HandlerMapping sourceMapping,
+      int sourceOrder,
+      PathPattern parsedPattern) {
+    if (config != null) {
+      config = normalizeCapabilities(config);
+    }
+    var pattern = parsedPattern == null ? parsePathPattern(routePattern) : parsedPattern;
+    var method = normalizeMethod(policyMethod);
+    ensureNoConflictingIdentity(method, pattern.getPatternString(), config);
+    registrations.add(
+        new RegisteredEndpoint(
+            config, method, pattern, mappingInfo, handlerMethod, sourceMapping, sourceOrder));
+  }
+
+  private static PathPattern patternFrom(RequestMappingInfo mappingInfo, String pattern) {
+    var condition = mappingInfo.getPathPatternsCondition();
+    if (condition != null) {
+      for (PathPattern parsedPattern : condition.getPatterns()) {
+        if (parsedPattern.getPatternString().equals(pattern)) {
+          return parsedPattern;
+        }
+      }
+    }
+    return null;
+  }
+
+  private void ensureNoConflictingIdentity(
+      String method, String canonicalPattern, PaygateEndpointConfig config) {
+    for (RegisteredEndpoint existing : registrations) {
+      if (existing.policyMethod().equals(method)
+          && existing.pattern().getPatternString().equals(canonicalPattern)) {
+        if (!java.util.Objects.equals(existing.config(), config)) {
+          throw new IllegalArgumentException(
+              "Duplicate endpoint registration for " + method + " " + canonicalPattern);
+        }
+        if (existing.mappingInfo() == null) {
+          throw new IllegalArgumentException(
+              "Duplicate endpoint registration for " + method + " " + canonicalPattern);
         }
       }
     }
@@ -263,16 +368,16 @@ public class PaygateEndpointRegistry {
   /** Returns an unmodifiable view of all registered endpoint configurations. */
   public Collection<PaygateEndpointConfig> getConfigs() {
     var configs =
-        registrationsByMethod.values().stream()
-            .flatMap(registrations -> registrations.values().stream())
+        registrations.stream()
             .map(RegisteredEndpoint::config)
+            .filter(java.util.Objects::nonNull)
             .toList();
     return Collections.unmodifiableCollection(configs);
   }
 
   /** Returns the number of registered endpoint configurations. */
   public int size() {
-    return registrationsByMethod.values().stream().mapToInt(Map::size).sum();
+    return registrations.size();
   }
 
   private PaygateEndpointConfig toConfig(String method, String path, PaymentRequired annotation) {
@@ -296,5 +401,12 @@ public class PaygateEndpointRegistry {
     return PATTERN_PARSER.parse(pathPattern);
   }
 
-  private record RegisteredEndpoint(PaygateEndpointConfig config, PathPattern pattern) {}
+  private record RegisteredEndpoint(
+      PaygateEndpointConfig config,
+      String policyMethod,
+      PathPattern pattern,
+      RequestMappingInfo mappingInfo,
+      HandlerMethod handlerMethod,
+      HandlerMapping sourceMapping,
+      int sourceOrder) {}
 }

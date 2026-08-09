@@ -17,6 +17,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
@@ -198,7 +199,8 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     var errorRequest = request("/paid");
     errorRequest.setDispatcherType(DispatcherType.ERROR);
 
-    assertThatCode(() -> proxy.doFilter(errorRequest, mock(), mock())).doesNotThrowAnyException();
+    assertThatCode(() -> proxy.doFilter(errorRequest, mock(HttpServletResponse.class), mock()))
+        .doesNotThrowAnyException();
     assertThat(paygateChainReached).isFalse();
 
     assertThatThrownBy(

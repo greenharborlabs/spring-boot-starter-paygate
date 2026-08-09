@@ -43,8 +43,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * <p>On successful authentication the {@link SecurityContextHolder} is populated with an
  * authenticated {@link PaygateAuthenticationToken}.
  *
- * <p>If the header is absent or does not match any known protocol, the filter chain continues
- * without setting authentication, allowing other filters to handle the request.
+ * <p>For an unprotected route, an absent or unrelated authorization header is left for other
+ * authentication mechanisms. For every registered paid route, however, this filter always runs: a
+ * missing or unrelated credential is rejected before downstream authorization can apply a {@code
+ * permitAll} rule.
  */
 public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
@@ -93,6 +95,28 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     return !matchesAnyProtocol(authHeader);
   }
 
+  /**
+   * Enforces the paid-route invariant before {@link OncePerRequestFilter} can skip an absent or
+   * unrelated credential. The normal once-per-request dispatch behavior remains delegated to the
+   * superclass for recognized payment credentials.
+   */
+  @Override
+  public void doFilter(
+      jakarta.servlet.ServletRequest servletRequest,
+      jakarta.servlet.ServletResponse servletResponse,
+      FilterChain filterChain)
+      throws ServletException, IOException {
+    if (servletRequest instanceof HttpServletRequest request
+        && servletResponse instanceof HttpServletResponse response
+        && hasNoRecognizedPaymentCredential(request)
+        && isPaidRoute(request)) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeUnauthorized(response);
+      return;
+    }
+    super.doFilter(servletRequest, servletResponse, filterChain);
+  }
+
   @Override
   protected void doFilterInternal(
       HttpServletRequest request,
@@ -139,6 +163,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     }
     if (resolvedEndpoint == null) {
       filterChain.doFilter(request, response);
+      return;
+    }
+
+    if (authHeader == null
+        || authHeader.isBlank()
+        || (!L402HeaderComponents.extract(authHeader).isPresent()
+            && !matchesAnyProtocol(authHeader))) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeUnauthorized(response);
       return;
     }
 
@@ -212,6 +245,14 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     return false;
   }
 
+  private boolean hasNoRecognizedPaymentCredential(HttpServletRequest request) {
+    String authHeader = request.getHeader(AUTHORIZATION_HEADER);
+    return authHeader == null
+        || authHeader.isBlank()
+        || (!L402HeaderComponents.extract(authHeader).isPresent()
+            && !matchesAnyProtocol(authHeader));
+  }
+
   private Map<String, String> extractRequestMetadata(
       HttpServletRequest request,
       String normalizedPath,
@@ -243,6 +284,20 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
    */
   private ResolvedEndpoint resolveEndpoint(HttpServletRequest request, String normalizedPath) {
     return endpointRegistry.resolve(request.getMethod(), normalizedPath);
+  }
+
+  /**
+   * Determines whether the request is paid before deciding whether this filter may be skipped.
+   * Resolution failures deliberately keep the filter active, so a registry failure cannot create an
+   * authorization bypass.
+   */
+  private boolean isPaidRoute(HttpServletRequest request) {
+    try {
+      String normalizedPath = ApplicationRelativeRequestResolver.resolve(request);
+      return endpointRegistry.findConfig(request.getMethod(), normalizedPath) != null;
+    } catch (RuntimeException e) {
+      return true;
+    }
   }
 
   private static String extractCapability(PaygateEndpointConfig config) {

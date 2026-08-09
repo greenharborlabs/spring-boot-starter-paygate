@@ -367,9 +367,17 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 
 ### Endpoint Resolution and Credential Boundaries
 
-Resolution is deterministic: exact paths precede patterns, Spring pattern specificity selects among patterns, and unresolved equal-specificity ambiguity fails closed. For `HEAD`, an explicit HEAD policy wins; otherwise the matching GET policy is inherited in full, followed by a wildcard policy. The actual method remains `HEAD`, so a GET-bound credential cannot be reused for HEAD. Other methods use their own bucket and then wildcard; `OPTIONS` does not inherit GET.
+The registry catalogs both paid and unprotected mappings from supported MVC mapping sources in their Spring order, retaining complete mapping conditions. It resolves an `HttpServletRequest` with Spring MVC's matching and comparison rules, including path patterns, HTTP method, parameters, headers, media types, version, and custom conditions. Application-relative paths use DispatcherServlet-compatible decoded segments and the active path-parser behavior.
+
+Resolution is deterministic: exact paths precede patterns, Spring pattern specificity selects among patterns, and unresolved equal-specificity ambiguity fails closed. Conflicting paid policies with the same signed method and canonical route are rejected at registration; equally selected requests with different paid policies fail closed. A detectable unsupported mapping source that serves a paid handler also fails startup rather than leaving the handler unprotected. For `HEAD`, an explicit HEAD policy wins; otherwise the matching GET policy is inherited in full, followed by a wildcard policy. The actual method remains `HEAD`, so a GET-bound credential cannot be reused for HEAD. Other methods use their own bucket and then wildcard; `OPTIONS` does not inherit GET.
 
 The canonical registered pattern is bound separately from the concrete request path. This keeps route identity stable for root, context-path, servlet-mapped, and combined-prefix deployments. Malformed or ambiguous prefix/path state does not invoke the protected handler.
+
+### Redispatch and Final MVC Check
+
+Servlet enforcement applies to `REQUEST`, `ASYNC`, `FORWARD`, and `ERROR` dispatches. After a successful payment decision, Paygate keeps a private decision for the selected target and reuses it only when a redispatch resolves to that same target. A redispatch to a different paid target is authorized again. This avoids rereading a request body for a same-target redispatch while preserving payment checks when routing changes.
+
+MVC also performs a final check immediately before controller invocation. If the handler selected by MVC does not match the paid handler marked by the successful decision, the request fails closed. This protects against a routing difference between early filter resolution and final handler selection.
 
 Code that already resolved endpoint policy through `PaygateEndpointRegistry` should call a `PaygateChallengeService.createChallenge(..., ResolvedEndpoint)` overload. The retained config-based overloads sign the exact parsed spelling of `PaygateEndpointConfig.pathPattern()`: a manually constructed `/api/orders/` configuration can mismatch the registered `/api/orders` identity. That mismatch intentionally fails closed, so the credential is rejected and the client is re-challenged.
 
@@ -585,8 +593,8 @@ Test mode provides a fully functional L402 flow without requiring a real Lightni
 
 Test mode has a two-layer guard to prevent accidental production use:
 
-1. **Denylist (belt):** If any active Spring profile matches `production` or `prod` (case-insensitive), startup fails immediately with `IllegalStateException`, even if an allowed profile is also active.
-2. **Allowlist (suspenders):** At least one of `test`, `dev`, `local`, or `development` must be an active profile. This catches custom production profile names like `prd`, `live`, or `staging` that would bypass the denylist.
+1. **Production veto:** If any active Spring profile is production-like (`prod` or a production variant), startup fails immediately, even if an allowed profile is also active.
+2. **Explicit allowlist:** Every active profile must be one of `test`, `dev`, `local`, or `development`. Empty, unknown, and mixed safe/unknown profile sets fail closed.
 
 ### Usage
 
