@@ -58,7 +58,10 @@ class PaymentValidationExceptionTest {
             PaymentValidationException.ErrorCode.valueOf("UNAVAILABLE"), ATTACKER_DETAIL, cause);
 
     assertThat(exception.getMessage()).doesNotContain(ATTACKER_DETAIL).doesNotContain(CAUSE_DETAIL);
-    assertThat(exception.getCause()).isSameAs(cause);
+    assertThat(exception.getCause()).isNull();
+    assertThatThrownBy(() -> exception.initCause(cause))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Can't overwrite cause");
   }
 
   @Test

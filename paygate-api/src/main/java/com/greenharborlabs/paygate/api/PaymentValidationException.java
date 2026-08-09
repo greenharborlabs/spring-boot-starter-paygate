@@ -74,7 +74,7 @@ public class PaymentValidationException extends RuntimeException {
    * @param cause the underlying cause
    */
   public PaymentValidationException(ErrorCode errorCode, String message, Throwable cause) {
-    super(publicMessage(errorCode), cause);
+    super(publicMessage(errorCode), null, true, true);
     this.errorCode = Objects.requireNonNull(errorCode, "errorCode must not be null");
     this.tokenId = null;
     this.problemTypeUri = errorCode.problemTypeUri();
