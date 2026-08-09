@@ -324,7 +324,9 @@ public class PaygateChallengeService {
                   opaque,
                   requestDigest,
                   routePattern,
-                  requestMethod);
+                  requestMethod,
+                  request.getQueryString(),
+                  request.getQueryString() != null);
 
           // Populate capability cache after successful invoice creation
           if (capabilityCache != null

@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.protocol.mpp;
 
+import com.greenharborlabs.paygate.api.CanonicalRequestDigest;
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import java.nio.charset.StandardCharsets;
@@ -102,6 +103,25 @@ public final class MppChallengeBinding {
     byte[] expectedBytes =
         computeHmac(realm, method, intent, requestB64, expires, digest, opaqueB64, secret);
     return MppCryptoUtils.constantTimeEquals(presentedBytes, expectedBytes);
+  }
+
+  /**
+   * Creates the content digest used to bind an MPP challenge to an HTTP request.
+   *
+   * <p>Every variable-width field is length-prefixed. Query presence is encoded independently from
+   * its value so an absent query and an explicit empty query remain distinct. The raw query is
+   * deliberately not parsed, decoded, sorted, or otherwise normalized.
+   *
+   * @param method HTTP method
+   * @param applicationPath normalized application path
+   * @param queryPresent whether the original request included a query component
+   * @param rawQuery exact servlet raw query, required when {@code queryPresent} is true
+   * @param body bounded request body bytes
+   * @return an RFC 9530 SHA-256 content digest
+   */
+  public static String createRequestDigest(
+      String method, String applicationPath, boolean queryPresent, String rawQuery, byte[] body) {
+    return CanonicalRequestDigest.create(method, applicationPath, queryPresent, rawQuery, body);
   }
 
   /** Builds the pipe-delimited input and computes HMAC-SHA256. */

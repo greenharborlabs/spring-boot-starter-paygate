@@ -123,6 +123,16 @@ Utility class that computes and verifies HMAC-SHA256 challenge IDs for stateless
 
 The HMAC input is a pipe-delimited string with 7 slots. For MPP challenges created by `MppProtocol.formatChallenge()`, `digest` is required and is always populated in the header and response body. The low-level binding helper still accepts nullable optional slots for callers that use it directly; null `expires`, `digest`, or `opaque` values map to an empty string in their slot. A fresh `Mac.getInstance("HmacSHA256")` is obtained per call for virtual-thread safety; JCA provider lookups are cached after the first call, so the overhead is negligible.
 
+### Request-digest migration
+
+Applications integrating MPP directly should create request digests with
+`CanonicalRequestDigest.create(...)` from `paygate-api`; this keeps request binding available
+without making the MPP module a dependency of Spring integrations. `MppChallengeBinding
+.createRequestDigest(...)` remains as a compatible façade and returns the same value. Existing
+`ChallengeContext` constructor signatures remain supported for legacy direct-MPP and receipt-only
+callers; use the newer request-bound context fields when issuing an MPP challenge that must bind a
+raw query and body.
+
 ### MppCredentialParser
 
 Utility class that parses `Authorization: Payment <base64url-nopad>` credential blobs into `PaymentCredential` records. The parsing pipeline:
@@ -241,6 +251,14 @@ Client                                  Server (MppProtocol)
 **Step 3: Credential presentation.** The client echoes back the entire challenge object plus the payment preimage in a base64url-encoded JSON blob in the `Authorization: Payment` header.
 
 **Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, digest binding, HMAC binding, expiry, and method. The echoed challenge digest must be present and must match the request digest from the validation context. On success, a `Payment-Receipt` header is included in the response.
+
+### Request Identity, Reuse, and Migration
+
+The digest binds a credential to the request method, application-relative UTF-8 path, query presence, exact raw query, and bounded body. The query is not parsed, decoded, sorted, or normalized: absent and explicit-empty queries differ, and query order, duplicate parameters, empty values, and encoding spelling are all part of the identity.
+
+An MPP credential is transferable bearer material. It may be presented repeatedly until expiry for that same bound request; it is not single-use and does not provide replay prevention. A request with any different bound component must obtain its own challenge.
+
+This binding format adds authenticated query presence and raw-query bytes to the older path/body identity. Credentials issued for the older identity do not authorize under this format and clients must obtain a new challenge. Integrations must preserve the servlet raw query rather than reconstructing it from parsed parameters.
 
 ---
 

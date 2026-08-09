@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.protocol.mpp;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.greenharborlabs.paygate.api.CanonicalRequestDigest;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -328,6 +329,41 @@ class MppChallengeBindingTest {
             REALM, METHOD, INTENT, REQUEST_B64, EXPIRES, DIGEST, OPAQUE_B64, secret());
 
     assertThat(id1).isEqualTo(id2);
+  }
+
+  @Test
+  void requestDigest_bindsRawQueryPresenceOrderDuplicatesEmptyValuesAndEncoding() {
+    byte[] body = "{\"amount\":100}".getBytes(StandardCharsets.UTF_8);
+
+    String absent = MppChallengeBinding.createRequestDigest("POST", "/café", false, null, body);
+    String empty = MppChallengeBinding.createRequestDigest("POST", "/café", true, "", body);
+    String ordered =
+        MppChallengeBinding.createRequestDigest("POST", "/café", true, "a=1&b=2", body);
+    String reordered =
+        MppChallengeBinding.createRequestDigest("POST", "/café", true, "b=2&a=1", body);
+    String duplicate =
+        MppChallengeBinding.createRequestDigest("POST", "/café", true, "a=1&a=1", body);
+    String emptyValue = MppChallengeBinding.createRequestDigest("POST", "/café", true, "a=", body);
+    String percentEncoded =
+        MppChallengeBinding.createRequestDigest("POST", "/café", true, "q=%2F", body);
+    String literalSlash =
+        MppChallengeBinding.createRequestDigest("POST", "/café", true, "q=/", body);
+
+    assertThat(empty).isNotEqualTo(absent);
+    assertThat(reordered).isNotEqualTo(ordered);
+    assertThat(duplicate).isNotEqualTo(ordered);
+    assertThat(emptyValue).isNotEqualTo(empty);
+    assertThat(percentEncoded).isNotEqualTo(literalSlash);
+  }
+
+  @Test
+  void requestDigestCompatibilityFacadeDelegatesToApiPrimitive() {
+    byte[] body = "{\"amount\":100}".getBytes(StandardCharsets.UTF_8);
+
+    String digest = MppChallengeBinding.createRequestDigest("POST", "/café", true, "a=1&a=1", body);
+
+    assertThat(digest)
+        .isEqualTo(CanonicalRequestDigest.create("POST", "/café", true, "a=1&a=1", body));
   }
 
   // ---- Differentiation: null vs empty string in optional slots ----

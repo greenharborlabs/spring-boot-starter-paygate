@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.CanonicalRequestDigest;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
@@ -11,15 +12,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
 import java.util.Objects;
 
 /** Utilities for bounded request-body capture and canonical request digest generation. */
 public final class RequestDigestSupport {
 
-  public static final int MAX_CACHED_BODY_BYTES = 8 * 1024;
+  public static final int MAX_CACHED_BODY_BYTES = CanonicalRequestDigest.MAX_BODY_BYTES;
   public static final String REQUEST_DIGEST_ATTRIBUTE =
       RequestDigestSupport.class.getName() + ".REQUEST_DIGEST";
   private static final String MPP_SCHEME = "Payment";
@@ -43,22 +41,12 @@ public final class RequestDigestSupport {
     Objects.requireNonNull(request, "request must not be null");
     Objects.requireNonNull(normalizedPath, "normalizedPath must not be null");
 
-    byte[] bodyBytes = extractBodyBytes(request, MAX_CACHED_BODY_BYTES);
-    byte[] methodBytes = request.getMethod().getBytes(StandardCharsets.UTF_8);
-    byte[] pathBytes = normalizedPath.getBytes(StandardCharsets.UTF_8);
-
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      digest.update(methodBytes);
-      digest.update((byte) 0);
-      digest.update(pathBytes);
-      digest.update((byte) 0);
-      digest.update(bodyBytes);
-      String b64 = Base64.getEncoder().encodeToString(digest.digest());
-      return "sha-256=:" + b64 + ":";
-    } catch (NoSuchAlgorithmException e) {
-      throw new AssertionError("SHA-256 not available", e);
-    }
+    return CanonicalRequestDigest.create(
+        request.getMethod(),
+        normalizedPath,
+        request.getQueryString() != null,
+        request.getQueryString(),
+        extractBodyBytes(request, MAX_CACHED_BODY_BYTES));
   }
 
   public static void ensureDigestAttribute(HttpServletRequest request, String normalizedPath)

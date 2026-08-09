@@ -593,7 +593,7 @@ class MppProtocolTest {
                   PaymentValidationException pve = (PaymentValidationException) e;
                   assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
                   assertThat(pve.getMessage()).isEqualTo("Payment validation failed: INVALID");
-                  assertThat(pve.getCause()).isInstanceOf(IllegalArgumentException.class);
+                  assertThat(pve.getCause()).isNull();
                 });
       }
     }

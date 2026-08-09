@@ -504,7 +504,7 @@ public interface RootKeyStore {
 
 The `CredentialStore` interface caches validated L402 credentials to avoid re-verifying the full macaroon signature chain on every request.
 
-The cache is a performance optimization, not a revocation authority. After proof-of-payment succeeds, `L402Validator` performs an authoritative root-key lookup before every cache read. An exact cached variant can then skip HMAC recomputation while still re-evaluating request-specific caveats. This adds one root-key-store lookup to every successful cache hit. Missing or failed root-key lookup returns a sanitized `REVOKED_CREDENTIAL` and best-effort evicts the token's cache slot; cached authority is never used as a fallback.
+The cache is a performance optimization, not a revocation authority. After proof-of-payment succeeds, `L402Validator` performs an authoritative root-key lookup before every cache read. An exact cached variant can then skip HMAC recomputation while still re-evaluating request-specific caveats. This adds one root-key-store lookup to every successful cache hit. A missing root key is permanent revocation: validation fails with sanitized `REVOKED_CREDENTIAL` and best-effort evicts the token's cache slot. A transient root-key-store or credential-store failure instead fails closed as temporary unavailability and does not evict a valid cached credential; a later successful lookup can use it again. Cached authority is never a fallback when current root-key state is unavailable.
 
 Revocation has a narrow concurrency boundary: a validation that obtained its defensive root-key copy before concurrent revocation may complete. A validation whose lookup occurs after revocation fails, and subsequent requests cannot reuse a stale cache entry. Spring's revocation listener remains an eager-eviction optimization rather than the correctness boundary.
 
@@ -568,7 +568,7 @@ Orchestrates the full credential validation pipeline:
 
 1. **Parse** the Authorization header into an `L402Credential`
 2. **Verify proof of payment** -- decode the identifier and compare SHA-256(preimage) with its payment hash before consulting the cache
-3. **Require the root key** -- authoritative lookup happens before cache inspection; missing or failed lookup best-effort evicts the cache slot and fails as `REVOKED_CREDENTIAL`
+3. **Require the root key** -- authoritative lookup happens before cache inspection; a missing key best-effort evicts the cache slot and fails as `REVOKED_CREDENTIAL`, while a store failure fails closed as temporary unavailability without permanent eviction
 4. **Check cache** -- an exact cached macaroon variant skips HMAC recomputation, re-runs required-boundary and request-specific caveat checks, and returns with `freshValidation=false`
 5. **Fall back for attenuation** -- a different macaroon variant with the same token ID reuses the loaded root key for full signature and caveat validation instead of failing solely because another variant is cached
 6. **Cache after complete validation** with a TTL derived from `valid_until` caveats, then return with `freshValidation=true`
@@ -650,6 +650,7 @@ All byte array fields in immutable types are defensively copied on construction 
 - Protected content is **never** served with HTTP 200 when the backend cannot be reached
 - Truly unregistered caveat keys are skipped to support cross-service delegation; registered `route`, `method`, and `{serviceName}_capabilities` keys are reserved mandatory first-party boundaries and fail closed when absent, unverifiable, or unsatisfied
 - Revoked root keys are detected both on fresh validation and on cache hits
+- Transient root-key-store and credential-store failures fail closed as temporary unavailability; they are not treated as proof of revocation and do not permanently evict an otherwise valid cache entry
 - Expired credentials in the cache are re-verified against the current time and evicted if expired
 
 ### Required L402 Boundaries and Capability Ceilings

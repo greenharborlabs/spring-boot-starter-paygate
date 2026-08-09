@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.greenharborlabs.paygate.api.CanonicalRequestDigest;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -30,6 +31,17 @@ class RequestDigestSupportTest {
     String digestSpaced = RequestDigestSupport.computeDigest(spaced, "/api/pay");
 
     assertThat(digestCompact).isNotEqualTo(digestSpaced);
+  }
+
+  @Test
+  void computeDigest_usesTheApiCanonicalPrimitiveForExactRawQuery() throws Exception {
+    byte[] body = "{\"a\":1}".getBytes(StandardCharsets.UTF_8);
+    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/pay");
+    request.setQueryString("a=1&a=1");
+    request.setContent(body);
+
+    assertThat(RequestDigestSupport.computeDigest(request, "/api/pay"))
+        .isEqualTo(CanonicalRequestDigest.create("POST", "/api/pay", true, "a=1&a=1", body));
   }
 
   @Test

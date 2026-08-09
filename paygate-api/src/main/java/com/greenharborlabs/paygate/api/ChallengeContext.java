@@ -14,9 +14,9 @@ import java.util.Objects;
  * {@code opaque}) both on construction and on access.
  *
  * <p>{@code routePattern} is the canonical framework route pattern and {@code requestMethod} is the
- * actual request method used to mint the challenge. Both are optional request-boundary metadata and
- * are intentionally omitted from {@link #toString()}. The eleven-argument compatibility constructor
- * leaves both components {@code null} for non-L402 and receipt-only callers.
+ * actual request method used to mint the challenge. {@code rawQuery} preserves the unmodified
+ * servlet query and {@code queryPresent} distinguishes an absent query from an explicit empty
+ * query. Request-boundary metadata is intentionally omitted from {@link #toString()}.
  */
 public record ChallengeContext(
     byte[] paymentHash,
@@ -31,7 +31,9 @@ public record ChallengeContext(
     Map<String, String> opaque,
     String digest,
     String routePattern,
-    String requestMethod) {
+    String requestMethod,
+    String rawQuery,
+    boolean queryPresent) {
 
   public ChallengeContext {
     Objects.requireNonNull(paymentHash, "paymentHash must not be null");
@@ -45,14 +47,16 @@ public record ChallengeContext(
     paymentHash = paymentHash.clone();
     rootKeyBytes = rootKeyBytes != null ? rootKeyBytes.clone() : null;
     opaque = opaque != null ? Map.copyOf(opaque) : null;
+    if (queryPresent == (rawQuery == null)) {
+      throw new IllegalArgumentException("query presence must match rawQuery nullability");
+    }
   }
 
   /**
    * Creates a challenge without request-boundary metadata.
    *
    * <p>This constructor preserves the original public constructor descriptor for existing non-L402
-   * and receipt-only callers. {@link #routePattern()} and {@link #requestMethod()} return {@code
-   * null} for contexts created through it.
+   * and receipt-only callers. Request-boundary metadata is absent for contexts created through it.
    */
   public ChallengeContext(
       byte[] paymentHash,
@@ -79,7 +83,46 @@ public record ChallengeContext(
         opaque,
         digest,
         null,
-        null);
+        null,
+        null,
+        false);
+  }
+
+  /**
+   * Creates a challenge with route and method metadata but without raw-query metadata.
+   *
+   * <p>This constructor preserves the public descriptor introduced before raw-query binding.
+   */
+  public ChallengeContext(
+      byte[] paymentHash,
+      String tokenId,
+      String bolt11Invoice,
+      long priceSats,
+      String description,
+      String serviceName,
+      long timeoutSeconds,
+      String capability,
+      byte[] rootKeyBytes,
+      Map<String, String> opaque,
+      String digest,
+      String routePattern,
+      String requestMethod) {
+    this(
+        paymentHash,
+        tokenId,
+        bolt11Invoice,
+        priceSats,
+        description,
+        serviceName,
+        timeoutSeconds,
+        capability,
+        rootKeyBytes,
+        opaque,
+        digest,
+        routePattern,
+        requestMethod,
+        null,
+        false);
   }
 
   @Override
@@ -111,7 +154,9 @@ public record ChallengeContext(
         && Objects.equals(opaque, that.opaque)
         && Objects.equals(digest, that.digest)
         && Objects.equals(routePattern, that.routePattern)
-        && Objects.equals(requestMethod, that.requestMethod);
+        && Objects.equals(requestMethod, that.requestMethod)
+        && Objects.equals(rawQuery, that.rawQuery)
+        && queryPresent == that.queryPresent;
   }
 
   @Override
@@ -128,7 +173,9 @@ public record ChallengeContext(
             opaque,
             digest,
             routePattern,
-            requestMethod);
+            requestMethod,
+            rawQuery,
+            queryPresent);
     result = 31 * result + Arrays.hashCode(paymentHash);
     result = 31 * result + Arrays.hashCode(rootKeyBytes);
     return result;
