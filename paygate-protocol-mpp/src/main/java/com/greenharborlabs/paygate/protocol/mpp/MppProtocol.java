@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.PaymentValidationException.ErrorCode;
+import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import java.nio.charset.StandardCharsets;
@@ -130,10 +131,7 @@ public final class MppProtocol implements PaymentProtocol {
     if (credential.metadata() instanceof MppMetadata mppMetadata) {
       String method = mppMetadata.echoedChallenge().get("method");
       if (!"lightning".equals(method)) {
-        throw new PaymentValidationException(
-            ErrorCode.METHOD_UNSUPPORTED,
-            "Unsupported payment method: " + method,
-            credential.tokenId());
+        throw new UnsupportedPaymentMethodException(credential.tokenId());
       }
     }
 
@@ -241,7 +239,7 @@ public final class MppProtocol implements PaymentProtocol {
 
     if (!(credential.metadata() instanceof MppMetadata mppMetadata)) {
       throw new PaymentValidationException(
-          ErrorCode.MALFORMED_CREDENTIAL,
+          ErrorCode.MALFORMED,
           "Expected MppMetadata but got " + credential.metadata().getClass().getName(),
           credential.tokenId());
     }
@@ -271,33 +269,25 @@ public final class MppProtocol implements PaymentProtocol {
       computedHash = MppCryptoUtils.sha256(preimage);
       if (!MppCryptoUtils.constantTimeEquals(computedHash, paymentHash)) {
         throw new PaymentValidationException(
-            ErrorCode.INVALID_PREIMAGE,
-            "Preimage does not match payment hash",
-            credential.tokenId());
+            ErrorCode.INVALID, "Preimage does not match payment hash", credential.tokenId());
       }
 
       // 2. HMAC binding check
       if (id == null || realm == null || method == null || intent == null || request == null) {
         throw new PaymentValidationException(
-            ErrorCode.INVALID_CHALLENGE_BINDING,
-            "Echoed challenge is missing required fields",
-            credential.tokenId());
+            ErrorCode.INVALID, "Echoed challenge is missing required fields", credential.tokenId());
       }
       if (digest == null || digest.isBlank()) {
         throw new PaymentValidationException(
-            ErrorCode.INVALID_CHALLENGE_BINDING,
-            "Echoed challenge is missing digest binding",
-            credential.tokenId());
+            ErrorCode.INVALID, "Echoed challenge is missing digest binding", credential.tokenId());
       }
       if (requestDigest == null || requestDigest.isBlank()) {
         throw new PaymentValidationException(
-            ErrorCode.INVALID_CHALLENGE_BINDING,
-            "Request context is missing digest binding",
-            credential.tokenId());
+            ErrorCode.INVALID, "Request context is missing digest binding", credential.tokenId());
       }
       if (!requestDigest.equals(digest)) {
         throw new PaymentValidationException(
-            ErrorCode.INVALID_CHALLENGE_BINDING, "Request digest mismatch", credential.tokenId());
+            ErrorCode.INVALID, "Request digest mismatch", credential.tokenId());
       }
       boolean hmacCurrentSecretValid;
       boolean hmacPreviousSecretValid = false;
@@ -328,13 +318,11 @@ public final class MppProtocol implements PaymentProtocol {
         }
       } catch (IllegalArgumentException e) {
         throw new PaymentValidationException(
-            ErrorCode.INVALID_CHALLENGE_BINDING, "Challenge binding verification failed", e);
+            ErrorCode.INVALID, "Challenge binding verification failed", e);
       }
       if (!(hmacCurrentSecretValid || hmacPreviousSecretValid)) {
         throw new PaymentValidationException(
-            ErrorCode.INVALID_CHALLENGE_BINDING,
-            "Challenge binding verification failed",
-            credential.tokenId());
+            ErrorCode.INVALID, "Challenge binding verification failed", credential.tokenId());
       }
 
       // 3. Expiry check
@@ -344,22 +332,17 @@ public final class MppProtocol implements PaymentProtocol {
           expiresInstant = Instant.parse(expires);
         } catch (DateTimeParseException e) {
           throw new PaymentValidationException(
-              ErrorCode.EXPIRED_CREDENTIAL,
-              "Invalid expires timestamp format",
-              credential.tokenId());
+              ErrorCode.INVALID, "Invalid expires timestamp format", credential.tokenId());
         }
         if (Instant.now().isAfter(expiresInstant)) {
           throw new PaymentValidationException(
-              ErrorCode.EXPIRED_CREDENTIAL, "Credential has expired", credential.tokenId());
+              ErrorCode.INVALID, "Credential has expired", credential.tokenId());
         }
       }
 
       // 4. Defense-in-depth: method must be "lightning"
       if (!"lightning".equals(method)) {
-        throw new PaymentValidationException(
-            ErrorCode.METHOD_UNSUPPORTED,
-            "Unsupported payment method: " + method,
-            credential.tokenId());
+        throw new UnsupportedPaymentMethodException(credential.tokenId());
       }
     } finally {
       CryptoUtils.zeroize(preimage, paymentHash, computedHash);

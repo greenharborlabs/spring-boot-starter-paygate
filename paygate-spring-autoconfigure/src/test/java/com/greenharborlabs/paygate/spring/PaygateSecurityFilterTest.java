@@ -23,6 +23,8 @@ import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.api.ProtocolMetadata;
+import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -161,6 +163,45 @@ class PaygateSecurityFilterTest {
               "Unexpected credential validation error; failing closed with service unavailable")
           .doesNotContain(credentialMarker);
     }
+  }
+
+  @Test
+  @DisplayName("presented unsupported Payment credential is rejected without creating a challenge")
+  void presentedUnsupportedPaymentCredentialDoesNotCreateChallenge() throws Exception {
+    String tokenMarker = "credential-token-marker";
+    long invoicesBefore = earningsTracker.getTotalInvoicesCreated();
+    capturingPaymentProtocol.reset();
+    capturingPaymentProtocol.throwValidationFailure(
+        new UnsupportedPaymentMethodException(tokenMarker));
+
+    mockMvc
+        .perform(get(PROTECTED_PATH).header("Authorization", "Payment method=unsupported"))
+        .andExpect(status().isPaymentRequired())
+        .andExpect(jsonPath("$.title", is("INVALID")))
+        .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")))
+        .andExpect(header().doesNotExist("WWW-Authenticate"))
+        .andExpect(content().string(org.hamcrest.Matchers.not(containsString(tokenMarker))));
+
+    assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore);
+    assertThat(capturingPaymentProtocol.lastChallengeContext()).isNull();
+    capturingPaymentProtocol.reset();
+  }
+
+  @Test
+  @DisplayName("other invalid Payment credentials retain challenge creation")
+  void otherInvalidPaymentCredentialCreatesChallenge() throws Exception {
+    long invoicesBefore = earningsTracker.getTotalInvoicesCreated();
+    capturingPaymentProtocol.reset();
+    capturingPaymentProtocol.throwValidationFailure(
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INVALID, "Invalid credential", "token-marker"));
+
+    mockMvc
+        .perform(get(PROTECTED_PATH).header("Authorization", "Payment invalid"))
+        .andExpect(status().isPaymentRequired());
+
+    assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore + 1);
+    capturingPaymentProtocol.reset();
   }
 
   // -----------------------------------------------------------------------
@@ -320,6 +361,8 @@ class PaygateSecurityFilterTest {
     private final AtomicReference<ChallengeContext> lastChallengeContext = new AtomicReference<>();
     private final AtomicReference<RuntimeException> unexpectedValidationFailure =
         new AtomicReference<>();
+    private final AtomicReference<PaymentValidationException> validationFailure =
+        new AtomicReference<>();
 
     @Override
     public String scheme() {
@@ -328,7 +371,7 @@ class PaygateSecurityFilterTest {
 
     @Override
     public boolean canHandle(String authorizationHeader) {
-      return unexpectedValidationFailure.get() != null;
+      return unexpectedValidationFailure.get() != null || validationFailure.get() != null;
     }
 
     @Override
@@ -338,8 +381,12 @@ class PaygateSecurityFilterTest {
       if (failure != null) {
         throw failure;
       }
+      if (validationFailure.get() != null) {
+        return new PaymentCredential(
+            new byte[32], new byte[32], "test-token", "Payment", null, new ProtocolMetadata() {});
+      }
       throw new PaymentValidationException(
-          PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL,
+          PaymentValidationException.ErrorCode.MALFORMED,
           "Payment credentials are not parsed in this boundary test",
           (String) null);
     }
@@ -359,16 +406,24 @@ class PaygateSecurityFilterTest {
     @Override
     public void validate(PaymentCredential credential, Map<String, String> requestContext)
         throws PaymentValidationException {
-      // Not used because canHandle returns false.
+      PaymentValidationException failure = validationFailure.get();
+      if (failure != null) {
+        throw failure;
+      }
     }
 
     void reset() {
       lastChallengeContext.set(null);
       unexpectedValidationFailure.set(null);
+      validationFailure.set(null);
     }
 
     void throwUnexpectedValidationFailure(String credentialMarker) {
       unexpectedValidationFailure.set(new IllegalStateException(credentialMarker));
+    }
+
+    void throwValidationFailure(PaymentValidationException failure) {
+      validationFailure.set(failure);
     }
 
     ChallengeContext lastChallengeContext() {
@@ -999,7 +1054,7 @@ class PaygateSecurityFilterTest {
     }
 
     @Test
-    @DisplayName("expired valid_until caveat is rejected as EXPIRED_CREDENTIAL")
+    @DisplayName("expired valid_until caveat is rejected as INVALID")
     void expiredCredentialIsRejected() throws Exception {
       byte[] preimage = new byte[32];
       new SecureRandom().nextBytes(preimage);
@@ -1017,11 +1072,12 @@ class PaygateSecurityFilterTest {
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("EXPIRED_CREDENTIAL")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
 
     @Test
-    @DisplayName("wrong service name in caveat is rejected as INVALID_SERVICE")
+    @DisplayName("wrong service name in caveat is rejected as INVALID")
     void wrongServiceIsRejected() throws Exception {
       byte[] preimage = new byte[32];
       new SecureRandom().nextBytes(preimage);
@@ -1039,7 +1095,8 @@ class PaygateSecurityFilterTest {
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
   }
 
@@ -1211,7 +1268,8 @@ class PaygateSecurityFilterTest {
       mockMvc
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
 
     @Test
@@ -1223,7 +1281,8 @@ class PaygateSecurityFilterTest {
       mockMvc
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
 
     @Test

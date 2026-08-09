@@ -14,12 +14,10 @@ public class PaymentValidationException extends RuntimeException {
 
   /** Classifies the validation failure and maps it to an HTTP status and problem type URI. */
   public enum ErrorCode {
-    MALFORMED_CREDENTIAL(402, "https://paymentauth.org/problems/malformed-credential"),
-    INVALID_PREIMAGE(402, "https://paymentauth.org/problems/verification-failed"),
-    INVALID_CHALLENGE_BINDING(402, "https://paymentauth.org/problems/verification-failed"),
-    EXPIRED_CREDENTIAL(402, "https://paymentauth.org/problems/verification-failed"),
-    METHOD_UNSUPPORTED(400, "https://paymentauth.org/problems/method-unsupported"),
-    SERVICE_UNAVAILABLE(503, "https://paymentauth.org/problems/service-unavailable");
+    MALFORMED(400, "https://paymentauth.org/problems/malformed"),
+    INVALID(402, "https://paymentauth.org/problems/invalid"),
+    INSUFFICIENT(402, "https://paymentauth.org/problems/insufficient"),
+    UNAVAILABLE(503, "https://paymentauth.org/problems/unavailable");
 
     private final int httpStatus;
     private final String problemTypeUri;
@@ -47,7 +45,7 @@ public class PaymentValidationException extends RuntimeException {
    * Creates a validation exception without a token ID.
    *
    * @param errorCode the error classification, must not be {@code null}
-   * @param message human-readable detail message
+   * @param message diagnostic detail retained for compatibility but not exposed publicly
    */
   public PaymentValidationException(ErrorCode errorCode, String message) {
     this(errorCode, message, (String) null);
@@ -57,11 +55,11 @@ public class PaymentValidationException extends RuntimeException {
    * Creates a validation exception with an optional token ID.
    *
    * @param errorCode the error classification, must not be {@code null}
-   * @param message human-readable detail message
+   * @param message diagnostic detail retained for compatibility but not exposed publicly
    * @param tokenId the token identifier, may be {@code null}
    */
   public PaymentValidationException(ErrorCode errorCode, String message, String tokenId) {
-    super(message);
+    super(publicMessage(errorCode));
     this.errorCode = Objects.requireNonNull(errorCode, "errorCode must not be null");
     this.tokenId = tokenId;
     this.problemTypeUri = errorCode.problemTypeUri();
@@ -72,11 +70,11 @@ public class PaymentValidationException extends RuntimeException {
    * Creates a validation exception with a cause.
    *
    * @param errorCode the error classification, must not be {@code null}
-   * @param message human-readable detail message
+   * @param message diagnostic detail retained for compatibility but not exposed publicly
    * @param cause the underlying cause
    */
   public PaymentValidationException(ErrorCode errorCode, String message, Throwable cause) {
-    super(message, cause);
+    super(publicMessage(errorCode), cause);
     this.errorCode = Objects.requireNonNull(errorCode, "errorCode must not be null");
     this.tokenId = null;
     this.problemTypeUri = errorCode.problemTypeUri();
@@ -97,5 +95,10 @@ public class PaymentValidationException extends RuntimeException {
 
   public int getHttpStatus() {
     return httpStatus;
+  }
+
+  private static String publicMessage(ErrorCode errorCode) {
+    return "Payment validation failed: "
+        + Objects.requireNonNull(errorCode, "errorCode must not be null").name();
   }
 }

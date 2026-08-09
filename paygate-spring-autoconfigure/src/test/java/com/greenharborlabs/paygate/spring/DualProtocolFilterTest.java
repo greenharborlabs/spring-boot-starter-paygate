@@ -252,11 +252,11 @@ class DualProtocolFilterTest {
     verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
   }
 
-  // --- Test 7: 400 for METHOD_UNSUPPORTED ---
+  // --- Test 7: invalid payment method ---
 
   @Test
-  @DisplayName("Protocol throws METHOD_UNSUPPORTED -> 400 Bad Request")
-  void methodUnsupported400() throws Exception {
+  @DisplayName("Protocol throws INVALID -> 402 Payment Required")
+  void invalidMethod402() throws Exception {
     when(mppProtocol.scheme()).thenReturn("Payment");
     when(mppProtocol.canHandle("Payment bad-method")).thenReturn(true);
     when(mppProtocol.parseCredential("Payment bad-method"))
@@ -265,8 +265,7 @@ class DualProtocolFilterTest {
                 PAYMENT_HASH, PREIMAGE, TOKEN_ID, "Payment", null, mock(ProtocolMetadata.class)));
     doThrow(
             new PaymentValidationException(
-                PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED,
-                "Only lightning method is supported"))
+                PaymentValidationException.ErrorCode.INVALID, "Only lightning method is supported"))
         .when(mppProtocol)
         .validate(any(), anyMap());
 
@@ -275,9 +274,9 @@ class DualProtocolFilterTest {
     var filter = createFilter(List.of(mppProtocol));
     filter.doFilter(request, response, filterChain);
 
-    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getStatus()).isEqualTo(402);
     assertThat(response.getContentType()).isEqualTo("application/problem+json");
-    assertThat(response.getContentAsString()).contains("method-unsupported");
+    assertThat(response.getContentAsString()).contains("INVALID");
     verify(filterChain, never()).doFilter(any(), any());
   }
 

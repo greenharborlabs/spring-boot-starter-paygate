@@ -89,6 +89,18 @@
       "defaultValue": 20
     },
     {
+      "name": "paygate.rate-limit.ipv6-prefix-length",
+      "type": "java.lang.Integer",
+      "description": "IPv6 network prefix length used to group client addresses for challenge rate limiting. Must be between 0 and 128, inclusive; use 64 to group addresses by the standard IPv6 subnet.",
+      "defaultValue": 64
+    },
+    {
+      "name": "paygate.request-body.max-bytes",
+      "type": "java.lang.Integer",
+      "description": "Maximum request body size in bytes accepted while processing payment-gated requests. Must be between 1 and 16777216, inclusive; larger requests are rejected to limit resource consumption.",
+      "defaultValue": 8192
+    },
+    {
       "name": "paygate.lightning.timeout-seconds",
       "type": "java.lang.Integer",
       "description": "Global timeout in seconds for Lightning backend RPC/HTTP calls. Used as the default for both LND and LNbits backends. Backend-specific properties (paygate.lnd.rpc-deadline-seconds, paygate.lnbits.request-timeout-seconds) override this value when set.",

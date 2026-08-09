@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -45,6 +46,8 @@ public class PaygateProperties {
 
   private Caveat caveat = new Caveat();
 
+  private RequestBody requestBody = new RequestBody();
+
   private RateLimit rateLimit = new RateLimit();
 
   private HealthCache healthCache = new HealthCache();
@@ -83,6 +86,14 @@ public class PaygateProperties {
 
   public void setRateLimit(RateLimit rateLimit) {
     this.rateLimit = rateLimit;
+  }
+
+  public RequestBody getRequestBody() {
+    return requestBody;
+  }
+
+  public void setRequestBody(RequestBody requestBody) {
+    this.requestBody = requestBody;
   }
 
   public HealthCache getHealthCache() {
@@ -243,6 +254,29 @@ public class PaygateProperties {
     }
   }
 
+  /** Request-body configuration bound from {@code paygate.request-body.*}. */
+  public static class RequestBody {
+
+    private int maxBytes = 8_192;
+
+    public int getMaxBytes() {
+      return maxBytes;
+    }
+
+    public void setMaxBytes(int maxBytes) {
+      if (!SecurityBounds.isValidRequestBodySize(maxBytes)) {
+        throw new IllegalArgumentException(
+            "paygate.request-body.max-bytes must be between "
+                + SecurityBounds.MIN_REQUEST_BODY_SIZE_BYTES
+                + " and "
+                + SecurityBounds.MAX_REQUEST_BODY_SIZE_BYTES
+                + ", got: "
+                + maxBytes);
+      }
+      this.maxBytes = maxBytes;
+    }
+  }
+
   /** Rate-limiting configuration bound from {@code paygate.rate-limit.*}. */
   public static class RateLimit {
 
@@ -251,6 +285,8 @@ public class PaygateProperties {
     private int burstSize = 20;
 
     private int maxBuckets = 100_000;
+
+    private int ipv6PrefixLength = 64;
 
     public double getRequestsPerSecond() {
       return requestsPerSecond;
@@ -274,6 +310,23 @@ public class PaygateProperties {
 
     public void setMaxBuckets(int maxBuckets) {
       this.maxBuckets = maxBuckets;
+    }
+
+    public int getIpv6PrefixLength() {
+      return ipv6PrefixLength;
+    }
+
+    public void setIpv6PrefixLength(int ipv6PrefixLength) {
+      if (!SecurityBounds.isValidIpv6PrefixLength(ipv6PrefixLength)) {
+        throw new IllegalArgumentException(
+            "paygate.rate-limit.ipv6-prefix-length must be between "
+                + SecurityBounds.MIN_IPV6_PREFIX_LENGTH
+                + " and "
+                + SecurityBounds.MAX_IPV6_PREFIX_LENGTH
+                + ", got: "
+                + ipv6PrefixLength);
+      }
+      this.ipv6PrefixLength = ipv6PrefixLength;
     }
   }
 

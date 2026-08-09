@@ -207,10 +207,10 @@ public final class MppCredentialParser {
   }
 
   private static PaymentValidationException malformed(String message) {
-    return new PaymentValidationException(ErrorCode.MALFORMED_CREDENTIAL, message);
+    return new PaymentValidationException(ErrorCode.MALFORMED, message);
   }
 
   private static PaymentValidationException malformed(String message, Throwable cause) {
-    return new PaymentValidationException(ErrorCode.MALFORMED_CREDENTIAL, message, cause);
+    return new PaymentValidationException(ErrorCode.MALFORMED, message, cause);
   }
 }

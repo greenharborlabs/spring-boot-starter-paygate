@@ -254,7 +254,7 @@ class PaygateAuthenticationProviderDelegationTest {
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
       doThrow(
               new PaymentValidationException(
-                  PaymentValidationException.ErrorCode.INVALID_PREIMAGE, "bad preimage"))
+                  PaymentValidationException.ErrorCode.INVALID, "bad preimage"))
           .when(mppProtocol)
           .validate(eq(credential), any());
 
@@ -274,7 +274,7 @@ class PaygateAuthenticationProviderDelegationTest {
       when(mppProtocol.parseCredential(authHeader))
           .thenThrow(
               new PaymentValidationException(
-                  PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL, "cannot parse"));
+                  PaymentValidationException.ErrorCode.MALFORMED, "cannot parse"));
 
       var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
 

@@ -60,7 +60,7 @@ class MppReplayConformanceTest {
         .satisfies(
             e ->
                 assertThat(((PaymentValidationException) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING));
+                    .isEqualTo(ErrorCode.INVALID));
   }
 
   @Test
@@ -87,7 +87,7 @@ class MppReplayConformanceTest {
         .satisfies(
             e ->
                 assertThat(((PaymentValidationException) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING));
+                    .isEqualTo(ErrorCode.INVALID));
   }
 
   @Test
@@ -102,7 +102,7 @@ class MppReplayConformanceTest {
         .satisfies(
             e ->
                 assertThat(((PaymentValidationException) e).getErrorCode())
-                    .isEqualTo(ErrorCode.EXPIRED_CREDENTIAL));
+                    .isEqualTo(ErrorCode.INVALID));
   }
 
   @Test
@@ -137,7 +137,7 @@ class MppReplayConformanceTest {
         .satisfies(
             e ->
                 assertThat(((PaymentValidationException) e).getErrorCode())
-                    .isEqualTo(ErrorCode.INVALID_PREIMAGE));
+                    .isEqualTo(ErrorCode.INVALID));
   }
 
   @Test

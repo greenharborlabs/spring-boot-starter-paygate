@@ -220,7 +220,7 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
               });
     }
 
@@ -233,8 +233,8 @@ class L402ProtocolTest {
               PaymentValidationException.class, () -> protocol.parseCredential(authHeader));
 
       assertThat(exception.getErrorCode())
-          .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
-      assertThat(exception).hasMessage("Malformed L402 credential").hasNoCause();
+          .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
+      assertThat(exception).hasMessage("Payment validation failed: MALFORMED").hasNoCause();
       assertThat(exception.getTokenId()).isNull();
       assertThat(exception.getMessage()).doesNotContain("Unsupported", "version", "12599", "3137");
     }
@@ -247,7 +247,7 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
               });
     }
 
@@ -259,7 +259,7 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
               });
     }
   }
@@ -746,7 +746,7 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
                 assertThat(pve.getTokenId()).isEqualTo("tok123");
               });
     }
@@ -758,33 +758,28 @@ class L402ProtocolTest {
     @Test
     void malformedHeaderMapsTOMalformedCredential() {
       verifyErrorMapping(
-          ErrorCode.MALFORMED_HEADER, PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+          ErrorCode.MALFORMED_HEADER, PaymentValidationException.ErrorCode.MALFORMED);
     }
 
     @Test
     void invalidPreimageMapsToInvalidPreimage() {
-      verifyErrorMapping(
-          ErrorCode.INVALID_PREIMAGE, PaymentValidationException.ErrorCode.INVALID_PREIMAGE);
+      verifyErrorMapping(ErrorCode.INVALID_PREIMAGE, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void expiredCredentialMapsToExpiredCredential() {
       verifyErrorMapping(
-          ErrorCode.EXPIRED_CREDENTIAL, PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL);
+          ErrorCode.EXPIRED_CREDENTIAL, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void invalidMacaroonMapsToInvalidChallengeBinding() {
-      verifyErrorMapping(
-          ErrorCode.INVALID_MACAROON,
-          PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+      verifyErrorMapping(ErrorCode.INVALID_MACAROON, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void invalidServiceMapsToInvalidChallengeBinding() {
-      verifyErrorMapping(
-          ErrorCode.INVALID_SERVICE,
-          PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+      verifyErrorMapping(ErrorCode.INVALID_SERVICE, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
@@ -807,9 +802,10 @@ class L402ProtocolTest {
                 PaymentValidationException validationException =
                     (PaymentValidationException) exception;
                 assertThat(validationException.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID);
                 assertThat(validationException.getMessage())
-                    .isEqualTo("Request route and method context are required");
+                    .isEqualTo("Payment validation failed: INVALID")
+                    .doesNotContain("unsafe route=/private method=DELETE");
               });
     }
 
@@ -829,10 +825,10 @@ class L402ProtocolTest {
               error -> {
                 PaymentValidationException failure = (PaymentValidationException) error;
                 assertThat(failure.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID);
                 assertThat(failure.getHttpStatus()).isEqualTo(402);
                 assertThat(failure.getMessage())
-                    .isEqualTo("L402 credential validation failed")
+                    .isEqualTo("Payment validation failed: INVALID")
                     .doesNotContain(sensitiveDetail);
                 assertThat(failure.getTokenId()).isEqualTo("tok-1");
               });
@@ -841,15 +837,13 @@ class L402ProtocolTest {
     @Test
     void revokedCredentialMapsToInvalidChallengeBinding() {
       verifyErrorMapping(
-          ErrorCode.REVOKED_CREDENTIAL,
-          PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+          ErrorCode.REVOKED_CREDENTIAL, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void lightningUnavailableMapsToServiceUnavailable() {
       verifyErrorMapping(
-          ErrorCode.LIGHTNING_UNAVAILABLE,
-          PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE);
+          ErrorCode.LIGHTNING_UNAVAILABLE, PaymentValidationException.ErrorCode.UNAVAILABLE);
     }
 
     @Test
@@ -868,7 +862,7 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getMessage())
-                    .isEqualTo("L402 credential proof is invalid")
+                    .isEqualTo("Payment validation failed: INVALID")
                     .doesNotContain(credentialMarker);
                 assertThat(pve.getTokenId()).isEqualTo("tok-42");
               });

@@ -3,199 +3,77 @@ package com.greenharborlabs.paygate.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class PaymentValidationExceptionTest {
 
-  // --- ErrorCode mappings ---
+  private static final String ATTACKER_DETAIL = "ATTACKER_DETAIL_DO_NOT_EXPOSE";
+  private static final String CAUSE_DETAIL = "CAUSE_DETAIL_DO_NOT_EXPOSE";
 
   @Test
-  void malformedCredentialMapsToCorrectStatusAndUri() {
-    var code = PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL;
-    assertThat(code.httpStatus()).isEqualTo(402);
-    assertThat(code.problemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/malformed-credential");
-  }
-
-  @Test
-  void invalidPreimageMapsToCorrectStatusAndUri() {
-    var code = PaymentValidationException.ErrorCode.INVALID_PREIMAGE;
-    assertThat(code.httpStatus()).isEqualTo(402);
-    assertThat(code.problemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/verification-failed");
-  }
-
-  @Test
-  void invalidChallengeBindingMapsToCorrectStatusAndUri() {
-    var code = PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
-    assertThat(code.httpStatus()).isEqualTo(402);
-    assertThat(code.problemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/verification-failed");
-  }
-
-  @Test
-  void expiredCredentialMapsToCorrectStatusAndUri() {
-    var code = PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL;
-    assertThat(code.httpStatus()).isEqualTo(402);
-    assertThat(code.problemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/verification-failed");
-  }
-
-  @Test
-  void methodUnsupportedMapsToCorrectStatusAndUri() {
-    var code = PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED;
-    assertThat(code.httpStatus()).isEqualTo(400);
-    assertThat(code.problemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/method-unsupported");
-  }
-
-  @Test
-  void serviceUnavailableMapsToCorrectStatusAndUri() {
-    var code = PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
-    assertThat(code.httpStatus()).isEqualTo(503);
-    assertThat(code.problemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/service-unavailable");
+  void exposesOnlyTheFourStableProtocolNeutralFailureCategories() {
+    assertThat(PaymentValidationException.ErrorCode.values())
+        .extracting(Enum::name)
+        .containsExactlyInAnyOrder("MALFORMED", "INVALID", "INSUFFICIENT", "UNAVAILABLE");
   }
 
   @ParameterizedTest
-  @EnumSource(PaymentValidationException.ErrorCode.class)
-  void allErrorCodesHaveNonNullProblemTypeUri(PaymentValidationException.ErrorCode code) {
-    assertThat(code.problemTypeUri()).isNotNull();
-    assertThat(code.problemTypeUri()).startsWith("https://");
+  @MethodSource("failureCategoryStatuses")
+  void eachFailureCategoryMapsToItsStableHttpStatus(String categoryName, int expectedStatus) {
+    var category = PaymentValidationException.ErrorCode.valueOf(categoryName);
+
+    var exception = new PaymentValidationException(category, ATTACKER_DETAIL);
+
+    assertThat(exception.getErrorCode()).isSameAs(category);
+    assertThat(exception.getHttpStatus()).isEqualTo(expectedStatus);
+    assertThat(exception.getProblemTypeUri()).startsWith("https://");
   }
 
-  @ParameterizedTest
-  @EnumSource(PaymentValidationException.ErrorCode.class)
-  void allErrorCodesHavePositiveHttpStatus(PaymentValidationException.ErrorCode code) {
-    assertThat(code.httpStatus()).isGreaterThanOrEqualTo(400);
-    assertThat(code.httpStatus()).isLessThan(600);
+  private static Stream<Arguments> failureCategoryStatuses() {
+    return Stream.of(
+        Arguments.of("MALFORMED", 400),
+        Arguments.of("INVALID", 402),
+        Arguments.of("INSUFFICIENT", 402),
+        Arguments.of("UNAVAILABLE", 503));
   }
 
   @Test
-  void allSixErrorCodesExist() {
-    assertThat(PaymentValidationException.ErrorCode.values()).hasSize(6);
-  }
-
-  // --- Constructor: (ErrorCode, String) ---
-
-  @Test
-  void twoArgConstructorSetsFieldsCorrectly() {
-    var ex =
+  void publicMessageDoesNotExposeCallerSuppliedDetail() {
+    var exception =
         new PaymentValidationException(
-            PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL, "bad token");
+            PaymentValidationException.ErrorCode.valueOf("INVALID"), ATTACKER_DETAIL);
 
-    assertThat(ex.getMessage()).isEqualTo("bad token");
-    assertThat(ex.getErrorCode())
-        .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
-    assertThat(ex.getTokenId()).isNull();
-    assertThat(ex.getHttpStatus()).isEqualTo(402);
-    assertThat(ex.getProblemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/malformed-credential");
-    assertThat(ex.getCause()).isNull();
+    assertThat(exception.getMessage()).doesNotContain(ATTACKER_DETAIL);
   }
 
   @Test
-  void twoArgConstructorWithNullErrorCodeThrows() {
-    assertThatThrownBy(() -> new PaymentValidationException(null, "msg"))
+  void publicMessageDoesNotExposeCauseDetail() {
+    var cause = new IllegalStateException(CAUSE_DETAIL);
+    var exception =
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.valueOf("UNAVAILABLE"), ATTACKER_DETAIL, cause);
+
+    assertThat(exception.getMessage()).doesNotContain(ATTACKER_DETAIL).doesNotContain(CAUSE_DETAIL);
+    assertThat(exception.getCause()).isSameAs(cause);
+  }
+
+  @Test
+  void nullFailureCategoryIsRejected() {
+    assertThatThrownBy(() -> new PaymentValidationException(null, "safe detail"))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("errorCode");
   }
-
-  // --- Constructor: (ErrorCode, String, String) ---
-
-  @Test
-  void threeArgStringConstructorSetsTokenId() {
-    var ex =
-        new PaymentValidationException(
-            PaymentValidationException.ErrorCode.INVALID_PREIMAGE, "wrong preimage", "tok_123");
-
-    assertThat(ex.getMessage()).isEqualTo("wrong preimage");
-    assertThat(ex.getErrorCode()).isEqualTo(PaymentValidationException.ErrorCode.INVALID_PREIMAGE);
-    assertThat(ex.getTokenId()).isEqualTo("tok_123");
-    assertThat(ex.getHttpStatus()).isEqualTo(402);
-    assertThat(ex.getProblemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/verification-failed");
-    assertThat(ex.getCause()).isNull();
-  }
-
-  @Test
-  void threeArgStringConstructorWithNullTokenIdIsAllowed() {
-    var ex =
-        new PaymentValidationException(
-            PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL, "expired", (String) null);
-
-    assertThat(ex.getTokenId()).isNull();
-  }
-
-  @Test
-  void threeArgStringConstructorWithNullErrorCodeThrows() {
-    assertThatThrownBy(() -> new PaymentValidationException(null, "msg", "tok"))
-        .isInstanceOf(NullPointerException.class)
-        .hasMessageContaining("errorCode");
-  }
-
-  // --- Constructor: (ErrorCode, String, Throwable) ---
-
-  @Test
-  void threeArgCauseConstructorPreservesCauseChain() {
-    var rootCause = new RuntimeException("root cause");
-    var ex =
-        new PaymentValidationException(
-            PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING,
-            "binding failed",
-            rootCause);
-
-    assertThat(ex.getMessage()).isEqualTo("binding failed");
-    assertThat(ex.getCause()).isSameAs(rootCause);
-    assertThat(ex.getErrorCode())
-        .isEqualTo(PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
-    assertThat(ex.getTokenId()).isNull();
-    assertThat(ex.getHttpStatus()).isEqualTo(402);
-    assertThat(ex.getProblemTypeUri())
-        .isEqualTo("https://paymentauth.org/problems/verification-failed");
-  }
-
-  @Test
-  void threeArgCauseConstructorWithNullErrorCodeThrows() {
-    assertThatThrownBy(() -> new PaymentValidationException(null, "msg", new RuntimeException()))
-        .isInstanceOf(NullPointerException.class)
-        .hasMessageContaining("errorCode");
-  }
-
-  @Test
-  void causeConstructorWithNestedCauseChain() {
-    var innerCause = new IllegalStateException("inner");
-    var outerCause = new RuntimeException("outer", innerCause);
-    var ex =
-        new PaymentValidationException(
-            PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED, "unsupported", outerCause);
-
-    assertThat(ex.getCause()).isSameAs(outerCause);
-    assertThat(ex.getCause().getCause()).isSameAs(innerCause);
-  }
-
-  // --- Is a RuntimeException ---
 
   @Test
   void isRuntimeException() {
-    var ex =
+    var exception =
         new PaymentValidationException(
-            PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL, "test");
+            PaymentValidationException.ErrorCode.valueOf("MALFORMED"), "safe detail");
 
-    assertThat(ex).isInstanceOf(RuntimeException.class);
-  }
-
-  // --- Each ErrorCode propagates correctly through exception ---
-
-  @ParameterizedTest
-  @EnumSource(PaymentValidationException.ErrorCode.class)
-  void eachErrorCodePropagatesStatusAndUriToException(PaymentValidationException.ErrorCode code) {
-    var ex = new PaymentValidationException(code, "test message");
-
-    assertThat(ex.getHttpStatus()).isEqualTo(code.httpStatus());
-    assertThat(ex.getProblemTypeUri()).isEqualTo(code.problemTypeUri());
-    assertThat(ex.getErrorCode()).isEqualTo(code);
+    assertThat(exception).isInstanceOf(RuntimeException.class);
   }
 }

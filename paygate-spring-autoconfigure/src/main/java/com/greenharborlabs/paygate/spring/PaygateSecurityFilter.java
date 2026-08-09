@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
@@ -345,17 +346,21 @@ public class PaygateSecurityFilter implements Filter {
         protocol.scheme(),
         e.getErrorCode());
 
-    if (e.getErrorCode() == PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED) {
-      PaygateResponseWriter.writeMethodUnsupported(httpResponse, e.getMessage());
-      recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
-      return;
-    }
-
-    if (e.getErrorCode() == PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL
+    if (e.getErrorCode() == PaymentValidationException.ErrorCode.MALFORMED
         && "L402".equals(protocol.scheme())) {
       log.log(
           System.Logger.Level.WARNING, "Malformed L402 header for protocol {0}", protocol.scheme());
       PaygateResponseWriter.writeMalformedHeader(httpResponse, e.getMessage(), e.getTokenId());
+      recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
+      return;
+    }
+
+    // An unsupported MPP method is a classified, presented-credential failure. Do not allocate a
+    // replacement challenge, and use a response-safe exception so its diagnostic token ID cannot
+    // be serialized to the client.
+    if (RequestDigestSupport.isMppProtocol(protocol)
+        && e instanceof UnsupportedPaymentMethodException) {
+      PaygateResponseWriter.writeMethodUnsupported(httpResponse, "Unsupported payment method");
       recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
       return;
     }

@@ -242,23 +242,17 @@ public final class PaygateResponseWriter {
   }
 
   /**
-   * Writes a 400 Bad Request response for an unsupported payment method, using RFC 9457 Problem
-   * Details format.
+   * Writes the standard invalid-credential response when a payment method is unsupported.
    *
    * @param response the servlet response
-   * @param message detail message describing why the method is unsupported
+   * @param message detail message for caller logging, not exposed publicly
    */
   public static void writeMethodUnsupported(HttpServletResponse response, String message)
       throws IOException {
-    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setHeader("Cache-Control", "no-store");
-    response.setContentType("application/problem+json");
-    response
-        .getWriter()
-        .write(
-            """
-                {"type": "https://paymentauth.org/problems/method-unsupported", "title": "Method Unsupported", "status": 400, "detail": "%s"}"""
-                .formatted(JsonEscaper.escape(message)));
+    writeMppError(
+        response,
+        new PaymentValidationException(PaymentValidationException.ErrorCode.INVALID, message),
+        List.of());
   }
 
   /**

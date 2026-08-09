@@ -162,19 +162,20 @@ class PaygateResponseWriterMultiProtocolTest {
   // --- Test 6: writeMethodUnsupported ---
 
   @Test
-  @DisplayName("writeMethodUnsupported -> 400, application/problem+json, RFC 9457 body")
+  @DisplayName("writeMethodUnsupported -> standard INVALID RFC 9457 response")
   void writeMethodUnsupported() throws Exception {
     PaygateResponseWriter.writeMethodUnsupported(response, "Only lightning is supported");
 
-    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getStatus()).isEqualTo(402);
     assertThat(response.getContentType()).isEqualTo("application/problem+json");
     assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
 
     String body = response.getContentAsString();
-    assertThat(body).contains("\"type\": \"https://paymentauth.org/problems/method-unsupported\"");
-    assertThat(body).contains("\"title\": \"Method Unsupported\"");
-    assertThat(body).contains("\"status\": 400");
-    assertThat(body).contains("\"detail\": \"Only lightning is supported\"");
+    assertThat(body).contains("\"type\": \"https://paymentauth.org/problems/invalid\"");
+    assertThat(body).contains("\"title\": \"INVALID\"");
+    assertThat(body).contains("\"status\": 402");
+    assertThat(body).contains("\"detail\": \"Payment validation failed: INVALID\"");
+    assertThat(body).doesNotContain("Only lightning is supported");
   }
 
   // --- Test 7: writeMppError with challenges ---
@@ -184,7 +185,7 @@ class PaygateResponseWriterMultiProtocolTest {
   void writeMppErrorWithChallenges() throws Exception {
     var exception =
         new PaymentValidationException(
-            PaymentValidationException.ErrorCode.INVALID_PREIMAGE,
+            PaymentValidationException.ErrorCode.INVALID,
             "Preimage does not match payment hash",
             "token-abc");
 
@@ -207,10 +208,11 @@ class PaygateResponseWriterMultiProtocolTest {
 
     // RFC 9457 Problem Details body
     String body = response.getContentAsString();
-    assertThat(body).contains("\"type\": \"https://paymentauth.org/problems/verification-failed\"");
-    assertThat(body).contains("\"title\": \"INVALID_PREIMAGE\"");
+    assertThat(body).contains("\"type\": \"https://paymentauth.org/problems/invalid\"");
+    assertThat(body).contains("\"title\": \"INVALID\"");
     assertThat(body).contains("\"status\": 402");
-    assertThat(body).contains("\"detail\": \"Preimage does not match payment hash\"");
+    assertThat(body).contains("\"detail\": \"Payment validation failed: INVALID\"");
+    assertThat(body).doesNotContain("Preimage does not match payment hash");
     assertThat(body).contains("\"token_id\": \"token-abc\"");
   }
 }

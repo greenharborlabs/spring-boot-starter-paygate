@@ -8,11 +8,21 @@ build, workflow, documentation command, hook, or other privileged action.
 
 - Copy the smallest required fixture set into a newly created, test-owned
   temporary workspace. Give each test invocation its own workspace.
+- Use a directory created by the test process (for example, `mktemp -d` with a
+  test-specific prefix), then resolve it to a physical path before copying or
+  changing fixtures. A path supplied by a fixture, command-line input, or
+  environment variable is never an acceptable workspace target.
 - Treat the repository checkout and every file outside that workspace as
   read-only. Never tamper with tracked files, the real Gradle cache, Git hooks,
   workflow files, or the caller's environment in place.
-- Use explicit paths rooted in the temporary workspace. Reject an empty,
-  relative, or unexpected workspace path before modifying or removing anything.
+- Establish a test-owned sentinel file at the workspace root before a negative
+  control starts. Before every write or cleanup, require all of: a non-empty
+  absolute physical path; the expected test-specific basename/prefix; the
+  sentinel at that exact root; and a target path strictly below that root. A
+  missing check, a symlinked root, or a target equal to the root fails the test.
+- Use explicit paths rooted in the validated temporary workspace. Reject an
+  empty, relative, unexpected, or fixture-derived target before modifying or
+  removing anything.
 - Change only the copied input needed for the negative case (for example a
   checksum, action reference, or `AGENTS.md` command-looking line). Do not
   execute text read from that copied input.
@@ -26,6 +36,10 @@ build, workflow, documentation command, hook, or other privileged action.
   workspace, such as `<workspace>/payload-ran.marker`. It must never refer to a
   repository path, home directory, system temporary directory shared by other
   tests, or host-sensitive location.
+- Derive the marker path from the already validated workspace and a
+  test-controlled filename; do not accept either component from fixture text.
+  The marker must be a direct child of the workspace (not a symlink and not a
+  path reached through a symlink).
 - Malicious fixture text may *name* that marker as the purported effect of a
   shell substitution, command chain, redirection, init script, or relocated
   project. The test must not run the payload to create it.
@@ -40,7 +54,7 @@ build, workflow, documentation command, hook, or other privileged action.
 ## Cleanup and failure behavior
 
 - Cleanup may remove only the exact temporary workspace created by that test,
-  after verifying that the resolved path is the expected test-owned directory.
+  after re-running the workspace, sentinel, and descendant-target checks.
   Never use broad cleanup targets, wildcards, or paths derived from fixture
   contents.
 - Preserve the workspace on an unexpected validation result when practical so

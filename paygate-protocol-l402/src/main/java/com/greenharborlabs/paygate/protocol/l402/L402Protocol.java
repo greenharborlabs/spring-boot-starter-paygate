@@ -157,7 +157,7 @@ public class L402Protocol implements PaymentProtocol {
 
     if (!(credential.metadata() instanceof L402Metadata metadata)) {
       throw new PaymentValidationException(
-          PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL,
+          PaymentValidationException.ErrorCode.MALFORMED,
           "Expected L402Metadata but got " + credential.metadata().getClass().getName(),
           credential.tokenId());
     }
@@ -195,14 +195,12 @@ public class L402Protocol implements PaymentProtocol {
   private static PaymentValidationException mapL402Exception(L402Exception e) {
     PaymentValidationException.ErrorCode mapped =
         switch (e.getErrorCode()) {
-          case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL;
-          case INVALID_PREIMAGE -> PaymentValidationException.ErrorCode.INVALID_PREIMAGE;
-          case EXPIRED_CREDENTIAL -> PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL;
-          case MISSING_REQUEST_CONTEXT ->
-              PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
+          case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED;
+          case INVALID_PREIMAGE, EXPIRED_CREDENTIAL, MISSING_REQUEST_CONTEXT ->
+              PaymentValidationException.ErrorCode.INVALID;
           case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
-              PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
-          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
+              PaymentValidationException.ErrorCode.INVALID;
+          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.UNAVAILABLE;
         };
     return new PaymentValidationException(
         mapped, safeFailureMessage(e.getErrorCode()), e.getTokenId());
