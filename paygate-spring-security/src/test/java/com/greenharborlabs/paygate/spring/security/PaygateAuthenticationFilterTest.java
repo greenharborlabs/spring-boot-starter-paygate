@@ -107,7 +107,12 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenNoAuthorizationHeader() throws ServletException, IOException {
+  void skipsUnregisteredRouteWhenNoAuthorizationHeader() throws ServletException, IOException {
+    request.setRequestURI("/api/unregistered");
+    org.mockito.Mockito.lenient()
+        .when(endpointRegistry.findConfig("GET", "/api/unregistered"))
+        .thenReturn(null);
+
     filter.doFilter(request, response, filterChain);
 
     verify(filterChain)
@@ -117,8 +122,28 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenBlankAuthorizationHeader() throws ServletException, IOException {
+  void rejectsMissingCredentialForRegisteredPaidRoute() throws ServletException, IOException {
+    request.setMethod("GET");
+    request.setRequestURI("/api/protected");
+    var config = new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "paid", "", null);
+    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(401);
+    assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void skipsUnregisteredRouteWhenBlankAuthorizationHeader() throws ServletException, IOException {
+    request.setRequestURI("/api/unregistered");
     request.addHeader("Authorization", "   ");
+    org.mockito.Mockito.lenient()
+        .when(endpointRegistry.findConfig("GET", "/api/unregistered"))
+        .thenReturn(null);
 
     filter.doFilter(request, response, filterChain);
 
@@ -128,14 +153,36 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void skipsWhenNonL402AuthorizationHeader() throws ServletException, IOException {
+  void skipsUnregisteredRouteWhenNonL402AuthorizationHeader() throws ServletException, IOException {
+    request.setRequestURI("/api/unregistered");
     request.addHeader("Authorization", "Bearer some-jwt-token");
+    org.mockito.Mockito.lenient()
+        .when(endpointRegistry.findConfig("GET", "/api/unregistered"))
+        .thenReturn(null);
 
     filter.doFilter(request, response, filterChain);
 
     verify(filterChain)
         .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
     verify(authenticationManager, never()).authenticate(any());
+  }
+
+  @Test
+  void rejectsUnrelatedAuthorizationSchemeForRegisteredPaidRoute()
+      throws ServletException, IOException {
+    request.setMethod("GET");
+    request.setRequestURI("/api/protected");
+    request.addHeader("Authorization", "Bearer unrelated-jwt");
+    var config = new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "paid", "", null);
+    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(401);
+    assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain, never()).doFilter(any(), any());
   }
 
   @Test

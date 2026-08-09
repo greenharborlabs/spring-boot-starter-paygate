@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.lang.annotation.Annotation;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -305,6 +306,26 @@ class PaygateEndpointRegistryTest {
   }
 
   @Test
+  @DisplayName("annotation scanning retains an explicit HEAD mapping independently of GET")
+  void scansExplicitHeadMappingIndependentlyOfGet() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    var handlerMapping = mock(RequestMappingHandlerMapping.class);
+    var mappings = new LinkedHashMap<RequestMappingInfo, HandlerMethod>();
+    mappings.put(
+        RequestMappingInfo.paths("/api/report").methods(RequestMethod.GET).build(),
+        paidHandler("get"));
+    mappings.put(
+        RequestMappingInfo.paths("/api/report").methods(RequestMethod.HEAD).build(),
+        paidHandler("head"));
+    when(handlerMapping.getHandlerMethods()).thenReturn(mappings);
+
+    registry.scanAnnotatedEndpoints(handlerMapping);
+
+    assertThat(registry.resolve("GET", "/api/report").config().capability()).isEqualTo("get");
+    assertThat(registry.resolve("HEAD", "/api/report").config().capability()).isEqualTo("head");
+  }
+
+  @Test
   @DisplayName("explicit HEAD policy takes precedence and remains distinct from GET")
   void prefersExplicitHeadAndFailsEqualSpecificityAmbiguityClosed() {
     var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
@@ -400,6 +421,72 @@ class PaygateEndpointRegistryTest {
     registry.register(new PaygateEndpointConfig("GET", "/api/resource", 10, 600, "", "", "read"));
 
     assertThat(registry.resolve("OPTIONS", "/api/resource")).isNull();
+  }
+
+  @Test
+  @DisplayName("specificity selection is stable regardless of registration order")
+  void specificitySelectionIsStableRegardlessOfRegistrationOrder() {
+    for (var registerBroadFirst : Set.of(true, false)) {
+      var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+      var broad = new PaygateEndpointConfig("GET", "/orders/**", 5, 600, "", "", "broad");
+      var specific =
+          new PaygateEndpointConfig(
+              "GET", "/orders/{orderId}/receipt", 10, 600, "", "", "specific");
+
+      if (registerBroadFirst) {
+        registry.register(broad);
+        registry.register(specific);
+      } else {
+        registry.register(specific);
+        registry.register(broad);
+      }
+
+      assertThat(registry.resolve("GET", "/orders/42/receipt").config().capability())
+          .isEqualTo("specific");
+    }
+  }
+
+  @Test
+  @DisplayName("conflicting paid mappings with distinct Spring request conditions fail closed")
+  void conflictingPaidMappingsWithDistinctSpringRequestConditionsFailClosed() {
+    for (var mapping :
+        Set.of(
+            RequestMappingInfo.paths("/orders")
+                .methods(RequestMethod.GET)
+                .params("mode=fast")
+                .build(),
+            RequestMappingInfo.paths("/orders")
+                .methods(RequestMethod.GET)
+                .headers("X-Tier=premium")
+                .build(),
+            RequestMappingInfo.paths("/orders")
+                .methods(RequestMethod.POST)
+                .consumes("application/json")
+                .build(),
+            RequestMappingInfo.paths("/orders")
+                .methods(RequestMethod.GET)
+                .produces("application/json")
+                .build())) {
+      var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+      var mappings = new LinkedHashMap<RequestMappingInfo, HandlerMethod>();
+      var method = mapping.getMethodsCondition().getMethods().iterator().next();
+      mappings.put(
+          RequestMappingInfo.paths("/orders").methods(method).build(), paidHandler("basic"));
+      mappings.put(mapping, paidHandler("premium"));
+      var handlerMapping = mock(RequestMappingHandlerMapping.class);
+      when(handlerMapping.getHandlerMethods()).thenReturn(mappings);
+
+      assertThatThrownBy(() -> registry.scanAnnotatedEndpoints(handlerMapping))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Duplicate endpoint registration");
+    }
+  }
+
+  private static HandlerMethod paidHandler(String capability) {
+    var handler = mock(HandlerMethod.class);
+    when(handler.getMethodAnnotation(PaymentRequired.class))
+        .thenReturn(paymentRequired(capability));
+    return handler;
   }
 
   private static PaymentRequired paymentRequired(String capability) {

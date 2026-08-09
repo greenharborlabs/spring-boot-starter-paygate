@@ -120,6 +120,44 @@ class TestModeProductionGuardTest {
             });
   }
 
+  @Test
+  @DisplayName("test-mode + only safe profile combination → context starts successfully")
+  void testModeWithOnlySafeProfileCombinationSucceeds() {
+    contextRunner
+        .withPropertyValues("spring.profiles.active=test,dev,local,development")
+        .run(context -> assertThat(context).hasNotFailed());
+  }
+
+  @Test
+  @DisplayName("test-mode + safe profile plus unknown profile → fails (all profiles must be safe)")
+  void testModeWithSafeAndUnknownProfileFails() {
+    contextRunner
+        .withPropertyValues("spring.profiles.active=dev,staging")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .rootCause()
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("requires every active profile to be explicitly safe");
+            });
+  }
+
+  @Test
+  @DisplayName("test-mode + production-like profile with dev → fails (production veto)")
+  void testModeWithProductionLikeProfileAndDevFails() {
+    contextRunner
+        .withPropertyValues("spring.profiles.active=dev,production-eu")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .rootCause()
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("production profiles");
+            });
+  }
+
   // --- Unknown / custom production profiles ---
 
   @Test
