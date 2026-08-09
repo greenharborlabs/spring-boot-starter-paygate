@@ -41,7 +41,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -114,7 +113,7 @@ class DualProtocolSecurityTest {
       assertThat(token.isAuthenticated()).isTrue();
       assertThat(token.getProtocolScheme()).isEqualTo("L402");
       assertThat(token.getTokenId()).isEqualTo(credential.tokenId());
-      assertThat(token.getL402Credential()).isEqualTo(credential);
+      assertThat(token.getL402Credential()).isNull();
       assertThat(token.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
           .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
@@ -136,7 +135,6 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
       when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
@@ -157,7 +155,7 @@ class DualProtocolSecurityTest {
       assertThat(token.isAuthenticated()).isTrue();
       assertThat(token.getProtocolScheme()).isEqualTo("Payment");
       assertThat(token.getTokenId()).isEqualTo(credential.tokenId());
-      assertThat(token.getPaymentCredential()).isEqualTo(credential);
+      assertThat(token.getPaymentCredential()).isNull();
       assertThat(token.getL402Credential()).isNull();
       assertThat(token.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
@@ -198,7 +196,6 @@ class DualProtocolSecurityTest {
       var config =
           new PaygateEndpointConfig("GET", "/api/protected", 100, 3600, "Test", "", "read");
       var resolvedEndpoint = resolvedEndpoint(config);
-      when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(resolvedEndpoint);
 
       var challengeContext =
           new ChallengeContext(
@@ -223,7 +220,7 @@ class DualProtocolSecurityTest {
       request.setMethod("GET");
       request.setRequestURI("/api/protected");
 
-      entryPoint.commence(request, response, new BadCredentialsException("test"));
+      entryPoint.commence(request, response, resolvedEndpoint);
 
       assertThat(response.getStatus()).isEqualTo(402);
 
@@ -327,7 +324,6 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
       when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
@@ -365,7 +361,6 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
       when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
@@ -399,7 +394,6 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
       when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 

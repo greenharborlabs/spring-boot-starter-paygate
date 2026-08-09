@@ -564,6 +564,11 @@ Only one documented enforcement path is active per deployment. Servlet mode uses
 
 When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthenticationFilter` in your `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. If the filter is absent, startup fails closed unless `paygate.spring-security.custom-filter-chain-acknowledged=true` is set.
 
+`PaygateAuthenticationFilter` constructors without a `PaygateAuthenticationEntryPoint` are retained
+for source compatibility but deprecated. They fail closed (503) for an absent `Authorization`
+header rather than minting a challenge without the resolved endpoint handoff. Prefer the
+auto-configured filter bean or the constructor that accepts the entry point.
+
 Set the mode explicitly when both modules are on the classpath:
 
 ```yaml

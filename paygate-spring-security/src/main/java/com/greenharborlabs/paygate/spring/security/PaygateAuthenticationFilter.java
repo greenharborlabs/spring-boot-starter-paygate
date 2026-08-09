@@ -58,12 +58,34 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   private final PaygateEndpointRegistry endpointRegistry;
   private final ClientIpResolver clientIpResolver;
   private final String serviceName;
+  private final PaygateAuthenticationEntryPoint authenticationEntryPoint;
 
+  /**
+   * @deprecated Use the constructor accepting {@link PaygateAuthenticationEntryPoint}. This
+   *     compatibility constructor fails closed for absent credentials because it cannot issue a
+   *     resolved-endpoint challenge safely.
+   */
+  @Deprecated(since = "0.0.0", forRemoval = false)
   public PaygateAuthenticationFilter(
       AuthenticationManager authenticationManager,
       List<PaymentProtocol> protocols,
       PaygateEndpointRegistry endpointRegistry) {
-    this(authenticationManager, protocols, endpointRegistry, null, null);
+    this(authenticationManager, protocols, endpointRegistry, null, null, null);
+  }
+
+  /**
+   * @deprecated Use the constructor accepting {@link PaygateAuthenticationEntryPoint}. This
+   *     compatibility constructor fails closed for absent credentials because it cannot issue a
+   *     resolved-endpoint challenge safely.
+   */
+  @Deprecated(since = "0.0.0", forRemoval = false)
+  public PaygateAuthenticationFilter(
+      AuthenticationManager authenticationManager,
+      List<PaymentProtocol> protocols,
+      PaygateEndpointRegistry endpointRegistry,
+      ClientIpResolver clientIpResolver,
+      String serviceName) {
+    this(authenticationManager, protocols, endpointRegistry, clientIpResolver, serviceName, null);
   }
 
   public PaygateAuthenticationFilter(
@@ -71,7 +93,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       List<PaymentProtocol> protocols,
       PaygateEndpointRegistry endpointRegistry,
       ClientIpResolver clientIpResolver,
-      String serviceName) {
+      String serviceName,
+      PaygateAuthenticationEntryPoint authenticationEntryPoint) {
     this.authenticationManager =
         Objects.requireNonNull(authenticationManager, "authenticationManager must not be null");
     this.protocols = protocols != null ? List.copyOf(protocols) : List.of();
@@ -79,18 +102,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         Objects.requireNonNull(endpointRegistry, "endpointRegistry must not be null");
     this.clientIpResolver = clientIpResolver;
     this.serviceName = serviceName;
+    this.authenticationEntryPoint = authenticationEntryPoint;
   }
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    String authHeader = request.getHeader(AUTHORIZATION_HEADER);
-    if (authHeader == null || authHeader.isBlank()) {
-      return true;
-    }
-    if (L402HeaderComponents.extract(authHeader).isPresent()) {
-      return false;
-    }
-    return !matchesAnyProtocol(authHeader);
+    // Resolve once in doFilterInternal so paid routes never bypass this filter based on credential
+    // shape. The resolved endpoint is subsequently shared by challenge, authentication metadata,
+    // receipt handling, and the successful-handler marker.
+    return false;
   }
 
   @Override
@@ -142,12 +162,21 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       return;
     }
 
-    if (authHeader == null
-        || authHeader.isBlank()
+    if (authHeader == null) {
+      SecurityContextHolder.clearContext();
+      if (authenticationEntryPoint == null) {
+        PaygateResponseWriter.writeLightningUnavailable(response);
+        return;
+      }
+      authenticationEntryPoint.commence(request, response, resolvedEndpoint);
+      return;
+    }
+
+    if (authHeader.isBlank()
         || (!L402HeaderComponents.extract(authHeader).isPresent()
             && !matchesAnyProtocol(authHeader))) {
       SecurityContextHolder.clearContext();
-      PaygateResponseWriter.writeUnauthorized(response);
+      PaygateResponseWriter.writeMethodUnsupported(response, "Unsupported payment credential");
       return;
     }
 

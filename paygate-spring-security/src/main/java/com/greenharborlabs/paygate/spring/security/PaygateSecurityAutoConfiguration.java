@@ -74,9 +74,15 @@ public class PaygateSecurityAutoConfiguration {
       List<PaymentProtocol> protocols,
       PaygateEndpointRegistry paygateEndpointRegistry,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
-      @Value("${paygate.service-name:default}") String serviceName) {
+      @Value("${paygate.service-name:default}") String serviceName,
+      PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint) {
     return new PaygateAuthenticationFilter(
-        authenticationManager, protocols, paygateEndpointRegistry, clientIpResolver, serviceName);
+        authenticationManager,
+        protocols,
+        paygateEndpointRegistry,
+        clientIpResolver,
+        serviceName,
+        paygateAuthenticationEntryPoint);
   }
 
   /**

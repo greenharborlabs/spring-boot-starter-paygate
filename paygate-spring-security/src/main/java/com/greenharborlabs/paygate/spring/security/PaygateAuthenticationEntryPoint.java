@@ -58,47 +58,69 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       HttpServletResponse response,
       AuthenticationException authException)
       throws IOException {
+    // The entry point is only allowed to mint challenge state for an absent credential. The
+    // authentication filter handles recognized payment credentials; a header reaching here is
+    // therefore unsupported or malformed and must not trigger invoice or root-key work.
+    if (request.getHeader(AUTHORIZATION_HEADER) != null) {
+      PaygateResponseWriter.writeMethodUnsupported(response, "Unsupported payment credential");
+      return;
+    }
+
+    String method = request.getMethod();
+    String path;
     try {
-      // The entry point is only allowed to mint challenge state for an absent credential. The
-      // authentication filter handles recognized payment credentials; a header reaching here is
-      // therefore unsupported or malformed and must not trigger invoice or root-key work.
-      if (request.getHeader(AUTHORIZATION_HEADER) != null) {
-        PaygateResponseWriter.writeMethodUnsupported(response, "Unsupported payment credential");
-        return;
-      }
+      path = ApplicationRelativeRequestResolver.resolve(request);
+    } catch (RuntimeException e) {
+      log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: <unavailable>");
+      PaygateResponseWriter.writeMalformedUri(response);
+      return;
+    }
 
-      String method = request.getMethod();
-      String path;
-      try {
-        path = ApplicationRelativeRequestResolver.resolve(request);
-      } catch (RuntimeException e) {
-        log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: <unavailable>");
-        PaygateResponseWriter.writeMalformedUri(response);
-        return;
-      }
+    ResolvedEndpoint resolvedEndpoint;
+    try {
+      resolvedEndpoint = endpointRegistry.resolve(method, path);
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Endpoint policy resolution failed for {0} {1}: {2}",
+          method,
+          LogSanitizer.sanitize(path),
+          e.getClass().getSimpleName());
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeInternalError(response);
+      return;
+    }
+    if (resolvedEndpoint == null) {
+      PaygateResponseWriter.writeUnauthorized(response);
+      return;
+    }
 
-      ResolvedEndpoint resolvedEndpoint;
-      try {
-        resolvedEndpoint = endpointRegistry.resolve(method, path);
-      } catch (RuntimeException e) {
-        log.log(
-            System.Logger.Level.WARNING,
-            "Endpoint policy resolution failed for {0} {1}: {2}",
-            method,
-            LogSanitizer.sanitize(path),
-            e.getClass().getSimpleName());
-        SecurityContextHolder.clearContext();
-        PaygateResponseWriter.writeInternalError(response);
-        return;
-      }
-      if (resolvedEndpoint == null) {
-        PaygateResponseWriter.writeUnauthorized(response);
-        return;
-      }
+    commence(request, response, resolvedEndpoint);
+  }
 
+  /**
+   * Issues an absent-credential challenge using the endpoint already resolved by the authentication
+   * filter. This preserves the exact MVC handler mapping used for later enforcement and avoids a
+   * second, potentially divergent endpoint lookup.
+   *
+   * <p>The caller must invoke this operation only when the {@code Authorization} header is truly
+   * absent. A presented (including blank) header is never allowed to mint challenge state.
+   */
+  public void commence(
+      HttpServletRequest request, HttpServletResponse response, ResolvedEndpoint resolvedEndpoint)
+      throws IOException {
+    Objects.requireNonNull(request, "request must not be null");
+    Objects.requireNonNull(response, "response must not be null");
+    Objects.requireNonNull(resolvedEndpoint, "resolvedEndpoint must not be null");
+    if (request.getHeader(AUTHORIZATION_HEADER) != null) {
+      PaygateResponseWriter.writeMethodUnsupported(response, "Unsupported payment credential");
+      return;
+    }
+    try {
       HttpServletRequest challengeRequest = request;
       challengeService.acquireChallengeRateLimit(request);
       if (mppEnabled) {
+        String path = ApplicationRelativeRequestResolver.resolve(request);
         challengeRequest = RequestDigestSupport.wrapForDigest(request);
         RequestDigestSupport.ensureDigestAttribute(challengeRequest, path);
       }

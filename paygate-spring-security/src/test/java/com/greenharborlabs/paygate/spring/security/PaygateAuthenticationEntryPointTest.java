@@ -152,6 +152,23 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
+  void resolvedEndpointChallengeDoesNotResolveEndpointAgain() throws Exception {
+    var resolvedEndpoint =
+        new ResolvedEndpoint(TEST_CONFIG, TEST_CONFIG.pathPattern(), TEST_CONFIG.httpMethod());
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
+
+    entryPoint.commence(request, response, resolvedEndpoint);
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry, never()).resolve(any(String.class), any(String.class));
+    verify(challengeService)
+        .createChallenge(
+            request,
+            resolvedEndpoint,
+            PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
+  }
+
+  @Test
   void rejectsPresentedUnsupportedCredentialWithoutCreatingChallengeState() throws Exception {
     request.addHeader("Authorization", "Bearer opaque-credential");
 

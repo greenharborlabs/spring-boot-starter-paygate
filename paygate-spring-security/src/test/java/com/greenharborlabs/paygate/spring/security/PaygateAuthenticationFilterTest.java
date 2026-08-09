@@ -56,6 +56,8 @@ class PaygateAuthenticationFilterTest {
 
   @Mock private Authentication authenticatedResult;
 
+  @Mock private PaygateAuthenticationEntryPoint authenticationEntryPoint;
+
   private PaygateAuthenticationFilter filter;
   private MockHttpServletRequest request;
   private MockHttpServletResponse response;
@@ -83,7 +85,14 @@ class PaygateAuthenticationFilterTest {
                   ? null
                   : new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
             });
-    filter = new PaygateAuthenticationFilter(authenticationManager, List.of(), endpointRegistry);
+    filter =
+        new PaygateAuthenticationFilter(
+            authenticationManager,
+            List.of(),
+            endpointRegistry,
+            null,
+            null,
+            authenticationEntryPoint);
     request = new MockHttpServletRequest();
     response = new MockHttpServletResponse();
     SecurityContextHolder.clearContext();
@@ -133,11 +142,14 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    assertThat(response.getStatus()).isEqualTo(401);
-    assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(authenticationManager, never()).authenticate(any());
     verify(filterChain, never()).doFilter(any(), any());
+    verify(authenticationEntryPoint)
+        .commence(
+            org.mockito.ArgumentMatchers.same(request),
+            org.mockito.ArgumentMatchers.same(response),
+            any(ResolvedEndpoint.class));
   }
 
   @Test
@@ -183,8 +195,7 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    assertThat(response.getStatus()).isEqualTo(401);
-    assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(response.getStatus()).isEqualTo(402);
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(authenticationManager, never()).authenticate(any());
     verify(filterChain, never()).doFilter(any(), any());
@@ -969,19 +980,19 @@ class PaygateAuthenticationFilterTest {
 
   @Test
   void shouldNotFilterWhenNoAuthorizationHeader() {
-    assertThat(filter.shouldNotFilter(request)).isTrue();
+    assertThat(filter.shouldNotFilter(request)).isFalse();
   }
 
   @Test
   void shouldNotFilterWhenBlankAuthorizationHeader() {
     request.addHeader("Authorization", "   ");
-    assertThat(filter.shouldNotFilter(request)).isTrue();
+    assertThat(filter.shouldNotFilter(request)).isFalse();
   }
 
   @Test
   void shouldNotFilterWhenUnrecognizedAuthScheme() {
     request.addHeader("Authorization", "Bearer some-jwt-token");
-    assertThat(filter.shouldNotFilter(request)).isTrue();
+    assertThat(filter.shouldNotFilter(request)).isFalse();
   }
 
   @Test
@@ -992,9 +1003,7 @@ class PaygateAuthenticationFilterTest {
 
   @Test
   void shouldFilterWhenMppProtocolMatches() {
-    filter =
-        new PaygateAuthenticationFilter(
-            authenticationManager, List.of(mockMppProtocol()), endpointRegistry);
+    filter = new PaygateAuthenticationFilter(authenticationManager, List.of(), endpointRegistry);
     request.addHeader("Authorization", "Payment preimage=abc123");
     assertThat(filter.shouldNotFilter(request)).isFalse();
   }
@@ -1184,8 +1193,7 @@ class PaygateAuthenticationFilterTest {
   }
 
   private void assertRejectedWithoutAuthentication() throws IOException, ServletException {
-    assertThat(response.getStatus()).isEqualTo(401);
-    assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(response.getStatus()).isEqualTo(402);
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(authenticationManager, never()).authenticate(any());
     verify(filterChain, never()).doFilter(any(), any());

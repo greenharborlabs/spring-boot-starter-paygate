@@ -130,6 +130,60 @@ class PaygateHandlerInterceptorTest {
     assertThat(controller.calls).hasValue(1);
   }
 
+  @Test
+  @DisplayName("treats a resolved MVC handler as paid when its catalog entry uses the bean name")
+  void rejectsResolvedHandlerWhenPaidCatalogEntryUsesBeanName() throws Exception {
+    var applicationContext = new StaticApplicationContext();
+    var controller = new CatalogOnlyController();
+    applicationContext.getBeanFactory().registerSingleton("catalogOnlyController", controller);
+    applicationContext.refresh();
+    var method = controller.getClass().getMethod("paid");
+    var catalogHandler = new HandlerMethod("catalogOnlyController", applicationContext, method);
+    var selectedHandler = catalogHandler.createWithResolvedBean();
+    var endpoint =
+        new ResolvedEndpoint(
+            new PaygateEndpointConfig("GET", "/catalog/paid", 1, 60, "paid", "", ""),
+            "/catalog/paid",
+            "GET",
+            null,
+            catalogHandler,
+            null,
+            Integer.MAX_VALUE,
+            null);
+    var request = request("/catalog/paid");
+    var response = new MockHttpServletResponse();
+
+    var proceed =
+        interceptor(new FixedEndpointRegistry(endpoint))
+            .preHandle(request, response, selectedHandler);
+    invokeSelectedHandlerIfAllowed(proceed, selectedHandler);
+
+    assertThat(catalogHandler).isNotEqualTo(selectedHandler);
+    assertThat(proceed).isFalse();
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(controller.calls).hasValue(0);
+  }
+
+  @Test
+  @DisplayName("rejects a matching marker when final registry resolution fails")
+  void rejectsMatchingMarkerWhenFinalRegistryResolutionFails() throws Exception {
+    var controller = new CatalogOnlyController();
+    var handler = dynamicallyRegisteredHandler("/runtime/throwing", controller);
+    var request = request("/runtime/throwing");
+    request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, handler);
+    var response = new MockHttpServletResponse();
+
+    var proceed = interceptor(new ThrowingEndpointRegistry()).preHandle(request, response, handler);
+    invokeSelectedHandlerIfAllowed(proceed, handler);
+
+    assertThat(proceed).isFalse();
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 500, \"error\": \"INTERNAL_ERROR\", \"message\": \"An internal error occurred\"}");
+    assertThat(controller.calls).hasValue(0);
+  }
+
   private static HandlerInterceptor interceptor(PaygateEndpointRegistry registry) throws Exception {
     // T046 intentionally remains source-compatible until T054 introduces this final MVC boundary.
     // The runtime lookup becomes an executable contract as soon as the interceptor exists.
@@ -197,6 +251,34 @@ class PaygateHandlerInterceptorTest {
     @PaymentRequired(priceSats = 2, description = "policy-b")
     public void paid() {
       calls.incrementAndGet();
+    }
+  }
+
+  private static final class CatalogOnlyController {
+    private final AtomicInteger calls = new AtomicInteger();
+
+    public void paid() {
+      calls.incrementAndGet();
+    }
+  }
+
+  private static final class FixedEndpointRegistry extends PaygateEndpointRegistry {
+    private final ResolvedEndpoint endpoint;
+
+    private FixedEndpointRegistry(ResolvedEndpoint endpoint) {
+      this.endpoint = endpoint;
+    }
+
+    @Override
+    public ResolvedEndpoint resolve(jakarta.servlet.http.HttpServletRequest request) {
+      return endpoint;
+    }
+  }
+
+  private static final class ThrowingEndpointRegistry extends PaygateEndpointRegistry {
+    @Override
+    public ResolvedEndpoint resolve(jakarta.servlet.http.HttpServletRequest request) {
+      throw new IllegalStateException("registry resolution failed");
     }
   }
 }

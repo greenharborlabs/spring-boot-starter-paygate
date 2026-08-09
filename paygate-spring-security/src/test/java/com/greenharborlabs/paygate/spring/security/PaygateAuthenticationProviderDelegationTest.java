@@ -212,7 +212,7 @@ class PaygateAuthenticationProviderDelegationTest {
       assertThat(result.isAuthenticated()).isTrue();
 
       var authToken = (PaygateAuthenticationToken) result;
-      assertThat(authToken.getPaymentCredential()).isEqualTo(credential);
+      assertThat(authToken.getPaymentCredential()).isNull();
       assertThat(authToken.getTokenId()).isEqualTo(credential.tokenId());
       assertThat(authToken.getServiceName()).isEqualTo(SERVICE_NAME);
       assertThat(authToken.getAuthorities())

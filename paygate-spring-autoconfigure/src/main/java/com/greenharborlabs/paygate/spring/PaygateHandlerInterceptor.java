@@ -27,7 +27,19 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
   @Override
   public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
       throws Exception {
-    if (!(handler instanceof HandlerMethod handlerMethod) || !isPaid(request, handlerMethod)) {
+    if (!(handler instanceof HandlerMethod handlerMethod)) {
+      return true;
+    }
+
+    boolean paid;
+    try {
+      paid = isPaid(request, handlerMethod);
+    } catch (RuntimeException _) {
+      // The final enforcement boundary cannot prove this mapping is safe.
+      PaygateResponseWriter.writeInternalError(response);
+      return false;
+    }
+    if (!paid) {
       return true;
     }
 
@@ -56,12 +68,9 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
     if (handlerMethod.getMethodAnnotation(PaymentRequired.class) != null) {
       return true;
     }
-    try {
-      var endpoint = registry.resolve(request);
-      return endpoint != null && handlerMethod.equals(endpoint.handlerMethod());
-    } catch (RuntimeException _) {
-      // A mapping resolution failure at the final boundary is paid/unsafe until proven otherwise.
-      return true;
-    }
+    var endpoint = registry.resolve(request);
+    return endpoint != null
+        && endpoint.handlerMethod() != null
+        && identifiesSameHandler(handlerMethod, endpoint.handlerMethod());
   }
 }
