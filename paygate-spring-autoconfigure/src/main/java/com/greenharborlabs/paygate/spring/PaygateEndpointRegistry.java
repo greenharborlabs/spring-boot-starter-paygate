@@ -218,15 +218,60 @@ public class PaygateEndpointRegistry {
    * @return the selected endpoint, or {@code null} if no protected mapping matches
    */
   public ResolvedEndpoint resolve(HttpServletRequest request) {
-    var matches = new ArrayList<RegisteredEndpoint>();
+    // Filters can run before DispatcherServlet has cached this state. MVC's path-pattern
+    // condition requires the parsed path to be present on the request.
+    org.springframework.web.util.ServletRequestPathUtils.parseAndCache(request);
+    var mvcMatches = new ArrayList<RegisteredEndpoint>();
     for (RegisteredEndpoint candidate : registrations) {
       var mappingInfo = candidate.mappingInfo();
-      if (mappingInfo == null) {
-        if (candidate.policyMethod().equals(normalizeMethod(request.getMethod()))
-            && candidate.pattern().matches(PathContainer.parsePath(request.getRequestURI()))) {
-          matches.add(candidate);
-        }
-      } else if (mappingInfo.getMatchingCondition(request) != null) {
+      if (mappingInfo != null && mappingInfo.getMatchingCondition(request) != null) {
+        mvcMatches.add(candidate);
+      }
+    }
+
+    // MVC owns selection whenever one of its mappings matches. In particular, an unprotected
+    // MVC handler must not fall through to a manually registered paid route with the same path.
+    if (!mvcMatches.isEmpty()) {
+      mvcMatches.sort((left, right) -> compareMvcForRequest(left, right, request));
+      var selected = mvcMatches.getFirst();
+      if (mvcMatches.size() > 1
+          && compareMvcForRequest(selected, mvcMatches.get(1), request) == 0
+          && !java.util.Objects.equals(selected.config(), mvcMatches.get(1).config())) {
+        throw new IllegalStateException("Ambiguous payment policies for request mapping");
+      }
+      return selected.config() == null
+          ? null
+          : toResolvedEndpoint(selected.policyMethod(), selected);
+    }
+
+    // Do not match manual routes against the container URI: deployments commonly add a context
+    // path or servlet mapping. Reuse the established method-bucket and specificity semantics.
+    return resolveManual(
+        normalizeMethod(request.getMethod()), ApplicationRelativeRequestResolver.resolve(request));
+  }
+
+  private ResolvedEndpoint resolveManual(String method, String path) {
+    var buckets =
+        "HEAD".equals(method)
+            ? List.of("HEAD", "GET", "*")
+            : "*".equals(method) ? List.of("*") : List.of(method, "*");
+    var pathContainer = PathContainer.parsePath(path);
+    for (String bucket : buckets) {
+      var resolved = resolveManualBucket(bucket, path, pathContainer);
+      if (resolved != null) {
+        return resolved;
+      }
+    }
+    return null;
+  }
+
+  private ResolvedEndpoint resolveManualBucket(
+      String method, String path, PathContainer pathContainer) {
+    var matches = new ArrayList<RegisteredEndpoint>();
+    for (RegisteredEndpoint candidate : registrations) {
+      if (candidate.mappingInfo() == null
+          && method.equals(candidate.policyMethod())
+          && candidate.pattern().matches(pathContainer)) {
         matches.add(candidate);
       }
     }
@@ -234,30 +279,30 @@ public class PaygateEndpointRegistry {
       return null;
     }
     matches.sort(
-        (left, right) -> {
-          if (left.mappingInfo() != null && right.mappingInfo() != null) {
-            return left.mappingInfo().compareTo(right.mappingInfo(), request);
-          }
-          return PathPattern.SPECIFICITY_COMPARATOR.compare(left.pattern(), right.pattern());
-        });
+        (left, right) ->
+            PathPattern.SPECIFICITY_COMPARATOR.compare(left.pattern(), right.pattern()));
     var selected = matches.getFirst();
     if (matches.size() > 1
-        && compareForRequest(selected, matches.get(1), request) == 0
-        && !java.util.Objects.equals(selected.config(), matches.get(1).config())) {
-      throw new IllegalStateException("Ambiguous payment policies for request mapping");
+        && PathPattern.SPECIFICITY_COMPARATOR.compare(selected.pattern(), matches.get(1).pattern())
+            == 0) {
+      throw new IllegalStateException(
+          "Ambiguous endpoint registrations for "
+              + method
+              + " "
+              + selected.pattern().getPatternString()
+              + " and "
+              + matches.get(1).pattern().getPatternString());
     }
-    if (selected.config() == null) {
-      return null;
-    }
-    return toResolvedEndpoint(selected.policyMethod(), selected);
+    return toResolvedEndpoint(method, selected);
   }
 
-  private static int compareForRequest(
+  private static int compareMvcForRequest(
       RegisteredEndpoint left, RegisteredEndpoint right, HttpServletRequest request) {
-    if (left.mappingInfo() != null && right.mappingInfo() != null) {
-      return left.mappingInfo().compareTo(right.mappingInfo(), request);
+    int sourceOrder = Integer.compare(left.sourceOrder(), right.sourceOrder());
+    if (sourceOrder != 0) {
+      return sourceOrder;
     }
-    return PathPattern.SPECIFICITY_COMPARATOR.compare(left.pattern(), right.pattern());
+    return left.mappingInfo().compareTo(right.mappingInfo(), request);
   }
 
   /**

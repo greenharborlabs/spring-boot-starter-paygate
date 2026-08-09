@@ -66,8 +66,7 @@ class RouteMatchingParityTest {
     registry.register(new PaygateEndpointConfig("GET", "/orders/café", 10, 600, "", "", "read"));
 
     assertThat(ApplicationRelativeRequestResolver.resolve(request)).isEqualTo("/orders/café");
-    assertThat(registry.resolve("GET", ApplicationRelativeRequestResolver.resolve(request)))
-        .isNotNull();
+    assertThat(registry.resolve(request)).isNotNull();
   }
 
   @Test
@@ -82,8 +81,7 @@ class RouteMatchingParityTest {
     registry.register(new PaygateEndpointConfig("GET", "/orders/{id}", 10, 600, "", "", "read"));
 
     assertThat(ApplicationRelativeRequestResolver.resolve(request)).isEqualTo("/orders/42");
-    assertThat(registry.resolve("GET", ApplicationRelativeRequestResolver.resolve(request)))
-        .isNotNull();
+    assertThat(registry.resolve(request)).isNotNull();
   }
 
   @Test
@@ -102,7 +100,7 @@ class RouteMatchingParityTest {
 
     registry.scanAnnotatedEndpoints(mapping);
 
-    assertThat(registry.resolve("GET", "/orders/public")).isNull();
+    assertThat(registry.resolve(new MockHttpServletRequest("GET", "/orders/public"))).isNull();
   }
 
   private static HandlerMethod handler(PaymentRequired annotation) {
