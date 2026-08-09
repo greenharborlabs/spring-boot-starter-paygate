@@ -1,18 +1,35 @@
 package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+import com.greenharborlabs.paygate.core.lightning.Invoice;
+import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
+import com.greenharborlabs.paygate.core.lightning.LightningBackend;
+import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationContext;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 /**
@@ -214,5 +231,134 @@ class PaygateResponseWriterMultiProtocolTest {
     assertThat(body).contains("\"detail\": \"Payment validation failed: INVALID\"");
     assertThat(body).doesNotContain("Preimage does not match payment hash");
     assertThat(body).contains("\"token_id\": \"token-abc\"");
+  }
+
+  @Test
+  @DisplayName("one formatter failure preserves another protocol's usable challenge")
+  void partialFormatterFailurePreservesSuccessfulChallenge() throws Exception {
+    var rootKeyStore = new TrackingRootKeyStore();
+    var successful = mock(PaymentProtocol.class);
+    when(successful.scheme()).thenReturn("L402");
+    when(successful.formatChallenge(any()))
+        .thenReturn(new ChallengeResponse("L402 usable-challenge", "L402", Map.of("token", "ok")));
+    var failing = mock(PaymentProtocol.class);
+    when(failing.scheme()).thenReturn("Broken");
+    when(failing.formatChallenge(any())).thenThrow(new IllegalStateException("formatter secret"));
+    var fixture = createChallengeFilter(rootKeyStore, List.of(successful, failing));
+
+    fixture
+        .filter()
+        .doFilter(
+            new MockHttpServletRequest("GET", "/api/protected"),
+            response,
+            mock(jakarta.servlet.FilterChain.class));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getHeaders("WWW-Authenticate")).containsExactly("L402 usable-challenge");
+    assertThat(response.getContentAsString())
+        .contains("\"L402\"")
+        .doesNotContain("formatter secret");
+    verify(fixture.lightningBackend(), times(1)).createInvoice(anyLong(), anyString());
+    assertThat(rootKeyStore.generateRootKeyInvocations).isEqualTo(1);
+    assertThat(rootKeyStore.revokeRootKeyInvocations).isZero();
+  }
+
+  @Test
+  @DisplayName("all formatter failures revoke the newly persisted shared root key")
+  void allFormatterFailuresCleanUpPersistentChallengeState() throws Exception {
+    var rootKeyStore = new TrackingRootKeyStore();
+    var first = failingProtocol("L402");
+    var second = failingProtocol("Broken");
+    var fixture = createChallengeFilter(rootKeyStore, List.of(first, second));
+
+    fixture
+        .filter()
+        .doFilter(
+            new MockHttpServletRequest("GET", "/api/protected"),
+            response,
+            mock(jakarta.servlet.FilterChain.class));
+
+    assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+    verify(fixture.lightningBackend(), times(1)).createInvoice(anyLong(), anyString());
+    assertThat(rootKeyStore.generateRootKeyInvocations).isEqualTo(1);
+    assertThat(rootKeyStore.revokeRootKeyInvocations).isEqualTo(1);
+    assertThat(rootKeyStore.lastRevokedTokenId).containsExactly(rootKeyStore.generatedTokenId);
+  }
+
+  private static PaymentProtocol failingProtocol(String scheme) {
+    var protocol = mock(PaymentProtocol.class);
+    when(protocol.scheme()).thenReturn(scheme);
+    when(protocol.formatChallenge(any())).thenThrow(new IllegalStateException("format failed"));
+    return protocol;
+  }
+
+  private static ChallengeFilterFixture createChallengeFilter(
+      TrackingRootKeyStore rootKeyStore, List<PaymentProtocol> protocols) {
+    var lightningBackend = mock(LightningBackend.class);
+    when(lightningBackend.isHealthy()).thenReturn(true);
+    when(lightningBackend.createInvoice(anyLong(), anyString()))
+        .thenReturn(
+            new Invoice(
+                PAYMENT_HASH,
+                "lnbc100n1test",
+                100L,
+                "Test invoice",
+                InvoiceStatus.PENDING,
+                null,
+                Instant.parse("2026-01-01T00:00:00Z"),
+                Instant.parse("2026-01-01T01:00:00Z")));
+    var properties = new PaygateProperties();
+    properties.setServiceName("test-service");
+    var challengeService =
+        new PaygateChallengeService(
+            rootKeyStore,
+            lightningBackend,
+            properties,
+            mock(ApplicationContext.class),
+            null,
+            null,
+            null,
+            null);
+    var registry = new PaygateEndpointRegistry();
+    registry.register(
+        new PaygateEndpointConfig("GET", "/api/protected", 100L, 3600L, "Test endpoint", "", ""));
+    return new ChallengeFilterFixture(
+        new PaygateSecurityFilter(
+            registry, protocols, challengeService, "test-service", null, null, null, null),
+        lightningBackend);
+  }
+
+  private record ChallengeFilterFixture(
+      PaygateSecurityFilter filter, LightningBackend lightningBackend) {}
+
+  private static final class TrackingRootKeyStore implements RootKeyStore {
+    private final byte[] generatedTokenId = new byte[32];
+    private int generateRootKeyInvocations;
+    private int revokeRootKeyInvocations;
+    private byte[] lastRevokedTokenId;
+
+    private TrackingRootKeyStore() {
+      Arrays.fill(generatedTokenId, (byte) 7);
+    }
+
+    @Override
+    public GenerationResult generateRootKey() {
+      generateRootKeyInvocations++;
+      var key = new byte[32];
+      Arrays.fill(key, (byte) 11);
+      return new GenerationResult(new SensitiveBytes(key), generatedTokenId);
+    }
+
+    @Override
+    public SensitiveBytes getRootKey(byte[] keyId) {
+      return null;
+    }
+
+    @Override
+    public void revokeRootKey(byte[] keyId) {
+      revokeRootKeyInvocations++;
+      lastRevokedTokenId = Arrays.copyOf(keyId, keyId.length);
+    }
   }
 }

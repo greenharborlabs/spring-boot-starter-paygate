@@ -28,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -281,7 +282,7 @@ class AutoConfigurationTest {
             context -> {
               List<CaveatVerifier> verifiers =
                   (List<CaveatVerifier>) context.getBean("caveatVerifiers");
-              assertThat(verifiers).hasSize(4);
+              assertThat(verifiers).hasSize(5);
               assertThat(verifiers.getFirst()).isInstanceOf(ServicesCaveatVerifier.class);
               assertThat(verifiers.get(1))
                   .isInstanceOf(
@@ -290,6 +291,7 @@ class AutoConfigurationTest {
                   .isInstanceOf(
                       com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier.class);
               assertThat(verifiers.get(3)).isInstanceOf(CapabilitiesCaveatVerifier.class);
+              assertThat(verifiers.get(4)).isInstanceOf(ValidUntilCaveatVerifier.class);
             });
   }
 
@@ -716,6 +718,29 @@ class AutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("startup fails safely when no payment protocol implementation is present")
+    void failsWhenNoProtocolImplementationIsPresent() {
+      String configuredSecret = "operator-secret-must-not-appear-in-diagnostics-123456";
+
+      contextRunner
+          .withClassLoader(
+              new FilteredClassLoader(
+                  "com.greenharborlabs.paygate.protocol.l402",
+                  "com.greenharborlabs.paygate.protocol.mpp"))
+          .withPropertyValues("paygate.protocols.mpp.challenge-binding-secret=" + configuredSecret)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("No usable payment protocol")
+                    .hasMessageContaining("paygate.protocols")
+                    .hasMessageNotContaining(configuredSecret);
+              });
+    }
+
+    @Test
     @DisplayName("startup succeeds with both protocols enabled")
     void succeedsWithBothProtocols() {
       contextRunner
@@ -767,7 +792,8 @@ class AutoConfigurationTest {
           new ServicesCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
-          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier("default", 50));
+          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier("default", 50),
+          new ValidUntilCaveatVerifier("default"));
     }
   }
 

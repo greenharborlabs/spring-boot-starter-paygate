@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -12,6 +13,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -28,6 +32,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 
 /**
  * Pure unit tests for {@link PaygateChallengeService}, verifying all paths independently of the
@@ -165,6 +170,76 @@ class PaygateChallengeServiceTest {
             .as("route identity for %s spelling", routeCase.name())
             .isEqualTo(resolved.routePattern());
       }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Credential lifecycle
+  // -----------------------------------------------------------------------
+
+  @Nested
+  @DisplayName("credential lifecycle")
+  class CredentialLifecycle {
+
+    @Test
+    @DisplayName("absent credential creates exactly one invoice and one root key")
+    void absentCredentialCreatesOneSharedChallengeArtifact() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      var trackingStore = createTrackingRootKeyStore();
+      var protocol = challengeProtocol();
+      var filter = createFilter(createService(trackingStore), protocol);
+      var response = new MockHttpServletResponse();
+
+      filter.doFilter(request, response, mock(jakarta.servlet.FilterChain.class));
+
+      assertThat(response.getStatus()).isEqualTo(402);
+      verify(lightningBackend, times(1)).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("presented invalid credential creates no replacement invoice or root key")
+    void presentedInvalidCredentialDoesNotCreateReplacementChallengeArtifact() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      var trackingStore = createTrackingRootKeyStore();
+      var protocol = mock(PaymentProtocol.class);
+      when(protocol.scheme()).thenReturn("Payment");
+      when(protocol.canHandle("Payment invalid-presented-credential")).thenReturn(true);
+      when(protocol.parseCredential("Payment invalid-presented-credential"))
+          .thenThrow(
+              new PaymentValidationException(
+                  PaymentValidationException.ErrorCode.INVALID,
+                  "attacker-controlled validation detail"));
+      var filter = createFilter(createService(trackingStore), protocol);
+      request.addHeader("Authorization", "Payment invalid-presented-credential");
+      var response = new MockHttpServletResponse();
+
+      filter.doFilter(request, response, mock(jakarta.servlet.FilterChain.class));
+
+      assertThat(response.getStatus()).isEqualTo(402);
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
+      verify(protocol, never()).validate(org.mockito.ArgumentMatchers.any(), anyMap());
+    }
+
+    private PaymentProtocol challengeProtocol() {
+      var protocol = mock(PaymentProtocol.class);
+      when(protocol.scheme()).thenReturn("L402");
+      when(protocol.formatChallenge(org.mockito.ArgumentMatchers.any()))
+          .thenReturn(new ChallengeResponse("L402 challenge", "L402", null));
+      return protocol;
+    }
+
+    private PaygateSecurityFilter createFilter(
+        PaygateChallengeService service, PaymentProtocol protocol) {
+      var registry = new PaygateEndpointRegistry();
+      registry.register(config);
+      return new PaygateSecurityFilter(
+          registry, List.of(protocol), service, SERVICE_NAME, null, null, null, null);
     }
   }
 
