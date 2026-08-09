@@ -87,9 +87,9 @@ public final class MacaroonVerifier {
    * @param context verification context (service name, current time, etc.)
    * @throws MacaroonVerificationException if a caveat escalation is detected or a verifier rejects
    */
-  public static void verifyCaveats(
+  public static Map<String, String> verifyCaveats(
       List<Caveat> caveats, List<CaveatVerifier> caveatVerifiers, L402VerificationContext context) {
-    verifyCaveats(caveats, buildVerifierMap(caveatVerifiers), context);
+    return verifyCaveats(caveats, buildVerifierMap(caveatVerifiers), context);
   }
 
   /**
@@ -105,7 +105,7 @@ public final class MacaroonVerifier {
    * @param context verification context (service name, current time, etc.)
    * @throws MacaroonVerificationException if a caveat escalation is detected or a verifier rejects
    */
-  public static void verifyCaveats(
+  public static Map<String, String> verifyCaveats(
       List<Caveat> caveats,
       Map<String, CaveatVerifier> verifiersByKey,
       L402VerificationContext context) {
@@ -113,6 +113,7 @@ public final class MacaroonVerifier {
 
     Map<String, Caveat> lastSeenByKey = new HashMap<>();
     Map<String, Caveat> finalEvaluationByKey = new HashMap<>();
+    Map<String, String> acceptedValues = new HashMap<>();
     for (Caveat caveat : caveats) {
       CaveatVerifier verifier = verifiersByKey.get(caveat.key());
       if (verifier == null) {
@@ -134,11 +135,14 @@ public final class MacaroonVerifier {
         finalEvaluationByKey.put(caveat.key(), caveat);
       } else {
         verifier.verify(caveat, context);
+        acceptedValues.put(caveat.key(), caveat.value());
       }
     }
 
     for (Map.Entry<String, Caveat> entry : finalEvaluationByKey.entrySet()) {
-      verifiersByKey.get(entry.getKey()).verify(entry.getValue(), context);
+      Caveat caveat = entry.getValue();
+      verifiersByKey.get(entry.getKey()).verify(caveat, context);
+      acceptedValues.put(entry.getKey(), caveat.value());
     }
 
     // Post-loop enforcement: if a capability is required, the macaroon MUST contain
@@ -156,6 +160,8 @@ public final class MacaroonVerifier {
                 + "'");
       }
     }
+
+    return Map.copyOf(acceptedValues);
   }
 
   /**
@@ -222,7 +228,13 @@ public final class MacaroonVerifier {
   public static Map<String, CaveatVerifier> buildVerifierMap(List<CaveatVerifier> caveatVerifiers) {
     Map<String, CaveatVerifier> map = new HashMap<>(caveatVerifiers.size());
     for (CaveatVerifier cv : caveatVerifiers) {
-      map.put(cv.getKey(), cv);
+      String key = cv.getKey();
+      if (key == null || key.isBlank()) {
+        throw new IllegalArgumentException("Caveat verifier key must not be blank");
+      }
+      if (map.putIfAbsent(key, cv) != null) {
+        throw new IllegalArgumentException("Duplicate caveat verifier key: " + key);
+      }
     }
     return Map.copyOf(map);
   }

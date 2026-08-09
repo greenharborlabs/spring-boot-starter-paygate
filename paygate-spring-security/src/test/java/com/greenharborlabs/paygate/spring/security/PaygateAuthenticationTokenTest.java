@@ -12,6 +12,8 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectOutputStream;
 import java.security.SecureRandom;
 import java.util.HashSet;
 import java.util.List;
@@ -65,7 +67,7 @@ class PaygateAuthenticationTokenTest {
   }
 
   @Test
-  void authenticatedTokenExposesCredentialDetails() {
+  void authenticatedTokenRetainsOnlySafeCredentialDetails() {
     L402Credential credential =
         createTestCredential(
             List.of(
@@ -77,8 +79,11 @@ class PaygateAuthenticationTokenTest {
     assertThat(token.getTokenId()).isEqualTo(credential.tokenId());
     assertThat(token.getServiceName()).isEqualTo("my-api");
     assertThat(token.getPrincipal()).isEqualTo(credential.tokenId());
-    assertThat(token.getCredentials()).isEqualTo(credential);
-    assertThat(token.getL402Credential()).isEqualTo(credential);
+    assertThat(token.getCredentials()).isEqualTo("[REDACTED]");
+    assertThat(token.getL402Credential()).isNull();
+    assertThat(token.getPaymentCredential()).isNull();
+    assertThat(token.getComponents()).isNull();
+    assertThat(token.getAuthorizationHeader()).isNull();
   }
 
   @Test
@@ -105,6 +110,16 @@ class PaygateAuthenticationTokenTest {
         .containsEntry("tier", "premium");
     assertThat(token.getAttribute("tier")).isEqualTo("premium");
     assertThat(token.getAttribute("nonexistent")).isNull();
+  }
+
+  @Test
+  void authenticatedTokenAttributesCannotBeMutatedThroughAccessor() {
+    L402Credential credential = createTestCredential(List.of(new Caveat("tier", "premium")));
+    var token = PaygateAuthenticationToken.authenticated(credential, "api");
+
+    assertThatThrownBy(() -> token.getAttributes().put("tier", "attacker-controlled"))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThat(token.getAttributes()).containsEntry("tier", "premium");
   }
 
   @Test
@@ -320,12 +335,15 @@ class PaygateAuthenticationTokenTest {
   }
 
   @Test
-  void authenticatedPaymentCredentialReturnsCredentialFromGetCredentials() {
+  void authenticatedPaymentCredentialErasesCredentialMaterial() {
     PaymentCredential cred = createMppCredential("tok", null);
     var token = PaygateAuthenticationToken.authenticated(cred, "svc");
 
-    assertThat(token.getCredentials()).isInstanceOf(PaymentCredential.class);
-    assertThat(token.getPaymentCredential()).isEqualTo(cred);
+    assertThat(token.getCredentials()).isEqualTo("[REDACTED]");
+    assertThat(token.getPaymentCredential()).isNull();
+    assertThat(token.getL402Credential()).isNull();
+    assertThat(token.getAuthorizationHeader()).isNull();
+    assertThat(token.getComponents()).isNull();
   }
 
   @Test
@@ -354,6 +372,16 @@ class PaygateAuthenticationTokenTest {
   }
 
   @Test
+  void authenticatedPaymentCredentialAttributesCannotBeMutatedThroughAccessor() {
+    PaymentCredential cred = createMppCredential("tok", "did:key:z6Mk...");
+    var token = PaygateAuthenticationToken.authenticated(cred, "svc");
+
+    assertThatThrownBy(() -> token.getAttributes().put("source", "attacker-controlled"))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThat(token.getAttributes()).containsEntry("source", "did:key:z6Mk...");
+  }
+
+  @Test
   void authenticatedPaymentCredentialRejectsNull() {
     assertThatThrownBy(
             () -> PaygateAuthenticationToken.authenticated((PaymentCredential) null, "svc"))
@@ -377,6 +405,35 @@ class PaygateAuthenticationTokenTest {
     var token = PaygateAuthenticationToken.authenticated(credential, "svc");
 
     assertThat(token.getPaymentCredential()).isNull();
+  }
+
+  @Test
+  void authenticatedTokensSerializeWithoutUsableL402CredentialMaterial() throws Exception {
+    L402Credential credential = createTestCredential(List.of());
+    var token = PaygateAuthenticationToken.authenticated(credential, "svc");
+
+    byte[] serialized = serialize(token);
+
+    assertThat(containsByteSequence(serialized, credential.preimage().value())).isFalse();
+    assertThat(containsByteSequence(serialized, credential.macaroon().signature())).isFalse();
+    assertThat(containsByteSequence(serialized, credential.macaroon().identifier())).isFalse();
+  }
+
+  @Test
+  void authenticatedTokensSerializeWithoutUsablePaymentCredentialMaterial() throws Exception {
+    byte[] paymentHash = new byte[32];
+    byte[] preimage = new byte[32];
+    RNG.nextBytes(paymentHash);
+    RNG.nextBytes(preimage);
+    PaymentCredential credential =
+        new PaymentCredential(
+            paymentHash, preimage, "tok", "Payment", null, new ProtocolMetadata() {});
+    var token = PaygateAuthenticationToken.authenticated(credential, "svc");
+
+    byte[] serialized = serialize(token);
+
+    assertThat(containsByteSequence(serialized, paymentHash)).isFalse();
+    assertThat(containsByteSequence(serialized, preimage)).isFalse();
   }
 
   // ========== L402 unauthenticated token new accessor tests ==========
@@ -652,5 +709,29 @@ class PaygateAuthenticationTokenTest {
 
     return new PaymentCredential(
         paymentHash, preimage, tokenId, "L402", null, new ProtocolMetadata() {});
+  }
+
+  private byte[] serialize(PaygateAuthenticationToken token) throws Exception {
+    try (var output = new ByteArrayOutputStream();
+        var stream = new ObjectOutputStream(output)) {
+      stream.writeObject(token);
+      return output.toByteArray();
+    }
+  }
+
+  private boolean containsByteSequence(byte[] haystack, byte[] needle) {
+    if (needle.length == 0 || needle.length > haystack.length) {
+      return needle.length == 0;
+    }
+    for (int start = 0; start <= haystack.length - needle.length; start++) {
+      int offset = 0;
+      while (offset < needle.length && haystack[start + offset] == needle[offset]) {
+        offset++;
+      }
+      if (offset == needle.length) {
+        return true;
+      }
+    }
+    return false;
   }
 }

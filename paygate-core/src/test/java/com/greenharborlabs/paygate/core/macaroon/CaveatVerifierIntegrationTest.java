@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -159,5 +160,97 @@ class CaveatVerifierIntegrationTest {
       assertThatThrownBy(() -> MacaroonVerifier.verifyCaveats(caveats, allVerifiers, contextB))
           .isInstanceOf(MacaroonVerificationException.class);
     }
+  }
+
+  // ---------------------------------------------------------------
+  // Trusted accepted-value provenance (US4, FR-026/027)
+  // ---------------------------------------------------------------
+
+  @Nested
+  @DisplayName("trusted accepted-value provenance")
+  class TrustedAcceptedValueProvenance {
+
+    @Test
+    @DisplayName("rejects a blank verifier key before it can own trusted provenance")
+    void rejectsBlankVerifierKey() {
+      assertThatThrownBy(() -> MacaroonVerifier.buildVerifierMap(List.of(acceptingVerifier("  "))))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("rejects duplicate verifier ownership instead of selecting a provenance source")
+    void rejectsDuplicateVerifierKey() {
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.buildVerifierMap(
+                      List.of(acceptingVerifier("role"), acceptingVerifier("role"))))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("keeps differently cased registered keys as separate case-sensitive provenance")
+    void preservesCaseSensitiveVerifierKeyProvenance() {
+      Map<String, String> acceptedValues =
+          MacaroonVerifier.verifyCaveats(
+              List.of(new Caveat("role", "viewer"), new Caveat("ROLE", "operator")),
+              List.of(acceptingVerifier("role"), acceptingVerifier("ROLE")),
+              new L402VerificationContext());
+
+      assertThat(acceptedValues)
+          .containsExactlyInAnyOrderEntriesOf(Map.of("role", "viewer", "ROLE", "operator"));
+    }
+
+    @Test
+    @DisplayName("excludes an unknown holder-added key from trusted provenance")
+    void excludesUnknownCaveatFromTrustedProvenance() {
+      Map<String, String> acceptedValues =
+          MacaroonVerifier.verifyCaveats(
+              List.of(new Caveat("role", "viewer"), new Caveat("Role", "admin")),
+              List.of(acceptingVerifier("role")),
+              new L402VerificationContext());
+
+      assertThat(acceptedValues).containsExactlyEntriesOf(Map.of("role", "viewer"));
+      assertThat(acceptedValues).isUnmodifiable();
+    }
+
+    @Test
+    @DisplayName("never returns provenance when a registered verifier rejects its value")
+    void rejectsUnsuccessfullyVerifiedCaveatBeforeReturningProvenance() {
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.verifyCaveats(
+                      List.of(new Caveat("role", "admin")),
+                      List.of(rejectingVerifier("role")),
+                      new L402VerificationContext()))
+          .isInstanceOf(MacaroonVerificationException.class);
+    }
+  }
+
+  private static CaveatVerifier acceptingVerifier(String key) {
+    return new CaveatVerifier() {
+      @Override
+      public String getKey() {
+        return key;
+      }
+
+      @Override
+      public void verify(Caveat caveat, L402VerificationContext context) {
+        // Accepts the configured key's value.
+      }
+    };
+  }
+
+  private static CaveatVerifier rejectingVerifier(String key) {
+    return new CaveatVerifier() {
+      @Override
+      public String getKey() {
+        return key;
+      }
+
+      @Override
+      public void verify(Caveat caveat, L402VerificationContext context) {
+        throw new MacaroonVerificationException("caveat rejected: " + caveat.key());
+      }
+    };
   }
 }

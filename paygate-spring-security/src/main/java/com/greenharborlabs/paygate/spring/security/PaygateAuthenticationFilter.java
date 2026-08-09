@@ -1,9 +1,6 @@
 package com.greenharborlabs.paygate.spring.security;
 
-import com.greenharborlabs.paygate.api.ChallengeContext;
-import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
-import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
@@ -24,7 +21,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import org.jspecify.annotations.NonNull;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.Authentication;
@@ -54,6 +50,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       System.getLogger(PaygateAuthenticationFilter.class.getName());
 
   private static final String AUTHORIZATION_HEADER = "Authorization";
+  private static final String SUCCESSFUL_PAID_HANDLER_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPaidHandler";
 
   private final AuthenticationManager authenticationManager;
   private final List<PaymentProtocol> protocols;
@@ -95,28 +93,6 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     return !matchesAnyProtocol(authHeader);
   }
 
-  /**
-   * Enforces the paid-route invariant before {@link OncePerRequestFilter} can skip an absent or
-   * unrelated credential. The normal once-per-request dispatch behavior remains delegated to the
-   * superclass for recognized payment credentials.
-   */
-  @Override
-  public void doFilter(
-      jakarta.servlet.ServletRequest servletRequest,
-      jakarta.servlet.ServletResponse servletResponse,
-      FilterChain filterChain)
-      throws ServletException, IOException {
-    if (servletRequest instanceof HttpServletRequest request
-        && servletResponse instanceof HttpServletResponse response
-        && hasNoRecognizedPaymentCredential(request)
-        && isPaidRoute(request)) {
-      SecurityContextHolder.clearContext();
-      PaygateResponseWriter.writeUnauthorized(response);
-      return;
-    }
-    super.doFilter(servletRequest, servletResponse, filterChain);
-  }
-
   @Override
   protected void doFilterInternal(
       HttpServletRequest request,
@@ -149,7 +125,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
     ResolvedEndpoint resolvedEndpoint;
     try {
-      resolvedEndpoint = resolveEndpoint(request, normalizedPath);
+      resolvedEndpoint = resolveEndpoint(request);
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -197,7 +173,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
     PaygateAuthenticationToken unauthenticatedToken =
         Objects.requireNonNull(
-            createAuthToken(authHeader, requestMetadata),
+            createAuthToken(authHeader, requestMetadata, endpointConfig),
             "Token creation must succeed after shouldNotFilter");
 
     Authentication authenticated;
@@ -206,6 +182,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       var securityContext = SecurityContextHolder.createEmptyContext();
       securityContext.setAuthentication(authenticated);
       SecurityContextHolder.setContext(securityContext);
+      request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, resolvedEndpoint.handlerMethod());
     } catch (AuthenticationException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeAuthenticationFailed(response);
@@ -219,19 +196,28 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       return;
     }
 
-    generateReceipt(authenticated, endpointConfig, response);
+    writeReceipt(authenticated, response);
 
     filterChain.doFilter(authRequest, response);
   }
 
   private PaygateAuthenticationToken createAuthToken(
-      String authHeader, Map<String, String> requestMetadata) {
+      String authHeader,
+      Map<String, String> requestMetadata,
+      PaygateEndpointConfig endpointConfig) {
     var componentsOpt = L402HeaderComponents.extract(authHeader);
     if (componentsOpt.isPresent()) {
       return new PaygateAuthenticationToken(componentsOpt.get(), requestMetadata);
     }
     if (matchesAnyProtocol(authHeader)) {
-      return PaygateAuthenticationToken.unauthenticated(authHeader, requestMetadata);
+      return PaygateAuthenticationToken.unauthenticated(
+          authHeader,
+          requestMetadata,
+          new PaygateAuthenticationToken.ReceiptRequest(
+              endpointConfig.priceSats(),
+              endpointConfig.timeoutSeconds(),
+              endpointConfig.description(),
+              endpointConfig.capability()));
     }
     return null;
   }
@@ -243,14 +229,6 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       }
     }
     return false;
-  }
-
-  private boolean hasNoRecognizedPaymentCredential(HttpServletRequest request) {
-    String authHeader = request.getHeader(AUTHORIZATION_HEADER);
-    return authHeader == null
-        || authHeader.isBlank()
-        || (!L402HeaderComponents.extract(authHeader).isPresent()
-            && !matchesAnyProtocol(authHeader));
   }
 
   private Map<String, String> extractRequestMetadata(
@@ -279,25 +257,11 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   }
 
   /**
-   * Resolves the endpoint for the current request by looking up the endpoint registry. Returns
-   * {@code null} if no endpoint is found for the given method and path.
+   * Resolves the endpoint with Spring MVC's complete mapping rules, preserving the exact handler
+   * identity that the final MVC enforcement boundary will see.
    */
-  private ResolvedEndpoint resolveEndpoint(HttpServletRequest request, String normalizedPath) {
-    return endpointRegistry.resolve(request.getMethod(), normalizedPath);
-  }
-
-  /**
-   * Determines whether the request is paid before deciding whether this filter may be skipped.
-   * Resolution failures deliberately keep the filter active, so a registry failure cannot create an
-   * authorization bypass.
-   */
-  private boolean isPaidRoute(HttpServletRequest request) {
-    try {
-      String normalizedPath = ApplicationRelativeRequestResolver.resolve(request);
-      return endpointRegistry.findConfig(request.getMethod(), normalizedPath) != null;
-    } catch (RuntimeException e) {
-      return true;
-    }
+  private ResolvedEndpoint resolveEndpoint(HttpServletRequest request) {
+    return endpointRegistry.resolve(request);
   }
 
   private static String extractCapability(PaygateEndpointConfig config) {
@@ -311,56 +275,14 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     return capability;
   }
 
-  /**
-   * Generates a payment receipt after successful authentication for protocols that support it
-   * (e.g., MPP produces receipts, L402 does not).
-   *
-   * <p>Receipt generation is best-effort: failures are logged at DEBUG level and do not block
-   * request processing.
-   */
-  private void generateReceipt(
-      Authentication authenticated, PaygateEndpointConfig config, HttpServletResponse response) {
-    if (config == null) {
-      return;
-    }
+  /** Writes the provider-created response receipt without retaining a payment credential. */
+  private static void writeReceipt(Authentication authenticated, HttpServletResponse response)
+      throws IOException {
     if (!(authenticated instanceof PaygateAuthenticationToken authToken)) {
       return;
     }
-    PaymentCredential credential = authToken.getPaymentCredential();
-    if (credential == null) {
-      return;
-    }
-
-    for (PaymentProtocol protocol : protocols) {
-      if (protocol.scheme().equals(credential.sourceProtocolScheme())) {
-        try {
-          ChallengeContext receiptContext =
-              new ChallengeContext(
-                  credential.paymentHash(),
-                  credential.tokenId(),
-                  "", // bolt11 not needed for receipt
-                  config.priceSats(),
-                  config.description(),
-                  serviceName,
-                  config.timeoutSeconds(),
-                  config.capability(),
-                  null, // rootKeyBytes not needed for receipt
-                  null, // opaque
-                  null // digest
-                  );
-          Optional<PaymentReceipt> receiptOpt = protocol.createReceipt(credential, receiptContext);
-          if (receiptOpt.isPresent()) {
-            PaygateResponseWriter.writeReceipt(response, receiptOpt.get());
-          }
-        } catch (Exception e) {
-          log.log(
-              System.Logger.Level.DEBUG,
-              "Receipt creation failed for protocol {0}",
-              protocol.scheme(),
-              e);
-        }
-        return;
-      }
+    if (authToken.getReceipt() != null) {
+      PaygateResponseWriter.writeReceipt(response, authToken.getReceipt());
     }
   }
 }

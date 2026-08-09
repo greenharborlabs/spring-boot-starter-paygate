@@ -92,7 +92,10 @@ public final class L402Validator {
    * @param effectiveCapabilities the non-null capabilities effective for this validation
    */
   public record ValidationResult(
-      L402Credential credential, boolean freshValidation, Set<String> effectiveCapabilities) {
+      L402Credential credential,
+      boolean freshValidation,
+      Set<String> effectiveCapabilities,
+      Map<String, String> verifiedAttributes) {
 
     /** Creates a result after defensively snapshotting its effective capabilities. */
     public ValidationResult {
@@ -100,6 +103,9 @@ public final class L402Validator {
           Set.copyOf(
               Objects.requireNonNull(
                   effectiveCapabilities, "effectiveCapabilities must not be null"));
+      verifiedAttributes =
+          Map.copyOf(
+              Objects.requireNonNull(verifiedAttributes, "verifiedAttributes must not be null"));
     }
 
     /**
@@ -110,7 +116,13 @@ public final class L402Validator {
      *     cache
      */
     public ValidationResult(L402Credential credential, boolean freshValidation) {
-      this(credential, freshValidation, Set.of());
+      this(credential, freshValidation, Set.of(), Map.of());
+    }
+
+    /** Creates a result with effective capabilities but no additional verifier-approved values. */
+    public ValidationResult(
+        L402Credential credential, boolean freshValidation, Set<String> effectiveCapabilities) {
+      this(credential, freshValidation, effectiveCapabilities, Map.of());
     }
   }
 
@@ -226,10 +238,10 @@ public final class L402Validator {
 
           // 5. Reuse the already loaded root key for full signature and caveat validation.
           Instant now = context.getCurrentTime();
-          Set<String> effectiveCapabilities;
+          VerificationDetails verificationDetails;
           byte[] rootKey = rootKeySb.value();
           try {
-            effectiveCapabilities =
+            verificationDetails =
                 verifyMacaroon(credential.macaroon(), macId, rootKey, context, tokenId);
           } catch (MacaroonVerificationException e) {
             throw new L402Exception(
@@ -246,7 +258,11 @@ public final class L402Validator {
           credentialStore.store(tokenId, credential, cacheTtl);
 
           returningCredential = true;
-          return new ValidationResult(credential, true, effectiveCapabilities);
+          return new ValidationResult(
+              credential,
+              true,
+              verificationDetails.effectiveCapabilities(),
+              verificationDetails.verifiedAttributes());
         }
       } finally {
         KeyMaterial.zeroize(tokenIdBytes);
@@ -305,8 +321,11 @@ public final class L402Validator {
           mapReasonToErrorCode(reason), safeValidationFailureMessage(reason), tokenId);
     }
     requireRequestContext(context, tokenId);
+    Map<String, String> verifiedAttributes;
     try {
-      MacaroonVerifier.verifyCaveats(cached.macaroon().caveats(), caveatVerifiersByKey, context);
+      verifiedAttributes =
+          MacaroonVerifier.verifyCaveats(
+              cached.macaroon().caveats(), caveatVerifiersByKey, context);
     } catch (MacaroonVerificationException e) {
       if (e.getReason() == VerificationFailureReason.CREDENTIAL_EXPIRED
           || e.getReason() == VerificationFailureReason.CAVEAT_ESCALATION) {
@@ -319,10 +338,10 @@ public final class L402Validator {
     }
 
     Set<String> effectiveCapabilities = extractFinalEffectiveCapabilities(cached.macaroon());
-    return new ValidationResult(cached.copy(), false, effectiveCapabilities);
+    return new ValidationResult(cached.copy(), false, effectiveCapabilities, verifiedAttributes);
   }
 
-  private Set<String> verifyMacaroon(
+  private VerificationDetails verifyMacaroon(
       Macaroon macaroon,
       MacaroonIdentifier identifier,
       byte[] rootKey,
@@ -346,12 +365,17 @@ public final class L402Validator {
       verifyCurrentIdentifierVersion(identifier);
       verifyRequiredBoundaryCaveats(macaroon.caveats());
       requireRequestContext(context, tokenId);
-      MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
-      return extractFinalEffectiveCapabilities(macaroon);
+      Map<String, String> verifiedAttributes =
+          MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
+      return new VerificationDetails(
+          extractFinalEffectiveCapabilities(macaroon), verifiedAttributes);
     } finally {
       KeyMaterial.zeroize(derivedKey, sig);
     }
   }
+
+  private record VerificationDetails(
+      Set<String> effectiveCapabilities, Map<String, String> verifiedAttributes) {}
 
   private static void verifyCurrentIdentifierVersion(MacaroonIdentifier identifier) {
     if (identifier.version() != 1) {

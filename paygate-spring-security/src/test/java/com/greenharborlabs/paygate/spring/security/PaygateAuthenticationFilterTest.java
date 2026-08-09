@@ -16,6 +16,7 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
+import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
@@ -71,11 +72,12 @@ class PaygateAuthenticationFilterTest {
         .when(endpointRegistry.findConfig(anyString(), anyString()))
         .thenReturn(DEFAULT_CONFIG);
     org.mockito.Mockito.lenient()
-        .when(endpointRegistry.resolve(anyString(), anyString()))
+        .when(endpointRegistry.resolve(any(HttpServletRequest.class)))
         .thenAnswer(
             invocation -> {
-              String method = invocation.getArgument(0);
-              String path = invocation.getArgument(1);
+              HttpServletRequest resolvedRequest = invocation.getArgument(0);
+              String method = resolvedRequest.getMethod();
+              String path = ApplicationRelativeRequestResolver.resolve(resolvedRequest);
               PaygateEndpointConfig config = endpointRegistry.findConfig(method, path);
               return config == null
                   ? null
@@ -247,7 +249,7 @@ class PaygateAuthenticationFilterTest {
         new PaygateEndpointConfig("GET", "/api/orders/{orderId}", 10, 3600, "Order", "", "read");
     org.mockito.Mockito.doReturn(new ResolvedEndpoint(getConfig, "/api/orders/{orderId}", "GET"))
         .when(endpointRegistry)
-        .resolve("HEAD", "/api/orders/42");
+        .resolve(request);
     when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
 
     filter.doFilter(request, response, filterChain);
@@ -272,7 +274,7 @@ class PaygateAuthenticationFilterTest {
         new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "Protected", "", null);
     org.mockito.Mockito.doReturn(new ResolvedEndpoint(getConfig, "/api/protected", "GET"))
         .when(endpointRegistry)
-        .resolve("HEAD", "/api/protected");
+        .resolve(request);
     when(authenticationManager.authenticate(any()))
         .thenAnswer(
             invocation -> {
@@ -302,7 +304,7 @@ class PaygateAuthenticationFilterTest {
         new PaygateEndpointConfig("HEAD", "/api/protected", 20, 3600, "Head", "", "head-read");
     org.mockito.Mockito.doReturn(new ResolvedEndpoint(headConfig, "/api/protected", "HEAD"))
         .when(endpointRegistry)
-        .resolve("HEAD", "/api/protected");
+        .resolve(request);
     when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
 
     filter.doFilter(request, response, filterChain);
@@ -321,7 +323,7 @@ class PaygateAuthenticationFilterTest {
     request.setMethod("OPTIONS");
     request.setRequestURI("/api/protected");
     request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
-    org.mockito.Mockito.doReturn(null).when(endpointRegistry).resolve("OPTIONS", "/api/protected");
+    org.mockito.Mockito.doReturn(null).when(endpointRegistry).resolve(request);
 
     filter.doFilter(request, response, filterChain);
 
@@ -1027,10 +1029,9 @@ class PaygateAuthenticationFilterTest {
     var receipt =
         new PaymentReceipt(
             "success", "challenge-123", "lightning", null, 100, "2026-03-26T00:00:00Z", "Payment");
-    when(mppProtocol.createReceipt(any(PaymentCredential.class), any(ChallengeContext.class)))
-        .thenReturn(Optional.of(receipt));
-
-    PaygateAuthenticationToken authenticatedToken = createAuthenticatedMppToken();
+    PaygateAuthenticationToken authenticatedToken =
+        PaygateAuthenticationToken.authenticated(
+            "test-token-id", "test-service", "Payment", Map.of(), List.of(), receipt);
 
     filter =
         new PaygateAuthenticationFilter(
@@ -1155,7 +1156,8 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void challengeContextBolt11InvoiceIsEmptyString() throws ServletException, IOException {
+  void filterDoesNotCreateReceiptsFromAuthenticatedCredentials()
+      throws ServletException, IOException {
     PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
     when(mppProtocol.createReceipt(any(PaymentCredential.class), any(ChallengeContext.class)))
         .thenReturn(Optional.empty());
@@ -1177,20 +1179,8 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    ArgumentCaptor<ChallengeContext> contextCaptor =
-        ArgumentCaptor.forClass(ChallengeContext.class);
-    verify(mppProtocol).createReceipt(any(PaymentCredential.class), contextCaptor.capture());
-
-    ChallengeContext capturedContext = contextCaptor.getValue();
-    assertThat(capturedContext.bolt11Invoice()).isEqualTo("");
-    assertThat(capturedContext.priceSats()).isEqualTo(100);
-    assertThat(capturedContext.description()).isEqualTo("Test resource");
-    assertThat(capturedContext.serviceName()).isEqualTo("test-service");
-    assertThat(capturedContext.timeoutSeconds()).isEqualTo(3600);
-    assertThat(capturedContext.capability()).isEqualTo("read");
-    assertThat(capturedContext.rootKeyBytes()).isNull();
-    assertThat(capturedContext.opaque()).isNull();
-    assertThat(capturedContext.digest()).isNull();
+    verify(mppProtocol, never())
+        .createReceipt(any(PaymentCredential.class), any(ChallengeContext.class));
   }
 
   private void assertRejectedWithoutAuthentication() throws IOException, ServletException {

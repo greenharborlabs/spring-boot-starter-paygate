@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.condition.RequestMethodsRequestCondition;
@@ -303,6 +304,31 @@ class PaygateEndpointRegistryTest {
     assertThat(resolved.routePattern()).isEqualTo("/api/{name}");
     assertThat(resolved.policyMethod()).isEqualTo("GET");
     assertThat(registry.findConfig("HEAD", "/api/resource")).isSameAs(resolved.config());
+  }
+
+  @Test
+  @DisplayName(
+      "request-aware manual resolution preserves context paths, HEAD fallback, and wildcard")
+  void requestAwareManualResolutionPreservesLegacyMethodAndPathSemantics() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("GET", "/api/resource", 10, 600, "", "", "get"));
+    registry.register(new PaygateEndpointConfig("HEAD", "/api/head", 10, 600, "", "", "head"));
+    registry.register(new PaygateEndpointConfig("*", "/api/wild", 10, 600, "", "", "wild"));
+
+    var inheritedHead = new MockHttpServletRequest("HEAD", "/shop/api/resource");
+    inheritedHead.setContextPath("/shop");
+    var explicitHead = new MockHttpServletRequest("HEAD", "/api/head");
+    var wildcardPost = new MockHttpServletRequest("POST", "/api/wild");
+
+    assertThat(registry.resolve(inheritedHead))
+        .extracting(ResolvedEndpoint::policyMethod)
+        .isEqualTo("GET");
+    assertThat(registry.resolve(explicitHead))
+        .extracting(ResolvedEndpoint::policyMethod)
+        .isEqualTo("HEAD");
+    assertThat(registry.resolve(wildcardPost))
+        .extracting(ResolvedEndpoint::policyMethod)
+        .isEqualTo("*");
   }
 
   @Test

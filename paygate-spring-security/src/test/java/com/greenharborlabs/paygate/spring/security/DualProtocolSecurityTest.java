@@ -2,7 +2,6 @@ package com.greenharborlabs.paygate.spring.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -95,7 +94,7 @@ class DualProtocolSecurityTest {
       when(l402Validator.validate(
               any(L402HeaderComponents.class), any(L402VerificationContext.class)))
           .thenReturn(new L402Validator.ValidationResult(credential, true));
-      when(endpointRegistry.resolve(anyString(), anyString()))
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
@@ -138,7 +137,7 @@ class DualProtocolSecurityTest {
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
       when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.resolve(anyString(), anyString()))
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
@@ -199,7 +198,7 @@ class DualProtocolSecurityTest {
       var config =
           new PaygateEndpointConfig("GET", "/api/protected", 100, 3600, "Test", "", "read");
       var resolvedEndpoint = resolvedEndpoint(config);
-      when(endpointRegistry.resolve("GET", "/api/protected")).thenReturn(resolvedEndpoint);
+      when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(resolvedEndpoint);
 
       var challengeContext =
           new ChallengeContext(
@@ -293,7 +292,7 @@ class DualProtocolSecurityTest {
       when(l402Validator.validate(
               any(L402HeaderComponents.class), any(L402VerificationContext.class)))
           .thenReturn(new L402Validator.ValidationResult(credential, true));
-      when(endpointRegistry.resolve(anyString(), anyString()))
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
@@ -329,7 +328,7 @@ class DualProtocolSecurityTest {
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
       when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.resolve(anyString(), anyString()))
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
@@ -367,7 +366,7 @@ class DualProtocolSecurityTest {
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
       when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.resolve(anyString(), anyString()))
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
@@ -401,7 +400,7 @@ class DualProtocolSecurityTest {
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
       when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.resolve(anyString(), anyString()))
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
           .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =

@@ -236,6 +236,46 @@ class CapabilitiesCaveatVerifierTest {
     }
 
     @Test
+    @DisplayName("rejects a capability-bearing credential on a capability-agnostic endpoint")
+    void rejectsCapabilityBearingCredentialOnCapabilityAgnosticEndpoint() {
+      var capabilityAgnosticContext =
+          L402VerificationContext.builder().serviceName(SERVICE_NAME).build();
+      var capabilityBearingCredential =
+          List.of(new Caveat("my-api_capabilities", "search,analyze"));
+
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.verifyCaveats(
+                      capabilityBearingCredential, List.of(verifier), capabilityAgnosticContext))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .satisfies(
+              e -> {
+                var ex = (MacaroonVerificationException) e;
+                assertThat(ex.getReason()).isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
+                assertThat(ex.getMessage()).contains("no capability declared");
+              });
+    }
+
+    @Test
+    @DisplayName(
+        "accepts a capability-bearing credential only when the endpoint declares a supported capability")
+    void acceptsCapabilityBearingCredentialOnEndpointWithSupportedCapability() {
+      var capabilityBearingCredential =
+          List.of(new Caveat("my-api_capabilities", "search,analyze"));
+      var contextWithTrustedCapability =
+          L402VerificationContext.builder()
+              .serviceName(SERVICE_NAME)
+              .requestMetadata(Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "search"))
+              .build();
+
+      assertThatCode(
+              () ->
+                  MacaroonVerifier.verifyCaveats(
+                      capabilityBearingCredential, List.of(verifier), contextWithTrustedCapability))
+          .doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("rejects a named request when the final ceiling is no capability")
     void rejectsNamedRequestForSentinel() {
       var context =

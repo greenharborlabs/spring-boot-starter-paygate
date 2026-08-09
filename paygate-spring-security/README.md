@@ -18,6 +18,7 @@ If you do not use Spring Security, you do not need this module. The base `paygat
 - [Accessing Payment Credentials in Controllers](#accessing-payment-credentials-in-controllers)
 - [SpEL and @PreAuthorize](#spel-and-preauthorize)
 - [Capability Enforcement](#capability-enforcement)
+- [Trust and Serialization Guarantees](#trust-and-serialization-guarantees)
 - [Comparison with Non-Spring-Security Approach](#comparison-with-non-spring-security-approach)
 - [Testing](#testing)
 
@@ -170,8 +171,8 @@ PaygateAuthenticationFilter (OncePerRequestFilter)
      |       |     - ROLE_PAYMENT authority (plus ROLE_L402 for L402)
      |       |     - PAYGATE_CAPABILITY_* authorities (from the final verified capability ceiling)
      |       |     - tokenId as principal
-     |       |     - L402Credential as credentials
-     |       |     - Caveat-derived attributes map
+     |       |     - credential-free authenticated state
+     |       |     - verifier-approved attributes map
      |       |
      |       v
      |   SecurityContextHolder populated --> continue filter chain
@@ -205,10 +206,10 @@ The token has two states:
 | `authenticated` | `true` |
 | `authorities` | `[ROLE_PAYMENT, ROLE_L402]` + `[L402_CAPABILITY_*]` and `[PAYGATE_CAPABILITY_*]` for each capability in the final verified effective set |
 | `principal` | token ID string |
-| `credentials` | `L402Credential` object |
-| `attributes` | Map of caveat key-value pairs plus `tokenId` and `serviceName` |
+| `credentials` | `[REDACTED]`; no raw authorization header, parsed credential components, preimage, `L402Credential`, or `PaymentCredential` is retained |
+| `attributes` | Immutable map of verifier-approved values plus `tokenId` and `serviceName` |
 
-Authenticated non-L402 protocols carry a `PaymentCredential`, always receive `ROLE_PAYMENT`, and expose `protocolScheme` plus any safe protocol attributes. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
+Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
 #### Security: Attribute Overwrite Protection
 
@@ -407,11 +408,13 @@ public class PremiumController {
 }
 ```
 
-The `attributes` map on an authenticated token contains:
+The `attributes` map on an authenticated token contains only values that a registered caveat verifier accepted, plus server-issued values:
 
-- All caveat key-value pairs from the macaroon (for example `services`, `route`, `method`, and `<service>_valid_until`)
+- Verified caveat values (for example `services`, `route`, `method`, and `<service>_valid_until`), when their registered verifiers explicitly accept them
 - `tokenId` -- the hex-encoded 32-byte token identifier (overwrite-protected)
 - `serviceName` -- the configured service name (overwrite-protected, omitted if null)
+
+Unknown caveats and values merely added by a credential holder are not trusted attributes. The map is immutable, including when authentication is served from validation cache.
 
 ---
 
@@ -504,6 +507,22 @@ authority checks, as above, when an operation requires both capabilities.
 The issued capability value is a ceiling. Holder attenuation may retain or narrow a named set, including narrowing it to `~`; it cannot expand the set, turn `~` into a named grant, or mix `~` with names. Every signed ceiling is parsed and checked before use, so blank segments, mixed `~`/names, and malformed values fail closed. A final `~` cannot satisfy a named endpoint declaration and produces no capability-derived authorities.
 
 Existing `hasRole('L402')` rules remain usable, but credential compatibility is intentionally stricter: previously issued credentials missing the capability ceiling, canonical `route`, or actual `method` are rejected even on cache hits. Clients recover by obtaining a new challenge; there is no fail-open compatibility switch.
+
+## Trust and Serialization Guarantees
+
+### Verified Attribute Provenance and Authorities
+
+`MacaroonVerifier` accepts attribute provenance only from non-blank, uniquely registered, case-sensitive verifier keys. Each accepted value is captured immutably and is carried by `L402Validator.ValidationResult.verifiedAttributes()` for both fresh and cached validation. Spring Security maps attributes and capability authorities only from that verified result; it does not treat arbitrary caveats as claims.
+
+Payment roles are issued by the server: validated credentials receive `ROLE_PAYMENT`, and L402 credentials also receive `ROLE_L402`. A holder cannot mint Spring Security roles or authorities by adding caveats such as `role=ADMIN`. Capability authorities likewise come only from the verified effective capability ceiling.
+
+### Capability Non-Portability
+
+A credential with named capabilities is valid only for an endpoint that declares an overlapping named capability. It is rejected for an endpoint that declares no capability. The `~` ceiling represents no capability: it cannot satisfy a named declaration and produces no capability-derived authorities. This prevents a credential minted for one named capability from becoming a general-purpose paid credential.
+
+### Authenticated State and Serialization
+
+The authenticated `PaygateAuthenticationToken` intentionally retains no raw `Authorization` header, parsed credential components or preimage, `L402Credential`, or `PaymentCredential`. Its trusted attributes are immutable. Receipt handoff is transient, and multipart-payment receipt generation completes before the token is reduced to credential-free authenticated state. Consequently, serializing an authenticated token does not serialize payment credentials or request secrets.
 
 ### Route, Method, and Deployment Prefixes
 

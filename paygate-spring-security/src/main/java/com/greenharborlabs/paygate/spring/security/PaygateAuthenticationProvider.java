@@ -1,20 +1,28 @@
 package com.greenharborlabs.paygate.spring.security;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
+import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 /**
  * Spring Security {@link AuthenticationProvider} that validates payment credentials using either
@@ -87,8 +95,17 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
 
     try {
       L402Validator.ValidationResult result = l402Validator.validate(components, context);
-      return PaygateAuthenticationToken.authenticated(
-          result.credential(), serviceName, result.effectiveCapabilities());
+      L402Credential credential = result.credential();
+      try {
+        return PaygateAuthenticationToken.authenticated(
+            credential.tokenId(),
+            serviceName,
+            "L402",
+            result.verifiedAttributes(),
+            l402Authorities(result.effectiveCapabilities()));
+      } finally {
+        credential.destroy();
+      }
     } catch (L402Exception e) {
       throw new BadCredentialsException("L402 authentication failed", e);
     }
@@ -105,7 +122,14 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
               resolveCapabilitiesSafely(
                   new CapabilityResolutionContext(
                       credential.tokenId(), serviceName, null, token.getRequestMetadata()));
-          return PaygateAuthenticationToken.authenticated(credential, serviceName, capabilities);
+          PaymentReceipt receipt = createReceipt(protocol, credential, token.getReceiptRequest());
+          return PaygateAuthenticationToken.authenticated(
+              credential.tokenId(),
+              serviceName,
+              credential.sourceProtocolScheme(),
+              protocolAttributes(credential),
+              paymentAuthorities(capabilities),
+              receipt);
         } catch (PaymentValidationException e) {
           throw new BadCredentialsException("Payment authentication failed", e);
         }
@@ -124,6 +148,67 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
           "Capability resolution failed for token; proceeding without resolved capabilities",
           e);
       return Set.of();
+    }
+  }
+
+  private static Set<GrantedAuthority> l402Authorities(Set<String> capabilities) {
+    Set<GrantedAuthority> authorities = new LinkedHashSet<>();
+    authorities.add(new SimpleGrantedAuthority("ROLE_PAYMENT"));
+    authorities.add(new SimpleGrantedAuthority("ROLE_L402"));
+    for (String capability : capabilities) {
+      if (capability != null) {
+        authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + capability));
+        authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + capability));
+      }
+    }
+    return Set.copyOf(authorities);
+  }
+
+  private static Set<GrantedAuthority> paymentAuthorities(Set<String> capabilities) {
+    Set<GrantedAuthority> authorities = new LinkedHashSet<>();
+    authorities.add(new SimpleGrantedAuthority("ROLE_PAYMENT"));
+    for (String capability : capabilities) {
+      if (capability != null) {
+        authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + capability));
+      }
+    }
+    return Set.copyOf(authorities);
+  }
+
+  private static Map<String, String> protocolAttributes(PaymentCredential credential) {
+    if (credential.source() == null) {
+      return Map.of();
+    }
+    return Map.of("source", credential.source());
+  }
+
+  private PaymentReceipt createReceipt(
+      PaymentProtocol protocol,
+      PaymentCredential credential,
+      PaygateAuthenticationToken.ReceiptRequest receiptRequest) {
+    if (receiptRequest == null) {
+      return null;
+    }
+    try {
+      ChallengeContext context =
+          new ChallengeContext(
+              credential.paymentHash(),
+              credential.tokenId(),
+              "",
+              receiptRequest.priceSats(),
+              receiptRequest.description(),
+              serviceName,
+              receiptRequest.timeoutSeconds(),
+              receiptRequest.capability(),
+              null,
+              null,
+              null);
+      Optional<PaymentReceipt> receipt = protocol.createReceipt(credential, context);
+      return receipt.orElse(null);
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.DEBUG, "Receipt creation failed for protocol {0}", protocol.scheme());
+      return null;
     }
   }
 

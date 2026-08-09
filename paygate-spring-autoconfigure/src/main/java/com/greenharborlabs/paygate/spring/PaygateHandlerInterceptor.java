@@ -32,12 +32,24 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
     }
 
     Object successfulHandler = request.getAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE);
-    if (handlerMethod.equals(successfulHandler)) {
+    if (successfulHandler instanceof HandlerMethod markedHandler
+        && identifiesSameHandler(handlerMethod, markedHandler)) {
       return true;
     }
 
     PaygateResponseWriter.writeInternalError(response);
     return false;
+  }
+
+  /**
+   * Compares the stable MVC handler identity rather than {@link HandlerMethod#equals(Object)}.
+   * Spring's mapping catalog can retain a bean name while request dispatch resolves that name to
+   * the bean instance, which makes {@code HandlerMethod.equals} false for the same controller
+   * method.
+   */
+  private static boolean identifiesSameHandler(HandlerMethod selected, HandlerMethod marked) {
+    return selected.getBeanType().equals(marked.getBeanType())
+        && selected.getMethod().equals(marked.getMethod());
   }
 
   private boolean isPaid(HttpServletRequest request, HandlerMethod handlerMethod) {

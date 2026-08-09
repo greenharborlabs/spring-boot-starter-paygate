@@ -87,7 +87,9 @@ class PaygateAuthenticationProviderTest {
     L402Credential credential = createTestCredential(List.of(new Caveat("service", "api")));
     when(l402Validator.validate(
             any(L402HeaderComponents.class), any(L402VerificationContext.class)))
-        .thenReturn(new L402Validator.ValidationResult(credential, true));
+        .thenReturn(
+            new L402Validator.ValidationResult(
+                credential, true, Set.of(), Map.of("service", "api")));
 
     var unauthToken =
         new PaygateAuthenticationToken(new L402HeaderComponents("L402", macaroonB64, preimageHex));
@@ -100,7 +102,7 @@ class PaygateAuthenticationProviderTest {
     var authToken = (PaygateAuthenticationToken) result;
     assertThat(authToken.getTokenId()).isEqualTo(credential.tokenId());
     assertThat(authToken.getServiceName()).isEqualTo(SERVICE_NAME);
-    assertThat(authToken.getL402Credential()).isEqualTo(credential);
+    assertThat(authToken.getL402Credential()).isNull();
     assertThat(authToken.getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
         .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
@@ -228,6 +230,85 @@ class PaygateAuthenticationProviderTest {
         .isInstanceOf(BadCredentialsException.class)
         .hasMessageContaining("L402 authentication failed")
         .hasCauseInstanceOf(L402Exception.class);
+  }
+
+  // ========== Trusted attribute and authority derivation tests ==========
+
+  @Nested
+  @DisplayName("trusted attribute and authority derivation")
+  class TrustedAttributeAndAuthorityTests {
+
+    @Test
+    void holderAddedUnknownRoleDoesNotBecomeTrustedAttributeOrAuthority() {
+      L402Credential credential = createTestCredential(List.of(new Caveat("role", "admin")));
+      when(l402Validator.validate(
+              any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+          .thenReturn(
+              new L402Validator.ValidationResult(
+                  credential, true, Set.of(), Map.of("service", "api")));
+
+      var unauthToken =
+          new PaygateAuthenticationToken(
+              new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64)));
+
+      var authenticated = (PaygateAuthenticationToken) provider.authenticate(unauthToken);
+
+      assertThat(authenticated.getAttributes()).doesNotContainKey("role");
+      assertThat(authenticated.getAttribute("role")).isNull();
+      assertThat(authenticated.getAuthorities())
+          .extracting(GrantedAuthority::getAuthority)
+          .doesNotContain("ROLE_ADMIN", "L402_CAPABILITY_admin", "PAYGATE_CAPABILITY_admin");
+    }
+
+    @Test
+    void exposesOnlyVerifierApprovedAttributesFromAnOtherwiseValidCredential() {
+      L402Credential credential =
+          createTestCredential(List.of(new Caveat("service", "api"), new Caveat("note", "holder")));
+      when(l402Validator.validate(
+              any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+          .thenReturn(
+              new L402Validator.ValidationResult(
+                  credential, true, Set.of(), Map.of("service", "api")));
+
+      var unauthToken =
+          new PaygateAuthenticationToken(
+              new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64)));
+
+      var authenticated = (PaygateAuthenticationToken) provider.authenticate(unauthToken);
+
+      assertThat(authenticated.getAttribute("service")).isEqualTo("api");
+      assertThat(authenticated.getAttributes()).doesNotContainKey("note");
+    }
+
+    @Test
+    void derivesAuthoritiesOnlyFromVerifierApprovedCapabilities() {
+      L402Credential credential =
+          createTestCredential(
+              List.of(
+                  new Caveat("role", "admin"),
+                  new Caveat(SERVICE_NAME + "_capabilities", "holder-admin")));
+      when(l402Validator.validate(
+              any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+          .thenReturn(new L402Validator.ValidationResult(credential, true, Set.of("read")));
+
+      var unauthToken =
+          new PaygateAuthenticationToken(
+              new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64)));
+
+      var authenticated = (PaygateAuthenticationToken) provider.authenticate(unauthToken);
+
+      assertThat(authenticated.getAuthorities())
+          .extracting(GrantedAuthority::getAuthority)
+          .contains("L402_CAPABILITY_read", "PAYGATE_CAPABILITY_read")
+          .doesNotContain(
+              "ROLE_ADMIN",
+              "L402_CAPABILITY_admin",
+              "PAYGATE_CAPABILITY_admin",
+              "L402_CAPABILITY_holder-admin",
+              "PAYGATE_CAPABILITY_holder-admin");
+      assertThat(authenticated.getAttributes())
+          .doesNotContainKeys("role", SERVICE_NAME + "_capabilities");
+    }
   }
 
   // ========== CapabilityResolver integration tests ==========

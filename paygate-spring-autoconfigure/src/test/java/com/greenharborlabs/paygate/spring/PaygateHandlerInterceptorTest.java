@@ -106,6 +106,30 @@ class PaygateHandlerInterceptorTest {
     assertThat(policyBController.calls).hasValue(1);
   }
 
+  @Test
+  @DisplayName("allows the same handler when MVC resolves the marker bean name to an instance")
+  void allowsSameHandlerWhenMvcResolvesMarkerBeanName() throws Exception {
+    var applicationContext = new StaticApplicationContext();
+    var controller = new PaidController();
+    applicationContext.getBeanFactory().registerSingleton("paidController", controller);
+    applicationContext.refresh();
+    var method = controller.getClass().getMethod("paid");
+    var marker = new HandlerMethod("paidController", applicationContext, method);
+    var selectedHandler = marker.createWithResolvedBean();
+    var request = request("/runtime/paid");
+    request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, marker);
+    var response = new MockHttpServletResponse();
+
+    var proceed =
+        interceptor(new PaygateEndpointRegistry()).preHandle(request, response, selectedHandler);
+    invokeSelectedHandlerIfAllowed(proceed, selectedHandler);
+
+    assertThat(marker).isNotEqualTo(selectedHandler);
+    assertThat(proceed).isTrue();
+    assertThat(response.getStatus()).isEqualTo(200);
+    assertThat(controller.calls).hasValue(1);
+  }
+
   private static HandlerInterceptor interceptor(PaygateEndpointRegistry registry) throws Exception {
     // T046 intentionally remains source-compatible until T054 introduces this final MVC boundary.
     // The runtime lookup becomes an executable contract as soon as the interceptor exists.
