@@ -60,7 +60,7 @@ class TrustedAttributesIT {
   @LocalServerPort private int port;
 
   @Test
-  @DisplayName("holder-added role caveat cannot become a trusted grant or retained credential")
+  @DisplayName("holder-added role caveat cannot become a trusted grant or retain credentials")
   @SuppressWarnings("unchecked")
   void holderAddedRoleCannotBecomeTrustedGrantOrRemainInSecurityContext() throws Exception {
     try (var client = HttpClient.newHttpClient()) {
@@ -88,6 +88,9 @@ class TrustedAttributesIT {
           .contains("ROLE_PAYMENT", "ROLE_L402")
           .doesNotContain("ROLE_ADMIN", "L402_CAPABILITY_admin", "PAYGATE_CAPABILITY_admin");
       assertThat(response.headers().firstValue("X-Test-Raw-Authorization-Accessible"))
+          .contains("false");
+      assertThat(response.headers().firstValue("X-Test-L402-Components-Accessible"))
+          .as("the parsed L402 components retain the payment preimage")
           .contains("false");
       assertThat(response.headers().firstValue("X-Test-L402-Credential-Accessible"))
           .contains("false");
@@ -170,6 +173,9 @@ class TrustedAttributesIT {
             response.setHeader(
                 "X-Test-Raw-Authorization-Accessible",
                 Boolean.toString(invoke(authentication, "getAuthorizationHeader") != null));
+            response.setHeader(
+                "X-Test-L402-Components-Accessible",
+                Boolean.toString(invoke(authentication, "getComponents") != null));
             response.setHeader(
                 "X-Test-L402-Credential-Accessible",
                 Boolean.toString(invoke(authentication, "getL402Credential") != null));

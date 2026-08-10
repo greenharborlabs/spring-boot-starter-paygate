@@ -347,6 +347,27 @@ class PaygateAuthenticationTokenTest {
   }
 
   @Test
+  void authenticatedTokenDoesNotRetainRawHeaderOrPaymentPreimage() {
+    byte[] paymentHash = new byte[32];
+    byte[] preimage = new byte[32];
+    RNG.nextBytes(paymentHash);
+    RNG.nextBytes(preimage);
+    String rawHeader = "Payment preimage=" + java.util.HexFormat.of().formatHex(preimage);
+    var unauthenticated = PaygateAuthenticationToken.unauthenticated(rawHeader, Map.of());
+    var credential =
+        new PaymentCredential(
+            paymentHash, preimage, "trusted-token", "Payment", null, new ProtocolMetadata() {});
+
+    var authenticated = PaygateAuthenticationToken.authenticated(credential, "svc");
+
+    assertThat(unauthenticated.getAuthorizationHeader()).isEqualTo(rawHeader);
+    assertThat(authenticated.getAuthorizationHeader()).isNull();
+    assertThat(authenticated.getComponents()).isNull();
+    assertThat(authenticated.getPaymentCredential()).isNull();
+    assertThat(authenticated.getCredentials()).isEqualTo("[REDACTED]");
+  }
+
+  @Test
   void authenticatedPaymentCredentialHasNullL402Credential() {
     PaymentCredential cred = createMppCredential("tok", null);
     var token = PaygateAuthenticationToken.authenticated(cred, "svc");
@@ -379,6 +400,30 @@ class PaygateAuthenticationTokenTest {
     assertThatThrownBy(() -> token.getAttributes().put("source", "attacker-controlled"))
         .isInstanceOf(UnsupportedOperationException.class);
     assertThat(token.getAttributes()).containsEntry("source", "did:key:z6Mk...");
+  }
+
+  @Test
+  void authenticatedTokenDefensivelyCopiesTrustedAttributes() {
+    var trustedAttributes = new java.util.HashMap<String, String>();
+    trustedAttributes.put("tier", "premium");
+    var token =
+        PaygateAuthenticationToken.authenticated(
+            "trusted-token",
+            "svc",
+            "Payment",
+            trustedAttributes,
+            List.of(
+                new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                    "ROLE_PAYMENT")));
+
+    trustedAttributes.put("tier", "attacker-controlled");
+    trustedAttributes.put("injected", "value");
+
+    assertThat(token.getAttributes())
+        .containsEntry("tier", "premium")
+        .doesNotContainKey("injected");
+    assertThatThrownBy(() -> token.getAttributes().put("tier", "attacker-controlled"))
+        .isInstanceOf(UnsupportedOperationException.class);
   }
 
   @Test
@@ -433,6 +478,27 @@ class PaygateAuthenticationTokenTest {
     byte[] serialized = serialize(token);
 
     assertThat(containsByteSequence(serialized, paymentHash)).isFalse();
+    assertThat(containsByteSequence(serialized, preimage)).isFalse();
+  }
+
+  @Test
+  void authenticatedTokenSerializationOmitsRawHeaderAndPreimage() throws Exception {
+    byte[] paymentHash = new byte[32];
+    byte[] preimage = new byte[32];
+    RNG.nextBytes(paymentHash);
+    RNG.nextBytes(preimage);
+    String rawHeader = "Payment preimage=" + java.util.HexFormat.of().formatHex(preimage);
+    var unauthenticated = PaygateAuthenticationToken.unauthenticated(rawHeader, Map.of());
+    var credential =
+        new PaymentCredential(
+            paymentHash, preimage, "trusted-token", "Payment", null, new ProtocolMetadata() {});
+    var authenticated = PaygateAuthenticationToken.authenticated(credential, "svc");
+
+    byte[] serialized = serialize(authenticated);
+
+    assertThat(unauthenticated.getAuthorizationHeader()).isEqualTo(rawHeader);
+    assertThat(new String(serialized, java.nio.charset.StandardCharsets.ISO_8859_1))
+        .doesNotContain(rawHeader);
     assertThat(containsByteSequence(serialized, preimage)).isFalse();
   }
 
