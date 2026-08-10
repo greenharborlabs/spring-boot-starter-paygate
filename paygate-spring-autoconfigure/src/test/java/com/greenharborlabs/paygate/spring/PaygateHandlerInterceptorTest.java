@@ -165,6 +165,37 @@ class PaygateHandlerInterceptorTest {
   }
 
   @Test
+  @DisplayName(
+      "rejects an unannotated selected handler when the paid catalog identifies another handler")
+  void rejectsSelectedHandlerWhenPaidCatalogIdentifiesAnotherHandler() throws Exception {
+    var catalogController = new CatalogOnlyController();
+    var selectedController = new UnannotatedController();
+    var catalogHandler = dynamicallyRegisteredHandler("/catalog/paid", catalogController);
+    var selectedHandler = dynamicallyRegisteredHandler("/catalog/paid", selectedController);
+    var endpoint =
+        new ResolvedEndpoint(
+            new PaygateEndpointConfig("GET", "/catalog/paid", 1, 60, "paid", "", ""),
+            "/catalog/paid",
+            "GET",
+            null,
+            catalogHandler,
+            null,
+            Integer.MAX_VALUE,
+            null);
+    var request = request("/catalog/paid");
+    var response = new MockHttpServletResponse();
+
+    var proceed =
+        interceptor(new FixedEndpointRegistry(endpoint))
+            .preHandle(request, response, selectedHandler);
+    invokeSelectedHandlerIfAllowed(proceed, selectedHandler);
+
+    assertThat(proceed).isFalse();
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(selectedController.calls).hasValue(0);
+  }
+
+  @Test
   @DisplayName("rejects a matching marker when final registry resolution fails")
   void rejectsMatchingMarkerWhenFinalRegistryResolutionFails() throws Exception {
     var controller = new CatalogOnlyController();
@@ -255,6 +286,14 @@ class PaygateHandlerInterceptorTest {
   }
 
   private static final class CatalogOnlyController {
+    private final AtomicInteger calls = new AtomicInteger();
+
+    public void paid() {
+      calls.incrementAndGet();
+    }
+  }
+
+  private static final class UnannotatedController {
     private final AtomicInteger calls = new AtomicInteger();
 
     public void paid() {

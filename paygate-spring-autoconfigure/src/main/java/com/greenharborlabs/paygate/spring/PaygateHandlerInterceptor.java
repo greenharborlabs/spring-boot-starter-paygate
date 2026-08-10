@@ -65,12 +65,14 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
   }
 
   private boolean isPaid(HttpServletRequest request, HandlerMethod handlerMethod) {
-    if (handlerMethod.getMethodAnnotation(PaymentRequired.class) != null) {
+    var endpoint = registry.resolve(request);
+    if (endpoint != null) {
+      var registeredHandler = endpoint.handlerMethod();
+      if (registeredHandler == null || !identifiesSameHandler(handlerMethod, registeredHandler)) {
+        throw new IllegalStateException("Registry mapping does not identify the selected handler");
+      }
       return true;
     }
-    var endpoint = registry.resolve(request);
-    return endpoint != null
-        && endpoint.handlerMethod() != null
-        && identifiesSameHandler(handlerMethod, endpoint.handlerMethod());
+    return handlerMethod.getMethodAnnotation(PaymentRequired.class) != null;
   }
 }

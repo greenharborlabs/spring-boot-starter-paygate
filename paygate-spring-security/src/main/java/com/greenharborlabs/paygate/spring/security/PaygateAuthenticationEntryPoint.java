@@ -4,7 +4,6 @@ import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
-import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
@@ -66,25 +65,17 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       return;
     }
 
-    String method = request.getMethod();
-    String path;
+    ResolvedEndpoint resolvedEndpoint;
     try {
-      path = ApplicationRelativeRequestResolver.resolve(request);
-    } catch (RuntimeException e) {
+      resolvedEndpoint = endpointRegistry.resolve(request);
+    } catch (IllegalArgumentException e) {
       log.log(System.Logger.Level.WARNING, "Rejected request with malformed URI: <unavailable>");
       PaygateResponseWriter.writeMalformedUri(response);
       return;
-    }
-
-    ResolvedEndpoint resolvedEndpoint;
-    try {
-      resolvedEndpoint = endpointRegistry.resolve(method, path);
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
-          "Endpoint policy resolution failed for {0} {1}: {2}",
-          method,
-          LogSanitizer.sanitize(path),
+          "Endpoint policy resolution failed: {0}",
           e.getClass().getSimpleName());
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeInternalError(response);
