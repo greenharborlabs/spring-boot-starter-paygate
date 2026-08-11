@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Deliberately untrusted negative-control data.  The shell test treats this as
+  inert XML and must reject it before any Gradle or build command can run.
+-->
+<verification-metadata>
+   <components>
+      <component group="org.example" name="fixture-artifact" version="1.0.0">
+         <artifact name="fixture-artifact-1.0.0.jar">
+            <sha256 value="0000000000000000000000000000000000000000000000000000000000000000" origin="tampered-negative-control"/>
+         </artifact>
+      </component>
+   </components>
+</verification-metadata>
