@@ -80,6 +80,28 @@ class MppCredentialParserTest {
         .formatted(challengeId, requestB64, sourceValue, preimageHex);
   }
 
+  /** Returns an alternative final base64url character that decodes to the same bytes. */
+  private static String nonCanonicalBase64url(String canonical) {
+    int remainder = canonical.length() % 4;
+    if (remainder == 0) {
+      throw new IllegalArgumentException("Base64url input must have unused trailing bits");
+    }
+
+    String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    int lastIndex = alphabet.indexOf(canonical.charAt(canonical.length() - 1));
+    int replacement = lastIndex + 1;
+    return canonical.substring(0, canonical.length() - 1) + alphabet.charAt(replacement);
+  }
+
+  private static void assertMalformed(String credentialBlob) {
+    assertThatThrownBy(() -> MppCredentialParser.parse(credentialBlob))
+        .isInstanceOf(PaymentValidationException.class)
+        .satisfies(
+            e ->
+                assertThat(((PaymentValidationException) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED));
+  }
+
   // --- Happy path ---
 
   @Test
@@ -449,15 +471,25 @@ class MppCredentialParserTest {
   }
 
   @Test
-  void base64urlWithPaddingIsAlsoAccepted() {
-    // Base64.getUrlDecoder() handles both padded and unpadded
-    String json = validJson();
+  void rejectsPaddedOuterCredentialBlob() {
+    String json = validJson() + " ";
     byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-
     String blob = Base64.getUrlEncoder().encodeToString(bytes);
 
-    PaymentCredential cred = MppCredentialParser.parse(blob);
-    assertThat(cred.tokenId()).isEqualTo(VALID_CHALLENGE_ID);
+    assertMalformed(blob);
+  }
+
+  @Test
+  void rejectsNonUrlAlphabetInOuterCredentialBlob() {
+    assertMalformed("++++");
+  }
+
+  @Test
+  void rejectsNonCanonicalOuterCredentialBlob() {
+    String blob = toBlob(validJson() + " ");
+    assertThat(blob.length() % 4).isNotZero();
+
+    assertMalformed(nonCanonicalBase64url(blob));
   }
 
   // --- Request field extraction errors ---
@@ -502,6 +534,56 @@ class MppCredentialParserTest {
               assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
               assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
+  }
+
+  @Test
+  void rejectsPaddedRequestField() {
+    String paddedRequest =
+        Base64.getUrlEncoder()
+            .encodeToString(
+                (new String(
+                        Base64.getUrlDecoder().decode(VALID_REQUEST_B64), StandardCharsets.UTF_8))
+                    .concat(" ")
+                    .getBytes(StandardCharsets.UTF_8));
+    String json =
+        """
+                {"challenge":{"id":"test-id","request":"%s"},"payload":{"preimage":"%s"}}"""
+            .formatted(paddedRequest, VALID_PREIMAGE_HEX);
+
+    assertMalformed(toBlob(json));
+  }
+
+  @Test
+  void rejectsNonUrlAlphabetInRequestField() {
+    String json =
+        """
+                {"challenge":{"id":"test-id","request":"////"},"payload":{"preimage":"%s"}}"""
+            .formatted(VALID_PREIMAGE_HEX);
+
+    assertMalformed(toBlob(json));
+  }
+
+  @Test
+  void rejectsNonCanonicalRequestField() {
+    String requestJson =
+        new String(Base64.getUrlDecoder().decode(VALID_REQUEST_B64), StandardCharsets.UTF_8) + " ";
+    String request = toBlob(requestJson);
+    assertThat(request.length() % 4).isNotZero();
+    String json =
+        """
+                {"challenge":{"id":"test-id","request":"%s"},"payload":{"preimage":"%s"}}"""
+            .formatted(nonCanonicalBase64url(request), VALID_PREIMAGE_HEX);
+
+    assertMalformed(toBlob(json));
+  }
+
+  @Test
+  void rejectsTrailingContentInRequestJson() {
+    String requestJson =
+        new String(Base64.getUrlDecoder().decode(VALID_REQUEST_B64), StandardCharsets.UTF_8) + "{}";
+    String requestB64 = toBlob(requestJson);
+
+    assertMalformed(toBlob(validJson().replace(VALID_REQUEST_B64, requestB64)));
   }
 
   @Test

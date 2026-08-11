@@ -14,6 +14,8 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 import lnrpc.LightningGrpc;
@@ -251,8 +253,9 @@ class LndBackendTest {
 
   @Test
   void lookupInvoice_returnsInvoiceOnSuccess() throws Exception {
-    byte[] rHash = new byte[32];
-    rHash[0] = 2;
+    byte[] preimage = new byte[32];
+    preimage[0] = 2;
+    byte[] rHash = sha256(preimage);
     long creationDate = Instant.now().getEpochSecond();
 
     var backend =
@@ -268,6 +271,7 @@ class LndBackendTest {
                         .setValue(200)
                         .setMemo("lookup memo")
                         .setState(Lnrpc.Invoice.InvoiceState.SETTLED)
+                        .setRPreimage(ByteString.copyFrom(preimage))
                         .setCreationDate(creationDate)
                         .setExpiry(3600)
                         .build());
@@ -280,6 +284,85 @@ class LndBackendTest {
     assertThat(invoice.paymentHash()).isEqualTo(rHash);
     assertThat(invoice.status()).isEqualTo(InvoiceStatus.SETTLED);
     assertThat(invoice.amountSats()).isEqualTo(200);
+  }
+
+  @Test
+  void lookupInvoice_rejectsSettledInvoiceWithWrongLengthHash() throws Exception {
+    byte[] queriedHash = new byte[32];
+    byte[] preimage = new byte[32];
+
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                responseObserver.onNext(settledInvoice(new byte[31], preimage));
+                responseObserver.onCompleted();
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(queriedHash)).isInstanceOf(LndException.class);
+  }
+
+  @Test
+  void lookupInvoice_rejectsSettledInvoiceWithWrongLengthPreimage() throws Exception {
+    byte[] queriedHash = new byte[32];
+    byte[] validPreimage = new byte[32];
+
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                responseObserver.onNext(settledInvoice(sha256(validPreimage), new byte[31]));
+                responseObserver.onCompleted();
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(queriedHash)).isInstanceOf(LndException.class);
+  }
+
+  @Test
+  void lookupInvoice_rejectsSettledInvoiceWithoutPreimage() throws Exception {
+    byte[] preimage = new byte[32];
+    byte[] paymentHash = sha256(preimage);
+
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                responseObserver.onNext(settledInvoice(paymentHash, null));
+                responseObserver.onCompleted();
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(paymentHash)).isInstanceOf(LndException.class);
+  }
+
+  @Test
+  void lookupInvoice_rejectsInvoiceWhoseHashDiffersFromQuery() throws Exception {
+    byte[] queriedHash = new byte[32];
+    queriedHash[0] = 1;
+    byte[] preimage = new byte[32];
+    preimage[0] = 2;
+    byte[] returnedHash = sha256(preimage);
+
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                responseObserver.onNext(settledInvoice(returnedHash, preimage));
+                responseObserver.onCompleted();
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(queriedHash)).isInstanceOf(LndException.class);
   }
 
   @Test
@@ -451,5 +534,29 @@ class LndBackendTest {
   @Test
   void lndTimeoutException_extendsLightningTimeoutException() {
     assertThat(LightningTimeoutException.class).isAssignableFrom(LndTimeoutException.class);
+  }
+
+  private static Lnrpc.Invoice settledInvoice(byte[] paymentHash, byte[] preimage) {
+    var builder =
+        Lnrpc.Invoice.newBuilder()
+            .setRHash(ByteString.copyFrom(paymentHash))
+            .setPaymentRequest("lnbc200n1test")
+            .setValue(200)
+            .setMemo("lookup memo")
+            .setState(Lnrpc.Invoice.InvoiceState.SETTLED)
+            .setCreationDate(Instant.now().getEpochSecond())
+            .setExpiry(3600);
+    if (preimage != null) {
+      builder.setRPreimage(ByteString.copyFrom(preimage));
+    }
+    return builder.build();
+  }
+
+  private static byte[] sha256(byte[] value) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(value);
+    } catch (NoSuchAlgorithmException e) {
+      throw new AssertionError("SHA-256 must be available", e);
+    }
   }
 }

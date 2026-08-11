@@ -7,8 +7,9 @@ import java.util.TreeMap;
 /**
  * Minimal RFC 8785 (JSON Canonicalization Scheme) implementation.
  *
- * <p>Sorted keys, no whitespace, handles String/Number/Boolean/null/nested Map/List. Zero external
- * dependencies — JDK only.
+ * <p>Sorted keys, no whitespace, handles String/Boolean/null/nested Map/List. Numeric values are
+ * deliberately unsupported because governed MPP JSON treats numeric input as ambiguous. Zero
+ * external dependencies — JDK only.
  */
 public final class JcsSerializer {
 
@@ -32,11 +33,7 @@ public final class JcsSerializer {
     switch (value) {
       case null -> sb.append("null");
       case Boolean b -> sb.append(b);
-      case Integer i -> sb.append(i);
-      case Long l -> sb.append(l);
-      case Double d -> serializeDouble(d, sb);
-      case Float f -> serializeDouble(f.doubleValue(), sb);
-      case Number n -> sb.append(n);
+      case Number n -> throw new IllegalArgumentException("Numeric values are not supported");
       case String s -> serializeString(s, sb);
       case Map<?, ?> m -> serializeMap((Map<String, Object>) m, sb);
       case List<?> list -> serializeList(list, sb);
@@ -76,6 +73,17 @@ public final class JcsSerializer {
     sb.append('"');
     for (int i = 0; i < s.length(); i++) {
       char c = s.charAt(i);
+      if (Character.isHighSurrogate(c)) {
+        if (i + 1 == s.length() || !Character.isLowSurrogate(s.charAt(i + 1))) {
+          throw new IllegalArgumentException("String contains an unpaired surrogate");
+        }
+        sb.append(c);
+        sb.append(s.charAt(++i));
+        continue;
+      }
+      if (Character.isLowSurrogate(c)) {
+        throw new IllegalArgumentException("String contains an unpaired surrogate");
+      }
       switch (c) {
         case '"' -> sb.append("\\\"");
         case '\\' -> sb.append("\\\\");
@@ -95,20 +103,5 @@ public final class JcsSerializer {
       }
     }
     sb.append('"');
-  }
-
-  /**
-   * RFC 8785 requires ES6-compatible number serialization. Integers are rendered without decimal
-   * point; others use standard toString.
-   */
-  private static void serializeDouble(double d, StringBuilder sb) {
-    if (Double.isNaN(d) || Double.isInfinite(d)) {
-      throw new IllegalArgumentException("NaN and Infinity are not valid JSON values");
-    }
-    if (d == Math.floor(d) && !Double.isInfinite(d) && Math.abs(d) < (1L << 53)) {
-      sb.append((long) d);
-    } else {
-      sb.append(Double.toString(d));
-    }
   }
 }

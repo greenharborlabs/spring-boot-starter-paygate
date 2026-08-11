@@ -49,6 +49,7 @@ public final class MacaroonVerifier {
       byte[] rootKey,
       List<CaveatVerifier> caveatVerifiers,
       L402VerificationContext context) {
+    requireSupportedCaveatCount(macaroon.caveats());
     byte[] derivedKey = MacaroonCrypto.deriveKey(rootKey);
     byte[] sig = null;
     try {
@@ -109,6 +110,7 @@ public final class MacaroonVerifier {
       List<Caveat> caveats,
       Map<String, CaveatVerifier> verifiersByKey,
       L402VerificationContext context) {
+    requireSupportedCaveatCount(caveats);
     requireMandatoryL402Boundaries(caveats, verifiersByKey, context);
 
     Map<String, Caveat> lastSeenByKey = new HashMap<>();
@@ -162,6 +164,13 @@ public final class MacaroonVerifier {
     }
 
     return Map.copyOf(acceptedValues);
+  }
+
+  private static void requireSupportedCaveatCount(List<Caveat> caveats) {
+    if (caveats.size() > MacaroonSerializer.MAX_CAVEATS) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET, "Credential contains too many caveats");
+    }
   }
 
   /**

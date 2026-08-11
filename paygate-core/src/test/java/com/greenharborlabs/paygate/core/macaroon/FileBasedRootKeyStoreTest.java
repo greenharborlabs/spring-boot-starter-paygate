@@ -6,11 +6,16 @@ import static org.assertj.core.api.Assumptions.assumeThat;
 
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import java.io.IOException;
+import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -114,14 +119,17 @@ class FileBasedRootKeyStoreTest {
     }
 
     @Test
-    @DisplayName("no temporary files remain after successful write")
-    void noTmpFilesRemain() throws IOException {
-      store.generateRootKey();
+    @DisplayName("atomically publishes a complete key file and removes its temporary file")
+    void atomicallyPublishesKeyFile() throws IOException {
+      RootKeyStore.GenerationResult result = store.generateRootKey();
+      String fileName = HEX.formatHex(result.tokenId());
 
       try (Stream<Path> files = Files.list(tempDir)) {
         long tmpCount = files.filter(p -> p.getFileName().toString().endsWith(".tmp")).count();
         assertThat(tmpCount).isZero();
       }
+      assertThat(Files.readString(tempDir.resolve(fileName)))
+          .isEqualTo(HEX.formatHex(result.rootKey().value()));
     }
   }
 
@@ -138,6 +146,12 @@ class FileBasedRootKeyStoreTest {
       SensitiveBytes result = store.getRootKey(unknownKeyId);
 
       assertThat(result).isNull();
+    }
+
+    @Test
+    @DisplayName("returns not found for an empty keyId")
+    void returnsNullForEmptyKeyId() {
+      assertThat(store.getRootKey(new byte[0])).isNull();
     }
 
     @Test
@@ -189,6 +203,92 @@ class FileBasedRootKeyStoreTest {
       byte[] retrieved = freshStore.getRootKey(keyId).value();
 
       assertThat(retrieved).isEqualTo(key);
+    }
+
+    @Test
+    @DisplayName("rejects a symbolic-link key file without reading its target")
+    void rejectsSymbolicLinkKeyFile() throws IOException {
+      assumeThat(Files.getFileStore(tempDir).supportsFileAttributeView("posix")).isTrue();
+
+      byte[] keyId = new byte[KEY_LENGTH];
+      java.util.Arrays.fill(keyId, (byte) 0x5A);
+      Path outsideFile = tempDir.resolve("outside-key");
+      Files.writeString(outsideFile, "00".repeat(KEY_LENGTH));
+      Path keyFile = tempDir.resolve(HEX.formatHex(keyId));
+
+      try {
+        Files.createSymbolicLink(keyFile, outsideFile);
+      } catch (UnsupportedOperationException e) {
+        assumeThat(false).as("symbolic links are supported by this filesystem").isTrue();
+      }
+
+      FileBasedRootKeyStore freshStore = new FileBasedRootKeyStore(tempDir);
+
+      assertThat(freshStore.getRootKey(keyId)).isNull();
+    }
+
+    @Test
+    @DisplayName("rejects a non-regular key-file path")
+    void rejectsNonRegularKeyFile() throws IOException {
+      byte[] keyId = new byte[KEY_LENGTH];
+      java.util.Arrays.fill(keyId, (byte) 0x6B);
+      Files.createDirectory(tempDir.resolve(HEX.formatHex(keyId)));
+
+      FileBasedRootKeyStore freshStore = new FileBasedRootKeyStore(tempDir);
+
+      assertThat(freshStore.getRootKey(keyId)).isNull();
+    }
+
+    @Test
+    @DisplayName("rejects a key file whose permissions are broader than 0600")
+    void rejectsKeyFileWithBroaderThan0600Permissions() throws IOException {
+      assumeThat(tempDir.getFileSystem().supportedFileAttributeViews()).contains("posix");
+
+      RootKeyStore.GenerationResult result = store.generateRootKey();
+      Path keyFile = tempDir.resolve(HEX.formatHex(result.tokenId()));
+      Files.setPosixFilePermissions(keyFile, PosixFilePermissions.fromString("rw-r--r--"));
+
+      FileBasedRootKeyStore freshStore = new FileBasedRootKeyStore(tempDir);
+
+      assertThat(freshStore.getRootKey(result.tokenId())).isNull();
+    }
+  }
+
+  @Nested
+  @DisplayName("filesystem security controls")
+  class FilesystemSecurityControls {
+
+    @Test
+    @DisplayName("restores an existing storage directory to 0700")
+    void restoresExistingDirectoryTo0700() throws IOException {
+      assumeThat(tempDir.getFileSystem().supportedFileAttributeViews()).contains("posix");
+
+      Path keyDirectory = tempDir.resolve("insecure-keys");
+      Files.createDirectory(
+          keyDirectory,
+          PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxrwxrwx")));
+
+      new FileBasedRootKeyStore(keyDirectory);
+
+      assertThat(Files.getPosixFilePermissions(keyDirectory))
+          .containsExactlyInAnyOrder(
+              PosixFilePermission.OWNER_READ,
+              PosixFilePermission.OWNER_WRITE,
+              PosixFilePermission.OWNER_EXECUTE);
+    }
+
+    @Test
+    @DisplayName("refuses a filesystem that cannot provide POSIX protections")
+    void refusesUnsupportedFilesystem() throws IOException {
+      Path archive = tempDir.resolve("unsupported-filesystem.zip");
+      URI archiveUri = URI.create("jar:" + archive.toUri());
+      try (FileSystem zipFileSystem =
+          FileSystems.newFileSystem(archiveUri, Map.of("create", "true"))) {
+        Path keyDirectory = zipFileSystem.getPath("/keys");
+
+        assertThatThrownBy(() -> new FileBasedRootKeyStore(keyDirectory))
+            .isInstanceOf(IllegalStateException.class);
+      }
     }
   }
 

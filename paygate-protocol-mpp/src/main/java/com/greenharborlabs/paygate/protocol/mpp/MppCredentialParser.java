@@ -61,12 +61,7 @@ public final class MppCredentialParser {
     }
 
     // Step 1: base64url decode
-    byte[] jsonBytes;
-    try {
-      jsonBytes = Base64.getUrlDecoder().decode(credentialBlob);
-    } catch (IllegalArgumentException e) {
-      throw malformed("Invalid base64url encoding", e);
-    }
+    byte[] jsonBytes = decodeCanonicalBase64Url(credentialBlob, "Invalid base64url encoding");
 
     String json = new String(jsonBytes, StandardCharsets.UTF_8);
 
@@ -165,12 +160,8 @@ public final class MppCredentialParser {
       throw malformed("Missing 'request' in echoed challenge for payment hash extraction");
     }
 
-    byte[] requestJsonBytes;
-    try {
-      requestJsonBytes = Base64.getUrlDecoder().decode(requestB64);
-    } catch (IllegalArgumentException e) {
-      throw malformed("Invalid base64url in echoed challenge request field", e);
-    }
+    byte[] requestJsonBytes =
+        decodeCanonicalBase64Url(requestB64, "Invalid base64url in echoed challenge request field");
 
     String requestJson = new String(requestJsonBytes, StandardCharsets.UTF_8);
 
@@ -178,6 +169,7 @@ public final class MppCredentialParser {
     try {
       var parser = new MinimalJsonParser(requestJson, limits);
       requestMap = parser.parseObject();
+      parser.expectEnd();
     } catch (MinimalJsonParser.JsonParseException e) {
       throw malformed("Missing methodDetails.paymentHash in charge request", e);
     }
@@ -212,5 +204,33 @@ public final class MppCredentialParser {
 
   private static PaymentValidationException malformed(String message, Throwable cause) {
     return new PaymentValidationException(ErrorCode.MALFORMED, message, cause);
+  }
+
+  /** Decodes only the canonical, unpadded base64url representation of a value. */
+  private static byte[] decodeCanonicalBase64Url(String encoded, String errorMessage) {
+    if (encoded == null || encoded.length() % 4 == 1) {
+      throw malformed(errorMessage);
+    }
+    for (int index = 0; index < encoded.length(); index++) {
+      char character = encoded.charAt(index);
+      if (!((character >= 'A' && character <= 'Z')
+          || (character >= 'a' && character <= 'z')
+          || (character >= '0' && character <= '9')
+          || character == '-'
+          || character == '_')) {
+        throw malformed(errorMessage);
+      }
+    }
+
+    try {
+      byte[] decoded = Base64.getUrlDecoder().decode(encoded);
+      String canonical = Base64.getUrlEncoder().withoutPadding().encodeToString(decoded);
+      if (!canonical.equals(encoded)) {
+        throw malformed(errorMessage);
+      }
+      return decoded;
+    } catch (IllegalArgumentException e) {
+      throw malformed(errorMessage, e);
+    }
   }
 }

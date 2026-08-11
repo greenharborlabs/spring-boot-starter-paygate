@@ -64,6 +64,9 @@ final class MinimalJsonParser {
           throw error(
               "JSON object key count exceeds maximum of %d".formatted(limits.maxKeysPerObject()));
         }
+        if (map.containsKey(key)) {
+          throw error("JSON object contains duplicate key: %s".formatted(key));
+        }
         skipWhitespace();
         expect(':');
         skipWhitespace();
@@ -137,26 +140,66 @@ final class MinimalJsonParser {
           case 'r' -> sb.append('\r');
           case 't' -> sb.append('\t');
           case 'u' -> {
-            if (pos + 4 >= input.length()) {
-              throw error("Incomplete unicode escape");
+            char unicode = parseUnicodeEscape();
+            if (Character.isHighSurrogate(unicode)) {
+              appendEscapedSurrogatePair(sb, unicode);
+            } else if (Character.isLowSurrogate(unicode)) {
+              throw error("Unpaired low surrogate unicode escape");
+            } else {
+              sb.append(unicode);
             }
-            String hex = input.substring(pos + 1, pos + 5);
-            try {
-              sb.append((char) Integer.parseInt(hex, 16));
-            } catch (NumberFormatException _) {
-              throw error("Invalid unicode escape: \\u%s".formatted(hex));
-            }
-            pos += 4; // advance past the 4 hex digits (the loop advance handles +1)
           }
           default -> throw error("Unknown escape character: \\%c".formatted(escaped));
         }
         advance();
+      } else if (c < 0x20) {
+        throw error("Unescaped control character in string");
+      } else if (Character.isHighSurrogate(c)) {
+        if (pos + 1 >= input.length() || !Character.isLowSurrogate(input.charAt(pos + 1))) {
+          throw error("Unpaired high surrogate in string");
+        }
+        sb.append(c).append(input.charAt(pos + 1));
+        pos += 2;
+      } else if (Character.isLowSurrogate(c)) {
+        throw error("Unpaired low surrogate in string");
       } else {
         sb.append(c);
         advance();
       }
     }
     throw error("Unterminated string");
+  }
+
+  /** Parses the four hexadecimal digits following the current {@code u} escape marker. */
+  private char parseUnicodeEscape() {
+    if (pos + 4 >= input.length()) {
+      throw error("Incomplete unicode escape");
+    }
+    String hex = input.substring(pos + 1, pos + 5);
+    try {
+      char unicode = (char) Integer.parseInt(hex, 16);
+      pos += 4; // advance past the 4 hex digits (the caller advances past the escape marker)
+      return unicode;
+    } catch (NumberFormatException _) {
+      throw error("Invalid unicode escape: \\u%s".formatted(hex));
+    }
+  }
+
+  /** Appends a high surrogate escape and the immediately following low surrogate escape. */
+  private void appendEscapedSurrogatePair(StringBuilder sb, char highSurrogate) {
+    // parseUnicodeEscape leaves pos on the final hexadecimal digit. The low surrogate must begin
+    // with the next two input characters, a backslash and 'u'.
+    if (pos + 6 >= input.length()
+        || input.charAt(pos + 1) != '\\'
+        || input.charAt(pos + 2) != 'u') {
+      throw error("Unpaired high surrogate unicode escape");
+    }
+    pos += 2; // position at the low surrogate's 'u' marker
+    char lowSurrogate = parseUnicodeEscape();
+    if (!Character.isLowSurrogate(lowSurrogate)) {
+      throw error("High surrogate unicode escape is not followed by a low surrogate escape");
+    }
+    sb.append(highSurrogate).append(lowSurrogate);
   }
 
   private Object parseNull() {

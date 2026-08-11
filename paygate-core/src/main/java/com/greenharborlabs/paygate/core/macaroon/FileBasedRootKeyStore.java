@@ -1,12 +1,17 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
@@ -96,6 +101,9 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
   @Override
   public SensitiveBytes getRootKey(byte[] keyId) {
     ensureOpen();
+    if (keyId.length == 0) {
+      return null;
+    }
     String hexKeyId = HEX.formatHex(keyId);
     Path keyFile = resolveKeyFile(hexKeyId);
 
@@ -122,10 +130,10 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
       if (cached != null) {
         return new SensitiveBytes(cached.clone());
       }
-      if (!Files.exists(keyFile)) {
+      if (!isSecureKeyFile(keyFile)) {
         return null;
       }
-      byte[] hexContentBytes = Files.readAllBytes(keyFile);
+      byte[] hexContentBytes = readKeyFileNoFollow(keyFile);
       byte[] rootKey = decodeHexKeyFileContent(hexContentBytes);
       try {
         cache.put(hexKeyId, rootKey.clone());
@@ -144,6 +152,9 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
   @Override
   public void revokeRootKey(byte[] keyId) {
     ensureOpen();
+    if (keyId.length == 0) {
+      return;
+    }
     String hexKeyId = HEX.formatHex(keyId);
     Path keyFile = resolveKeyFile(hexKeyId);
 
@@ -151,7 +162,11 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     writeLock.lock();
     try {
       ensureOpen();
-      Files.deleteIfExists(keyFile);
+      // Do not delete a link or another special filesystem object. Besides avoiding link
+      // traversal, this leaves suspicious state available for investigation.
+      if (isSecureKeyFile(keyFile)) {
+        Files.delete(keyFile);
+      }
       byte[] removed = cache.remove(hexKeyId);
       KeyMaterial.zeroize(removed);
     } catch (IOException e) {
@@ -198,16 +213,20 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
   }
 
   private void ensureDirectory() {
+    if (!posix) {
+      throw new IllegalStateException(
+          "Root key storage requires a filesystem with POSIX permissions: " + directory);
+    }
     try {
-      if (!Files.exists(directory)) {
-        if (posix) {
-          Set<PosixFilePermission> dirPerms = PosixFilePermissions.fromString("rwx------");
-          Files.createDirectories(directory, PosixFilePermissions.asFileAttribute(dirPerms));
-        } else {
-          Files.createDirectories(directory);
+      if (Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+        if (!Files.readAttributes(directory, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
+            .isDirectory()) {
+          throw new IllegalStateException("Root key storage path is not a directory: " + directory);
         }
-      } else if (posix) {
         Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"));
+      } else {
+        Set<PosixFilePermission> dirPerms = PosixFilePermissions.fromString("rwx------");
+        Files.createDirectories(directory, PosixFilePermissions.asFileAttribute(dirPerms));
       }
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to create key storage directory: " + directory, e);
@@ -216,36 +235,61 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
 
   private void writeKeyFile(String hexKeyId, byte[] rootKey) {
     byte[] hexContentBytes = encodeHex(rootKey);
+    Path tmpFile = null;
     try {
       Path targetFile = resolveKeyFile(hexKeyId);
-      Path tmpFile = resolveKeyFile(hexKeyId + ".tmp");
-
-      if (posix) {
-        // Create temp file with owner-only permissions from the start,
-        // so the key is never world-readable even briefly.
-        Files.createFile(
-            tmpFile,
-            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-        try {
-          Files.write(tmpFile, hexContentBytes);
-        } catch (IOException e) {
-          Files.deleteIfExists(tmpFile);
-          throw e;
-        }
-      } else {
-        try {
-          Files.write(tmpFile, hexContentBytes);
-        } catch (IOException e) {
-          Files.deleteIfExists(tmpFile);
-          throw e;
-        }
+      if (Files.exists(targetFile, LinkOption.NOFOLLOW_LINKS)) {
+        throw new IOException("Refusing to replace an existing root key file");
       }
-      Files.move(
-          tmpFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+      tmpFile =
+          Files.createTempFile(
+              directory,
+              "." + hexKeyId + "-",
+              ".tmp",
+              PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+      Files.write(tmpFile, hexContentBytes);
+      Files.move(tmpFile, targetFile, StandardCopyOption.ATOMIC_MOVE);
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to write root key: " + hexKeyId, e);
     } finally {
+      if (tmpFile != null) {
+        try {
+          Files.deleteIfExists(tmpFile);
+        } catch (IOException ignored) {
+          // The original operation has already failed or atomically published the file.
+        }
+      }
       KeyMaterial.zeroize(hexContentBytes);
+    }
+  }
+
+  /** Returns whether the path is a non-link regular file with exactly owner read/write access. */
+  private boolean isSecureKeyFile(Path keyFile) throws IOException {
+    if (!Files.exists(keyFile, LinkOption.NOFOLLOW_LINKS)) {
+      return false;
+    }
+    if (!Files.readAttributes(keyFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
+        .isRegularFile()) {
+      return false;
+    }
+    return Files.getPosixFilePermissions(keyFile, LinkOption.NOFOLLOW_LINKS)
+        .equals(PosixFilePermissions.fromString("rw-------"));
+  }
+
+  private static byte[] readKeyFileNoFollow(Path keyFile) throws IOException {
+    try (var channel =
+            Files.newByteChannel(keyFile, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        var output = new ByteArrayOutputStream(HEX_KEY_LENGTH)) {
+      ByteBuffer buffer = ByteBuffer.allocate(128);
+      while (channel.read(buffer) != -1) {
+        buffer.flip();
+        if (output.size() + buffer.remaining() > 256) {
+          throw new IOException("Root key file is unexpectedly large");
+        }
+        output.write(buffer.array(), buffer.position(), buffer.remaining());
+        buffer.clear();
+      }
+      return output.toByteArray();
     }
   }
 

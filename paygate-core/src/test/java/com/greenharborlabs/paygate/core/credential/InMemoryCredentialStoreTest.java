@@ -11,7 +11,9 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -119,6 +121,21 @@ class InMemoryCredentialStoreTest {
   @Nested
   @DisplayName("TTL expiration")
   class TtlExpiration {
+
+    @Test
+    @DisplayName("extreme TTL values are rejected without overflowing expiration time")
+    void extremeTtlValuesAreRejectedWithoutOverflowingExpirationTime() {
+      String tokenId = randomTokenId();
+      L402Credential credential = createTestCredential(tokenId);
+
+      assertThatThrownBy(() -> store.store(tokenId, credential, Long.MAX_VALUE))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> store.store(tokenId, credential, Long.MIN_VALUE))
+          .isInstanceOf(IllegalArgumentException.class);
+
+      assertThat(store.get(tokenId)).isNull();
+      assertCredentialUsable(credential);
+    }
 
     @Test
     @DisplayName("credential with zero TTL expires immediately and returns null on get")
@@ -609,6 +626,48 @@ class InMemoryCredentialStoreTest {
   @Nested
   @DisplayName("eviction listener")
   class EvictionListenerTests {
+
+    @Test
+    @DisplayName("capacity listener observes completed state without holding the mutation lock")
+    void capacityListenerObservesCompletedStateWithoutHoldingMutationLock()
+        throws InterruptedException {
+      try (var boundedStore = new InMemoryCredentialStore(2, 0)) {
+        String first = randomTokenId();
+        String second = randomTokenId();
+        boundedStore.store(first, createTestCredential(first), 3600);
+        boundedStore.store(second, createTestCredential(second), 3600);
+
+        var reentrantCallStarted = new CountDownLatch(1);
+        var reentrantCallCompleted = new CountDownLatch(1);
+        var callbackSawUnlockedStore = new AtomicBoolean(false);
+        var callbackSawCompletedState = new AtomicBoolean(false);
+        boundedStore.setEvictionListener(
+            (_, _) -> {
+              Thread.ofVirtual()
+                  .start(
+                      () -> {
+                        reentrantCallStarted.countDown();
+                        callbackSawCompletedState.set(boundedStore.activeCount() == 2);
+                        reentrantCallCompleted.countDown();
+                      });
+              try {
+                callbackSawUnlockedStore.set(
+                    reentrantCallStarted.await(1, TimeUnit.SECONDS)
+                        && reentrantCallCompleted.await(1, TimeUnit.SECONDS));
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+            });
+
+        String third = randomTokenId();
+        boundedStore.store(third, createTestCredential(third), 3600);
+
+        assertThat(reentrantCallCompleted.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(callbackSawUnlockedStore).isTrue();
+        assertThat(callbackSawCompletedState).isTrue();
+        assertThat(boundedStore.activeCount()).isEqualTo(2);
+      }
+    }
 
     @Test
     @DisplayName("listener is called on expired eviction via get")

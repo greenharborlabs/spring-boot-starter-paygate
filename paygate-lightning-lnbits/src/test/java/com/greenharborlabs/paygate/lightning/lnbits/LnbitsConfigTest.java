@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class LnbitsConfigTest {
 
@@ -226,6 +228,43 @@ class LnbitsConfigTest {
   void shouldAcceptLoopbackHttpSchemeWithExplicitOptIn() {
     var config = new LnbitsConfig("http://127.0.0.1:5000", API_KEY, 5, 10, true);
     assertThat(config.baseUrl()).isEqualTo("http://127.0.0.1:5000");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"http://127.0.0.1:5000", "http://[::1]:5000"})
+  void shouldAcceptCanonicalLoopbackAddressesWithExplicitOptIn(String baseUrl) {
+    var config = new LnbitsConfig(baseUrl, API_KEY, 5, 10, true);
+
+    assertThat(config.baseUrl()).isEqualTo(baseUrl);
+    assertThat(config.allowPlaintextHttp()).isTrue();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "http://127.00.0.1:5000",
+        "http://127.0.00.1:5000",
+        "http://127.0.0.01:5000",
+        "http://127.000.000.001:5000",
+        "http://0177.0.0.1:5000",
+        "http://127.1:5000",
+        "http://2130706433:5000",
+        "http://0x7f.0.0.1:5000"
+      })
+  void shouldRejectAmbiguousNumericLoopbackFormsWithExplicitOptIn(String baseUrl) {
+    assertThatThrownBy(() -> new LnbitsConfig(baseUrl, API_KEY, 5, 10, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'");
+  }
+
+  @Test
+  void shouldRejectExpandedIpv6LoopbackFormWithExplicitOptIn() {
+    assertThatThrownBy(
+            () -> new LnbitsConfig("http://[0:0:0:0:0:0:0:1]:5000", API_KEY, 5, 10, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("HTTPS")
+        .hasMessageContaining("unsafe URL scheme 'http'");
   }
 
   @Test
