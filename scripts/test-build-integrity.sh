@@ -11,6 +11,7 @@ readonly SECURITY_FIXTURES="$SCRIPT_DIR/test-fixtures/security"
 readonly VERIFICATION_METADATA="$REPOSITORY_ROOT/gradle/verification-metadata.xml"
 readonly WRAPPER_PROPERTIES="$REPOSITORY_ROOT/gradle/wrapper/gradle-wrapper.properties"
 readonly SENTINEL_NAME='.build-integrity-test-owned'
+WORKSPACE=''
 
 fail() {
   printf 'build integrity test failed: %s\n' "$*" >&2
@@ -51,8 +52,10 @@ new_workspace() {
 }
 
 checksum_lines() {
-  # Extract only literal checksum attributes; fixture text is never evaluated.
-  sed -nE 's/.*<sha256 value="([0-9a-f]{64})"\/>.*/\1/p' "$1" | LC_ALL=C sort -u
+  # Extract literal checksum values while accepting Gradle metadata attributes
+  # such as origin. Fixture text is never evaluated.
+  sed -nE 's/.*<sha256[[:space:]]+value="([0-9a-f]{64})"[[:space:]][^>]*\/>.*/\1/p' "$1" \
+    | LC_ALL=C sort -u
 }
 
 validate_dependency_metadata() {
@@ -96,14 +99,14 @@ main() {
   [[ -f "$SECURITY_FIXTURES/tampered-verification-metadata.xml" ]] \
     || fail 'missing tampered verification metadata fixture'
 
-  local workspace marker copied_metadata copied_wrapper
-  workspace="$(new_workspace)"
-  trap 'cleanup "$workspace"' EXIT
-  marker="$workspace/payload-ran.marker"
-  copied_metadata="$workspace/verification-metadata.xml"
-  copied_wrapper="$workspace/gradle-wrapper.properties"
-  require_workspace_child "$workspace" "$copied_metadata"
-  require_workspace_child "$workspace" "$copied_wrapper"
+  local marker copied_metadata copied_wrapper
+  WORKSPACE="$(new_workspace)"
+  trap 'cleanup "$WORKSPACE"' EXIT
+  marker="$WORKSPACE/payload-ran.marker"
+  copied_metadata="$WORKSPACE/verification-metadata.xml"
+  copied_wrapper="$WORKSPACE/gradle-wrapper.properties"
+  require_workspace_child "$WORKSPACE" "$copied_metadata"
+  require_workspace_child "$WORKSPACE" "$copied_wrapper"
   cp -- "$SECURITY_FIXTURES/tampered-verification-metadata.xml" "$copied_metadata"
   cp -- "$WRAPPER_PROPERTIES" "$copied_wrapper"
 
@@ -117,7 +120,7 @@ main() {
   # This is a test-owned copy; the tracked wrapper configuration is never changed.
   sed -i.bak 's/^distributionSha256Sum=.*/distributionSha256Sum=0000000000000000000000000000000000000000000000000000000000000000/' \
     "$copied_wrapper"
-  require_workspace_child "$workspace" "$copied_wrapper.bak"
+  require_workspace_child "$WORKSPACE" "$copied_wrapper.bak"
   rm -f -- "$copied_wrapper.bak"
   assert_rejected_before_execution 'tampered wrapper checksum' "$marker" \
     validate_wrapper_checksum "$copied_wrapper" "$WRAPPER_PROPERTIES"

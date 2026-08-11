@@ -53,7 +53,7 @@ new_workspace() {
 validate_release_workflow() {
   local workflow="$1"
   local line reference
-  local has_sbom=0 has_manifest=0 has_attestation=0 has_environment=0
+  local has_sbom=0 has_manifest=0 has_manifest_check=0 has_attestation=0 has_environment=0
 
   [[ -f "$workflow" && ! -L "$workflow" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -62,6 +62,9 @@ validate_release_workflow() {
     fi
     if [[ "$line" == *sha256sum* || "$line" == *'shasum -a 256'* ]]; then
       has_manifest=1
+    fi
+    if [[ "$line" == *'sha256sum --check'* || "$line" == *'shasum -a 256 -c'* ]]; then
+      has_manifest_check=1
     fi
     if [[ "$line" =~ uses:[[:space:]]*actions/attest-build-provenance@ ]]; then
       has_attestation=1
@@ -81,6 +84,7 @@ validate_release_workflow() {
 
   ((has_sbom)) || { printf 'missing SBOM\n' >&2; return 1; }
   ((has_manifest)) || { printf 'missing SHA-256 manifest\n' >&2; return 1; }
+  ((has_manifest_check)) || { printf 'missing SHA-256 manifest verification\n' >&2; return 1; }
   ((has_attestation)) || { printf 'missing artifact attestation\n' >&2; return 1; }
   ((has_environment)) || { printf 'missing maven-central environment approval\n' >&2; return 1; }
 }
@@ -134,7 +138,7 @@ main() {
 
   workflow="$WORKSPACE/missing-manifest.yml"
   prepare_safe_copy "$workflow"
-  sed -i.bak '/sha256sum build\/libs\/\*/d' "$workflow"
+  sed -i.bak '/sha256sum/d' "$workflow"
   rm -f -- "$workflow.bak"
   expect_rejection "$workflow" "$marker" 'missing SHA-256 manifest'
 

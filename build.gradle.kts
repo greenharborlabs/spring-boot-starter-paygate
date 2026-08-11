@@ -297,13 +297,6 @@ tasks.register("installGitHook") {
     }
 }
 
-// Auto-install the hook when any subproject is compiled
-subprojects {
-    tasks.matching { it.name == "compileJava" }.configureEach {
-        dependsOn(rootProject.tasks.named("installGitHook"))
-    }
-}
-
 // Aggregate Javadoc task: collects sources from all subprojects with Java sources
 tasks.register<Javadoc>("aggregateJavadoc") {
     group = "documentation"
