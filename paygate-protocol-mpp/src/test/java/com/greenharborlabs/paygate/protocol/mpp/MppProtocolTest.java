@@ -157,6 +157,40 @@ class MppProtocolTest {
     }
   }
 
+  @Nested
+  class BindingSecretLifecycleTests {
+
+    @Test
+    void callerCanDestroyTransferredSecretWithoutBreakingChallengeIssuance() {
+      SensitiveBytes callerSecret = secret();
+      MppProtocol protocolWithOwnedSecret = new MppProtocol(callerSecret);
+
+      callerSecret.destroy();
+
+      assertThat(
+              protocolWithOwnedSecret
+                  .formatChallenge(challengeContext("test", null))
+                  .wwwAuthenticateHeader())
+          .startsWith("Payment ");
+    }
+
+    @Test
+    void closingProtocolDestroysOwnedSecretAndMapsFurtherUseToUnavailable() {
+      MppProtocol protocolWithOwnedSecret = new MppProtocol(secret());
+
+      protocolWithOwnedSecret.close();
+      protocolWithOwnedSecret.close();
+
+      assertThatThrownBy(
+              () -> protocolWithOwnedSecret.formatChallenge(challengeContext("test", null)))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              e ->
+                  assertThat(((PaymentValidationException) e).getErrorCode())
+                      .isEqualTo(ErrorCode.UNAVAILABLE));
+    }
+  }
+
   // --- scheme() ---
 
   @Test

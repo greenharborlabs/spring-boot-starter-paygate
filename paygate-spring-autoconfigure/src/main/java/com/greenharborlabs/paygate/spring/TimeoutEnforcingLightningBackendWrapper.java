@@ -4,7 +4,9 @@ import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.lightning.LightningException;
 import com.greenharborlabs.paygate.core.lightning.LightningTimeoutException;
+import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,6 +30,9 @@ public class TimeoutEnforcingLightningBackendWrapper
   private final LightningBackend delegate;
   private final int timeoutSeconds;
   private final ExecutorService executor;
+  private final Object lifecycleLock = new Object();
+  private final Set<Future<?>> outstandingWork = ConcurrentHashMap.newKeySet();
+  private boolean closed;
 
   public TimeoutEnforcingLightningBackendWrapper(LightningBackend delegate, int timeoutSeconds) {
     if (delegate == null) {
@@ -67,11 +72,25 @@ public class TimeoutEnforcingLightningBackendWrapper
 
   @Override
   public void close() {
-    executor.close();
+    synchronized (lifecycleLock) {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      outstandingWork.forEach(future -> future.cancel(true));
+    }
+    executor.shutdownNow();
   }
 
   private <T> T executeWithTimeout(Callable<T> task, String operationName) {
-    Future<T> future = executor.submit(task);
+    Future<T> future;
+    synchronized (lifecycleLock) {
+      if (closed) {
+        throw new LightningException("Timeout-enforcing backend is closed");
+      }
+      future = executor.submit(task);
+      outstandingWork.add(future);
+    }
     try {
       return future.get(timeoutSeconds, TimeUnit.SECONDS);
     } catch (TimeoutException e) {
@@ -87,6 +106,8 @@ public class TimeoutEnforcingLightningBackendWrapper
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new LightningException("Interrupted during " + operationName, e);
+    } finally {
+      outstandingWork.remove(future);
     }
   }
 }

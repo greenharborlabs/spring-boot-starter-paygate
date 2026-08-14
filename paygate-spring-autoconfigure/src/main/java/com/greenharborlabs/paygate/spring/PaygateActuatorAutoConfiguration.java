@@ -21,12 +21,12 @@ import org.springframework.context.annotation.Bean;
  */
 @AutoConfiguration(after = PaygateAutoConfiguration.class)
 @ConditionalOnClass(name = "org.springframework.boot.actuate.endpoint.annotation.Endpoint")
-@ConditionalOnBean(PaygateEndpointRegistry.class)
-@ConditionalOnProperty(name = "paygate.actuator.enabled", havingValue = "true")
 public class PaygateActuatorAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
+  @ConditionalOnBean(PaygateEndpointRegistry.class)
+  @ConditionalOnProperty(name = "paygate.actuator.enabled", havingValue = "true")
   @ConditionalOnAvailableEndpoint(endpoint = PaygateActuatorEndpoint.class)
   PaygateActuatorEndpoint paygateActuatorEndpoint(
       PaygateProperties properties,
@@ -36,5 +36,19 @@ public class PaygateActuatorAutoConfiguration {
       PaygateEarningsTracker earningsTracker) {
     return new PaygateActuatorEndpoint(
         properties, lightningBackend, endpointRegistry, credentialStore, earningsTracker);
+  }
+
+  /**
+   * Registers a health contributor whenever Actuator and a Lightning backend are available.
+   *
+   * <p>The contributor deliberately exposes only {@code UP} or {@code DOWN}; backend names and
+   * failure details can disclose deployment topology or secrets.
+   */
+  @Bean
+  @ConditionalOnMissingBean
+  @ConditionalOnBean(LightningBackend.class)
+  PaygateLightningHealthIndicator paygateLightningHealthIndicator(
+      LightningBackend lightningBackend) {
+    return new PaygateLightningHealthIndicator(lightningBackend, 5_000);
   }
 }

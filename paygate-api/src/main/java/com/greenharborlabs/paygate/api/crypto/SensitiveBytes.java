@@ -9,8 +9,9 @@ import javax.security.auth.Destroyable;
  * Secure wrapper for key material that must be zeroized when no longer needed.
  *
  * <p>The constructor defensively copies the input and fills the original with zeros. On {@link
- * #close()} or {@link #destroy()}, the internal copy is also zeroized. After destruction, {@link
- * #value()} throws {@link IllegalStateException}.
+ * #close()} or {@link #destroy()}, the internal copy is also zeroized. Ownership is deterministic:
+ * construction always copies before clearing the caller array, and {@link #value()} always returns
+ * a fresh defensive copy. After destruction, {@link #value()} throws {@link IllegalStateException}.
  *
  * <p>This class is {@code final} and does not implement {@code Cloneable} or {@code Serializable}
  * to prevent bypassing the zeroization lifecycle.
@@ -29,8 +30,9 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
   private final ReentrantLock lock = new ReentrantLock();
 
   /**
-   * Creates a new {@code SensitiveBytes} from the given raw key material. The input array is
-   * defensively copied and then filled with zeros.
+   * Creates a new {@code SensitiveBytes} from the given raw key material. The input array is copied
+   * before this method deterministically clears the caller-owned array. The resulting instance
+   * exclusively owns its internal copy.
    *
    * @param raw the key material (must not be null or empty)
    * @throws NullPointerException if {@code raw} is null
@@ -46,7 +48,8 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
   }
 
   /**
-   * Returns a defensive copy of the key material.
+   * Returns a fresh defensive copy of the key material. The caller owns the returned array and may
+   * mutate or zeroize it without affecting this instance.
    *
    * @return a fresh copy of the internal byte array
    * @throws IllegalStateException if this instance has been destroyed
@@ -63,7 +66,10 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
     }
   }
 
-  /** Zeroizes the internal key material. Idempotent — safe to call multiple times. */
+  /**
+   * Best-effort zeroizes the internally owned key material. Idempotent — repeated calls are safe
+   * and retain the destroyed state.
+   */
   @Override
   public void destroy() {
     lock.lock();
@@ -82,7 +88,7 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
     return destroyed;
   }
 
-  /** Delegates to {@link #destroy()}. */
+  /** Delegates to {@link #destroy()}; repeated calls are safe. */
   @Override
   public void close() {
     destroy();

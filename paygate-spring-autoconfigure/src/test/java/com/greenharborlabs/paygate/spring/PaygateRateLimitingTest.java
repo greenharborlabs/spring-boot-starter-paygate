@@ -209,7 +209,7 @@ class PaygateRateLimitingTest {
   }
 
   // -----------------------------------------------------------------------
-  // Test: generic RuntimeException path consumes rate limiter penalty
+  // Test: generic RuntimeException path does not consume a rate limiter penalty
   // Uses a custom "bomb" protocol that throws RuntimeException on validate
   // -----------------------------------------------------------------------
 
@@ -231,20 +231,23 @@ class PaygateRateLimitingTest {
     }
 
     @Test
-    @DisplayName("generic RuntimeException path consumes rate limiter penalty")
-    void genericRuntimeExceptionConsumesRateLimiter() throws Exception {
+    @DisplayName("generic RuntimeException path does not consume a rate limiter penalty")
+    void genericRuntimeExceptionDoesNotConsumeRateLimiterPenalty() throws Exception {
       // Use LARGE_BUCKET_TOKENS - 2 unauthenticated requests to leave exactly 2 tokens
       for (int i = 0; i < LARGE_BUCKET_TOKENS - 2; i++) {
         mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isPaymentRequired());
       }
 
       // Send a request with "Bomb" auth scheme that triggers RuntimeException
-      // Pre-check consumes 1 token, penalty consumes another = 2 tokens total
+      // Pre-check consumes 1 token. Unexpected 503 errors must not consume a penalty.
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", "Bomb trigger-explosion"))
           .andExpect(status().is(503));
 
-      // Bucket should now be empty — next request gets 429
+      // One token remains, so the next challenge proceeds rather than being rate limited.
+      mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isPaymentRequired());
+
+      // That challenge used the last token.
       mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().is(429));
     }
   }

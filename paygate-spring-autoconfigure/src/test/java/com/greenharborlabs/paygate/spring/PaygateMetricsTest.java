@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentCredential;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -24,9 +29,12 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -87,6 +95,8 @@ class PaygateMetricsTest {
 
   @Autowired private PaygateMetrics paygateMetrics;
 
+  @Autowired private TestRateLimiter rateLimiter;
+
   // -----------------------------------------------------------------------
   // Test application and configuration
   // -----------------------------------------------------------------------
@@ -118,10 +128,12 @@ class PaygateMetricsTest {
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
       return List.of(
+          new com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
-              "test-service", 50));
+              "test-service", 50),
+          new com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier("test-service"));
     }
 
     @Bean
@@ -145,6 +157,11 @@ class PaygateMetricsTest {
     }
 
     @Bean
+    TestRateLimiter rateLimiter() {
+      return new TestRateLimiter();
+    }
+
+    @Bean
     PaygateSecurityFilter paygateSecurityFilter(
         PaygateEndpointRegistry endpointRegistry,
         LightningBackend lightningBackendBean,
@@ -152,6 +169,7 @@ class PaygateMetricsTest {
         CredentialStore credentialStore,
         List<CaveatVerifier> caveatVerifiers,
         PaygateMetrics paygateMetrics,
+        TestRateLimiter rateLimiter,
         ApplicationContext applicationContext) {
       var properties = new PaygateProperties();
       properties.setServiceName("test-service");
@@ -165,18 +183,18 @@ class PaygateMetricsTest {
               properties,
               applicationContext,
               null,
-              null,
+              rateLimiter,
               null,
               null);
       return new PaygateSecurityFilter(
           endpointRegistry,
-          List.of(l402Protocol),
+          List.of(new BombProtocol(), l402Protocol),
           challengeService,
           "test-service",
           null,
           paygateMetrics,
           null,
-          null);
+          rateLimiter);
     }
 
     @Bean
@@ -205,11 +223,65 @@ class PaygateMetricsTest {
     }
   }
 
+  static class TestRateLimiter implements PaygateRateLimiter {
+    private final AtomicBoolean allowed = new AtomicBoolean(true);
+    private int acquireCount;
+
+    @Override
+    public synchronized boolean tryAcquire(String key) {
+      acquireCount++;
+      return allowed.get();
+    }
+
+    void setAllowed(boolean allowed) {
+      this.allowed.set(allowed);
+    }
+
+    synchronized int acquireCount() {
+      return acquireCount;
+    }
+
+    synchronized void reset() {
+      allowed.set(true);
+      acquireCount = 0;
+    }
+  }
+
+  static class BombProtocol implements PaymentProtocol {
+
+    @Override
+    public String scheme() {
+      return "Bomb";
+    }
+
+    @Override
+    public boolean canHandle(String authorizationHeader) {
+      return authorizationHeader.startsWith("Bomb ");
+    }
+
+    @Override
+    public PaymentCredential parseCredential(String authorizationHeader)
+        throws PaymentValidationException {
+      return new PaymentCredential(new byte[32], new byte[32], null, null, null, null);
+    }
+
+    @Override
+    public ChallengeResponse formatChallenge(ChallengeContext context) {
+      return new ChallengeResponse("Bomb realm=\"test\"", "Bomb", null);
+    }
+
+    @Override
+    public void validate(PaymentCredential credential, Map<String, String> requestContext) {
+      throw new RuntimeException("Simulated unexpected validation failure");
+    }
+  }
+
   @BeforeEach
   void resetStubs() {
     ((StubLightningBackend) lightningBackend).setHealthy(true);
     ((StubLightningBackend) lightningBackend).setThrowOnHealthCheck(false);
     ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
+    rateLimiter.reset();
   }
 
   // -----------------------------------------------------------------------
@@ -834,6 +906,57 @@ class PaygateMetricsTest {
   }
 
   // -----------------------------------------------------------------------
+  // Rate-limit rejection cardinality — one bounded route metric per 429
+  // -----------------------------------------------------------------------
+
+  @Nested
+  @DisplayName("rate-limit rejection metrics")
+  class RateLimitRejectionMetrics {
+
+    @Test
+    @DisplayName("an unexpected validation 503 does not consume a penalty or record a rejection")
+    void unexpectedValidationFailureDoesNotConsumeRateLimitPenalty() throws Exception {
+      double rejectionsBefore = rateLimitRejectionCount();
+
+      mockMvc
+          .perform(get(PROTECTED_PATH).header("Authorization", "Bomb trigger-explosion"))
+          .andExpect(status().isServiceUnavailable());
+
+      assertThat(rateLimiter.acquireCount()).isEqualTo(1);
+      assertThat(rateLimitRejectionCount()).isEqualTo(rejectionsBefore);
+    }
+
+    @Test
+    @DisplayName("each 429 records one rejection metric tagged with the registered route")
+    void eachRateLimitRejectionUsesRegisteredRouteExactlyOnce() throws Exception {
+      String rawPath = "/api/items/customer-12345-private-resource";
+      double totalBefore = rateLimitRejectionCount();
+      double routeBefore =
+          counterValue("paygate.ratelimiter.rejections", "endpoint", PARAMETERIZED_PATH_PATTERN);
+      rateLimiter.setAllowed(false);
+
+      mockMvc.perform(get(rawPath)).andExpect(status().isTooManyRequests());
+
+      assertThat(rateLimitRejectionCount()).isEqualTo(totalBefore + 1.0);
+      assertThat(
+              counterValue(
+                  "paygate.ratelimiter.rejections", "endpoint", PARAMETERIZED_PATH_PATTERN))
+          .isEqualTo(routeBefore + 1.0);
+    }
+
+    @Test
+    @DisplayName("a 429 never exposes the raw request path as a metric label")
+    void rateLimitRejectionNeverUsesRawRequestPathMetricLabel() throws Exception {
+      String rawPath = "/api/items/customer-67890-private-resource";
+      rateLimiter.setAllowed(false);
+
+      mockMvc.perform(get(rawPath)).andExpect(status().isTooManyRequests());
+
+      assertThat(counterValue("paygate.ratelimiter.rejections", "endpoint", rawPath)).isZero();
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Test helpers
   // -----------------------------------------------------------------------
 
@@ -845,6 +968,12 @@ class PaygateMetricsTest {
   private long timerCount(String name, String... tags) {
     var timer = meterRegistry.find(name).tags(tags).timer();
     return timer != null ? timer.count() : 0L;
+  }
+
+  private double rateLimitRejectionCount() {
+    return meterRegistry.find("paygate.ratelimiter.rejections").counters().stream()
+        .mapToDouble(Counter::count)
+        .sum();
   }
 
   private Double gaugeValue(String name, String... tags) {
@@ -867,10 +996,14 @@ class PaygateMetricsTest {
             identifier,
             null,
             List.of(
+                new com.greenharborlabs.paygate.core.macaroon.Caveat("services", "test-service:0"),
                 new com.greenharborlabs.paygate.core.macaroon.Caveat("route", PROTECTED_PATH),
                 new com.greenharborlabs.paygate.core.macaroon.Caveat("method", "GET"),
                 new com.greenharborlabs.paygate.core.macaroon.Caveat(
-                    "test-service_capabilities", "~")));
+                    "test-service_capabilities", "~"),
+                new com.greenharborlabs.paygate.core.macaroon.Caveat(
+                    "test-service_valid_until",
+                    String.valueOf(Instant.now().plusSeconds(600).getEpochSecond()))));
 
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);

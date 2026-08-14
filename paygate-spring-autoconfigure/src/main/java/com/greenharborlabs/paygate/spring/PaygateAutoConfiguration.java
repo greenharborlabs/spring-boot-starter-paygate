@@ -641,7 +641,8 @@ public class PaygateAutoConfiguration {
     @Bean
     static org.springframework.beans.factory.config.BeanPostProcessor
         lightningBackendWrappingPostProcessor(
-            org.springframework.core.env.Environment environment) {
+            org.springframework.core.env.Environment environment,
+            org.springframework.beans.factory.support.DefaultListableBeanFactory beanFactory) {
       return new org.springframework.beans.factory.config.BeanPostProcessor() {
         @Override
         public Object postProcessAfterInitialization(Object bean, String beanName) {
@@ -659,6 +660,8 @@ public class PaygateAutoConfiguration {
                   .orElse(5);
           LightningBackend wrapped =
               new TimeoutEnforcingLightningBackendWrapper(backend, timeoutSeconds);
+          var timeoutWrapper = (TimeoutEnforcingLightningBackendWrapper) wrapped;
+          beanFactory.registerDisposableBean(beanName, timeoutWrapper::close);
 
           // Apply caching wrapper (outermost) if health-cache is enabled
           boolean healthCacheEnabled =

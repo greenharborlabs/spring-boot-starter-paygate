@@ -174,6 +174,7 @@ public class PaygateSecurityFilter implements Filter {
         if (protocol.canHandle(authHeader)) {
           if (!tryAcquireRateLimit(httpRequest)) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
+            recordRateLimitRejection(resolvedEndpoint.routePattern());
             return;
           }
           HttpServletRequest protocolRequest = httpRequest;
@@ -207,6 +208,7 @@ public class PaygateSecurityFilter implements Filter {
       // consulting Lightning or minting replacement state.
       if (!tryAcquireRateLimit(httpRequest)) {
         PaygateResponseWriter.writeRateLimited(httpResponse);
+        recordRateLimitRejection(resolvedEndpoint.routePattern());
         return;
       }
       PaygateResponseWriter.writeMethodUnsupported(httpResponse, "Unsupported payment credential");
@@ -221,6 +223,7 @@ public class PaygateSecurityFilter implements Filter {
       challengeService.acquireChallengeRateLimit(httpRequest);
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
+      recordRateLimitRejection(resolvedEndpoint.routePattern());
       return;
     }
     if (mppEnabled) {
@@ -297,6 +300,7 @@ public class PaygateSecurityFilter implements Filter {
       recordChallenge(resolvedEndpoint.routePattern());
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
+      recordRateLimitRejection(resolvedEndpoint.routePattern());
     } catch (PaygateLightningUnavailableException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -488,7 +492,6 @@ public class PaygateSecurityFilter implements Filter {
     if (e instanceof MacaroonVerificationException) {
       recordCaveatRejected(LogSanitizer.sanitize(e.getMessage() != null ? e.getMessage() : ""));
     }
-    consumeRateLimitPenalty(httpRequest);
     // Exception messages can be supplied by protocol providers and may contain request credentials.
     // Do not include the exception (or any of its content) in production logs.
     log.log(
@@ -544,6 +547,13 @@ public class PaygateSecurityFilter implements Filter {
           System.Logger.Level.WARNING,
           "Rate limiter threw exception during penalty consumption: {0}",
           e.getMessage());
+    }
+  }
+
+  /** Records a rejection against the resolved route, never the request's raw path. */
+  private void recordRateLimitRejection(String routePattern) {
+    if (metrics != null) {
+      metrics.recordRateLimitRejection(routePattern);
     }
   }
 
