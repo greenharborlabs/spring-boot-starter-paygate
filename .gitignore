@@ -2,23 +2,9 @@
 .gradle/
 build/
 
-# Ignore the entire plans directory and all its contents
+# Keep planning and specification artifacts local-only.
 plans/
-# Ignore the entire plans directory and all its contents
 specs/
-# Keep the Phase 11 release ledger and validation record versioned. The remaining planning
-# artifacts stay local-only.
-!specs/
-specs/*
-!specs/005-security-audit-hardening/
-specs/005-security-audit-hardening/*
-!specs/005-security-audit-hardening/finding-dispositions.md
-!specs/005-security-audit-hardening/validation-evidence.md
-# Keep the DeepSeek remediation evidence ledger and its executed command record versioned.
-!specs/006-address-security-findings/
-specs/006-address-security-findings/*
-!specs/006-address-security-findings/finding-dispositions.md
-!specs/006-address-security-findings/validation-evidence.md
 # Ignore the entire specify directory and all its contents
 .specify/
 # Ignore generated local agent integrations
