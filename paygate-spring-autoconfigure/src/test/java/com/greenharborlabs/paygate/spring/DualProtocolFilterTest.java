@@ -334,19 +334,10 @@ class DualProtocolFilterTest {
   // --- Test 10: No auth header match falls through to challenge ---
 
   @Test
-  @DisplayName("Auth header that no protocol handles -> 402 challenge response")
-  void noAuthHeaderMatchFallsThrough() throws Exception {
+  @DisplayName("Presented unsupported auth header is rejected without a recovery challenge")
+  void unsupportedAuthHeaderIsRejectedWithoutChallenge() throws Exception {
     when(l402Protocol.canHandle("Bearer some-jwt")).thenReturn(false);
     when(mppProtocol.canHandle("Bearer some-jwt")).thenReturn(false);
-
-    var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any(ResolvedEndpoint.class), any()))
-        .thenReturn(challengeContext);
-
-    when(l402Protocol.formatChallenge(any()))
-        .thenReturn(new ChallengeResponse("L402 challenge", "L402", Map.of("macaroon", "abc")));
-    when(mppProtocol.formatChallenge(any()))
-        .thenReturn(new ChallengeResponse("Payment challenge", "Payment", Map.of("token", "xyz")));
 
     request.addHeader("Authorization", "Bearer some-jwt");
 
@@ -354,8 +345,8 @@ class DualProtocolFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(402);
-    List<String> wwwAuthHeaders = response.getHeaders("WWW-Authenticate");
-    assertThat(wwwAuthHeaders).hasSize(2);
+    assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
     verify(filterChain, never()).doFilter(any(), any());
   }
 }

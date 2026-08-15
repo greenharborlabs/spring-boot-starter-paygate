@@ -91,10 +91,12 @@ class FailClosedTest {
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
       return List.of(
+          new com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
           new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
-              "test-service", 50));
+              "test-service", 50),
+          new com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier("test-service"));
     }
 
     @Bean

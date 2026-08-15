@@ -48,12 +48,14 @@ class ApplicationRelativeRequestResolverTest {
   }
 
   @Test
-  @DisplayName("normalizes repeated separators and encoded input after prefix removal")
-  void normalizesRepeatedSeparatorsAndEncodedInput() {
+  @DisplayName("rejects encoded path separators after prefix removal")
+  void rejectsEncodedPathSeparators() {
     var request = request("/shop/api//%2578/%2f/orders/");
     request.setContextPath("/shop");
 
-    assertThat(ApplicationRelativeRequestResolver.resolve(request)).isEqualTo("/api/x/%2F/orders");
+    assertThatThrownBy(() -> ApplicationRelativeRequestResolver.resolve(request))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Encoded path separator");
   }
 
   @Test

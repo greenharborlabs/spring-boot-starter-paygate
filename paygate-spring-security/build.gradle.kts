@@ -13,6 +13,8 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-web")
     testImplementation("org.springframework.security:spring-security-test")
+    // The auto-configuration discovers optional protocols reflectively at runtime.
+    testRuntimeOnly(project(":paygate-protocol-l402"))
     testImplementation("org.mockito:mockito-core")
     testImplementation("org.springframework:spring-test")
     testImplementation("jakarta.servlet:jakarta.servlet-api")

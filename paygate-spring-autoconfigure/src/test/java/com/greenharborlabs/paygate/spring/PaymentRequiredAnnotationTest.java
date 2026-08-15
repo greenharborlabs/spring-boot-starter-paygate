@@ -65,7 +65,7 @@ class PaymentRequiredAnnotationTest {
 
     registry.scanAnnotatedEndpoints(handlerMapping);
 
-    assertThat(registry.size()).isZero();
+    assertThat(registry.size()).isEqualTo(1);
     assertThat(registry.findConfig("GET", "/api/free")).isNull();
   }
 

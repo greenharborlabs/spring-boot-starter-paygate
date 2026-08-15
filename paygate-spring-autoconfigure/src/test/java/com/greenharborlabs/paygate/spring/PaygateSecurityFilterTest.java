@@ -127,7 +127,7 @@ class PaygateSecurityFilterTest {
     PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
     PaygateChallengeService challengeService = mock(PaygateChallengeService.class);
     jakarta.servlet.FilterChain chain = mock(jakarta.servlet.FilterChain.class);
-    when(registry.resolve("GET", "/items/1"))
+    when(registry.resolve(any(jakarta.servlet.http.HttpServletRequest.class), any(String.class)))
         .thenThrow(new IllegalStateException("secret policy detail"));
     var filter =
         new PaygateSecurityFilter(

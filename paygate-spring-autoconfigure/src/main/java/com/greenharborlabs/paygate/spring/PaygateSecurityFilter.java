@@ -17,7 +17,6 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Instant;
@@ -45,6 +44,7 @@ import org.jspecify.annotations.Nullable;
  *       health, rate limits, and creates the 402 challenge
  * </ol>
  */
+@SuppressWarnings("PMD.CyclomaticComplexity") // Security response classification must stay explicit
 public class PaygateSecurityFilter implements Filter {
 
   private static final System.Logger log = System.getLogger(PaygateSecurityFilter.class.getName());
@@ -142,7 +142,7 @@ public class PaygateSecurityFilter implements Filter {
     // 1. Check if this endpoint is protected
     ResolvedEndpoint resolvedEndpoint;
     try {
-      resolvedEndpoint = registry.resolve(requestForResolvedPath(httpRequest, path));
+      resolvedEndpoint = registry.resolve(httpRequest, path);
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -382,26 +382,6 @@ public class PaygateSecurityFilter implements Filter {
       recordCaveatVerifyDuration(verifyStart);
       handleUnexpectedValidationError(e, protocol, httpRequest, httpResponse, method, safePath);
     }
-  }
-
-  private static HttpServletRequest requestForResolvedPath(
-      HttpServletRequest request, String path) {
-    return new HttpServletRequestWrapper(request) {
-      @Override
-      public String getRequestURI() {
-        return path;
-      }
-
-      @Override
-      public String getContextPath() {
-        return "";
-      }
-
-      @Override
-      public String getServletPath() {
-        return "";
-      }
-    };
   }
 
   private static boolean hasSuccessfulDecisionFor(

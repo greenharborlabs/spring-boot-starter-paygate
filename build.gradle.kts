@@ -175,6 +175,7 @@ subprojects {
         else -> "0.60"
     }
     tasks.withType<JacocoCoverageVerification> {
+        dependsOn(tasks.named("test"))
         violationRules {
             rule {
                 limit {
@@ -320,6 +321,46 @@ tasks.register<Javadoc>("aggregateJavadoc") {
     }
 }
 
+val supplyChainNegativeControlTasks = mapOf(
+    "verifyBuildIntegrityNegativeControls" to "scripts/test-build-integrity.sh",
+    "verifyWorkflowSecurityNegativeControls" to "scripts/test-workflow-security.sh",
+    "verifyAgentsMdSecurityNegativeControls" to "scripts/test-agents-md-security.sh",
+    "verifyReleaseHygieneNegativeControls" to "scripts/test-release-hygiene.sh",
+    "verifyReleaseWorkflowNegativeControls" to "scripts/test-release-workflow.sh",
+).map { (taskName, scriptPath) ->
+    tasks.register<Exec>(taskName) {
+        group = "verification"
+        description = "Runs ${scriptPath.substringAfterLast('/')} against its isolated temporary fixtures."
+
+        val scriptFile = layout.projectDirectory.file(scriptPath)
+        workingDir(layout.projectDirectory)
+        commandLine("bash", scriptFile.asFile.absolutePath)
+        outputs.upToDateWhen { false }
+    }
+}
+
+val verifySupplyChainNegativeControls = tasks.register("verifySupplyChainNegativeControls") {
+    group = "verification"
+    description = "Runs all isolated supply-chain and release negative controls."
+    dependsOn(supplyChainNegativeControlTasks)
+}
+
+val validateFindingDispositions = tasks.register<Exec>("validateFindingDispositions") {
+    group = "verification"
+    description = "Validates that every security finding has a complete, verified disposition."
+
+    val validator = layout.projectDirectory.file("scripts/validate-finding-dispositions.sh")
+    workingDir(layout.projectDirectory)
+    commandLine("bash", validator.asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyModuleCoverage = tasks.register("verifyModuleCoverage") {
+    group = "verification"
+    description = "Enforces the configured JaCoCo coverage minimum for every module."
+    dependsOn(subprojects.map { it.tasks.named("jacocoTestCoverageVerification") })
+}
+
 tasks.register("releaseReadiness") {
     group = "verification"
     description = "Runs the full local release gate: build, dependency health, integration tests, and aggregate Javadoc."
@@ -330,6 +371,9 @@ tasks.register("releaseReadiness") {
     dependsOn("aggregateJavadoc")
     dependsOn(":paygate-integration-tests:test")
     dependsOn(":paygate-integration-tests:securityTest")
+    dependsOn(verifySupplyChainNegativeControls)
+    dependsOn(validateFindingDispositions)
+    dependsOn(verifyModuleCoverage)
 
     doFirst {
         if (!providers.gradleProperty("integration").isPresent) {

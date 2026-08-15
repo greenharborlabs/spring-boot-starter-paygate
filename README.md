@@ -28,6 +28,7 @@ A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-li
 - [Test Mode](#test-mode)
 - [Architecture](#architecture)
 - [Security Considerations](#security-considerations)
+- [Security Release Migration](#security-release-migration)
 - [Compatibility](#compatibility)
 - [Building from Source](#building-from-source)
 - [Contributing](#contributing)
@@ -169,7 +170,7 @@ Both protocols share the same Lightning invoice -- the client pays once regardle
 
 ### MPP Request Binding and Replay Limitations
 
-An MPP credential is a reusable bearer credential for one exact request identity: HTTP method, application-relative UTF-8 path, raw-query presence and value, and a bounded request-body digest. The raw query is binding-sensitive; it is not parsed, decoded, sorted, or normalized, so differently encoded equivalent queries are different requests.
+An MPP credential is a reusable bearer credential for one exact request identity: HTTP method, application-relative UTF-8 path, raw-query presence and value, and a bounded request-body digest. The raw query is binding-sensitive; it is not parsed, decoded, sorted, or normalized, so differently encoded equivalent queries are different requests. An absent query and a present-but-empty query are also different identities. The echoed expiry is authenticated by the challenge binding and must be present, unexpired, and within the supported lifetime.
 
 MPP challenge validation is stateless. A credential may be presented repeatedly until expiry for that same bound request; there is no server-side single-use or replay ledger. Treat the credential and payment preimage as transferable bearer material: anyone who obtains them can use them within those binding and expiry constraints. A request with any different bound component must obtain a new challenge.
 
@@ -347,6 +348,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Trust `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. |
 | `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Advanced acknowledgement for intentional Spring Security enforcement outside the inspectable filter chain. |
 | `paygate.actuator.enabled` | `boolean` | `false` | Register the sensitive `/actuator/paygate` endpoint when Actuator is present. |
+| `paygate.request-body.max-bytes` | `int` | `8192` | Maximum body captured for payment binding on protected requests. Valid range: 1–16,777,216 bytes (16 MiB); larger bodies are rejected before protected handler work. |
 
 ### Protocol Configuration (`paygate.protocols.*`)
 
@@ -375,6 +377,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.rate-limit.requests-per-second` | `double` | `10.0` | Token refill rate per second for the challenge rate limiter. |
 | `paygate.rate-limit.burst-size` | `int` | `20` | Maximum burst size (token bucket capacity) for the challenge rate limiter. |
 | `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum client-IP buckets retained by the in-memory limiter. |
+| `paygate.rate-limit.ipv6-prefix-length` | `int` | `64` | IPv6 prefix used to group challenge-rate identities. Valid range: 0–128 bits. Trusted-proxy client-address resolution happens before this grouping. |
 
 ### Lightning Backend Timeout
 
@@ -637,7 +640,7 @@ When both Spring Security and an `L402Validator` bean are present, the module au
 
 - **`PaygateAuthenticationProvider`** -- validates L402 via `L402Validator`, delegates other recognized schemes to their `PaymentProtocol`, and produces an authenticated `PaygateAuthenticationToken`
 - **`PaygateAuthenticationFilter`** -- extracts L402 credentials from the `Authorization` header and delegates to the `AuthenticationManager`
-- **`PaygateAuthenticationToken`** -- carries the validated credential, token ID, service name, and caveat-derived attributes accessible via SpEL in `@PreAuthorize` expressions
+- **`PaygateAuthenticationToken`** -- carries the token ID, service name, and verifier-approved attributes accessible via SpEL in `@PreAuthorize` expressions; authenticated state retains no raw bearer credential or payment preimage
 - **`PaygateAuthenticationEntryPoint`** -- issues HTTP 402 Payment Required challenges with Lightning invoices when an unauthenticated request hits a protected endpoint, replacing the default 401 response
 
 ### Security Mode (`paygate.security-mode`)
@@ -694,7 +697,7 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http,
 
 ### Accessing L402 Credentials
 
-The authenticated token grants the `ROLE_L402` authority and exposes caveat values as attributes:
+The authenticated token grants the `ROLE_L402` authority and exposes only values from uniquely owned caveat keys whose trusted verifier succeeded. Unknown, duplicate-owner, blank, or failed caveats never become attributes or authorities. Authentication completion removes the raw header, parsed credential, and payment preimage from authenticated state:
 
 ```java
 @PreAuthorize("hasRole('L402')")
@@ -921,22 +924,33 @@ This library handles payment credentials and cryptographic tokens. The following
 
 ### Operational Security
 
-- **Root key storage** defaults to file-based storage at `~/.paygate/keys`. In production, ensure this directory has restricted permissions (`chmod 700`)
-- **Never log full macaroon values** -- only token IDs appear in logs
+- **Root key storage** defaults to file-based storage at `~/.paygate/keys`. It requires protections equivalent to `0700` directories and `0600` key files, refuses unsafe operation, and does not follow root-key symlinks. LND certificate and macaroon symlink mounts are a separate, documented trusted-orchestrator case; secure their ownership and mount path at the host layer.
+- **Never log full macaroon values** -- diagnostic correlation is restricted to sanitized, truncated identifiers. Logs, metrics, health output, and client errors must not contain authorization headers, preimages, root keys, backend credentials, or binding secrets.
 - **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`) and MPP challenge binding secrets, not plaintext in configuration files
 - **LNbits HTTPS by default** -- `http://` LNbits URLs require `paygate.lnbits.allow-plaintext-http=true` and are accepted only for local/test loopback targets
-- **Test mode is profile-gated** -- startup requires an explicit `test`, `dev`, `local`, or `development` profile and rejects `prod` or `production`
-- **Fail-closed** -- any unexpected exception during validation produces HTTP 503, never leaking protected content
+- **Test mode is profile-gated** -- every active profile must be one of `test`, `dev`, `local`, or `development`; any other or production-like profile fails startup
+- **Fail-closed responses** -- malformed presented credentials receive a stable safe 400; structurally valid but invalid, expired, or insufficient credentials receive 402; abuse throttling receives 429; backend outages and unexpected server failures receive 503. Presented invalid credentials do not mint a replacement invoice or root key, and backend failure never exposes protected content.
 
 ### Request-Bound L402 Credentials
 
 First-party L402 macaroons are bound to the canonical registered route, the actual HTTP method, and an explicit capability ceiling. The route is the selected Spring mapping pattern, not merely the concrete request URI; a credential minted for another route or method is rejected on both fresh validation and cache hits.
 
 - A capability-less endpoint is represented by the authenticated `~` ceiling. Holders may only retain or narrow the issued ceiling; they cannot add a named capability, expand a named set, or mix `~` with names. Spring Security authorities are derived only from the final verified ceiling.
+- Every fresh or cached authorization requires the authenticated service, route, actual method, `valid_until`, and issued capability-ceiling boundaries. Exact cache hits may skip signature recomputation, but still perform authoritative root-key lookup and request-specific boundary checks; deleting the root key revokes later cache uses.
 - `HEAD` resolves an explicit `HEAD` policy first, then inherits the matching `GET` policy, then a wildcard policy. Inherited price, timeout, capability, and pricing strategy remain unchanged, but the credential is bound to `HEAD`; `GET` and `HEAD` credentials are not interchangeable.
 - Route lookup uses the application-relative request path. Context paths and applicable path-prefix servlet mappings are removed consistently, so the same controller mapping keeps the same credential route behind deployment prefixes.
+- Spring MVC policy resolution uses the active mapping semantics and rejects indistinguishable conflicting policies at startup. REQUEST, ASYNC, FORWARD, and ERROR dispatches re-check a changed protected target without charging twice for the same target. In Spring Security mode, every effective chain serving paid routes must contain Paygate enforcement; a later permissive rule does not bypass the paid route.
 - Credentials issued before these boundaries were required are intentionally rejected when they omit `route`, `method`, or the capability ceiling. This deliberate compatibility break cannot be configured away; clients recover by obtaining a new challenge.
 - Diagnostics redact bearer material. Do not log full macaroons, payment preimages, `Authorization` headers, root keys, or detailed validation reasons; safe summaries expose only structural counts or lengths and non-secret identifiers.
+
+### Supported Parsing and Delegation Limits
+
+- Macaroon V2 inputs must use canonical bounded encodings and strictly valid UTF-8 caveat text. Third-party caveats and additional/discharge macaroons are unsupported and rejected; Paygate does not partially trust parsed authorization material.
+- Built-in `client_ip` caveats compare the configured literal to the resolved client-address string. They do not resolve DNS names or interpret CIDR ranges; unsupported forms fail closed. Configure `paygate.trusted-proxy-addresses` before enabling forwarded headers because proxy resolution precedes rate-limit and caveat identity.
+- MPP JSON, base64url, expiry, query, and body bindings are strict. Legacy credentials that omit authenticated expiry, use padded/noncanonical encodings, or were issued for a normalized rather than exact raw query must obtain a new challenge.
+- Lightning providers reject wrong-length hashes/preimages and a paid response whose preimage does not match the queried payment hash. Plaintext backend opt-ins remain local-only, and ambiguous numeric loopback spellings are judged by canonical address bytes rather than textual appearance.
+- `SensitiveBytes` and protocol credentials have explicit ownership. Callers must honor documented `close()`/`destroy()` duties; best-effort zeroization cannot erase immutable `String` copies held by client transports. Close backend clients during application shutdown.
+- Endpoint metrics use bounded registered-route labels, health is exposed only when its support and conditions are present, and `/actuator/paygate` remains disabled by default. These signals are operational summaries, not complete audit trails or proof of authorization.
 
 ### Recommendations for Production
 
@@ -947,6 +961,16 @@ First-party L402 macaroons are bound to the canonical registered route, the actu
 5. Set `paygate.credential-cache-max-size` based on your expected concurrent credential volume
 6. Review and rotate root keys periodically
 7. Use a strong, randomly generated `challenge-binding-secret` for MPP (minimum 32 bytes)
+
+---
+
+## Security Release Migration
+
+Before upgrading, inventory outstanding L402 and MPP credentials, proxy settings, root-key/LND mounts, custom security chains, and protected upload sizes. Configure `paygate.request-body.max-bytes` (default 8192; valid 1–16 MiB), `paygate.rate-limit.ipv6-prefix-length` (default 64; valid 0–128), and trusted proxies explicitly where existing traffic depends on different assumptions.
+
+The upgrade intentionally rejects identifier-v0 or boundary-incomplete L402 credentials, noncanonical macaroon/MPP encodings, MPP credentials without authenticated expiry, MPP requests whose exact raw-query presence/value differs, third-party caveats, and additional macaroons. Drain or allow old credentials to expire before rollout where possible; otherwise clients must obtain and pay a new challenge. Treat a rollback carefully: credentials issued under the hardened exact-request contract may not restore compatibility with legacy clients, and rolling back re-enables acceptance behavior that this release deliberately removed. Keep root keys and both current/previous MPP binding secrets available only for the planned migration window; never copy secrets into logs or release evidence.
+
+Roll out first to a canary with the production routing and Spring Security topology. Verify fixed 400/402 client failures, 429 throttling, fail-closed 503 outages, zero replacement artifacts for presented invalid credentials, redispatch behavior, bounded metrics, and secret-free health/log output before expanding traffic.
 
 ---
 
@@ -970,6 +994,17 @@ New L402 challenges use signed identifier version 1. The identifier layout remai
 ---
 
 ## Building from Source
+
+The final local security release gate is:
+
+```bash
+./gradlew verifySupplyChainNegativeControls
+./gradlew verifyModuleCoverage
+./gradlew validateFindingDispositions
+./gradlew releaseReadiness -Pintegration
+```
+
+`validateFindingDispositions` requires every supported audit-ledger row to contain verified implementation, regression, documentation, and command evidence. `releaseReadiness -Pintegration` composes these checks with the integration/security suites, module builds, dependency health, and Javadoc. A local pass does not itself attest published artifacts or satisfy protected-environment approval; verify those separately in the release workflow.
 
 Prerequisites: JDK 25 and Git.
 

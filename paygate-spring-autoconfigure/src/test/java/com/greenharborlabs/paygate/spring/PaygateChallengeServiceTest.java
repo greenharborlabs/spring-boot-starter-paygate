@@ -146,7 +146,6 @@ class PaygateChallengeServiceTest {
               new RouteCase("wildcard", "/api/files/*", "/api/files/report"),
               new RouteCase("trailing slash", "/api/trailing/", "/api/trailing/"),
               new RouteCase("surrounding whitespace", " /api/spaced ", " /api/spaced "),
-              new RouteCase("percent-encoding case", "/api/%2f", "/api/%2f"),
               new RouteCase("path case", "/Api/Case", "/Api/Case"));
 
       for (RouteCase routeCase : routeCases) {
@@ -872,7 +871,7 @@ class PaygateChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("delegates to ClientIpResolver.resolve() when resolver is present")
+    @DisplayName("delegates to ClientIpResolver rate-limit identity when resolver is present")
     void delegatesToResolverWhenPresent() throws Exception {
       when(lightningBackend.isHealthy()).thenReturn(true);
       when(lightningBackend.createInvoice(anyLong(), anyString()))
@@ -882,7 +881,7 @@ class PaygateChallengeServiceTest {
       when(rateLimiter.tryAcquire(anyString())).thenReturn(true);
 
       ClientIpResolver resolver = mock(ClientIpResolver.class);
-      when(resolver.resolve(request)).thenReturn("10.0.0.1");
+      when(resolver.resolveRateLimitIdentity(request)).thenReturn("10.0.0.1");
 
       request.setRemoteAddr("127.0.0.1");
 
@@ -898,7 +897,7 @@ class PaygateChallengeServiceTest {
               null);
 
       service.createChallenge(request, config);
-      verify(resolver).resolve(request);
+      verify(resolver).resolveRateLimitIdentity(request);
       verify(rateLimiter).tryAcquire("10.0.0.1");
     }
   }

@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.MappingMatch;
 import java.util.List;
@@ -284,9 +286,19 @@ class PaygateSecurityFilterPathNormalizationTest {
       var challengeService = mock(PaygateChallengeService.class);
       when(challengeService.createChallenge(any(), any(ResolvedEndpoint.class), any()))
           .thenReturn(challengeContext());
+      var protocol = mock(PaymentProtocol.class);
+      when(protocol.formatChallenge(any()))
+          .thenReturn(new ChallengeResponse("L402 challenge", "L402", Map.of()));
       var filter =
           new PaygateSecurityFilter(
-              registry, List.of(), challengeService, "test-service", null, null, null, null);
+              registry,
+              List.of(protocol),
+              challengeService,
+              "test-service",
+              null,
+              null,
+              null,
+              null);
       var response = new MockHttpServletResponse();
       var chain = mock(FilterChain.class);
 
@@ -296,8 +308,9 @@ class PaygateSecurityFilterPathNormalizationTest {
       verify(chain, never()).doFilter(any(), any());
       var resolvedEndpointCaptor = ArgumentCaptor.forClass(ResolvedEndpoint.class);
       verify(challengeService).createChallenge(any(), resolvedEndpointCaptor.capture(), any());
-      assertThat(resolvedEndpointCaptor.getValue())
-          .isEqualTo(new ResolvedEndpoint(config, PROTECTED_PATH, "GET"));
+      assertThat(resolvedEndpointCaptor.getValue().config()).isEqualTo(config);
+      assertThat(resolvedEndpointCaptor.getValue().routePattern()).isEqualTo(PROTECTED_PATH);
+      assertThat(resolvedEndpointCaptor.getValue().policyMethod()).isEqualTo("GET");
     }
 
     private ChallengeContext challengeContext() {

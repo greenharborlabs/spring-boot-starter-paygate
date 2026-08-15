@@ -18,6 +18,7 @@ import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -72,6 +73,17 @@ class CrossServiceTest {
     List<Caveat> boundedCaveats = new ArrayList<>(caveats);
     boundedCaveats.add(new Caveat("route", REQUEST_ROUTE));
     boundedCaveats.add(new Caveat("method", REQUEST_METHOD));
+    for (Caveat caveat : caveats) {
+      if (!caveat.key().equals("services")) {
+        continue;
+      }
+      for (String service : caveat.value().split(",")) {
+        boundedCaveats.add(
+            new Caveat(
+                service.trim() + "_valid_until",
+                String.valueOf(Instant.now().plusSeconds(3600).getEpochSecond())));
+      }
+    }
     Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, boundedCaveats);
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -84,7 +96,8 @@ class CrossServiceTest {
         new RouteCaveatVerifier(10),
         new MethodCaveatVerifier(10),
         new ServicesCaveatVerifier(50),
-        new CapabilitiesCaveatVerifier(serviceName, 50));
+        new CapabilitiesCaveatVerifier(serviceName, 50),
+        new ValidUntilCaveatVerifier(serviceName));
   }
 
   private L402VerificationContext context(String serviceName) {

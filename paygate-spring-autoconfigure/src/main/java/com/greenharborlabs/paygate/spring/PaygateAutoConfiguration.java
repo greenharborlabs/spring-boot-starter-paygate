@@ -341,7 +341,8 @@ public class PaygateAutoConfiguration {
   }
 
   @Bean
-  ProtocolStartupValidator protocolStartupValidator(PaygateProperties properties) {
+  ProtocolStartupValidator protocolStartupValidator(
+      PaygateProperties properties, ApplicationContext applicationContext) {
     var mppConfig = properties.getProtocols().getMpp();
     String mppEnabled = mppConfig.getEnabled();
     String secret = mppConfig.getChallengeBindingSecret();
@@ -352,14 +353,22 @@ public class PaygateAutoConfiguration {
 
     // Determine which protocols will be active based on configuration + classpath
     boolean l402OnClasspath =
-        isClassPresent("com.greenharborlabs.paygate.protocol.l402.L402Protocol");
-    boolean mppOnClasspath = isClassPresent("com.greenharborlabs.paygate.protocol.mpp.MppProtocol");
+        isClassPresent(
+            "com.greenharborlabs.paygate.protocol.l402.L402Protocol",
+            applicationContext.getClassLoader());
+    boolean mppOnClasspath =
+        isClassPresent(
+            "com.greenharborlabs.paygate.protocol.mpp.MppProtocol",
+            applicationContext.getClassLoader());
     boolean l402Active = properties.getProtocols().getL402().isEnabled() && l402OnClasspath;
     boolean mppActive = isMppEffectivelyEnabled(mppEnabled, secretPresent) && mppOnClasspath;
 
-    // Only validate "no protocols" when at least one protocol JAR is on the classpath.
-    // If no protocol JARs are present, this is a dependency setup issue, not a config error.
-    if ((l402OnClasspath || mppOnClasspath) && !l402Active && !mppActive) {
+    if (!l402Active && !mppActive) {
+      if (!l402OnClasspath && !mppOnClasspath) {
+        throw new IllegalStateException(
+            "No usable payment protocol implementation is present. Check paygate.protocols "
+                + "configuration and runtime dependencies.");
+      }
       throw new IllegalStateException(
           "No payment protocols are enabled. At least one protocol must be active. "
               + "Enable L402 (paygate.protocols.l402.enabled=true) or MPP "
@@ -433,9 +442,9 @@ public class PaygateAutoConfiguration {
     };
   }
 
-  private static boolean isClassPresent(String className) {
+  private static boolean isClassPresent(String className, ClassLoader classLoader) {
     try {
-      Class.forName(className, false, PaygateAutoConfiguration.class.getClassLoader());
+      Class.forName(className, false, classLoader);
       return true;
     } catch (ClassNotFoundException _) {
       return false;

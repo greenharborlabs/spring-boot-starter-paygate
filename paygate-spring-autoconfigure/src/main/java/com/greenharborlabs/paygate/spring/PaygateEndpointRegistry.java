@@ -218,6 +218,14 @@ public class PaygateEndpointRegistry {
    * @return the selected endpoint, or {@code null} if no protected mapping matches
    */
   public ResolvedEndpoint resolve(HttpServletRequest request) {
+    return resolve(request, ApplicationRelativeRequestResolver.resolve(request));
+  }
+
+  /**
+   * Resolves a policy using the original servlet request for MVC conditions and an already
+   * normalized application-relative path for manual registrations.
+   */
+  ResolvedEndpoint resolve(HttpServletRequest request, String applicationRelativePath) {
     // Filters can run before DispatcherServlet has cached this state. MVC's path-pattern
     // condition requires the parsed path to be present on the request.
     org.springframework.web.util.ServletRequestPathUtils.parseAndCache(request);
@@ -246,8 +254,7 @@ public class PaygateEndpointRegistry {
 
     // Do not match manual routes against the container URI: deployments commonly add a context
     // path or servlet mapping. Reuse the established method-bucket and specificity semantics.
-    return resolveManual(
-        normalizeMethod(request.getMethod()), ApplicationRelativeRequestResolver.resolve(request));
+    return resolveManual(normalizeMethod(request.getMethod()), applicationRelativePath);
   }
 
   private ResolvedEndpoint resolveManual(String method, String path) {

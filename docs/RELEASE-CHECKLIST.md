@@ -61,7 +61,7 @@ The release branch must not use a `-SNAPSHOT` version.
 [X.Y.Z]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/vX.Y.(Z-1)...vX.Y.Z
 ```
 
-### 5. Run local verification
+### 5. Run local verification and security release gates
 
 ```bash
 ./gradlew build
@@ -70,10 +70,53 @@ The release branch must not use a `-SNAPSHOT` version.
 - [ ] Build passes.
 - [ ] Spotless runs before Java compilation as part of the Gradle build.
 
-Optional deeper gates before important releases:
+For the defense-in-depth release, run the gates in this order so failures remain attributable. Record the command, commit, environment, and redacted result for each; checking this list is not evidence that an unexecuted command passed.
+
+1. Prove the build/release safeguards reject their isolated negative fixtures:
+
+```bash
+./gradlew verifySupplyChainNegativeControls
+```
+
+- [ ] Modified checksums, unsafe workflow/documentation inputs, and release-hygiene violations fail safely without executing fixture payloads.
+
+2. Enforce every configured per-module JaCoCo threshold:
+
+```bash
+./gradlew verifyModuleCoverage
+```
+
+- [ ] `paygate-core` meets at least 80%; each other non-example/non-integration module meets its configured minimum of at least 60%.
+
+3. Run both opt-in cross-module suites:
+
+```bash
+./gradlew :paygate-integration-tests:test -Pintegration
+./gradlew :paygate-integration-tests:securityTest -Pintegration
+```
+
+- [ ] Servlet and Spring Security enforcement, invalid-credential resource bounds, backend fail-closed behavior, interoperability, and redaction checks pass.
+
+4. Verify that every supported audit finding has complete evidence:
+
+```bash
+./gradlew validateFindingDispositions
+```
+
+- [ ] Every supported finding row names verified implementation, regression, documentation, and command evidence. This gate intentionally fails while supported ledger rows remain `planned` or otherwise incomplete; update evidence only from executed checks.
+
+5. Run the composed final local gate last:
 
 ```bash
 ./gradlew releaseReadiness -Pintegration
+```
+
+- [ ] The final gate passes with `-Pintegration`; it composes module builds, dependency health, aggregate Javadoc, integration/security suites, negative controls, disposition validation, and module coverage.
+- [ ] No local command is described as provenance, attestation, protected-environment approval, or proof of the bytes later published by GitHub Actions.
+
+Optional consumer-resolution check after the required gates:
+
+```bash
 ./gradlew publishToMavenLocal
 ```
 
@@ -143,10 +186,11 @@ The release workflow should:
 
 - Verify the tag is on `main`.
 - Verify the release version matches the tag.
-- Build every module in the default build. The opt-in integration module is covered by CI and by the recommended local `releaseReadiness -Pintegration` gate.
+- Build every module in the default build. The opt-in integration module is covered by CI and by the required local `releaseReadiness -Pintegration` gate.
 - Verify publishing secrets.
 - Publish to Sonatype and release to Maven Central.
 - Generate and attach SBOMs.
+- Produce workflow provenance/attestation only where the protected release environment and workflow support it; local verification is not a substitute.
 - Create the GitHub Release.
 
 ### 12. Verify release output
@@ -193,6 +237,8 @@ Manual stop point:
 ## Failure Handling
 
 - If local build fails, stop and fix before pushing a release branch.
+- If a negative control, module coverage, integration/security suite, or disposition validation fails, stop before `releaseReadiness`; preserve the redacted failure evidence and fix forward. Do not mark a finding verified from a planned or skipped command.
+- If the hardened release rejects legacy/noncanonical L402 or MPP credentials in canary traffic, keep the release fail closed and migrate clients to newly issued exact-request credentials. Rolling back may re-enable the rejected legacy surface; require an explicit security decision and preserve current root keys/binding secrets until the migration window is resolved.
 - If GitHub CI fails on the release PR, fix the PR branch and wait for CI again.
 - If the release workflow fails before publishing, fix forward and only retag if
   the tag has not been published publicly.

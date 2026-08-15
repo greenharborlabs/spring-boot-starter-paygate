@@ -16,6 +16,8 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -110,16 +112,22 @@ class PreimageValidationTest {
 
   private List<Caveat> boundaryCaveats() {
     return List.of(
+        new Caveat("services", SERVICE_NAME),
         new Caveat("route", REQUEST_ROUTE),
         new Caveat("method", REQUEST_METHOD),
-        new Caveat(SERVICE_NAME + "_capabilities", "~"));
+        new Caveat(SERVICE_NAME + "_capabilities", "~"),
+        new Caveat(
+            SERVICE_NAME + "_valid_until",
+            String.valueOf(Instant.now().plusSeconds(3600).getEpochSecond())));
   }
 
   private List<CaveatVerifier> boundaryVerifiers() {
     return List.of(
+        new ServicesCaveatVerifier(10),
         new RouteCaveatVerifier(10),
         new MethodCaveatVerifier(10),
-        new CapabilitiesCaveatVerifier(SERVICE_NAME, 50));
+        new CapabilitiesCaveatVerifier(SERVICE_NAME, 50),
+        new ValidUntilCaveatVerifier(SERVICE_NAME));
   }
 
   private L402VerificationContext boundaryContext() {

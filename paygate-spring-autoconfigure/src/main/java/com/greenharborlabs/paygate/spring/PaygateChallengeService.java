@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -281,6 +282,14 @@ public class PaygateChallengeService {
           "Failed to create invoice: " + e.getMessage(), e);
     }
 
+    final String safeBolt11;
+    try {
+      safeBolt11 = L402Challenge.sanitizeBolt11ForHeader(invoice.bolt11());
+    } catch (IllegalArgumentException e) {
+      throw new PaygateLightningUnavailableException(
+          "Lightning backend returned an invalid invoice", e);
+    }
+
     // Generate root key and tokenId atomically after invoice creation; try-with-resources ensures
     // SensitiveBytes.destroy() is called if a later step fails.
     try (RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey()) {
@@ -319,7 +328,7 @@ public class PaygateChallengeService {
                 new ChallengeContext(
                     invoice.paymentHash(),
                     tokenIdHex,
-                    invoice.bolt11(),
+                    safeBolt11,
                     effectivePrice,
                     config.description(),
                     serviceName,

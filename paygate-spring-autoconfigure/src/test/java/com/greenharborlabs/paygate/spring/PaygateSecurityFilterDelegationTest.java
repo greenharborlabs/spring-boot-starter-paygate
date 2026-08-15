@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -80,7 +81,8 @@ class PaygateSecurityFilterDelegationTest {
    */
   private void stubProtectedEndpointWithSuccessfulValidation(String method, String path) {
     var config = new PaygateEndpointConfig(method, path, 10L, 600L, "test", "", "");
-    when(registry.resolve(any(), any())).thenReturn(new ResolvedEndpoint(config, path, method));
+    when(registry.resolve(any(jakarta.servlet.http.HttpServletRequest.class), anyString()))
+        .thenReturn(new ResolvedEndpoint(config, path, method));
     when(protocol.canHandle(anyString())).thenReturn(true);
     when(protocol.scheme()).thenReturn("L402");
     when(protocol.parseCredential(anyString())).thenReturn(createStubCredential());
@@ -165,22 +167,17 @@ class PaygateSecurityFilterDelegationTest {
   }
 
   @Test
-  @DisplayName("FR-003b: encoded slash %2F is preserved in request context request.path")
-  void filterPreservesEncodedSlashInRequestPath() throws Exception {
-    stubProtectedEndpointWithSuccessfulValidation("GET", "/api/v1%2Fbypass");
-
+  @DisplayName("rejects encoded slash before protocol validation")
+  void filterRejectsEncodedSlashInRequestPath() throws Exception {
     request.setMethod("GET");
     request.setRequestURI("/api/v1%2Fbypass");
     request.addHeader("Authorization", VALID_AUTH_HEADER);
 
     filter.doFilter(request, response, chain);
 
-    verify(protocol).validate(any(PaymentCredential.class), requestContextCaptor.capture());
-    Map<String, String> ctx = requestContextCaptor.getValue();
-
-    assertThat(ctx)
-        .as("FR-003b: Encoded slash %2F must be preserved in request.path metadata")
-        .containsEntry(VerificationContextKeys.REQUEST_PATH, "/api/v1%2Fbypass");
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(protocol, never()).validate(any(PaymentCredential.class), any());
+    verify(chain, never()).doFilter(request, response);
   }
 
   @Test

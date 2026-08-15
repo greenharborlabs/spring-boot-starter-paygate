@@ -19,6 +19,8 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -74,16 +76,22 @@ class RevocationTest {
 
   private List<Caveat> boundaryCaveats() {
     return List.of(
+        new Caveat("services", SERVICE_NAME),
         new Caveat("route", REQUEST_ROUTE),
         new Caveat("method", REQUEST_METHOD),
-        new Caveat(SERVICE_NAME + "_capabilities", "~"));
+        new Caveat(SERVICE_NAME + "_capabilities", "~"),
+        new Caveat(
+            SERVICE_NAME + "_valid_until",
+            String.valueOf(Instant.now().plusSeconds(3600).getEpochSecond())));
   }
 
   private List<CaveatVerifier> boundaryVerifiers() {
     return List.of(
+        new ServicesCaveatVerifier(10),
         new RouteCaveatVerifier(10),
         new MethodCaveatVerifier(10),
-        new CapabilitiesCaveatVerifier(SERVICE_NAME, 50));
+        new CapabilitiesCaveatVerifier(SERVICE_NAME, 50),
+        new ValidUntilCaveatVerifier(SERVICE_NAME));
   }
 
   private L402VerificationContext boundaryContext() {
@@ -168,8 +176,8 @@ class RevocationTest {
     }
 
     @Test
-    @DisplayName("root key lookup failure never falls back to an exact cached credential")
-    void rootKeyLookupFailureRejectsAndEvictsCachedCredential() {
+    @DisplayName("transient root key lookup failure never falls back to an exact cached credential")
+    void rootKeyLookupFailureRejectsWithoutEvictingCachedCredential() {
       L402Validator validator =
           new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
       L402Validator.ValidationResult initial = validator.validate(authHeader, boundaryContext());
@@ -201,12 +209,12 @@ class RevocationTest {
           .satisfies(
               ex -> {
                 L402Exception l402Ex = (L402Exception) ex;
-                assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.REVOKED_CREDENTIAL);
+                assertThat(l402Ex.getErrorCode()).isEqualTo(ErrorCode.LIGHTNING_UNAVAILABLE);
                 assertThat(l402Ex.getMessage())
-                    .isEqualTo("Credential has been revoked")
+                    .isEqualTo("Credential validation is temporarily unavailable")
                     .doesNotContain("ROOT-KEY-LOOKUP-DETAIL");
               });
-      assertThat(credentialStore.get(HEX.formatHex(tokenIdBytes))).isNull();
+      assertThat(credentialStore.activeCount()).isEqualTo(1);
     }
 
     @Test

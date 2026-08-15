@@ -6,6 +6,14 @@ build/
 plans/
 # Ignore the entire plans directory and all its contents
 specs/
+# Keep the Phase 11 release ledger and validation record versioned. The remaining planning
+# artifacts stay local-only.
+!specs/
+specs/*
+!specs/005-security-audit-hardening/
+specs/005-security-audit-hardening/*
+!specs/005-security-audit-hardening/finding-dispositions.md
+!specs/005-security-audit-hardening/validation-evidence.md
 # Ignore the entire specify directory and all its contents
 .specify/
 # Ignore generated local agent integrations
