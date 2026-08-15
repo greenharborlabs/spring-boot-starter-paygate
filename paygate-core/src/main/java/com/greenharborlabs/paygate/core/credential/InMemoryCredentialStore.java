@@ -23,6 +23,7 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
   private final int maxSize;
   private final ScheduledExecutorService cleanupExecutor;
   private volatile EvictionListener evictionListener;
+  private boolean closed;
 
   public InMemoryCredentialStore() {
     this(DEFAULT_MAX_SIZE, DEFAULT_CLEANUP_INTERVAL_SECONDS);
@@ -71,6 +72,10 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
 
     storeLock.lock();
     try {
+      if (closed) {
+        destroyCached(cached);
+        throw new IllegalStateException("Credential store is closed");
+      }
       // If updating an existing entry, always allow it (updates access order too)
       if (entries.containsKey(tokenId)) {
         destroyCached(entries.put(tokenId, cached));
@@ -97,6 +102,9 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
     L402Credential result;
     storeLock.lock();
     try {
+      if (closed) {
+        return null;
+      }
       CachedCredential cached = entries.get(tokenId);
       if (cached == null) {
         return null;
@@ -123,6 +131,9 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
     EvictionEvent evictionEvent = null;
     storeLock.lock();
     try {
+      if (closed) {
+        return;
+      }
       CachedCredential removed = entries.remove(tokenId);
       if (removed != null) {
         destroyCached(removed);
@@ -140,6 +151,9 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
   public long activeCount() {
     storeLock.lock();
     try {
+      if (closed) {
+        return 0;
+      }
       return entries.values().stream().filter(cached -> !cached.isExpired()).count();
     } finally {
       storeLock.unlock();
@@ -148,6 +162,17 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
 
   @Override
   public void close() {
+    storeLock.lock();
+    try {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      entries.values().forEach(InMemoryCredentialStore::destroyCached);
+      entries.clear();
+    } finally {
+      storeLock.unlock();
+    }
     if (cleanupExecutor != null) {
       cleanupExecutor.shutdown();
       try {
@@ -159,13 +184,6 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
         Thread.currentThread().interrupt();
       }
     }
-    storeLock.lock();
-    try {
-      entries.values().forEach(InMemoryCredentialStore::destroyCached);
-      entries.clear();
-    } finally {
-      storeLock.unlock();
-    }
   }
 
   private void scheduledCleanup() {
@@ -173,6 +191,9 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
       var evictionEvents = new ArrayList<EvictionEvent>();
       storeLock.lock();
       try {
+        if (closed) {
+          return;
+        }
         evictExpired(evictionEvents);
       } finally {
         storeLock.unlock();
@@ -191,6 +212,9 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
   CachedCredential peekRetainedForTesting(String tokenId) {
     storeLock.lock();
     try {
+      if (closed) {
+        return null;
+      }
       return entries.get(tokenId);
     } finally {
       storeLock.unlock();

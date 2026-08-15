@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -153,19 +154,27 @@ class DualProtocolFilterTest {
     when(l402Protocol.canHandle("Payment method=\"lightning\"")).thenReturn(false);
     when(mppProtocol.scheme()).thenReturn("Payment");
     when(mppProtocol.canHandle("Payment method=\"lightning\"")).thenReturn(true);
-    when(mppProtocol.parseCredential("Payment method=\"lightning\""))
-        .thenReturn(
-            new PaymentCredential(
-                PAYMENT_HASH, PREIMAGE, TOKEN_ID, "Payment", null, mock(ProtocolMetadata.class)));
+    PaymentCredential credential =
+        new PaymentCredential(
+            PAYMENT_HASH, PREIMAGE, TOKEN_ID, "Payment", null, mock(ProtocolMetadata.class));
+    when(mppProtocol.parseCredential("Payment method=\"lightning\"")).thenReturn(credential);
     doNothing().when(mppProtocol).validate(any(), anyMap());
     when(mppProtocol.createReceipt(any(), any())).thenReturn(Optional.empty());
 
     request.addHeader("Authorization", "Payment method=\"lightning\"");
 
     var filter = createFilter(List.of(l402Protocol, mppProtocol));
+    doAnswer(
+            invocation -> {
+              assertThat(credential.isDestroyed()).isTrue();
+              return null;
+            })
+        .when(filterChain)
+        .doFilter(any(), any());
     filter.doFilter(request, response, filterChain);
 
     verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
+    assertThat(credential.isDestroyed()).isTrue();
   }
 
   // --- Test 4: Payment-Receipt on MPP success ---

@@ -218,6 +218,7 @@ class PaygateAuthenticationProviderDelegationTest {
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
           .contains("ROLE_PAYMENT");
+      assertThat(credential.isDestroyed()).isTrue();
     }
 
     @Test
@@ -264,6 +265,7 @@ class PaygateAuthenticationProviderDelegationTest {
           .isInstanceOf(BadCredentialsException.class)
           .hasMessageContaining("Payment authentication failed")
           .hasCauseInstanceOf(PaymentValidationException.class);
+      assertThat(credential.isDestroyed()).isTrue();
     }
 
     @Test

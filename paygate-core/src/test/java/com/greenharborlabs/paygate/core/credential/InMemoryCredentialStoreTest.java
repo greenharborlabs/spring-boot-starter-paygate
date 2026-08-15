@@ -621,6 +621,20 @@ class InMemoryCredentialStoreTest {
       var noCleanupStore = new InMemoryCredentialStore(100, 0);
       noCleanupStore.close(); // Should not throw
     }
+
+    @Test
+    @DisplayName("post-close store is rejected without modifying the caller credential")
+    void postCloseStoreIsRejected() {
+      var closedStore = new InMemoryCredentialStore(100, 0);
+      String tokenId = randomTokenId();
+      L402Credential credential = createTestCredential(tokenId);
+      closedStore.close();
+
+      assertThatThrownBy(() -> closedStore.store(tokenId, credential, 3600))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(closedStore.get(tokenId)).isNull();
+      assertCredentialUsable(credential);
+    }
   }
 
   @Nested

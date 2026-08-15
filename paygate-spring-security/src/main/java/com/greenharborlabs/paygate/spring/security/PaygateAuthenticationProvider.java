@@ -117,19 +117,24 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       if (protocol.canHandle(authorizationHeader)) {
         try {
           PaymentCredential credential = protocol.parseCredential(authorizationHeader);
-          protocol.validate(credential, token.getRequestMetadata());
-          Set<String> capabilities =
-              resolveCapabilitiesSafely(
-                  new CapabilityResolutionContext(
-                      credential.tokenId(), serviceName, null, token.getRequestMetadata()));
-          PaymentReceipt receipt = createReceipt(protocol, credential, token.getReceiptRequest());
-          return PaygateAuthenticationToken.authenticated(
-              credential.tokenId(),
-              serviceName,
-              credential.sourceProtocolScheme(),
-              protocolAttributes(credential),
-              paymentAuthorities(capabilities),
-              receipt);
+          try {
+            protocol.validate(credential, token.getRequestMetadata());
+            Set<String> capabilities =
+                resolveCapabilitiesSafely(
+                    new CapabilityResolutionContext(
+                        credential.tokenId(), serviceName, null, token.getRequestMetadata()));
+            PaymentReceipt receipt = createReceipt(protocol, credential, token.getReceiptRequest());
+            return PaygateAuthenticationToken.authenticated(
+                credential.tokenId(),
+                serviceName,
+                credential.sourceProtocolScheme(),
+                protocolAttributes(credential),
+                paymentAuthorities(capabilities),
+                receipt);
+          } finally {
+            // Authentication state contains only extracted facts, never the parsed credential.
+            credential.close();
+          }
         } catch (PaymentValidationException e) {
           throw new BadCredentialsException("Payment authentication failed", e);
         }

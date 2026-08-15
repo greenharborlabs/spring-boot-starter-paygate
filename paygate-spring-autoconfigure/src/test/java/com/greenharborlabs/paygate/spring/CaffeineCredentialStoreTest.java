@@ -624,6 +624,19 @@ class CaffeineCredentialStoreTest {
       assertCredentialDestroyed(retained);
       assertThat(store.activeCount()).isZero();
     }
+
+    @Test
+    @DisplayName("post-close stores are rejected and do not consume caller credentials")
+    void postCloseStoreIsRejected() {
+      String tokenId = randomTokenId();
+      L402Credential callerCredential = createTestCredential(tokenId);
+      store.close();
+
+      assertThatThrownBy(() -> store.store(tokenId, callerCredential, 3600))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(store.get(tokenId)).isNull();
+      assertCredentialUsable(callerCredential);
+    }
   }
 
   @Nested

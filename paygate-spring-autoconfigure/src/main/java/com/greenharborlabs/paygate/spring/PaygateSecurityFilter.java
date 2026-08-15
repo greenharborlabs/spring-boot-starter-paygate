@@ -345,27 +345,29 @@ public class PaygateSecurityFilter implements Filter {
 
     long verifyStart = System.nanoTime();
     try {
-      PaymentCredential credential = protocol.parseCredential(authHeader);
       PaygateEndpointConfig config = resolvedEndpoint.config();
-      Map<String, String> requestContext =
-          buildRequestContext(
-              httpRequest,
-              path,
-              method,
-              resolvedEndpoint,
-              RequestDigestSupport.isMppProtocol(protocol));
-      protocol.validate(credential, requestContext);
+      try (PaymentCredential credential = protocol.parseCredential(authHeader)) {
+        Map<String, String> requestContext =
+            buildRequestContext(
+                httpRequest,
+                path,
+                method,
+                resolvedEndpoint,
+                RequestDigestSupport.isMppProtocol(protocol));
+        protocol.validate(credential, requestContext);
 
-      markSuccessfulDecision(httpRequest, resolvedEndpoint);
+        markSuccessfulDecision(httpRequest, resolvedEndpoint);
 
-      log.log(
-          System.Logger.Level.DEBUG, "{0} credential validated successfully", protocol.scheme());
+        log.log(
+            System.Logger.Level.DEBUG, "{0} credential validated successfully", protocol.scheme());
 
-      if ("L402".equals(protocol.scheme())) {
-        handleL402Success(credential, config, httpResponse);
+        if ("L402".equals(protocol.scheme())) {
+          handleL402Success(credential, config, httpResponse);
+        }
+        generateReceipt(credential, config, protocol, httpResponse);
       }
-      generateReceipt(credential, config, protocol, httpResponse);
 
+      // The parsed credential has been closed before protected application code can run.
       chain.doFilter(request, response);
       recordCaveatVerifyDuration(verifyStart);
       recordPassed(resolvedEndpoint.routePattern(), config.priceSats(), protocol.scheme());

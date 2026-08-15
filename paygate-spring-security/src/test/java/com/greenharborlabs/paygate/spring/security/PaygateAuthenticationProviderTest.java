@@ -476,6 +476,7 @@ class PaygateAuthenticationProviderTest {
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
           .containsExactly("ROLE_PAYMENT");
+      assertThat(credential.isDestroyed()).isTrue();
     }
 
     @Test

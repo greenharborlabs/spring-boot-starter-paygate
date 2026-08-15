@@ -122,6 +122,18 @@ class MppCredentialParserTest {
   }
 
   @Test
+  void returnedCredentialOwnsIndependentSensitiveCopiesAndCanBeClosed() {
+    PaymentCredential credential = MppCredentialParser.parse(toBlob(validJson()));
+    byte[] firstCopy = credential.preimage();
+    firstCopy[0] ^= 0x7f;
+
+    assertThat(credential.preimage()).isNotEqualTo(firstCopy);
+    credential.close();
+    assertThat(credential.isDestroyed()).isTrue();
+    assertThatThrownBy(credential::preimage).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
   void parsesValidCredentialWithNullSource() {
     String json = validJson(VALID_PREIMAGE_HEX, VALID_CHALLENGE_ID, "null");
     String blob = toBlob(json);

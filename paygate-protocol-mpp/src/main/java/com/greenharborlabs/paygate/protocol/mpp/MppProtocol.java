@@ -183,15 +183,20 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
       throw mapFailure(ErrorCode.MALFORMED, null);
     }
 
-    // Verify method is "lightning"
-    if (credential.metadata() instanceof MppMetadata mppMetadata) {
-      String method = mppMetadata.echoedChallenge().get("method");
-      if (!"lightning".equals(method)) {
-        throw new UnsupportedPaymentMethodException(credential.tokenId());
+    try {
+      // Verify method is "lightning". A semantic failure still belongs to this protocol, so it
+      // must not leave the successfully parsed bearer credential alive.
+      if (credential.metadata() instanceof MppMetadata mppMetadata) {
+        String method = mppMetadata.echoedChallenge().get("method");
+        if (!"lightning".equals(method)) {
+          throw new UnsupportedPaymentMethodException(credential.tokenId());
+        }
       }
+      return credential;
+    } catch (RuntimeException | Error e) {
+      credential.close();
+      throw e;
     }
-
-    return credential;
   }
 
   @Override

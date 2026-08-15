@@ -37,7 +37,10 @@ public interface PaymentProtocol {
    * Parses a raw {@code Authorization} header into a protocol-agnostic credential.
    *
    * @param authorizationHeader the raw {@code Authorization} header value
-   * @return the parsed credential
+   *     <p>A successful return transfers ownership to the caller, which must close the credential
+   *     after extracting only the non-sensitive facts it needs. Implementations must close any
+   *     credential constructed during a parse that subsequently fails.
+   * @return the caller-owned parsed credential
    * @throws PaymentValidationException if the header is malformed or cannot be parsed
    */
   PaymentCredential parseCredential(String authorizationHeader) throws PaymentValidationException;

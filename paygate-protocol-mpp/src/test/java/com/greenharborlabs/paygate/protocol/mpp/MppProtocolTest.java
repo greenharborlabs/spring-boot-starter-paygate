@@ -504,6 +504,8 @@ class MppProtocolTest {
       assertThat(cred.sourceProtocolScheme()).isEqualTo("Payment");
       assertThat(cred.preimage()).isEqualTo(PREIMAGE);
       assertThat(cred.paymentHash()).isEqualTo(PAYMENT_HASH);
+      cred.close();
+      assertThat(cred.isDestroyed()).isTrue();
     }
 
     @Test
