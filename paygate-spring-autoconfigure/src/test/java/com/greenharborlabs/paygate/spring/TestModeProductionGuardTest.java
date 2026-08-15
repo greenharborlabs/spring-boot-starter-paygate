@@ -25,7 +25,8 @@ class TestModeProductionGuardTest {
               AutoConfigurations.of(
                   PaygateAutoConfiguration.class, TestModeAutoConfiguration.class))
           .withBean(RequestMappingHandlerMapping.class, RequestMappingHandlerMapping::new)
-          .withPropertyValues("paygate.enabled=true", "paygate.test-mode=true");
+          .withPropertyValues(
+              "paygate.enabled=true", "paygate.test-mode=true", "paygate.root-key-store=memory");
 
   // --- Denylist checks ---
 
@@ -40,7 +41,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("production profiles");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -55,7 +56,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("production profiles");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -70,7 +71,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("production profiles");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -139,7 +140,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("requires every active profile to be explicitly safe");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -154,7 +155,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("production profiles");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -171,7 +172,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("requires an explicit dev/test profile");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -184,7 +185,7 @@ class TestModeProductionGuardTest {
           assertThat(context.getStartupFailure())
               .rootCause()
               .isInstanceOf(IllegalStateException.class)
-              .hasMessageContaining("requires an explicit dev/test profile");
+              .hasMessageContaining("active-profiles");
         });
   }
 
@@ -199,7 +200,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("requires an explicit dev/test profile");
+                  .hasMessageContaining("active-profiles");
             });
   }
 }

@@ -45,6 +45,11 @@ public final class ObservableRootKeyStore implements RootKeyStore {
   }
 
   @Override
+  public PersistenceCapability persistenceCapability() {
+    return delegate.persistenceCapability();
+  }
+
+  @Override
   public void close() {
     delegate.close();
   }

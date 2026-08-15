@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -46,6 +47,36 @@ class TestModeConfigTest {
           assertThat(context.getBean(LightningBackend.class))
               .isInstanceOf(TestModeLightningBackend.class);
         });
+  }
+
+  @Test
+  @DisplayName("test mode rejects a replacement effective LightningBackend")
+  void replacementBackendFailsClosed() {
+    contextRunner
+        .withBean(LightningBackend.class, () -> mock(LightningBackend.class))
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .rootCause()
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("effective-lightning-backend");
+            });
+  }
+
+  @Test
+  @DisplayName("test mode rejects an unknown root-key-store setting")
+  void unknownRootKeyStoreFailsClosed() {
+    contextRunner
+        .withPropertyValues("paygate.root-key-store=unknown")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .rootCause()
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("root-key-store");
+            });
   }
 
   @Test

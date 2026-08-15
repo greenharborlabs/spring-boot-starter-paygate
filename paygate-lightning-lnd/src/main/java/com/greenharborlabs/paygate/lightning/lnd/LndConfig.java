@@ -98,4 +98,12 @@ public record LndConfig(
         DEFAULT_MAX_INBOUND_MESSAGE_SIZE,
         DEFAULT_RPC_DEADLINE_SECONDS);
   }
+
+  /** Validates this configuration's plaintext target when plaintext transport is enabled. */
+  ValidatedLndTarget validatedPlaintextTarget() {
+    if (!allowPlaintext) {
+      throw new IllegalStateException("Plaintext target requested for a TLS LND configuration");
+    }
+    return ValidatedLndTarget.validate(host);
+  }
 }

@@ -457,6 +457,13 @@ class InMemoryRootKeyStoreTest {
     }
   }
 
+  @Test
+  @DisplayName("in-memory stores explicitly attest ephemeral persistence")
+  void reportsEphemeralPersistenceCapability() {
+    assertThat(store.persistenceCapability())
+        .isEqualTo(RootKeyStore.PersistenceCapability.EPHEMERAL);
+  }
+
   // --- Test helpers ---
 
   @SuppressWarnings("unchecked")

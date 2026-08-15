@@ -103,7 +103,9 @@ public class PaygateAutoConfiguration {
       case "memory" -> new InMemoryRootKeyStore();
       case "file" ->
           new FileBasedRootKeyStore(Path.of(resolvePath(properties.getRootKeyStorePath())));
-      default -> new FileBasedRootKeyStore(Path.of(resolvePath(properties.getRootKeyStorePath())));
+      default ->
+          throw new IllegalStateException(
+              "Unsupported root-key-store configuration; use memory or file");
     };
   }
 
@@ -567,7 +569,9 @@ public class PaygateAutoConfiguration {
       @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
       @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
-      @Autowired(required = false) CapabilityCache capabilityCache) {
+      @Autowired(required = false) CapabilityCache capabilityCache,
+      org.springframework.beans.factory.ObjectProvider<DevelopmentSafetyPolicy.ValidatedTestMode>
+          validatedTestMode) {
     return new PaygateChallengeService(
         rootKeyStore,
         lightningBackend,
@@ -576,7 +580,8 @@ public class PaygateAutoConfiguration {
         paygateEarningsTracker,
         paygateRateLimiter,
         clientIpResolver,
-        capabilityCache);
+        capabilityCache,
+        validatedTestMode.getIfAvailable() != null);
   }
 
   @Bean
@@ -733,8 +738,12 @@ public class PaygateAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(LndConfig.class)
-    LndConfig lndConfig(PaygateProperties properties) {
+    LndConfig lndConfig(
+        PaygateProperties properties, org.springframework.core.env.Environment environment) {
       var lnd = properties.getLnd();
+      if (lnd.isAllowPlaintext()) {
+        DevelopmentSafetyPolicy.validatePlaintextLnd(environment, lnd.getHost());
+      }
       int rpcDeadline =
           lnd.getRpcDeadlineSeconds() != null
               ? lnd.getRpcDeadlineSeconds()

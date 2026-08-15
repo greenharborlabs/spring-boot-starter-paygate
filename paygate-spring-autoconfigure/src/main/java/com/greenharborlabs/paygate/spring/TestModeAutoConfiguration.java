@@ -1,7 +1,8 @@
 package com.greenharborlabs.paygate.spring;
 
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
-import java.util.Set;
+import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import java.util.List;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -29,50 +30,23 @@ import org.springframework.core.env.Environment;
     havingValue = "true")
 public class TestModeAutoConfiguration {
 
-  private static final Set<String> ALLOWED_PROFILES = Set.of("test", "dev", "local", "development");
-
   TestModeAutoConfiguration(Environment environment) {
-    String[] activeProfiles = environment.getActiveProfiles();
-
-    if (activeProfiles.length == 0) {
-      throw new IllegalStateException(
-          "L402 test mode requires an explicit dev/test profile "
-              + "(test, dev, local, development)");
-    }
-
-    boolean hasSafeProfile = false;
-    boolean hasUnsafeProfile = false;
-    for (String profile : activeProfiles) {
-      String normalizedProfile = profile.trim().toLowerCase(java.util.Locale.ROOT);
-      if (isProductionLike(normalizedProfile)) {
-        throw new IllegalStateException("L402 test mode must not be used with production profiles");
-      }
-      hasSafeProfile |= ALLOWED_PROFILES.contains(normalizedProfile);
-      hasUnsafeProfile |= !ALLOWED_PROFILES.contains(normalizedProfile);
-    }
-    if (!hasSafeProfile) {
-      throw new IllegalStateException(
-          "L402 test mode requires an explicit dev/test profile "
-              + "(test, dev, local, development)");
-    }
-    if (hasUnsafeProfile) {
-      throw new IllegalStateException(
-          "L402 test mode requires every active profile to be explicitly safe "
-              + "(test, dev, local, development)");
-    }
-  }
-
-  private static boolean isProductionLike(String profile) {
-    return profile.equals("prod")
-        || profile.startsWith("prod-")
-        || profile.endsWith("-prod")
-        || profile.contains("-prod-")
-        || profile.contains("production");
+    DevelopmentSafetyPolicy.validateProfiles(environment);
   }
 
   @Bean
   @ConditionalOnMissingBean
   LightningBackend testModeLightningBackend() {
     return new TestModeLightningBackend();
+  }
+
+  @Bean
+  DevelopmentSafetyPolicy.ValidatedTestMode validatedTestMode(
+      Environment environment,
+      PaygateProperties properties,
+      RootKeyStore rootKeyStore,
+      List<LightningBackend> lightningBackends) {
+    return DevelopmentSafetyPolicy.validateTestMode(
+        environment, properties.getRootKeyStore(), rootKeyStore, lightningBackends);
   }
 }

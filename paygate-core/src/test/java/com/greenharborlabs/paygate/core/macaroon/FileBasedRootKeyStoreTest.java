@@ -762,4 +762,11 @@ class FileBasedRootKeyStoreTest {
       assertThat(errors).isEmpty();
     }
   }
+
+  @Test
+  @DisplayName("file-backed stores explicitly attest persistent storage")
+  void reportsPersistentPersistenceCapability() {
+    assertThat(store.persistenceCapability())
+        .isEqualTo(RootKeyStore.PersistenceCapability.PERSISTENT);
+  }
 }

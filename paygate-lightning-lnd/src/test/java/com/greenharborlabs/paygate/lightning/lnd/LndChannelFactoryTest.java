@@ -121,6 +121,28 @@ class LndChannelFactoryTest {
   }
 
   @Test
+  void plaintextChannelRejectsNonLocalHostBeforeChannelCreation() {
+    var config = LndConfig.plaintextForTesting("wallet.example", 10009);
+
+    assertThatThrownBy(() -> LndChannelFactory.create(config))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("approved local target");
+  }
+
+  @Test
+  void plaintextTargetAcceptsLoopbackLiteralsAndRejectsAmbiguousForms() {
+    assertThat(ValidatedLndTarget.validate("127.0.0.1").address().isLoopbackAddress()).isTrue();
+    assertThat(ValidatedLndTarget.validate("::1").address().isLoopbackAddress()).isTrue();
+
+    assertThatThrownBy(() -> ValidatedLndTarget.validate("127.0.0.2.example"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> ValidatedLndTarget.validate("192.168.1.1"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> ValidatedLndTarget.validate("http://localhost"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void nullTlsCertWithoutAllowPlaintextThrowsFromLndConfigConstructor() {
     // The LndConfig constructor validates this invariant first, throwing
     // IllegalArgumentException before the factory's defense-in-depth
@@ -641,8 +663,7 @@ class LndChannelFactoryTest {
     assertThat(response).isNotNull();
     assertThat(channel.isShutdown()).isFalse();
 
-    // Verify the channel string representation includes authority with correct host:port,
-    // confirming the config was wired through properly
-    assertThat(channel.authority()).isEqualTo("localhost:" + port);
+    // Plaintext localhost is connected through the validator's numeric resolution snapshot.
+    assertThat(channel.authority()).endsWith(":" + port).startsWith("127.");
   }
 }

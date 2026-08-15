@@ -177,6 +177,11 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
   }
 
   @Override
+  public PersistenceCapability persistenceCapability() {
+    return PersistenceCapability.PERSISTENT;
+  }
+
+  @Override
   public void close() {
     if (closed) {
       return;

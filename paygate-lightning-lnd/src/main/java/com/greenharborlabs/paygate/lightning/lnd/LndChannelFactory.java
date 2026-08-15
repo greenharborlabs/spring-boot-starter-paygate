@@ -62,9 +62,11 @@ public final class LndChannelFactory {
       warnIfPermissionsAreTooBroad(macaroonPath, "Macaroon");
     }
 
+    ValidatedLndTarget plaintextTarget =
+        config.tlsCertPath() == null ? config.validatedPlaintextTarget() : null;
     try {
       if (config.tlsCertPath() == null) {
-        return buildPlaintextChannel(config);
+        return buildPlaintextChannel(config, plaintextTarget);
       } else {
         return buildTlsChannel(config);
       }
@@ -75,15 +77,13 @@ public final class LndChannelFactory {
     }
   }
 
-  private static ManagedChannel buildPlaintextChannel(LndConfig config) {
+  private static ManagedChannel buildPlaintextChannel(LndConfig config, ValidatedLndTarget target) {
     log.log(
         System.Logger.Level.WARNING,
-        "Building plaintext (unencrypted) gRPC channel to {0}:{1} — use TLS in production",
-        config.host(),
-        config.port());
+        "Building plaintext (unencrypted) local gRPC channel — use TLS in production");
 
     var builder =
-        ManagedChannelBuilder.forAddress(config.host(), config.port())
+        ManagedChannelBuilder.forAddress(target.address().getHostAddress(), config.port())
             .usePlaintext()
             .keepAliveTime(config.keepAliveTimeSeconds(), TimeUnit.SECONDS)
             .keepAliveTimeout(config.keepAliveTimeoutSeconds(), TimeUnit.SECONDS)

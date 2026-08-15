@@ -183,7 +183,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnd.port` | `int` | `10009` | When `paygate.backend=lnd` | Port of the LND gRPC endpoint. |
 | `paygate.lnd.tls-cert-path` | `string` | -- | When `paygate.backend=lnd` (unless plaintext) | Path to the LND TLS certificate (`tls.cert`). |
 | `paygate.lnd.macaroon-path` | `string` | -- | No | Path to the LND admin macaroon file (`admin.macaroon`). |
-| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Allow plaintext gRPC (no TLS). For local development only. |
+| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Explicit local-development opt-in for plaintext gRPC. It requires only `dev`, `local`, `development`, or `test` profiles and an exact `localhost` or loopback-IP target. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | gRPC keepalive ping interval. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Keepalive ping ack timeout. |
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle connection timeout. |
@@ -274,7 +274,7 @@ If `paygate.backend` is set but the corresponding module is not on the classpath
 When `paygate.backend=lnd`, the auto-configuration builds a gRPC `ManagedChannel`:
 
 - If `paygate.lnd.tls-cert-path` is set, the channel uses TLS with the provided certificate. If `paygate.lnd.macaroon-path` is also set, a `MacaroonClientInterceptor` attaches the macaroon hex as gRPC metadata on every call.
-- If `paygate.lnd.tls-cert-path` is not set and `paygate.lnd.allow-plaintext=true`, a plaintext channel is created (a warning is logged). This is only suitable for local development.
+- If `paygate.lnd.tls-cert-path` is not set and `paygate.lnd.allow-plaintext=true`, a plaintext channel is created only after startup verifies a nonempty all-allowed `dev`/`local`/`development`/`test` profile set and an exact `localhost` or loopback-IP target. The connection uses the validated numeric address and emits a secret-free warning. Other hostnames, private/public addresses, URI-shaped values, and mixed/empty localhost resolution fail before channel creation.
 - If neither TLS cert nor plaintext is configured, startup fails with `IllegalStateException`.
 
 ---
@@ -621,10 +621,12 @@ Test mode provides a fully functional L402 flow without requiring a real Lightni
 
 ### Production Safety Guards
 
-Test mode has a two-layer guard to prevent accidental production use:
-
-1. **Production veto:** If any active Spring profile is production-like (`prod` or a production variant), startup fails immediately, even if an allowed profile is also active.
-2. **Explicit allowlist:** Every active profile must be one of `test`, `dev`, `local`, or `development`. Empty, unknown, and mixed safe/unknown profile sets fail closed.
+Test mode has a fail-closed startup guard. Every active profile must be one of `test`, `dev`,
+`local`, or `development`; the set must be nonempty. It also requires `paygate.root-key-store=memory`,
+an effective `EPHEMERAL` root-key-store capability after wrapping or bean overrides, and exactly the
+built-in `TestModeLightningBackend`. Empty, unknown, mixed, persistent, custom, replaced, and
+ambiguous configurations fail before traffic is accepted. Only this validated flow can include a
+`test_preimage` in a challenge, and startup logs one secret-free payment-bypass warning.
 
 ### Usage
 

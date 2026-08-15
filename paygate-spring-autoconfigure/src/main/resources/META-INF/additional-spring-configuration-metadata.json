@@ -31,7 +31,7 @@
     {
       "name": "paygate.root-key-store",
       "type": "java.lang.String",
-      "description": "Root key storage backend for macaroon signing keys. 'file' persists keys to disk; 'memory' keeps keys in-memory (lost on restart).",
+      "description": "Root key storage backend for macaroon signing keys. Supported values are 'file' (persistent) and 'memory' (ephemeral); unknown values are rejected. Test mode requires configured and effective ephemeral memory storage.",
       "defaultValue": "file"
     },
     {
@@ -61,7 +61,7 @@
     {
       "name": "paygate.test-mode",
       "type": "java.lang.Boolean",
-      "description": "Enable test mode which uses an in-memory Lightning backend that auto-settles invoices. Must NOT be used in production. When enabled, no real Lightning node connection is required.",
+      "description": "Enable the synthetic auto-settling test backend. It starts only with nonempty all-allowed dev/local/development/test profiles, configured and effective ephemeral memory storage, and the exact built-in backend; every other configuration is rejected before traffic.",
       "defaultValue": false
     },
     {
@@ -149,6 +149,12 @@
       "type": "java.lang.Integer",
       "description": "Port number of the LND gRPC endpoint.",
       "defaultValue": 10009
+    },
+    {
+      "name": "paygate.lnd.allow-plaintext",
+      "type": "java.lang.Boolean",
+      "description": "Explicit local-development opt-in for unencrypted LND gRPC. Requires only dev/local/development/test profiles and an exact localhost or loopback IP target; arbitrary, private, public, and ambiguous targets are rejected before channel creation.",
+      "defaultValue": false
     },
     {
       "name": "paygate.lnd.tls-cert-path",

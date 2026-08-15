@@ -41,6 +41,7 @@ public class PaygateChallengeService {
   private final PaygateRateLimiter rateLimiter;
   private final ClientIpResolver clientIpResolver;
   private final CapabilityCache capabilityCache;
+  private final boolean validatedTestMode;
   private final ConcurrentHashMap<String, PaygatePricingStrategy> pricingStrategyCache =
       new ConcurrentHashMap<>();
 
@@ -53,6 +54,28 @@ public class PaygateChallengeService {
       @Nullable PaygateRateLimiter rateLimiter,
       @Nullable ClientIpResolver clientIpResolver,
       @Nullable CapabilityCache capabilityCache) {
+    this(
+        rootKeyStore,
+        lightningBackend,
+        properties,
+        applicationContext,
+        earningsTracker,
+        rateLimiter,
+        clientIpResolver,
+        capabilityCache,
+        false);
+  }
+
+  PaygateChallengeService(
+      RootKeyStore rootKeyStore,
+      LightningBackend lightningBackend,
+      @Nullable PaygateProperties properties,
+      @Nullable ApplicationContext applicationContext,
+      @Nullable PaygateEarningsTracker earningsTracker,
+      @Nullable PaygateRateLimiter rateLimiter,
+      @Nullable ClientIpResolver clientIpResolver,
+      @Nullable CapabilityCache capabilityCache,
+      boolean validatedTestMode) {
     this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
     this.lightningBackend =
         Objects.requireNonNull(lightningBackend, "lightningBackend must not be null");
@@ -63,6 +86,7 @@ public class PaygateChallengeService {
     this.rateLimiter = rateLimiter;
     this.clientIpResolver = clientIpResolver;
     this.capabilityCache = capabilityCache;
+    this.validatedTestMode = validatedTestMode;
   }
 
   /**
@@ -313,7 +337,9 @@ public class PaygateChallengeService {
           // Build opaque map for test preimage if present
           Map<String, String> opaque = null;
           byte[] invoicePreimage = invoice.preimage();
-          if (invoicePreimage != null) {
+          if (validatedTestMode
+              && lightningBackend.getClass() == TestModeLightningBackend.class
+              && invoicePreimage != null) {
             opaque = new LinkedHashMap<>();
             opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
           }

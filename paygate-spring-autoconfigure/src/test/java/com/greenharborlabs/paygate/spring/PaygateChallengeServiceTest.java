@@ -623,8 +623,8 @@ class PaygateChallengeServiceTest {
   class TestPreimage {
 
     @Test
-    @DisplayName("opaque map includes hex-encoded test_preimage when invoice has one")
-    void includesPreimageInOpaqueWhenPresent() throws Exception {
+    @DisplayName("custom backends cannot expose a test_preimage without a validated marker")
+    void omitsPreimageWithoutValidatedTestMode() throws Exception {
       when(lightningBackend.isHealthy()).thenReturn(true);
 
       byte[] preimage = new byte[32];
@@ -635,9 +635,7 @@ class PaygateChallengeServiceTest {
       PaygateChallengeService service = createService(createTrackingRootKeyStore());
       ChallengeContext ctx = service.createChallenge(request, config);
 
-      assertThat(ctx.opaque()).isNotNull();
-      assertThat(ctx.opaque()).containsKey("test_preimage");
-      assertThat(ctx.opaque().get("test_preimage")).isEqualTo(HexFormat.of().formatHex(preimage));
+      assertThat(ctx.opaque()).isNull();
     }
 
     @Test

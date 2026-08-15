@@ -65,6 +65,11 @@ public final class InMemoryRootKeyStore implements RootKeyStore {
   }
 
   @Override
+  public PersistenceCapability persistenceCapability() {
+    return PersistenceCapability.EPHEMERAL;
+  }
+
+  @Override
   public void close() {
     if (closed) {
       return;
