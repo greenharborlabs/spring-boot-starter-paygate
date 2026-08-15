@@ -1,6 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -9,9 +8,8 @@ import java.util.stream.Collectors;
  * Verifies that the request client IP matches at least one IP address specified in the {@code
  * client_ip} caveat value (comma-separated).
  *
- * <p>IPv6 addresses are normalized via {@link InetAddress#ofLiteral(String)} before comparison so
- * that equivalent representations (e.g. {@code ::1} and {@code 0:0:0:0:0:0:0:1}) match correctly.
- * Non-IP strings fall back to exact string comparison. Stateless and thread-safe.
+ * <p>Each value is compared literally. The verifier performs no DNS resolution and does not
+ * interpret CIDR or network-range notation. Stateless and thread-safe.
  */
 public class ClientIpCaveatVerifier implements CaveatVerifier {
 
@@ -42,10 +40,9 @@ public class ClientIpCaveatVerifier implements CaveatVerifier {
     // 2. Split, bounds-check, and trim caveat value
     String[] ips = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat, "client_ip");
 
-    // 3. Match request client IP against each allowed IP (normalized for IPv6)
-    String normalizedRequestIp = normalizeIp(requestClientIp);
+    // 3. Match request client IP against each allowed literal value.
     for (String ip : ips) {
-      if (normalizedRequestIp.equals(normalizeIp(ip))) {
+      if (requestClientIp.equals(ip)) {
         return;
       }
     }
@@ -67,30 +64,9 @@ public class ClientIpCaveatVerifier implements CaveatVerifier {
     Set<String> previousIps =
         Arrays.stream(previous.value().split(",", -1))
             .map(String::trim)
-            .map(ClientIpCaveatVerifier::normalizeIp)
             .collect(Collectors.toSet());
     Set<String> currentIps =
-        Arrays.stream(current.value().split(",", -1))
-            .map(String::trim)
-            .map(ClientIpCaveatVerifier::normalizeIp)
-            .collect(Collectors.toSet());
+        Arrays.stream(current.value().split(",", -1)).map(String::trim).collect(Collectors.toSet());
     return previousIps.containsAll(currentIps);
-  }
-
-  /**
-   * Normalizes an IP address string using {@link InetAddress#ofLiteral(String)}. This ensures
-   * equivalent IPv6 representations are canonicalized (e.g. {@code ::1} and {@code 0:0:0:0:0:0:0:1}
-   * both become {@code 0:0:0:0:0:0:0:1}).
-   *
-   * <p>Unlike {@link InetAddress#getByName(String)}, {@code ofLiteral()} never performs DNS lookups
-   * — it throws {@link IllegalArgumentException} for non-IP strings, which we catch and fall back
-   * to the raw input.
-   */
-  private static String normalizeIp(String ip) {
-    try {
-      return InetAddress.ofLiteral(ip).getHostAddress();
-    } catch (IllegalArgumentException _) {
-      return ip;
-    }
   }
 }

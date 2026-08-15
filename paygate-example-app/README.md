@@ -321,7 +321,7 @@ This application is a minimal but complete reference implementation covering the
 | Dynamic pricing | `ExampleController.analyze()` with `pricingStrategy = "analysisPricer"` |
 | Custom pricing strategy | `AnalysisPricingStrategy` implementing `PaygatePricingStrategy` |
 | Unprotected endpoints alongside protected ones | `ExampleController.health()` with no annotation |
-| Dual-protocol support (L402 + MPP) | `application.yml` / `application-dev.yml` with MPP challenge binding secret |
+| Dual-protocol support (L402 + MPP) | `application.yml` with an externally supplied MPP challenge binding secret |
 | Test mode configuration | `application-dev.yml` with `paygate.test-mode=true` |
 | Spring Boot auto-configuration | No manual bean wiring -- the starter auto-configures everything |
 | Integration testing | `ExampleAppIntegrationTest` exercising the full verification path |
@@ -361,21 +361,18 @@ And the `dev` profile overrides (`src/main/resources/application-dev.yml`):
 ```yaml
 paygate:
   test-mode: true
-  protocols:
-    mpp:
-      challenge-binding-secret: dev-only-mpp-test-secret-do-not-use-in-production
 ```
 
-> **Note:** Test mode is enabled only by `application-dev.yml`. Activate `dev` explicitly for local Gradle runs. The root Docker Compose file sets `SPRING_PROFILES_ACTIVE=dev`.
+> **Note:** Test mode is enabled only by `application-dev.yml`. It contains no reusable MPP challenge-binding secret. Activate `dev` explicitly for local Gradle runs. The root Docker Compose file sets `SPRING_PROFILES_ACTIVE=dev`.
 
 ### Dual-Protocol Behavior
 
-When the `dev` profile is active, both L402 and MPP protocols are enabled because:
+When the `dev` profile is active, L402 is enabled by default. To enable MPP as well, supply `PAYGATE_MPP_SECRET` with a secret of at least 32 bytes:
 
-1. L402 is enabled by default (`paygate.protocols.l402.enabled=true`)
-2. MPP is in `auto` mode (default) and the `challenge-binding-secret` is provided in `application-dev.yml`
+1. L402 is enabled by default (`paygate.protocols.l402.enabled=true`).
+2. MPP is in `auto` mode (default) when `paygate.protocols.mpp.challenge-binding-secret` is present and non-blank.
 
-When a client requests a protected endpoint without credentials, the server returns a 402 response with **multiple `WWW-Authenticate` headers** -- one for each active protocol. The client can choose which protocol to use for payment and credential presentation. In production, set `PAYGATE_MPP_SECRET` as an environment variable with a secret of at least 32 bytes.
+When both protocols are active, a client requesting a protected endpoint without credentials receives a 402 response with **multiple `WWW-Authenticate` headers** -- one for each active protocol. The client can choose which protocol to use for payment and credential presentation.
 
 ### Property Reference
 
@@ -415,7 +412,7 @@ paygate-example-app/
     SecurityConfig.java             Security configuration
   src/main/resources/
     application.yml                 Base configuration (protocols, service name)
-    application-dev.yml             Dev profile (test mode, MPP secret)
+    application-dev.yml             Dev profile (test mode)
   src/test/java/
     ExampleAppIntegrationTest.java  Full payment flow integration tests
   Dockerfile                        Multi-stage Docker build

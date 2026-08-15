@@ -1315,7 +1315,7 @@ paygate:
   security-mode: spring-security
 ```
 
-`paygate.security-mode` belongs in the main `application.yml` because it is part of the app's security architecture. Keep dev-only settings such as `paygate.test-mode: true` and local MPP secrets in `application-dev.yml`.
+`paygate.security-mode` belongs in the main `application.yml` because it is part of the app's security architecture. The dev profile contains only `paygate.test-mode: true`; when intentionally enabling MPP, supply its binding secret externally (for example, `PAYGATE_MPP_SECRET`) rather than packaging it in `application-dev.yml`.
 
 ### 7.2 Start the environment
 

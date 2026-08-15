@@ -17,6 +17,7 @@ You do not use this module directly. Instead, add the `paygate-spring-boot-start
 - [@PaymentRequired Annotation](#paymentrequired-annotation)
 - [PaygateResponseWriter](#paygateresponsewriter)
 - [Security Filter](#security-filter)
+- [Operational Security Limitations](#operational-security-limitations)
 - [Rate Limiting](#rate-limiting)
 - [Health Cache](#health-cache)
 - [Health Indicator (Actuator)](#health-indicator-actuator)
@@ -289,6 +290,12 @@ The root key store holds the signing keys for macaroons. Two implementations are
 
 The `~` prefix in `paygate.root-key-store-path` is expanded to `System.getProperty("user.home")`.
 
+The file-backed store requires a filesystem with POSIX permissions and protects the directory and
+new key files accordingly. This is not a substitute for deployment security: root-key directories
+and LND TLS certificate/macaroon paths still rely on secure host ownership, permissions, and
+trusted mount behavior. Do not infer cross-platform filesystem-security guarantees from this
+integration; protect those paths at the operating-system and deployment layers.
+
 ---
 
 ## Credential Cache
@@ -305,6 +312,11 @@ A request that obtained its defensive root-key copy before concurrent revocation
 | No | `InMemoryCredentialStore` | Simple `ConcurrentHashMap`-based store with configurable max size. |
 
 `CaffeineCredentialStore` uses Caffeine's variable expiry API (`Expiry`) so each cached credential expires independently based on its own TTL, rather than a global expiration.
+
+The credential cache is bounded and is only a validation optimization. Cache eviction, expiry, or
+capacity removal does not itself revoke a still-valid credential; a cache miss causes
+authoritative validation to remain server-side. Use root-key revocation (with the per-request
+root-key check described above) when a credential must be invalidated.
 
 Custom `CredentialStore` implementations must treat credentials passed to `store()` as caller-owned. If the store retains credentials in Redis, a database, or another cache, copy them before storing and return caller-owned copies from `get()`. Cache eviction, expiry, replacement, removal, or shutdown must destroy only the store's private retained copies and must not invalidate validation results already returned to callers. If backend removal or destruction fails or becomes uncertain, fail closed and stop serving the affected credential.
 
@@ -385,6 +397,18 @@ Every first-party L402 macaroon has a capability ceiling. A blank endpoint capab
 
 Error responses and diagnostics do not echo full macaroons, preimages, `Authorization` headers, root keys, or sensitive validation reasons. Log only permitted non-secret identifiers and redacted structural metadata.
 
+## Operational Security Limitations
+
+The auto-configuration enforces payment for endpoint selections it can resolve through the
+supported servlet and Spring Security integration paths; it is not a general-purpose request
+firewall. Verify filter placement, redispatch behavior, and application routing configuration in
+the deployed application, especially when using custom filter chains or nonstandard dispatching.
+
+When MPP request-body digest processing is active, `paygate.request-body.max-bytes` bounds the
+captured body. The value must be within the inclusive `SecurityBounds` range of 1 byte through
+16 MiB (16,777,216 bytes). Over-limit requests are rejected before protected handler work. This
+bounded capture does not make arbitrary streaming or upload workloads suitable.
+
 ### 0.1.5 resolver constructor migration
 
 The unused service-name constructor argument has been removed from the Spring Security fallback resolver:
@@ -443,6 +467,12 @@ By default, the filter uses `request.getRemoteAddr()` for rate limiting. If the 
 - Set `paygate.trust-forwarded-headers=true` to read the client IP from the `X-Forwarded-For` header (leftmost value).
 - When an `X-Forwarded-For` header is detected but `trust-forwarded-headers` is `false`, the filter logs a one-time warning suggesting you enable it.
 - When `trust-forwarded-headers` is `false`, spoofed `X-Forwarded-For` headers are ignored, preventing rate limit bypass.
+
+`paygate.rate-limit.ipv6-prefix-length` controls how many leading IPv6 bits (0–128) form a
+rate-limit identity; the default is `/64`. This grouping is an abuse-control bucket, not a user
+identity or authorization boundary. Forwarded addresses are authoritative only when forwarding is
+enabled *and* the direct peer is configured in `paygate.trusted-proxy-addresses`; do not trust
+forwarded headers supplied by untrusted peers.
 
 ### Overriding the Rate Limiter
 

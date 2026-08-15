@@ -167,6 +167,12 @@ Client                                  Server (PaygateSecurityFilter)
 
 Both protocols share the same Lightning invoice -- the client pays once regardless of which protocol it uses for authentication.
 
+### MPP Request Binding and Replay Limitations
+
+An MPP credential is a reusable bearer credential for one exact request identity: HTTP method, application-relative UTF-8 path, raw-query presence and value, and a bounded request-body digest. The raw query is binding-sensitive; it is not parsed, decoded, sorted, or normalized, so differently encoded equivalent queries are different requests.
+
+MPP challenge validation is stateless. A credential may be presented repeatedly until expiry for that same bound request; there is no server-side single-use or replay ledger. Treat the credential and payment preimage as transferable bearer material: anyone who obtains them can use them within those binding and expiry constraints. A request with any different bound component must obtain a new challenge.
+
 ### Protocol Configuration
 
 Control which protocols are active via `paygate.protocols.*` properties:
@@ -197,7 +203,7 @@ The `PaymentProtocol` SPI (`paygate-api`) is the extension point. Each protocol 
 - **Annotation-driven** -- protect any Spring MVC endpoint with `@PaymentRequired(priceSats = 10)`
 - **MPP challenge binding** -- HMAC-SHA256 stateless challenge verification (no credential cache needed for MPP)
 - **`Payment-Receipt` response header** -- MPP returns a receipt after successful validation as proof of payment
-- **Delegation caveat verifiers** -- `path`, `method`, `client_ip` caveats with glob matching (`*` and `**`) and IPv6 normalization
+- **Delegation caveat verifiers** -- `path` caveats with glob matching (`*` and `**`), plus `method` and literal exact-string `client_ip` matching (no DNS or CIDR interpretation)
 - **Spring Security integration** -- optional `paygate-spring-security` module provides `AuthenticationProvider`, `AuthenticationFilter`, and `PaygateAuthenticationToken` for use in Spring Security filter chains
 - **Pluggable Lightning backends** -- LND (gRPC) and LNbits (REST) included; implement `LightningBackend` for others
 - **Dynamic pricing** -- implement `PaygatePricingStrategy` to price based on request content, user tier, or time of day
@@ -582,7 +588,7 @@ Restricts the credential to specific HTTP methods.
 
 Restricts the credential to specific client IP addresses.
 
-- IPv6 normalization via `InetAddress.ofLiteral()` -- ensures `::1` and `0:0:0:0:0:0:0:1` are treated as the same address
+- Literal exact-string matching only; no DNS resolution or CIDR/network-range interpretation occurs (for example, `10.0.0.0/8` is not a range)
 - Multiple IPs can be comma-separated: `client_ip=10.0.0.1,10.0.0.2`
 - When `paygate.trust-forwarded-headers=true`, the client IP is resolved from the `X-Forwarded-For` header using the configured `paygate.trusted-proxy-addresses` list
 

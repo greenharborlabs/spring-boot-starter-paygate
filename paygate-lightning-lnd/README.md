@@ -164,6 +164,19 @@ The TLS certificate and macaroon file are sensitive credentials. Recommended app
 
 The macaroon file is read once at startup and held in memory as zeroizable bytes. Factory-created channels clear those bytes when the channel is shut down. The file path itself may appear in logs, but the macaroon value is never logged.
 
+### Credential Lifecycle and Memory Limits
+
+Zeroization here is best effort, not a complete memory-erasure guarantee. The owner of a closeable sensitive-data resource must call `close()` or `destroy()` at its defined lifecycle boundary; for the factory-created channel, that boundary is application-context shutdown. Custom channel/interceptor owners must arrange equivalent deterministic shutdown. The implementation does not rely on finalizers or `Cleaner`, and garbage collection provides no timing guarantee for credential cleanup.
+
+Ownership transfer must be explicit. When a component takes ownership of a macaroon byte array or other sensitive state, callers must not mutate or destroy it before the owner has finished and closed it. A caller that retains ownership remains responsible for closing or destroying it.
+
+Java and the gRPC/TLS/protobuf stack can create immutable string-backed (for example, Java
+`String`) or copied representations while processing configuration, certificate paths and
+contents, macaroon metadata, and request headers. Application code can zeroize only mutable
+buffers it controls; it cannot erase every JVM, library, or transport copy. Avoid placing
+credential values in strings where a byte-oriented API is available, but account for unavoidable
+copies in the threat model.
+
 ---
 
 ## Architecture

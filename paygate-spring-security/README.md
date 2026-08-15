@@ -645,7 +645,7 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `skipsWhenNonL402AuthorizationHeader` | Bearer/Basic headers: filter chain continues (pass-through to other filters) |
 | `extractsL402CredentialAndAuthenticates` | Valid `L402` header: extracts macaroon and preimage, authenticates, populates SecurityContext |
 | `extractsLsatCredentialAndAuthenticates` | Legacy `LSAT` header: same behavior as `L402` |
-| `returns401WhenAuthenticationFails` | Authentication failure: 401 status, `WWW-Authenticate: L402` header, JSON error body, security context cleared |
+| `returns401WhenAuthenticationFails` | `AuthenticationManager` validation failure: mapped to 401 with `WWW-Authenticate: L402`, a JSON error body, and a cleared security context |
 | `skipsWhenPreimageNotHex` | Invalid preimage format: filter chain continues without authentication attempt |
 | `extractsUppercaseHexPreimageAndAuthenticates` | Uppercase hex preimage accepted |
 | `extractsMixedCaseHexPreimageAndAuthenticates` | Mixed-case hex preimage accepted |
@@ -653,7 +653,6 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `skipsWhenMacaroonEmpty` | Empty macaroon field: filter chain continues |
 | `skipsWhenMacaroonExceedsMaxLength` | Oversized macaroon (>8192 chars): filter chain continues without authentication attempt |
 | `skipsWhenMacaroonContainsInvalidCharacters` | Macaroon with invalid characters: filter chain continues without authentication attempt |
-| `extractsMultiTokenHeaderAndAuthenticates` | Comma-separated multi-token macaroon: extracted as single raw value, authenticates |
 | `skipsWhenMultiTokenExceedsMaxLength` | Oversized multi-token macaroon: filter chain continues without authentication attempt |
 | `passesCapabilityFromRegistryToToken` | Capability from `PaygateEndpointRegistry` is set on the unauthenticated token |
 | `skipsAuthWhenConfigNotFound` | No registered paid endpoint: authentication is skipped |
@@ -672,6 +671,7 @@ Tests use **Mockito** with `MockitoExtension` and Spring's `MockHttpServletReque
 | `returnsNullForNonPaygateAuthentication` | Non-L402 tokens return `null` (Spring Security contract) |
 | `authenticatesValidL402Token` | Valid token: authenticated with `ROLE_L402`, correct tokenId, serviceName, caveat attributes |
 | `throwsBadCredentialsOnValidationFailure` | `L402Exception` wrapped in `BadCredentialsException` with original cause preserved |
+| `rejectsAdditionalMacaroonsThroughRealL402ValidatorParsingPath` | A comma-separated credential is rejected through the real `L402Validator`/`L402Credential` parsing path before root-key or credential-store access |
 | `throwsBadCredentialsWhenComponentsMissing` | L402 token without parsed components is rejected |
 | `allowsNullServiceName` | Null service name is accepted, `serviceName` attribute omitted |
 | `passesRequestedCapabilityThroughToValidatorContext` | Requested capability from token is forwarded to `L402VerificationContext` |

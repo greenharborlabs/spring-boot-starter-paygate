@@ -8,6 +8,22 @@ Docker Compose environments for testing the Paygate Spring Boot Starter (L402 + 
 - ~2 GB free disk space for container images
 - `curl`, `jq`, and `python3` on your host (used by setup and smoke scripts)
 
+## Disposable Test Infrastructure and Credentials
+
+The Compose environments in this directory are disposable local test
+infrastructure, not production deployment templates. They may generate regtest
+LND certificates and macaroons, LNbits test API keys, payment preimages, and
+local payer state. Grant those values only to the test container or local tool
+that needs them, keep mounted credential material scoped to the integration
+environment, and remove the containers and volumes when testing is complete.
+
+Use only test credentials and test wallets here. Never copy real credentials,
+local environment files, generated credentials or secrets, Python virtual
+environments, or interpreter caches into the repository or a production image,
+release, or artifact. The repository ignores the local integration-test state
+that these tools create; tracked example configuration remains the only
+configuration intended to ship with the source.
+
 ## Environments
 
 | File | Backend | What it runs |

@@ -410,6 +410,13 @@ evaluates the first-party `route`, `method`, and active service capability
 boundaries. If any registered or required caveat fails, the credential is
 rejected.
 
+The examples above describe general macaroon predicates, not additional
+Paygate syntax. In particular, Paygate's built-in `client_ip` caveat is a
+literal exact string comparison against the request client-IP value. It does
+not resolve DNS names or interpret CIDR/network ranges. No DNS resolution or CIDR interpretation
+occurs; `10.0.0.0/8` is not an
+IP-range predicate in this implementation.
+
 ### Third-Party Caveats
 
 A third-party caveat is a condition that requires **another service** to
@@ -460,6 +467,14 @@ A third-party caveat is constructed differently from a first-party caveat:
 5. The client **binds** the discharge macaroon to the original macaroon
   (using `HMAC(original_sig, discharge_sig)`) to prevent the discharge
    from being used with a different macaroon.
+
+#### Paygate Limitation: Third-Party Caveats and Additional Macaroons
+
+Paygate does not implement this third-party/discharge-macaroon flow. Its V2
+macaroon parser rejects third-party caveats, and its L402/LSAT credential parser
+rejects additional macaroons rather than partially processing them. A client
+cannot supply a discharge macaroon to make a third-party caveat acceptable; use
+only first-party caveats with Paygate.
 
 ### Which Type Does L402 Use?
 
@@ -801,6 +816,15 @@ key = value
 The key and value are separated by `=` (space, equals sign, space). The
 key uniquely identifies the caveat type. The value's format depends on the
 key.
+
+### Client IP Caveat
+
+Paygate's optional `client_ip` caveat accepts a comma-separated list of exact
+client-IP strings. Every value is compared literally with the client-IP string
+provided by the request integration. It performs no DNS resolution and offers
+no CIDR or network-range interpretation. No DNS resolution or CIDR interpretation
+occurs, so use the exact representation your
+integration supplies rather than a hostname or a range such as `10.0.0.0/8`.
 
 ### Services Caveat
 

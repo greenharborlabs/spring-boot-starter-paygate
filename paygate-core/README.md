@@ -87,7 +87,7 @@ paygate-core/
       CapabilitiesCaveatVerifier.java Verifier for capabilities caveats
       PathCaveatVerifier.java         Verifier for "path" caveats (glob pattern matching)
       MethodCaveatVerifier.java       Verifier for "method" caveats (HTTP method matching)
-      ClientIpCaveatVerifier.java     Verifier for "client_ip" caveats (IPv6 normalization)
+      ClientIpCaveatVerifier.java     Verifier for "client_ip" caveats (literal exact-string matching)
       PathGlobMatcher.java            Path normalization and glob matching utility
       VerificationContextKeys.java    Standard keys for request metadata in verification context
       L402VerificationContext.java    Context object passed to caveat verifiers
@@ -265,7 +265,7 @@ During macaroon verification, `MacaroonVerifier` matches each caveat to a regist
 | `CapabilitiesCaveatVerifier` | `capabilities` | Verifies that the macaroon grants the required capabilities for the request. |
 | `PathCaveatVerifier` | `path` | Comma-separated glob patterns matched against `VerificationContextKeys.REQUEST_PATH`. Rejects encoded slashes (`%2F`), normalizes paths via `PathGlobMatcher`. Supports `*` (one segment) and `**` (zero or more trailing segments). |
 | `MethodCaveatVerifier` | `method` | Comma-separated HTTP methods matched case-insensitively against `VerificationContextKeys.REQUEST_METHOD`. |
-| `ClientIpCaveatVerifier` | `client_ip` | Comma-separated IP addresses matched against `VerificationContextKeys.REQUEST_CLIENT_IP`. Normalizes IPv6 via `InetAddress.ofLiteral()` so equivalent representations (e.g. `::1` and `0:0:0:0:0:0:0:1`) match. Falls back to exact string comparison for non-IP values. |
+| `ClientIpCaveatVerifier` | `client_ip` | Comma-separated client-IP strings matched by literal exact-string comparison against `VerificationContextKeys.REQUEST_CLIENT_IP`. No DNS resolution or CIDR/network-range interpretation occurs. |
 
 ### L402VerificationContext
 
@@ -373,9 +373,9 @@ Verifies that the request HTTP method matches at least one method in the `method
 
 ### ClientIpCaveatVerifier
 
-Verifies that the request client IP matches at least one address in the `client_ip` caveat value. IPv6 addresses are normalized via `InetAddress.ofLiteral()` before comparison so that equivalent representations match correctly. `ofLiteral()` never performs DNS lookups -- non-IP strings fall back to exact string comparison.
+Verifies that the request client IP exactly matches at least one comma-separated value in the `client_ip` caveat. This is literal string matching: no DNS resolution or CIDR/network-range interpretation occurs. Configure the caveat with the exact client-IP string the integration supplies in `REQUEST_CLIENT_IP`; values such as `10.0.0.0/8` are not ranges and match only that same literal string.
 
-**`isMoreRestrictive()`:** Checks that the set of normalized IPs in the current caveat is a subset of the set in the previous caveat.
+**`isMoreRestrictive()`:** Checks that the set of literal client-IP strings in the current caveat is a subset of the set in the previous caveat.
 
 ### CaveatVerifier.isMoreRestrictive()
 
@@ -414,7 +414,7 @@ Verification (in MacaroonVerifier):
   +-- ClientIpCaveatVerifier
         client_ip=10.0.0.1,10.0.0.2
         request=10.0.0.1
-        InetAddress.ofLiteral("10.0.0.1") match --> PASS
+        literal "10.0.0.1" match --> PASS
 
 All caveats passed --> credential accepted
 ```
@@ -561,6 +561,11 @@ The `parse()` method:
 3. Parses the 64-character hex preimage
 4. Extracts the token ID from the macaroon identifier
 5. Returns an `L402Credential` record or throws `L402Exception(MALFORMED_HEADER)`
+
+Only a single primary macaroon is supported. Third-party caveats are rejected by the V2
+macaroon parser, and additional macaroons (including discharge macaroons) in an L402 or LSAT
+Authorization header are rejected by the credential parser. Paygate does not partially process a
+third-party/discharge-macaroon flow.
 
 ### L402Validator
 

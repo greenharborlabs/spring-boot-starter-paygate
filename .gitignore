@@ -39,4 +39,11 @@ bin/
 .env.*.local
 *.env
 !*.env.example
+
+# Local integration-test state (never release with production artifacts)
+/integration-tests/.venv/
+/integration-tests/.pytest_cache/
+/integration-tests/**/__pycache__/
+/integration-tests/.breez-spark-payer/
+/integration-tests/.l402-credential.env
 /reports/

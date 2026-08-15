@@ -256,7 +256,7 @@ Client                                  Server (MppProtocol)
 
 The digest binds a credential to the request method, application-relative UTF-8 path, query presence, exact raw query, and bounded body. The query is not parsed, decoded, sorted, or normalized: absent and explicit-empty queries differ, and query order, duplicate parameters, empty values, and encoding spelling are all part of the identity.
 
-An MPP credential is transferable bearer material. It may be presented repeatedly until expiry for that same bound request; it is not single-use and does not provide replay prevention. A request with any different bound component must obtain its own challenge.
+An MPP credential is transferable bearer material. It may be presented repeatedly until expiry for that same bound request; it is not single-use and does not provide replay prevention because stateless validation keeps no server-side single-use or replay ledger. Treat the credential and payment preimage accordingly: anyone who obtains them can present them within those binding and expiry constraints. A request with any different bound component must obtain its own challenge.
 
 This binding format adds authenticated query presence and raw-query bytes to the older path/body identity. Credentials issued for the older identity do not authorize under this format and clients must obtain a new challenge. Integrations must preserve the servlet raw query rather than reconstructing it from parsed parameters.
 

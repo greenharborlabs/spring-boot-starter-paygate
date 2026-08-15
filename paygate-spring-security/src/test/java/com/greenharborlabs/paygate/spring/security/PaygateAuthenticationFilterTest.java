@@ -540,26 +540,6 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void extractsMultiTokenHeaderAndAuthenticates() throws ServletException, IOException {
-    String secondToken = "c2Vjb25kdG9rZW4=";
-    request.addHeader(
-        "Authorization", "L402 " + VALID_MACAROON_B64 + "," + secondToken + ":" + VALID_PREIMAGE);
-    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
-
-    filter.doFilter(request, response, filterChain);
-
-    ArgumentCaptor<PaygateAuthenticationToken> captor =
-        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
-    verify(authenticationManager).authenticate(captor.capture());
-
-    PaygateAuthenticationToken unauthToken = captor.getValue();
-    assertThat(unauthToken.getComponents().macaroonBase64())
-        .isEqualTo(VALID_MACAROON_B64 + "," + secondToken);
-    assertThat(unauthToken.getComponents().preimageHex()).isEqualTo(VALID_PREIMAGE);
-    verify(filterChain).doFilter(request, response);
-  }
-
-  @Test
   void rejectsOversizedMultiTokenForRegisteredPaidRoute() throws ServletException, IOException {
     String oversizedTokens = "A".repeat(4000) + "," + "B".repeat(4193);
     request.addHeader("Authorization", "L402 " + oversizedTokens + ":" + VALID_PREIMAGE);

@@ -324,12 +324,9 @@ paygate:
 ```yaml
 paygate:
   test-mode: true
-  protocols:
-    mpp:
-      challenge-binding-secret: dev-only-mpp-test-secret-do-not-use-in-production
 ```
 
-The `dev` profile enables test mode (no real Lightning node needed) and provides a development-only MPP challenge binding secret. It is not active unless you select it, for example with `--spring.profiles.active=dev`.
+The `dev` profile enables test mode (no real Lightning node needed). It contains no packaged reusable MPP challenge-binding secret and is not active unless you select it, for example with `--spring.profiles.active=dev`. When MPP is intentionally enabled, supply `PAYGATE_MPP_SECRET` externally with a secret of at least 32 bytes.
 
 ### Key Properties
 
@@ -571,7 +568,7 @@ paygate-example-app-spring-security/
     SecurityExampleController.java      REST endpoints with @PaymentRequired and @PreAuthorize
   src/main/resources/
     application.yml                     Base configuration (security-mode, protocols, service name)
-    application-dev.yml                 Dev profile (test mode, MPP secret)
+    application-dev.yml                 Dev profile (test mode)
   src/test/java/
     SecurityExampleAppIntegrationTest.java   Full payment + authorization flow integration tests
   build.gradle.kts                      Module build file

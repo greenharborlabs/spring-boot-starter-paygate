@@ -124,9 +124,11 @@ Parses a raw `Authorization` header into a protocol-agnostic `PaymentCredential`
    - `tokenId` -- hex-encoded 32-byte token ID from the macaroon identifier
    - `sourceProtocolScheme` -- `"L402"`
    - `source` -- `null` (no source URI for L402)
-   - `metadata` -- an `L402Metadata` record carrying the parsed macaroon, additional macaroons, and raw header
+   - `metadata` -- an `L402Metadata` record carrying the parsed macaroon, an empty additional-macaroon list, and raw header
 
 Throws `PaymentValidationException` with error code `MALFORMED_CREDENTIAL` if the header cannot be parsed.
+
+L402 credential headers contain exactly one primary macaroon. Additional/discharge macaroons and third-party-caveat flows are unsupported and rejected as malformed credentials; they are never partially parsed or retained for downstream processing.
 
 #### `formatChallenge(ChallengeContext context)`
 
@@ -179,7 +181,7 @@ public record L402Metadata(
 | Field | Type | Description |
 |-------|------|-------------|
 | `macaroon` | `Macaroon` | The primary macaroon from the `Authorization` header |
-| `additionalMacaroons` | `List<Macaroon>` | Any additional macaroons presented alongside the primary one (immutable copy via `List.copyOf()`) |
+| `additionalMacaroons` | `List<Macaroon>` | Always empty for parsed headers. It remains an immutable defensive copy (`List.copyOf()`) for metadata construction. |
 | `rawAuthorizationHeader` | `String` | The original `Authorization` header value, preserved for downstream validation by `L402Validator` |
 
 All fields are required (non-null). The compact constructor validates this and creates a defensive copy of the additional macaroons list.
@@ -294,7 +296,7 @@ L402 macaroons use **standard base64 with padding** (`java.util.Base64.getEncode
 
 ### Immutable Metadata
 
-`L402Metadata` is an immutable record. The `additionalMacaroons` list is defensively copied via `List.copyOf()` in the compact constructor, preventing external mutation after construction.
+`L402Metadata` is an immutable record. The `additionalMacaroons` list is defensively copied via `List.copyOf()` in the compact constructor, preventing external mutation after construction. Parsed headers always supply an empty list because L402 rejects additional/discharge macaroons and does not support third-party-caveat flows.
 
 Its `toString()` is deliberately non-recursive and redacts the primary macaroon, additional macaroons, and raw `Authorization` header. It reports only the metadata type, redaction labels, additional-macaroon count, and raw-header length; diagnostics must not include credentials, preimages, root keys, or sensitive validation reasons.
 

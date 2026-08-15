@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -10,11 +11,19 @@ import static org.mockito.Mockito.when;
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.ProtocolMetadata;
+import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
+import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
+import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
@@ -126,6 +135,29 @@ class PaygateAuthenticationProviderTest {
         .hasMessageContaining("L402 authentication failed")
         .hasMessageNotContaining("bad sig")
         .hasCauseInstanceOf(L402Exception.class);
+  }
+
+  @Test
+  void rejectsAdditionalMacaroonsThroughRealL402ValidatorParsingPath() {
+    RootKeyStore rootKeyStore = mock(RootKeyStore.class);
+    CredentialStore credentialStore = mock(CredentialStore.class);
+    var realValidator =
+        new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+    var providerWithRealValidator = new PaygateAuthenticationProvider(realValidator, SERVICE_NAME);
+    var components =
+        L402HeaderComponents.extractOrThrow(
+            "L402 cHJpbWFyeS10b2tlbg==,c2Vjb25kLXRva2Vu:" + "a".repeat(64));
+    var unauthenticatedToken = new PaygateAuthenticationToken(components);
+
+    assertThatThrownBy(() -> providerWithRealValidator.authenticate(unauthenticatedToken))
+        .isInstanceOf(BadCredentialsException.class)
+        .hasMessage("L402 authentication failed")
+        .hasCauseInstanceOf(L402Exception.class)
+        .satisfies(
+            exception ->
+                assertThat(((L402Exception) exception.getCause()).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED_HEADER));
+    verifyNoInteractions(rootKeyStore, credentialStore);
   }
 
   @Test
@@ -565,5 +597,14 @@ class PaygateAuthenticationProviderTest {
 
     String tokenId = HexFormat.of().formatHex(tokenIdBytes);
     return new L402Credential(macaroon, preimage, tokenId);
+  }
+
+  private List<CaveatVerifier> boundaryVerifiers() {
+    return List.of(
+        new ServicesCaveatVerifier(10),
+        new RouteCaveatVerifier(10),
+        new MethodCaveatVerifier(10),
+        new CapabilitiesCaveatVerifier(SERVICE_NAME, 10),
+        new ValidUntilCaveatVerifier(SERVICE_NAME));
   }
 }

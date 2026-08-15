@@ -240,6 +240,14 @@ All byte array fields in immutable records are defensively copied on constructio
 
 Map fields (`ChallengeContext.opaque`, `ChallengeResponse.bodyData`) are wrapped in unmodifiable views via `Map.copyOf()` or `Collections.unmodifiableMap()`.
 
+### Sensitive Data Lifecycle and JVM Limits
+
+Defensive copying protects object ownership and mutation boundaries; it is not a guarantee that every copy of a secret can be erased. Where an API exposes a closeable sensitive-data holder (for example, `SensitiveBytes` in the core module), cleanup is **best effort** and deterministic only when the component that owns it calls `close()` or `destroy()` at its defined lifecycle boundary. Callers must use try-with-resources or otherwise close/destroy resources they own.
+
+Ownership transfer must be explicit. After a component accepts ownership of a sensitive byte array or closeable sensitive state, the caller must not mutate or destroy it prematurely; that component is responsible for closing it. Conversely, a caller that retains ownership must close or destroy the value when its own use ends.
+
+The project does not rely on finalizers or `Cleaner` for timely cleanup, and garbage collection provides no cleanup-timing guarantee. Zeroization can reduce the exposure of mutable buffers controlled by the application, but Java APIs and protocol transports may also create immutable `String` values or additional copies for credentials, certificates, and HTTP headers. Those copies cannot generally be erased by application code, so do not treat best-effort zeroization as a complete memory-erasure guarantee.
+
 ### No Secret Logging
 
 - `ChallengeContext.toString()` returns `ChallengeContext[tokenId=..., priceSats=..., serviceName=...]` -- no payment hash or root key bytes
