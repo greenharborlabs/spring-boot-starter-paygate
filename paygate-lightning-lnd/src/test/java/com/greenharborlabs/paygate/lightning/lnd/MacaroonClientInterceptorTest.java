@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.CallOptions;
+import io.grpc.Channel;
 import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -17,6 +18,7 @@ import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import java.util.HexFormat;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -87,7 +89,7 @@ class MacaroonClientInterceptorTest {
   }
 
   @Test
-  void zeroizeClearsInterceptorOwnedBytesIdempotently() throws Exception {
+  void zeroizeClearsInterceptorOwnedBytesAndRejectsLaterStartsIdempotently() throws Exception {
     byte[] macaroonBytes = {0x01, 0x23, 0x45, 0x67};
     String originalHex = HexFormat.of().formatHex(macaroonBytes);
     var interceptor = new MacaroonClientInterceptor(macaroonBytes);
@@ -98,7 +100,29 @@ class MacaroonClientInterceptorTest {
     interceptor.zeroize();
 
     assertThat(interceptor.isZeroized()).isTrue();
-    assertThat(captureMacaroonHeader(interceptor)).isNotEqualTo(originalHex);
+    assertThat(interceptor.hasClearedMacaroonBytes()).isTrue();
+    assertThat(interceptor.hasEncodedMacaroon()).isFalse();
+    assertThatThrownBy(() -> captureMacaroonHeader(interceptor))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("disposed");
+  }
+
+  @Test
+  void precomputesOneLowercaseEncodingForTenThousandCalls() {
+    var encodings = new AtomicInteger();
+    var interceptor =
+        new MacaroonClientInterceptor(
+            new byte[] {(byte) 0xAB, (byte) 0xCD},
+            bytes -> {
+              encodings.incrementAndGet();
+              return HexFormat.of().formatHex(bytes);
+            });
+
+    for (var call = 0; call < 10_000; call++) {
+      assertThat(captureMacaroonHeaderWithoutTransport(interceptor)).isEqualTo("abcd");
+    }
+
+    assertThat(encodings).hasValue(1);
   }
 
   @Test
@@ -166,6 +190,45 @@ class MacaroonClientInterceptorTest {
       server.shutdownNow();
     }
 
+    return capturedMacaroon.get();
+  }
+
+  private static String captureMacaroonHeaderWithoutTransport(
+      MacaroonClientInterceptor interceptor) {
+    var capturedMacaroon = new AtomicReference<String>();
+    Channel next =
+        new Channel() {
+          @Override
+          public String authority() {
+            return "test";
+          }
+
+          @Override
+          public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
+              MethodDescriptor<ReqT, RespT> method, CallOptions options) {
+            return new ClientCall<>() {
+              @Override
+              public void start(Listener<RespT> listener, Metadata headers) {
+                capturedMacaroon.set(headers.get(MACAROON_KEY));
+              }
+
+              @Override
+              public void request(int count) {}
+
+              @Override
+              public void cancel(String message, Throwable cause) {}
+
+              @Override
+              public void halfClose() {}
+
+              @Override
+              public void sendMessage(ReqT message) {}
+            };
+          }
+        };
+    interceptor
+        .interceptCall(DUMMY_METHOD, CallOptions.DEFAULT, next)
+        .start(new ClientCall.Listener<>() {}, new Metadata());
     return capturedMacaroon.get();
   }
 

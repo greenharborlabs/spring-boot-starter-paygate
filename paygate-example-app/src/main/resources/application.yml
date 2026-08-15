@@ -8,6 +8,9 @@ server:
 paygate:
   enabled: true
   service-name: example-api
+  example:
+    lnbits:
+      auto-provision: false
   protocols:
     mpp:
       challenge-binding-secret: ${PAYGATE_MPP_SECRET:}

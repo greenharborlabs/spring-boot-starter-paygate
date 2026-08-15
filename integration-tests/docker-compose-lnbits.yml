@@ -43,6 +43,7 @@ services:
       PAYGATE_LNBITS_URL: "http://lnbits:5000"
       PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP: "true"
       PAYGATE_LNBITS_API_KEY: "${LNBITS_API_KEY:-}"
+      PAYGATE_EXAMPLE_LNBITS_AUTO_PROVISION: "false"
       # Set LNBITS_API_KEY in .env or the shell before starting this service.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]

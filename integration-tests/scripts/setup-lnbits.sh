@@ -28,7 +28,9 @@ fi
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-lnbits.yml}"
 COMPOSE_WAIT_TIMEOUT_SECONDS="${COMPOSE_WAIT_TIMEOUT_SECONDS:-300}"
 LNBITS_PORT="${LNBITS_PORT:-15000}"
-LNBITS_URL="${LNBITS_URL:-http://localhost:${LNBITS_PORT}}"
+# Provision only through the host loopback mapping. The example container receives the resulting
+# disposable key through .env; it never provisions through a Compose service hostname.
+LNBITS_URL="http://localhost:${LNBITS_PORT}"
 LNBITS_SETUP_USERNAME="${LNBITS_SETUP_USERNAME:-paygate-admin}"
 LNBITS_SETUP_PASSWORD="${LNBITS_SETUP_PASSWORD:-paygate-test-password}"
 
@@ -71,7 +73,7 @@ elif [ "$FIRST_INSTALL_HTTP_STATUS" = "404" ] || [ "$FIRST_INSTALL_HTTP_STATUS" 
   echo "    LNbits first-install endpoint unavailable; continuing."
 else
   echo "ERROR: Failed to initialize LNbits first install."
-  echo "       HTTP $FIRST_INSTALL_HTTP_STATUS: $FIRST_INSTALL_BODY"
+  echo "       HTTP $FIRST_INSTALL_HTTP_STATUS"
   exit 1
 fi
 
@@ -105,7 +107,7 @@ WALLET_BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
 if [ "$WALLET_HTTP_STATUS" != "200" ] && [ "$WALLET_HTTP_STATUS" != "201" ]; then
   echo "ERROR: Failed to create wallet."
-  echo "       HTTP $WALLET_HTTP_STATUS: $WALLET_BODY"
+  echo "       HTTP $WALLET_HTTP_STATUS"
   echo "       Check the LNbits admin UI at ${LNBITS_URL} to create a wallet manually."
   echo "       Then set LNBITS_API_KEY in your .env file."
   exit 1
@@ -115,18 +117,14 @@ fi
 ADMIN_KEY=$(echo "$WALLET_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('adminkey',''))" 2>/dev/null || true)
 
 if [ -z "$ADMIN_KEY" ]; then
-  echo "WARNING: Could not parse adminkey from response."
-  echo "         Raw response: $WALLET_BODY"
+  echo "WARNING: Could not parse an admin key from the LNbits response."
   echo ""
   echo "         You may need to create a wallet manually via the LNbits UI at ${LNBITS_URL}"
   echo "         and copy the Admin API key into your .env file as LNBITS_API_KEY=<key>."
   exit 1
 fi
 
-echo "    Wallet created successfully."
-echo ""
-echo "==> Admin API Key: $ADMIN_KEY"
-echo ""
+echo "    Wallet created successfully; writing disposable key to ignored .env."
 
 # Append or update the key in .env
 if grep -q "^LNBITS_API_KEY=" "$ENV_FILE" 2>/dev/null; then

@@ -21,6 +21,7 @@ class ExampleApplicationPropertiesTest {
 
     assertThat(properties.getProperty("spring.profiles.active")).isNull();
     assertThat(properties.getProperty("paygate.test-mode")).isNull();
+    assertThat(properties.getProperty("paygate.example.lnbits.auto-provision")).isEqualTo(false);
   }
 
   @Test
@@ -39,6 +40,14 @@ class ExampleApplicationPropertiesTest {
 
     assertThat(properties.getProperty("paygate.test-mode")).isEqualTo(true);
     assertThat(properties.getProperty("paygate.protocols.mpp.challenge-binding-secret")).isNull();
+    assertThat(properties.getProperty("paygate.example.lnbits.auto-provision")).isEqualTo(false);
+  }
+
+  @Test
+  @DisplayName("bootstrap initializer is registered before application startup")
+  void bootstrapInitializerIsRegistered() {
+    assertThat(ExampleApplication.application().getInitializers())
+        .anyMatch(initializer -> initializer instanceof LocalWalletBootstrapInitializer);
   }
 
   private PropertySource<?> load(String resourceName) throws IOException {

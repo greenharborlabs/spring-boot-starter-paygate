@@ -66,7 +66,7 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 # Start LNbits (example app needs an API key)
 docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 
-# Create a wallet and write the API key to .env
+# Provision through host loopback and write a disposable API key to ignored .env
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 
 # Now start the example app (picks up LNBITS_API_KEY from .env)
@@ -216,7 +216,10 @@ LNbits 0.12.x may require a super-user key for API wallet creation. If `setup-ln
 
 For local Docker testing, `setup-lnbits.sh` initializes the first-install
 superuser automatically when LNbits redirects to `/first_install`, logs in, and
-stores a fresh wallet admin key in `.env`.
+stores a fresh disposable wallet admin key in ignored `.env`. The example entrypoint only launches
+the JVM; it never provisions through the nonlocal `lnbits` Compose hostname. Compose injects a
+pre-provisioned key and explicitly disables the example auto-provision setting. Starting it without
+that injected key fails safely.
 
 ### Example app fails to connect to LND
 

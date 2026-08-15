@@ -327,6 +327,8 @@ class PaygateResponseWriterTest {
     PaygateResponseWriter.writeInternalError(response);
 
     assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -372,6 +374,8 @@ class PaygateResponseWriterTest {
 
     assertThat(response.getStatus()).isEqualTo(401);
     assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -388,6 +392,8 @@ class PaygateResponseWriterTest {
 
     assertThat(response.getStatus()).isEqualTo(401);
     assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(

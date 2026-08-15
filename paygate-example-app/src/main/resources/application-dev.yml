@@ -1,2 +1,5 @@
 paygate:
   test-mode: true
+  example:
+    lnbits:
+      auto-provision: false

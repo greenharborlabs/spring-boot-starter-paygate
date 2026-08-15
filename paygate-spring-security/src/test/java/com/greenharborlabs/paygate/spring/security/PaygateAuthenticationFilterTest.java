@@ -493,6 +493,8 @@ class PaygateAuthenticationFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -643,6 +645,8 @@ class PaygateAuthenticationFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .contains("INTERNAL_ERROR")
@@ -662,6 +666,8 @@ class PaygateAuthenticationFilterTest {
     filter.doFilter(malformedRequest, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentAsString())
         .isEqualTo(
             "{\"code\": 400, \"error\": \"MALFORMED_URI\", \"message\": \"Invalid request URI\"}");

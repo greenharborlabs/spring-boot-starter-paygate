@@ -363,6 +363,22 @@ paygate:
   test-mode: true
 ```
 
+### Local LNbits bootstrap (explicit opt-in)
+
+The example never provisions a wallet from its container entrypoint. Supply
+`PAYGATE_LNBITS_API_KEY` for ordinary LNbits runs. For a short-lived, host-local development
+experiment only, you may explicitly set `PAYGATE_EXAMPLE_LNBITS_AUTO_PROVISION=true` when the
+backend is `lnbits` and no key is supplied. The bootstrap accepts only a complete `dev`, `local`,
+`development`, or `test` profile set and a loopback IP literal or exact `localhost` target that
+resolves only to loopback addresses. Plain HTTP also requires the existing
+`PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP=true` consent.
+
+It performs one direct bounded health request and one direct bounded wallet-creation request, does
+not follow redirects, and fails startup on timeout, non-success status, oversized/malformed JSON,
+or a missing key. The created key is held only in a highest-precedence in-memory property source.
+The JVM cannot guarantee erasure of that configuration `String`; use this path only for the
+explicitly opted-in, disposable example lifecycle. It never logs, writes, or echoes the key.
+
 > **Note:** Test mode is enabled only by `application-dev.yml`. It contains no reusable MPP challenge-binding secret. Activate `dev` explicitly for local Gradle runs. The root Docker Compose file sets `SPRING_PROFILES_ACTIVE=dev`.
 
 ### Dual-Protocol Behavior
@@ -382,6 +398,7 @@ When both protocols are active, a client requesting a protected endpoint without
 | `paygate.test-mode`    | `true`        | Uses `TestModeLightningBackend` instead of a real node.      |
 | `paygate.service-name` | `example-api` | Appears in macaroon caveats (e.g., `services=example-api:0`).|
 | `paygate.protocols.mpp.challenge-binding-secret` | `${PAYGATE_MPP_SECRET:}` | HMAC secret for MPP challenge binding. When present and non-blank, enables MPP protocol. |
+| `paygate.example.lnbits.auto-provision` | `false` | Explicitly enables the local-only, bounded example LNbits bootstrap when no API key is supplied. |
 
 ### Additional Properties (defaults)
 

@@ -435,6 +435,8 @@ class PaygateAuthenticationEntryPointTest {
     entryPoint.commence(request, response, new BadCredentialsException("credential secret"));
 
     assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .contains("INTERNAL_ERROR")
@@ -453,6 +455,8 @@ class PaygateAuthenticationEntryPointTest {
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
     assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -468,6 +472,8 @@ class PaygateAuthenticationEntryPointTest {
     entryPoint.commence(malformedRequest, response, new BadCredentialsException("test"));
 
     assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     MockHttpServletResponse expected = new MockHttpServletResponse();
     PaygateResponseWriter.writeMalformedUri(expected);

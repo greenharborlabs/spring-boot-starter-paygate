@@ -98,7 +98,7 @@ public final class PaygateResponseWriter {
   /** Writes a sanitized 500 response for internal application or configuration failures. */
   public static void writeInternalError(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -128,7 +128,7 @@ public final class PaygateResponseWriter {
   public static void writeUnauthorized(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
     response.setHeader("WWW-Authenticate", "L402");
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -140,7 +140,7 @@ public final class PaygateResponseWriter {
   public static void writeAuthenticationFailed(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
     response.setHeader("WWW-Authenticate", "L402");
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -161,13 +161,10 @@ public final class PaygateResponseWriter {
       HttpServletResponse response, ChallengeContext context, List<ChallengeResponse> challenges)
       throws IOException {
     response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-    response.setHeader("Cache-Control", "no-store");
-    response.setHeader("X-Content-Type-Options", "nosniff");
+    setSafeErrorHeaders(response, "application/json");
     for (ChallengeResponse challenge : challenges) {
       response.addHeader("WWW-Authenticate", challenge.wwwAuthenticateHeader());
     }
-    response.setContentType("application/json");
-
     var sb = new StringBuilder();
     sb.append("{\"code\": 402, \"message\": \"Payment required\"");
     sb.append(", \"price_sats\": ").append(context.priceSats());
@@ -273,16 +270,13 @@ public final class PaygateResponseWriter {
       throws IOException {
     int status = exception.getHttpStatus();
     response.setStatus(status);
-    response.setHeader("Cache-Control", "no-store");
-    response.setHeader("X-Content-Type-Options", "nosniff");
+    setSafeErrorHeaders(response, "application/problem+json");
 
     if (status == HttpServletResponse.SC_PAYMENT_REQUIRED && challenges != null) {
       for (ChallengeResponse challenge : challenges) {
         response.addHeader("WWW-Authenticate", challenge.wwwAuthenticateHeader());
       }
     }
-
-    response.setContentType("application/problem+json");
 
     var sb = new StringBuilder();
     sb.append("{\"type\": \"")
