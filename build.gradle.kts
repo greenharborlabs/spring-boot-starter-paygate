@@ -5,6 +5,7 @@ plugins {
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.2.2" apply false
     id("com.diffplug.spotless") version "7.2.1" apply false
+    id("org.owasp.dependencycheck") version "13.0.0"
 }
 
 val springBootVersion = "4.0.5"
@@ -80,6 +81,17 @@ nexusPublishing {
 }
 
 val exampleModules = setOf("paygate-example-app", "paygate-example-app-spring-security")
+
+dependencyCheck {
+    autoUpdate = true
+    failOnError = true
+    failBuildOnCVSS = 0F
+    formats = listOf("HTML", "JSON", "JUNIT")
+    outputDirectory.set(layout.buildDirectory.dir("reports/dependency-check"))
+    suppressionFile = layout.projectDirectory.file("config/dependency-check-suppressions.xml").asFile.path
+    failBuildOnUnusedSuppressionRule = true
+    nvd.apiKey = providers.environmentVariable("NVD_API_KEY").orNull
+}
 
 subprojects {
     if (project.name in exampleModules) {
@@ -327,6 +339,9 @@ val supplyChainNegativeControlTasks = mapOf(
     "verifyAgentsMdSecurityNegativeControls" to "scripts/test-agents-md-security.sh",
     "verifyReleaseHygieneNegativeControls" to "scripts/test-release-hygiene.sh",
     "verifyReleaseWorkflowNegativeControls" to "scripts/test-release-workflow.sh",
+    "verifyAddressSecurityFindingNegativeControls" to "scripts/test-address-security-finding-dispositions.sh",
+    "verifyExampleArtifactSafetyNegativeControls" to "scripts/test-example-artifact-safety.sh",
+    "verifyDependencyCheckRiskNegativeControls" to "scripts/test-dependency-check-risk-dispositions.sh",
 ).map { (taskName, scriptPath) ->
     tasks.register<Exec>(taskName) {
         group = "verification"
@@ -355,6 +370,31 @@ val validateFindingDispositions = tasks.register<Exec>("validateFindingDispositi
     outputs.upToDateWhen { false }
 }
 
+val validateAddressSecurityFindingDispositions = tasks.register<Exec>("validateAddressSecurityFindingDispositions") {
+    group = "verification"
+    description = "Validates the eleven-finding DeepSeek security disposition ledger."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-address-security-finding-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val validateDependencyCheckRiskDispositions = tasks.register<Exec>("validateDependencyCheckRiskDispositions") {
+    group = "verification"
+    description = "Rejects dependency suppressions without a scoped, approved, current risk record."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-dependency-check-risk-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyExampleArtifactSafety = tasks.register<Exec>("verifyExampleArtifactSafety") {
+    group = "verification"
+    description = "Checks example source defaults and built boot JARs for secrets and management exposure."
+    dependsOn(":paygate-example-app:bootJar", ":paygate-example-app-spring-security:bootJar")
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/verify-example-artifact-safety.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
 val verifyModuleCoverage = tasks.register("verifyModuleCoverage") {
     group = "verification"
     description = "Enforces the configured JaCoCo coverage minimum for every module."
@@ -373,6 +413,10 @@ tasks.register("releaseReadiness") {
     dependsOn(":paygate-integration-tests:securityTest")
     dependsOn(verifySupplyChainNegativeControls)
     dependsOn(validateFindingDispositions)
+    dependsOn(validateAddressSecurityFindingDispositions)
+    dependsOn(validateDependencyCheckRiskDispositions)
+    dependsOn(verifyExampleArtifactSafety)
+    dependsOn("dependencyCheckAggregate")
     dependsOn(verifyModuleCoverage)
 
     doFirst {

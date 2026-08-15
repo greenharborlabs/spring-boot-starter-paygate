@@ -23,6 +23,8 @@ class PublicSecurityContractTest {
     var api = documentation(workspace, "paygate-api/README.md");
     var lnd = documentation(workspace, "paygate-lightning-lnd/README.md");
     var spring = documentation(workspace, "paygate-spring-autoconfigure/README.md");
+    var security = documentation(workspace, "SECURITY.md");
+    var root = documentation(workspace, "README.md");
 
     SoftAssertions.assertSoftly(
         assertions -> {
@@ -56,6 +58,19 @@ class PublicSecurityContractTest {
               .contains("paygate.request-body.max-bytes")
               .contains("1 byte")
               .contains("16 mib");
+          assertions
+              .assertThat(security)
+              .contains("exact-request")
+              .contains("short expir")
+              .contains("idempot")
+              .contains("consumed-state")
+              .contains("auto-provision")
+              .contains("string");
+          assertions
+              .assertThat(root)
+              .contains("trusted proxy")
+              .contains("not a user identity")
+              .contains("not an authorization boundary");
         });
   }
 

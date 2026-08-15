@@ -1,5 +1,19 @@
 # Security Policy
 
+## Replay, proxies, and example bootstrap
+
+MPP credentials are reusable exact-request bearer material until expiry, not single-use tokens.
+Use short expiries and idempotency or transaction-uniqueness controls for state-changing actions;
+an application may maintain optional consumed-state when one-time business semantics are required.
+
+Forwarded addresses are trusted only at an explicit trusted proxy boundary. IP and IPv6-prefix
+rate-limit buckets are spoofable abuse controls, not a user identity or authorization boundary.
+
+Example LNbits auto-provision is disabled by default. It requires explicit local-development
+consent, a complete allowed profile set, local target validation, bounded direct requests, and an
+in-memory key. A configuration String cannot be reliably zeroized, so this residual risk is
+limited to the opted-in disposable example lifecycle.
+
 ## Supported Versions
 
 | Version | Supported |

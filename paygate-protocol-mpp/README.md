@@ -1,5 +1,15 @@
 # paygate-protocol-mpp
 
+## Replay and state-changing operations
+
+MPP credentials are reusable exact-request bearer material until their authenticated expiry. They
+bind the HTTP method, route, exact raw query, body digest where configured, and capability, but do
+not provide a single-use replay ledger. Use short expiries for all paid routes. For state-changing
+operations, also use application idempotency or transaction-uniqueness controls; deployments that
+need one-time consumption must maintain an application-owned consumed-state record keyed to the
+business operation. Do not treat a payment credential as an authorization substitute for those
+controls.
+
 The MPP (Modern Payment Protocol) implementation for the `spring-boot-starter-paygate` project. This is a **pure Java module with zero external dependencies** -- it depends only on `paygate-api` (which is itself JDK-only) and uses only JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.time`).
 
 **KEY CONSTRAINT:** This module has **NO dependency on `paygate-core`**. It is an entirely independent protocol implementation that shares only the `paygate-api` abstraction layer with the L402 protocol module. This architectural separation ensures that MPP can evolve independently and that applications can include one or both protocol modules without pulling in unnecessary dependencies.
