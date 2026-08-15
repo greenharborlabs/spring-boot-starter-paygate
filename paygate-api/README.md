@@ -25,7 +25,7 @@ Every protocol implementation module -- `paygate-protocol-l402` and `paygate-pro
 
 - **Zero external dependencies.** The compile classpath contains only JDK modules. No Spring, no Jackson, no Apache Commons. This keeps the API lightweight and free of transitive dependency conflicts, making it safe to depend on from any module regardless of its own dependency tree.
 - **Protocol agnosticism.** The types in this module carry payment data without encoding any protocol-specific wire format. The security filter operates on `PaymentCredential` and `ChallengeResponse` without knowing whether the underlying protocol is L402, MPP, or something else entirely.
-- **Immutability.** All public-facing types (`ChallengeContext`, `ChallengeResponse`, `PaymentCredential`, `PaymentReceipt`) are immutable records. Byte array fields are defensively copied on construction and on access. Map fields are wrapped in unmodifiable views.
+- **Immutable values with explicit credential ownership.** `ChallengeContext`, `ChallengeResponse`, and `PaymentReceipt` are immutable records. `PaymentCredential` is a final `AutoCloseable`/`Destroyable` class: it owns defensive copies of its payment hash and preimage, zeroizes them when closed, and rejects later sensitive access. Map fields are wrapped in unmodifiable views.
 - **Constant-time secret comparison.** `ChallengeContext` and `PaymentCredential` use XOR-accumulation comparison for byte array fields in their `equals()` methods. `Arrays.equals` is never used for secret data.
 - **No secret logging.** `toString()` methods on `ChallengeContext` and `PaymentCredential` redact sensitive byte array fields (payment hashes, preimages, root keys) and expose only structural metadata (token IDs, protocol schemes, prices).
 
@@ -128,7 +128,7 @@ The `PaymentProtocol` interface is the primary extension point. Protocol impleme
 |--------|-----------|-------------|
 | `scheme()` | `String scheme()` | Returns the unique scheme identifier (e.g., `"L402"`, `"Payment"`). Used to match `Authorization` headers and format `WWW-Authenticate` challenges. |
 | `canHandle()` | `boolean canHandle(String authorizationHeader)` | Fast, prefix-based check to determine if this protocol recognizes the header format. Must not throw on malformed input. |
-| `parseCredential()` | `PaymentCredential parseCredential(String authorizationHeader)` | Parses a raw `Authorization` header into a protocol-agnostic `PaymentCredential`. Throws `PaymentValidationException` if the header is malformed. |
+| `parseCredential()` | `PaymentCredential parseCredential(String authorizationHeader)` | Parses a raw `Authorization` header into a caller-owned `PaymentCredential`. A successful return transfers ownership to the caller, which must close it; an implementation closes a constructed credential when parsing later fails. Throws `PaymentValidationException` if the header is malformed. |
 | `formatChallenge()` | `ChallengeResponse formatChallenge(ChallengeContext context)` | Formats a `ChallengeContext` into a `WWW-Authenticate` header value and optional response body data. |
 | `validate()` | `void validate(PaymentCredential credential, Map<String, String> requestContext)` | Validates a parsed credential (signature checks, preimage verification, caveat enforcement). Throws `PaymentValidationException` on failure. The `requestContext` map carries per-request data (path, method, client IP) for delegation caveats; pass an empty map if no context is available. |
 | `createReceipt()` | `default Optional<PaymentReceipt> createReceipt(PaymentCredential credential, ChallengeContext context)` | Creates a receipt after successful validation. Returns `Optional.empty()` by default; protocols that support proof-of-payment receipts override this method. |
@@ -142,7 +142,7 @@ The `PaymentProtocol` interface is the primary extension point. Protocol impleme
 | `PaymentProtocol` | interface | SPI for payment protocol implementations. Defines the full lifecycle: header detection, credential parsing, challenge formatting, validation, and receipt creation. |
 | `ChallengeContext` | record | Protocol-agnostic data carrying all information needed to create a payment challenge, including canonical route and actual request method boundary metadata. Produced by `PaygateChallengeService`, consumed by `PaymentProtocol.formatChallenge()`. |
 | `ChallengeResponse` | record | A protocol's formatted challenge output containing the `WWW-Authenticate` header value, the protocol scheme that produced it, and optional body data for the JSON response. |
-| `PaymentCredential` | record | Protocol-agnostic representation of a parsed payment credential: payment hash, preimage, token ID, source protocol scheme, optional payer identity (DID format from MPP), and protocol-specific metadata. |
+| `PaymentCredential` | final class | Protocol-agnostic parsed credential with owned payment-hash and preimage copies, token ID, source protocol scheme, optional payer identity (DID format from MPP), and protocol-specific metadata. It implements `AutoCloseable` and `Destroyable`. |
 | `PaymentReceipt` | record | Data for the `Payment-Receipt` response header: status, HMAC-bound challenge ID, payment method, method-specific reference, amount in satoshis, RFC 3339 timestamp, and protocol scheme. |
 | `ProtocolMetadata` | marker interface | Carried by `PaymentCredential` to hold protocol-specific fields that the core framework does not need to understand. Each protocol module provides its own implementation (e.g., `L402Metadata`, `MppMetadata`). Consumers that know the concrete protocol can cast to the expected subtype. |
 | `PaymentValidationException` | class | Runtime exception thrown when credential validation fails. Carries an `ErrorCode` that determines the HTTP status code and RFC 9457 problem type URI. It may carry a token ID for internal correlation; production logs should use only a short token-ID prefix. |
@@ -231,14 +231,20 @@ private static boolean constantTimeEquals(byte[] a, byte[] b) {
 
 This prevents timing side-channel attacks when comparing payment hashes, preimages, and root key bytes. `Arrays.equals` is **never** used for secret data.
 
-### Defensive Copying
+### Defensive Copying and PaymentCredential Lifecycle
 
-All byte array fields in immutable records are defensively copied on construction and on access. This prevents external mutation of internal state:
+Byte array fields are defensively copied on construction and on access. This prevents external mutation of internal state:
 
 - `ChallengeContext`: `paymentHash` and `rootKeyBytes` are cloned in the compact constructor and in accessors
-- `PaymentCredential`: `paymentHash` and `preimage` are cloned in the compact constructor and in accessors
+- `PaymentCredential`: `paymentHash` and `preimage` are cloned by the constructor and each sensitive accessor returns a new caller-owned copy
 
 Map fields (`ChallengeContext.opaque`, `ChallengeResponse.bodyData`) are wrapped in unmodifiable views via `Map.copyOf()` or `Collections.unmodifiableMap()`.
+
+`PaymentCredential.close()` delegates to idempotent `destroy()`. A credential owner must close it
+after its final validation or non-sensitive extraction; servlet and Spring Security enforcement do
+so before protected execution or authentication publication. After destruction, `paymentHash()`
+and `preimage()` fail predictably instead of exposing cleared material. The API cannot close copies
+returned to callers, so callers that treat those arrays as sensitive must clear their own copies.
 
 ### Sensitive Data Lifecycle and JVM Limits
 

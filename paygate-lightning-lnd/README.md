@@ -145,7 +145,7 @@ paygate.lnd.macaroon-path=/path/to/invoice.macaroon
 | `paygate.lnd.port` | `int` | `10009` | No | Port number of the LND gRPC endpoint. LND defaults to `10009`. |
 | `paygate.lnd.tls-cert-path` | `string` | `null` | Yes* | Absolute path to the LND TLS certificate file (`tls.cert`). Required unless `allow-plaintext=true`. |
 | `paygate.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup and attached to every gRPC call as lower-case hex metadata. |
-| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC connections. Intended only for local development with a localhost LND node. A warning is logged when active. |
+| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC only with an all-allowed `dev`, `local`, `development`, or `test` profile set and a loopback literal or exact `localhost` resolving entirely to loopback. Other hostnames, Docker service names, private/public addresses, malformed targets, and mixed/empty resolution fail before channel creation. A secret-free warning is logged when active. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | Interval between gRPC keepalive pings. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Timeout for keepalive ping acknowledgement. |
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle gRPC connection timeout. |
@@ -162,7 +162,11 @@ The TLS certificate and macaroon file are sensitive credentials. Recommended app
 - **Docker volume mounts**: Mount LND credential files into the container and reference the mount paths
 - **Kubernetes secrets**: Mount as files via secret volumes
 
-The macaroon file is read once at startup and held in memory as zeroizable bytes. Factory-created channels clear those bytes when the channel is shut down. The file path itself may appear in logs, but the macaroon value is never logged.
+The macaroon file is read once at startup and held in memory as zeroizable bytes. The interceptor
+precomputes one canonical lower-case metadata encoding for its lifecycle rather than allocating a
+new full encoding per RPC. Factory-created channels clear mutable credential bytes, release that
+encoding, and reject later interceptor starts when the channel is shut down. The file path itself
+may appear in logs, but the macaroon value is never logged.
 
 ### Credential Lifecycle and Memory Limits
 

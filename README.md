@@ -344,7 +344,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.root-key-store-path` | `string` | `~/.paygate/keys` | Directory for file-based root key storage. |
 | `paygate.credential-cache-max-size` | `int` | `10000` | Maximum cached credentials. |
 | `paygate.security-mode` | `string` | `auto` | Security integration mode: `auto`, `servlet`, or `spring-security`. See [Spring Security Integration](#spring-security-integration). |
-| `paygate.test-mode` | `boolean` | `false` | Enable test mode (dummy invoices, auto-settle). |
+| `paygate.test-mode` | `boolean` | `false` | Enable test mode only with a nonempty all-allowed `dev`, `local`, `development`, or `test` profile set, `root-key-store=memory`, an effective ephemeral store, and the built-in synthetic backend. |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Trust `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. |
 | `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Advanced acknowledgement for intentional Spring Security enforcement outside the inspectable filter chain. |
 | `paygate.actuator.enabled` | `boolean` | `false` | Register the sensitive `/actuator/paygate` endpoint when Actuator is present. |
@@ -410,7 +410,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.lnd.port` | `int` | `10009` | LND gRPC port. |
 | `paygate.lnd.tls-cert-path` | `string` | -- | Path to LND TLS certificate. Omit for plaintext (dev only). |
 | `paygate.lnd.macaroon-path` | `string` | -- | Path to LND admin macaroon file. |
-| `paygate.lnd.allow-plaintext` | `boolean` | `false` | Allow plaintext gRPC (no TLS). Dev only. |
+| `paygate.lnd.allow-plaintext` | `boolean` | `false` | Allow plaintext gRPC only for an all-allowed development profile set and a loopback literal or exact `localhost` resolving entirely to loopback; unsafe targets fail before a channel is created. |
 | `paygate.lnd.rpc-deadline-seconds` | `int` | -- | Per-call gRPC deadline. Overrides `paygate.lightning.timeout-seconds` when set. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | Interval between gRPC keepalive pings. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | Timeout for keepalive ping acknowledgement. |
@@ -800,6 +800,14 @@ In test mode:
 The example app activates test mode via the `dev` profile (`application-dev.yml` sets `paygate.test-mode: true`), not directly in `application.yml`.
 
 **Safety guard:** Test mode requires at least one active `test`, `dev`, `local`, or `development` profile and refuses to start if any active profile is `production` or `prod` (case-insensitive).
+
+The complete guard also requires `paygate.root-key-store=memory`, an effective ephemeral root-key
+store, and exactly the built-in test backend. `test_preimage` is emitted only after those checks
+pass. Plaintext LND uses the same complete profile policy and accepts only loopback IP literals or
+exact `localhost` that resolves entirely to loopback; remote TLS remains unchanged. Example LNbits
+wallet bootstrap is disabled by default and, when deliberately enabled, requires explicit local
+consent, the complete allowed profile set, a local target, bounded direct requests, and an
+in-memory key. It never provisions through a Docker service hostname.
 
 ---
 

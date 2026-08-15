@@ -523,6 +523,7 @@ Credential ownership follows a caller-owned boundary:
 - `get()` returns a caller-owned copy. Later cache eviction, expiry, replacement, `revoke()`, or `close()` must not invalidate credentials or validation results already returned to callers.
 - `revoke()`, expiry, replacement, backend removal, and `close()` may destroy only private retained copies owned by the store.
 - Stores that retain payment preimages must define invalidate-all behavior for shutdown or administrative cache clearing, and must zeroize only their own retained preimage bytes.
+- Closing a built-in store is terminal: a racing insertion either becomes a private entry that shutdown destroys or is rejected and its speculative copy is destroyed. After close, reads are absent, the count is zero, and repeated close is safe.
 - Custom backends should fail closed if destruction, expiry, or backend removal is uncertain or fails: do not serve removed, expired, or uncertain credentials.
 
 ### InMemoryCredentialStore

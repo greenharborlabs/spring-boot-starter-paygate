@@ -588,6 +588,11 @@ The entry point implements Spring Security's `AuthenticationEntryPoint` interfac
 5. Falls back to 503 if the Lightning backend is unavailable (fail-closed)
 6. Returns 429 with `Retry-After` if the rate limiter rejects the request
 
+Every Paygate-generated authentication failure preserves its existing protocol response while
+adding `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. A successfully parsed
+credential is closed after validation and non-sensitive fact extraction, before an authenticated
+token is published to the `SecurityContext`.
+
 Register it in your `SecurityFilterChain`:
 
 ```java

@@ -628,6 +628,11 @@ built-in `TestModeLightningBackend`. Empty, unknown, mixed, persistent, custom, 
 ambiguous configurations fail before traffic is accepted. Only this validated flow can include a
 `test_preimage` in a challenge, and startup logs one secret-free payment-bypass warning.
 
+Paygate-generated 401, 402, malformed-credential, validation-failure, and authentication-failure
+responses also include `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. These
+headers do not replace the existing status, bounded body, content type, or protocol-required
+`WWW-Authenticate` challenge header.
+
 ### Usage
 
 ```yaml

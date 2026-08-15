@@ -105,13 +105,23 @@ For the defense-in-depth release, run the gates in this order so failures remain
 
 - [ ] Every supported finding row names verified implementation, regression, documentation, and command evidence. This gate intentionally fails while supported ledger rows remain `planned` or otherwise incomplete; update evidence only from executed checks.
 
-5. Run the composed final local gate last:
+5. Run current dependency, built-artifact, and DeepSeek-ledger gates before the final composition:
+
+```bash
+./gradlew dependencyCheckAggregate verifyExampleArtifactSafety validateAddressSecurityFindingDispositions
+```
+
+- [ ] Dependency-Check refreshes current vulnerability data and produces HTML, JSON, and JUnit reports. Any suppression must be approved, scoped, unexpired, and matched to a current risk record.
+- [ ] Built example artifacts and source defaults contain no embedded credentials or unintended management exposure.
+- [ ] All eleven DeepSeek rows (`L1`–`L3`, `I1`–`I8`) have complete evidence. Promote a row only from the recorded command results; preserve `planned` or `implemented` for any failing or skipped gate.
+
+6. Run the composed final local gate last:
 
 ```bash
 ./gradlew releaseReadiness -Pintegration
 ```
 
-- [ ] The final gate passes with `-Pintegration`; it composes module builds, dependency health, aggregate Javadoc, integration/security suites, negative controls, disposition validation, and module coverage.
+- [ ] The final gate passes with `-Pintegration`; it composes module builds, dependency health, aggregate Javadoc, integration/security suites, dependency scanning and risk validation, example-artifact safety, both disposition validators, negative controls, and module coverage.
 - [ ] No local command is described as provenance, attestation, protected-environment approval, or proof of the bytes later published by GitHub Actions.
 
 Optional consumer-resolution check after the required gates:
