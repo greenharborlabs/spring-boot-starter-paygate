@@ -245,7 +245,7 @@ class TimeoutEnforcingLightningBackendWrapperTest {
 
   @Test
   @DisplayName("completed operations run on virtual threads that terminate")
-  void completedOperationsUseTerminatedVirtualThreads() {
+  void completedOperationsUseTerminatedVirtualThreads() throws InterruptedException {
     var workerThread = new AtomicReference<Thread>();
     LightningBackend delegate =
         new StubBackend() {
@@ -261,6 +261,7 @@ class TimeoutEnforcingLightningBackendWrapperTest {
       assertThat(wrapper.createInvoice(100, "test")).isNotNull();
       assertThat(workerThread.get()).isNotNull();
       assertThat(workerThread.get().isVirtual()).isTrue();
+      workerThread.get().join(1_000);
       assertThat(workerThread.get().getState()).isEqualTo(Thread.State.TERMINATED);
     } finally {
       wrapper.close();
