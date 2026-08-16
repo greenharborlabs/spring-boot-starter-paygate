@@ -33,6 +33,8 @@ validate_expected_configuration() {
     and .actions.allowedActions == "selected"
     and .actions.shaPinningRequired == true
     and (.actions.patternsAllowed | length > 0)
+    and (.actions.patternsAllowed | index("actions/attest-build-provenance/predicate@*") != null)
+    and (.actions.patternsAllowed | index("actions/attest@*") != null)
     and .ruleset.includeRefs == ["refs/heads/main"]
     and .ruleset.requiredStatusChecks == ["CI / pr-gate", "Security / security-gate"]
     and .ruleset.requiredApprovals == 0

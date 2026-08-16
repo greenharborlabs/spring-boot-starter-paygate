@@ -26,6 +26,8 @@
     "verifiedAllowed": false,
     "patternsAllowed": [
       "actions/attest-build-provenance@*",
+      "actions/attest-build-provenance/predicate@*",
+      "actions/attest@*",
       "actions/cache@*",
       "actions/checkout@*",
       "actions/dependency-review-action@*",
