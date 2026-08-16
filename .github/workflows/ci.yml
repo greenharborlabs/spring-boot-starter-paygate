@@ -59,7 +59,7 @@ jobs:
 
           while IFS= read -r -d '' file; do
             case "$file" in
-              */src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
+              gradle/verification-metadata.xml|*/src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
                 continue
                 ;;
             esac
