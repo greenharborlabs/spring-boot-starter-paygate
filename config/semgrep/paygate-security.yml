@@ -1,0 +1,38 @@
+rules:
+  - id: paygate.no-threadlocal-jca-mac
+    languages: [java]
+    severity: ERROR
+    message: Create a fresh JCA Mac per operation; ThreadLocal JCA objects are unsafe with virtual threads.
+    patterns:
+      - pattern-either:
+          - pattern: new ThreadLocal<Mac>(...)
+          - pattern: ThreadLocal<Mac> $MAC = ...;
+
+  - id: paygate.no-static-jca-mac
+    languages: [java]
+    severity: ERROR
+    message: Do not cache mutable JCA Mac instances; create one with Mac.getInstance for each operation.
+    patterns:
+      - pattern-either:
+          - pattern: static Mac $MAC = ...;
+          - pattern: static final Mac $MAC = ...;
+
+  - id: paygate.no-sensitive-arrays-equals
+    languages: [java]
+    severity: ERROR
+    message: Secret material must use the repository constant-time comparison helper, not Arrays.equals.
+    patterns:
+      - pattern: Arrays.equals($LEFT, $RIGHT)
+      - metavariable-regex:
+          metavariable: $LEFT
+          regex: (?i).*(key|secret|preimage|macaroon|token|signature|paymentHash).*
+
+  - id: paygate.no-sensitive-token-logging
+    languages: [java]
+    severity: ERROR
+    message: Do not log macaroon, token, preimage, secret, or key values.
+    patterns:
+      - pattern: $LOGGER.log(..., $VALUE, ...)
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: (?i)^(macaroon|token|preimage|secret|key)(bytes|value|raw)?$

@@ -36,6 +36,7 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -80,7 +81,7 @@ class DefenseInDepthSecurityIT {
   @TestPropertySource(
       properties = {
         "paygate.enabled=true",
-        "paygate.test-mode=true",
+        "paygate.test-mode=false",
         "paygate.root-key-store=memory",
         "paygate.service-name=release-gate",
         "paygate.security-mode=spring-security",
@@ -101,6 +102,7 @@ class DefenseInDepthSecurityIT {
     @BeforeEach
     void resetState() {
       backend.setHealthy(true);
+      backend.clearPreimage();
       handlerCalls.reset();
       protocol.setChallengeFormattingAvailable(true);
     }
@@ -120,8 +122,8 @@ class DefenseInDepthSecurityIT {
     @DisplayName("accepted Go-compatible L402 and canonical MPP vectors reach the handler")
     void acceptsL402AndMppInteroperabilityVectors() throws Exception {
       try (var client = HttpClient.newHttpClient()) {
-        assertAcceptedL402(client, port, handlerCalls);
-        assertAcceptedMpp(client, port, handlerCalls);
+        assertAcceptedL402(client, port, backend, handlerCalls);
+        assertAcceptedMpp(client, port, backend, handlerCalls);
 
         assertThat(handlerCalls.get()).isEqualTo(2);
       }
@@ -179,7 +181,7 @@ class DefenseInDepthSecurityIT {
   @TestPropertySource(
       properties = {
         "paygate.enabled=true",
-        "paygate.test-mode=true",
+        "paygate.test-mode=false",
         "paygate.root-key-store=memory",
         "paygate.service-name=release-gate",
         "paygate.security-mode=servlet",
@@ -200,6 +202,7 @@ class DefenseInDepthSecurityIT {
     @BeforeEach
     void resetState() {
       backend.setHealthy(true);
+      backend.clearPreimage();
       handlerCalls.reset();
       protocol.setChallengeFormattingAvailable(true);
     }
@@ -219,8 +222,8 @@ class DefenseInDepthSecurityIT {
     @DisplayName("accepted Go-compatible L402 and canonical MPP vectors reach the handler")
     void acceptsL402AndMppInteroperabilityVectors() throws Exception {
       try (var client = HttpClient.newHttpClient()) {
-        assertAcceptedL402(client, port, handlerCalls);
-        assertAcceptedMpp(client, port, handlerCalls);
+        assertAcceptedL402(client, port, backend, handlerCalls);
+        assertAcceptedMpp(client, port, backend, handlerCalls);
 
         assertThat(handlerCalls.get()).isEqualTo(2);
       }
@@ -267,11 +270,11 @@ class DefenseInDepthSecurityIT {
     return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
   }
 
-  private static void assertAcceptedL402(HttpClient client, int port, HandlerCalls handlerCalls)
+  private static void assertAcceptedL402(
+      HttpClient client, int port, BackendControl backend, HandlerCalls handlerCalls)
       throws Exception {
     var challenge = get(client, port, PAID_PATH, null);
     assertDualProtocolChallenge(challenge);
-    var body = responseBody(challenge);
     var header =
         challenge.headers().allValues("WWW-Authenticate").stream()
             .filter(value -> value.startsWith("L402"))
@@ -282,7 +285,7 @@ class DefenseInDepthSecurityIT {
     var macaroon = matcher.group(1);
     var macaroonBytes = Base64.getDecoder().decode(macaroon);
     assertThat(macaroonBytes[0]).as("go-macaroon V2 wire discriminator").isEqualTo((byte) 0x02);
-    var preimage = (String) body.get("test_preimage");
+    var preimage = backend.preimageHex();
     assertThat(preimage).matches("[0-9a-f]{64}");
 
     var accepted = get(client, port, PAID_PATH, "L402 " + macaroon + ":" + preimage);
@@ -293,7 +296,8 @@ class DefenseInDepthSecurityIT {
   }
 
   @SuppressWarnings("unchecked")
-  private static void assertAcceptedMpp(HttpClient client, int port, HandlerCalls handlerCalls)
+  private static void assertAcceptedMpp(
+      HttpClient client, int port, BackendControl backend, HandlerCalls handlerCalls)
       throws Exception {
     var challenge = get(client, port, PAID_PATH, null);
     assertDualProtocolChallenge(challenge);
@@ -301,7 +305,7 @@ class DefenseInDepthSecurityIT {
     var protocols = (Map<String, Object>) body.get("protocols");
     var paymentChallenge = new TreeMap<>((Map<String, Object>) protocols.get("Payment"));
     var payload = new TreeMap<String, Object>();
-    var preimage = (String) body.get("test_preimage");
+    var preimage = backend.preimageHex();
     assertThat(preimage).matches("[0-9a-f]{64}");
     payload.put("preimage", preimage);
     var credential = new TreeMap<String, Object>();
@@ -466,9 +470,10 @@ class DefenseInDepthSecurityIT {
     }
   }
 
-  static final class BackendControl {
+  static final class BackendControl implements AutoCloseable {
 
     private final AtomicBoolean healthy = new AtomicBoolean(true);
+    private final AtomicReference<byte[]> lastPreimage = new AtomicReference<>();
 
     boolean isHealthy() {
       return healthy.get();
@@ -476,6 +481,33 @@ class DefenseInDepthSecurityIT {
 
     void setHealthy(boolean value) {
       healthy.set(value);
+    }
+
+    void recordPreimage(byte[] preimage) {
+      var previous = lastPreimage.getAndSet(preimage.clone());
+      if (previous != null) {
+        java.util.Arrays.fill(previous, (byte) 0);
+      }
+    }
+
+    String preimageHex() {
+      var preimage = lastPreimage.get();
+      if (preimage == null) {
+        throw new IllegalStateException("controlled backend has not created an invoice");
+      }
+      return HexFormat.of().formatHex(preimage);
+    }
+
+    void clearPreimage() {
+      var preimage = lastPreimage.getAndSet(null);
+      if (preimage != null) {
+        java.util.Arrays.fill(preimage, (byte) 0);
+      }
+    }
+
+    @Override
+    public void close() {
+      clearPreimage();
     }
   }
 
@@ -576,6 +608,7 @@ class DefenseInDepthSecurityIT {
       preimage[29] = (byte) (number >>> 16);
       preimage[30] = (byte) (number >>> 8);
       preimage[31] = (byte) number;
+      control.recordPreimage(preimage);
       var paymentHash = sha256(preimage);
       preimages.put(HexFormat.of().formatHex(paymentHash), preimage.clone());
       var now = Instant.now();

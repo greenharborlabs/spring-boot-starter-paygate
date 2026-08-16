@@ -49,6 +49,7 @@ import tools.jackson.databind.json.JsonMapper;
     properties = {
       "paygate.enabled=true",
       "paygate.test-mode=true",
+      "paygate.root-key-store=memory",
       "paygate.service-name=example-api",
       "paygate.protocols.mpp.challenge-binding-secret=credential-boundary-test-secret-at-least-32-bytes",
       "paygate.rate-limit.burst-size=1000"
@@ -304,6 +305,11 @@ class CredentialBoundaryIT {
     @Override
     public void revokeRootKey(byte[] keyId) {
       delegate.revokeRootKey(keyId);
+    }
+
+    @Override
+    public PersistenceCapability persistenceCapability() {
+      return PersistenceCapability.EPHEMERAL;
     }
 
     void deleteWithoutEvent(byte[] keyId) {

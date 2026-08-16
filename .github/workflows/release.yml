@@ -1,35 +1,113 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact non-snapshot version from gradle.properties
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
-  verify-release:
-    name: Verify release evidence
+  verify-request:
+    name: Verify protected main and release request
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      attestations: write
-      id-token: write
+      checks: read
+      security-events: read
+    outputs:
+      sha: ${{ steps.request.outputs.sha }}
+      tag: ${{ steps.request.outputs.tag }}
+      version: ${{ steps.request.outputs.version }}
 
     steps:
-      - name: Checkout
+      - name: Checkout requested commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Verify tag is on main
+      - name: Verify version, exact main SHA, collisions, and CodeQL evidence
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Release tags must point to commits already on main"
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases must be dispatched from main"
             exit 1
           fi
+
+          git fetch --no-tags origin main
+          verified_sha=$(git rev-parse origin/main)
+          if [ "$GITHUB_SHA" != "$verified_sha" ]; then
+            echo "::error::The dispatched SHA is not the exact current origin/main SHA"
+            exit 1
+          fi
+
+          gradle_version=$(sed -n 's/^version=//p' gradle.properties)
+          if [ -z "$gradle_version" ] || [ "$REQUESTED_VERSION" != "$gradle_version" ]; then
+            echo "::error::Requested version does not exactly match gradle.properties"
+            exit 1
+          fi
+          if [[ "$gradle_version" == *-SNAPSHOT ]] || [[ ! "$gradle_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::Release version is a snapshot or is not a supported version"
+            exit 1
+          fi
+
+          tag="v$gradle_version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
+            tag_sha=$(git rev-list -n 1 "$tag")
+            if [ "$tag_sha" != "$verified_sha" ]; then
+              echo "::error::Existing tag $tag points to a different commit"
+              exit 1
+            fi
+          fi
+
+          check_runs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits/$verified_sha/check-runs" -f per_page=100)
+          if ! jq -e --arg sha "$verified_sha" \
+            '.check_runs | any(.name == "analyze" and .head_sha == $sha and .conclusion == "success")' \
+            <<<"$check_runs" >/dev/null; then
+            echo "::error::No successful CodeQL analyze check exists for the exact release SHA"
+            exit 1
+          fi
+
+          {
+            printf 'sha=%s\n' "$verified_sha"
+            printf 'tag=%s\n' "$tag"
+            printf 'version=%s\n' "$gradle_version"
+          } >> "$GITHUB_OUTPUT"
+
+  deterministic-security:
+    needs: verify-request
+    uses: ./.github/workflows/security-suite.yml
+    with:
+      dependency-review: false
+    permissions:
+      contents: read
+
+  build-release:
+    name: Build complete unsigned release repository
+    needs: [verify-request, deterministic-security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout verified main SHA
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.verify-request.outputs.sha }}
+          persist-credentials: false
 
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
@@ -46,99 +124,155 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
+          key: release-gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
           restore-keys: |
-            gradle-${{ runner.os }}-
-
-      - name: Verify release version matches tag
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          GRADLE_VERSION=$(grep -oP '^version=\K.*' gradle.properties)
-          if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match gradle.properties version ($GRADLE_VERSION)"
-            exit 1
-          fi
-          if [[ "$GRADLE_VERSION" == *-SNAPSHOT ]]; then
-            echo "::error::Cannot release a SNAPSHOT version"
-            exit 1
-          fi
+            release-gradle-${{ runner.os }}-
 
       - name: Run release readiness gate
         run: ./gradlew releaseReadiness -Pintegration
 
-      - name: Generate SBOMs
-        run: ./gradlew cyclonedxBom
-
-      - name: Collect immutable release evidence
+      - name: Stage complete Maven publications without credentials
         run: |
-          mkdir -p build/release-evidence/sbom build/release-evidence/artifacts
-          find . -path '*/build/reports/bom.json' -exec sh -c '
-            module=$(echo "$1" | sed "s|^\./||;s|/build/reports/bom.json||")
-            cp "$1" "build/release-evidence/sbom/${module}-sbom.json"
-          ' _ {} \;
-          find . -type f -path '*/build/libs/*.jar' -print0 | while IFS= read -r -d '' artifact; do
-            destination="build/release-evidence/artifacts/${artifact#./}"
-            mkdir -p "$(dirname "$destination")"
-            cp "$artifact" "$destination"
-          done
-          (
-            cd build/release-evidence/artifacts
-            find . -type f -name '*.jar' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
-          ) > build/release-evidence/SHA256SUMS
-          test -s build/release-evidence/SHA256SUMS
-          find build/release-evidence/sbom -type f -name '*-sbom.json' -print -quit | grep -q .
+          staging="$PWD/build/release-evidence/staging-repository"
+          mkdir -p "$staging"
+          ./gradlew publishAllPublicationsToReleaseStagingRepository cyclonedxBom \
+            -Pintegration \
+            -PreleaseStagingRepository="$staging"
+          find "$staging" -type f \
+            \( -name 'maven-metadata.xml' -o -name 'maven-metadata.xml.*' \
+            -o -name '*.md5' -o -name '*.sha1' -o -name '*.sha256' -o -name '*.sha512' \) \
+            -delete
+          find "$staging" -type d -empty -delete
 
-      - name: Upload release evidence
+      - name: Collect SBOMs and checksum all unsigned evidence
+        env:
+          RELEASE_SHA: ${{ needs.verify-request.outputs.sha }}
+          RELEASE_VERSION: ${{ needs.verify-request.outputs.version }}
+        run: |
+          evidence=build/release-evidence
+          mkdir -p "$evidence/sbom"
+          while IFS= read -r -d '' bom; do
+            module=${bom#./}
+            module=${module%/build/reports/bom.json}
+            cp "$bom" "$evidence/sbom/${module}-sbom.json"
+          done < <(find . -path '*/build/reports/bom.json' -print0)
+
+          find "$evidence/staging-repository" -type f -print -quit | grep -q .
+          find "$evidence/sbom" -type f -name '*-sbom.json' -print -quit | grep -q .
+          if find "$evidence/staging-repository" -type f \
+            \( -name '*.asc' -o -name '*.md5' -o -name '*.sha1' -o -name '*.sha256' -o -name '*.sha512' \) \
+            -print -quit | grep -q .; then
+            echo "::error::Unsigned staging unexpectedly contains signatures or checksums"
+            exit 1
+          fi
+
+          jq -n \
+            --arg sha "$RELEASE_SHA" \
+            --arg version "$RELEASE_VERSION" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            '{commitSha: $sha, version: $version, workflowRunId: $run_id}' \
+            > "$evidence/build-metadata.json"
+          (
+            cd "$evidence"
+            find staging-repository sbom -type f -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum
+            sha256sum build-metadata.json
+          ) > "$evidence/SHA256SUMS"
+          test -s "$evidence/SHA256SUMS"
+
+      - name: Upload immutable release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: release-evidence
+          name: release-evidence-${{ needs.verify-request.outputs.sha }}
           path: build/release-evidence
           if-no-files-found: error
+          retention-days: 30
 
-      - name: Attest release evidence
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
-        with:
-          subject-path: build/release-evidence/**
-
-  publish-maven-central:
-    name: Publish to Maven Central
-    needs: verify-release
+  attest-release:
+    name: Attest exact unsigned release evidence
+    needs: [verify-request, build-release]
     runs-on: ubuntu-latest
-    environment: maven-central
     permissions:
-      contents: write
+      contents: read
+      attestations: write
+      id-token: write
 
     steps:
-      - name: Checkout verified tag
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Setup Java 25
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: '25'
-
-      - name: Download attested release evidence
+      - name: Download exact release evidence
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: release-evidence
+          name: release-evidence-${{ needs.verify-request.outputs.sha }}
           path: build/release-evidence
 
       - name: Verify release evidence manifest
         run: |
-          test -s build/release-evidence/SHA256SUMS
-          find build/release-evidence/sbom -type f -name '*-sbom.json' -print -quit | grep -q .
-          (
-            cd build/release-evidence/artifacts
-            sha256sum --check ../SHA256SUMS
-          )
+          cd build/release-evidence
+          sha256sum --check SHA256SUMS
 
-      - name: Restore verified publication artifacts
-        run: cp -a build/release-evidence/artifacts/. .
+      - name: Attest Maven artifacts and metadata
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: build/release-evidence/staging-repository/**
 
-      - name: Verify publishing secrets
+      - name: Attest SBOM and release manifests
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: |
+            build/release-evidence/sbom/**
+            build/release-evidence/SHA256SUMS
+            build/release-evidence/build-metadata.json
+
+  publish-maven-central:
+    name: Publish exact staged repository
+    needs: [verify-request, attest-release]
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      attestations: read
+      contents: write
+
+    steps:
+      - name: Checkout verified main SHA
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.verify-request.outputs.sha }}
+          persist-credentials: false
+
+      - name: Download attested release evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-evidence-${{ needs.verify-request.outputs.sha }}
+          path: build/release-evidence
+
+      - name: Verify checksums and GitHub attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.verify-request.outputs.sha }}
+        run: |
+          cd build/release-evidence
+          sha256sum --check SHA256SUMS
+          while IFS= read -r -d '' artifact; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$RELEASE_SHA" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners >/dev/null
+          done < <(find staging-repository sbom -type f -print0)
+          for artifact in SHA256SUMS build-metadata.json; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$RELEASE_SHA" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners >/dev/null
+          done
+
+      - name: Verify protected publishing secrets
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
         run: |
           missing=()
           for name in SONATYPE_USERNAME SONATYPE_PASSWORD GPG_SIGNING_KEY GPG_SIGNING_PASSWORD; do
@@ -150,22 +284,167 @@ jobs:
             printf '::error::Missing required publishing secret: %s\n' "${missing[@]}"
             exit 1
           fi
+
+      - name: Create or verify the release tag and draft
+        id: release
         env:
-          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.verify-request.outputs.sha }}
+          RELEASE_TAG: ${{ needs.verify-request.outputs.tag }}
+        run: |
+          resolve_tag_sha() {
+            local object_sha object_type
+            object_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)
+            object_type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.type)
+            if [ "$object_type" = tag ]; then
+              gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha" --jq .object.sha
+            else
+              printf '%s\n' "$object_sha"
+            fi
+          }
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            tag_sha=$(resolve_tag_sha)
+            if [ "$tag_sha" != "$RELEASE_SHA" ]; then
+              echo "::error::Existing release tag points to a different commit"
+              exit 1
+            fi
+          else
+            tag_object=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$RELEASE_TAG" \
+              -f message="Release $RELEASE_TAG" \
+              -f object="$RELEASE_SHA" \
+              -f type=commit \
+              --jq .sha)
+            if ! gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" \
+              -f sha="$tag_object" >/dev/null; then
+              tag_sha=$(resolve_tag_sha)
+              [ "$tag_sha" = "$RELEASE_SHA" ] || exit 1
+            fi
+          fi
+
+          if release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null); then
+            if [ "$(jq -r .draft <<<"$release_json")" != true ]; then
+              echo "already-published=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$RELEASE_TAG" \
+              -f target_commitish="$RELEASE_SHA" \
+              -f name="$RELEASE_TAG" \
+              -F draft=true \
+              -F generate_release_notes=true >/dev/null
+          fi
+          echo "already-published=false" >> "$GITHUB_OUTPUT"
+
+      - name: Sign exact staged files and assemble Central bundle
+        if: steps.release.outputs.already-published != 'true'
+        env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
+        run: |
+          staging="$PWD/build/release-evidence/staging-repository"
+          signing_home=$(mktemp -d "$RUNNER_TEMP/paygate-gpg-XXXXXXXX")
+          chmod 700 "$signing_home"
+          printf '%s' "$GPG_SIGNING_KEY" | gpg --batch --homedir "$signing_home" --import
 
-      - name: Sign and publish to Sonatype, then release to Maven Central
-        run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -x jar -x sourcesJar -x javadocJar
+          while IFS= read -r -d '' file; do
+            gpg --batch --yes --pinentry-mode loopback \
+              --passphrase "$GPG_SIGNING_PASSWORD" \
+              --homedir "$signing_home" \
+              --armor --detach-sign --output "$file.asc" "$file"
+          done < <(find "$staging" -type f -print0)
+
+          while IFS= read -r -d '' file; do
+            md5sum "$file" | awk '{print $1}' > "$file.md5"
+            sha1sum "$file" | awk '{print $1}' > "$file.sha1"
+          done < <(find "$staging" -type f \
+            ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' -print0)
+
+          rm -rf -- "$signing_home"
+          (
+            cd "$staging"
+            zip -qr ../central-bundle.zip .
+          )
+          test -s build/release-evidence/central-bundle.zip
+
+      - name: Upload or resume Maven Central deployment
+        if: steps.release.outputs.already-published != 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify-request.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.verify-request.outputs.version }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
-          GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
+        run: |
+          evidence=build/release-evidence
+          if gh release download "$RELEASE_TAG" --pattern central-deployment-id.txt --dir "$RUNNER_TEMP" >/dev/null 2>&1; then
+            deployment_id=$(tr -d '[:space:]' < "$RUNNER_TEMP/central-deployment-id.txt")
+          else
+            token=$(printf '%s:%s' "$SONATYPE_USERNAME" "$SONATYPE_PASSWORD" | base64 | tr -d '\n')
+            echo "::add-mask::$token"
+            deployment_id=$(curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $token" \
+              --form "bundle=@$evidence/central-bundle.zip;type=application/octet-stream" \
+              "https://central.sonatype.com/api/v1/publisher/upload?name=$RELEASE_TAG&publishingType=USER_MANAGED")
+            printf '%s\n' "$deployment_id" > "$evidence/central-deployment-id.txt"
+            gh release upload "$RELEASE_TAG" "$evidence/central-deployment-id.txt"
+          fi
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
-        with:
-          generate_release_notes: true
-          files: build/release-evidence/sbom/*-sbom.json
+          token=$(printf '%s:%s' "$SONATYPE_USERNAME" "$SONATYPE_PASSWORD" | base64 | tr -d '\n')
+          echo "::add-mask::$token"
+          for attempt in $(seq 1 60); do
+            echo "Checking Maven Central deployment status (attempt $attempt of 60)"
+            status=$(curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $token" \
+              "https://central.sonatype.com/api/v1/publisher/status?id=$deployment_id")
+            state=$(jq -r .deploymentState <<<"$status")
+            case "$state" in
+              PUBLISHED)
+                if ! jq -e --arg version "$RELEASE_VERSION" \
+                  '(.purls | length > 0) and all(.purls[]; endswith("@" + $version))' \
+                  <<<"$status" >/dev/null; then
+                  echo "::error::Published deployment does not contain only the requested version"
+                  exit 1
+                fi
+                exit 0
+                ;;
+              FAILED)
+                jq . <<<"$status"
+                exit 1
+                ;;
+              VALIDATED)
+                curl --fail-with-body --silent --show-error \
+                  --request POST \
+                  --header "Authorization: Bearer $token" \
+                  "https://central.sonatype.com/api/v1/publisher/deployment/$deployment_id"
+                sleep 30
+                ;;
+              PENDING|VALIDATING|PUBLISHING)
+                sleep 30
+                ;;
+              *)
+                echo "::error::Unexpected Maven Central deployment state: $state"
+                exit 1
+                ;;
+            esac
+          done
+          echo "::error::Maven Central deployment did not publish within 30 minutes"
+          exit 1
+
+      - name: Publish immutable GitHub release
+        if: steps.release.outputs.already-published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify-request.outputs.tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            build/release-evidence/SHA256SUMS \
+            build/release-evidence/build-metadata.json \
+            build/release-evidence/sbom/*-sbom.json \
+            --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest

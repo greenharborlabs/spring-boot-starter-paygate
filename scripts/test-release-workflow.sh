@@ -54,6 +54,8 @@ validate_release_workflow() {
   local workflow="$1"
   local line reference
   local has_sbom=0 has_manifest=0 has_manifest_check=0 has_attestation=0 has_environment=0
+  local has_dispatch=0 has_version_input=0 has_security_suite=0 has_staging=0 has_draft=0
+  local has_central_bundle_upload=0 has_attestation_verify=0
 
   [[ -f "$workflow" && ! -L "$workflow" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -72,6 +74,17 @@ validate_release_workflow() {
     if [[ "$line" =~ ^[[:space:]]*environment:[[:space:]]*maven-central[[:space:]]*($|#) ]]; then
       has_environment=1
     fi
+    [[ "$line" =~ workflow_dispatch: ]] && has_dispatch=1
+    [[ "$line" =~ ^[[:space:]]+version: ]] && has_version_input=1
+    [[ "$line" == *security-suite.yml* ]] && has_security_suite=1
+    [[ "$line" == *releaseStagingRepository* || "$line" == *staging-repository* ]] && has_staging=1
+    [[ "$line" == *'draft=true'* || "$line" == *'draft: true'* ]] && has_draft=1
+    [[ "$line" == *'/api/v1/publisher/upload'* ]] && has_central_bundle_upload=1
+    [[ "$line" == *'gh attestation verify'* ]] && has_attestation_verify=1
+    if [[ "$line" =~ ^[[:space:]]+tags: ]] || [[ "$line" == *publishToSonatype* ]]; then
+      printf 'legacy tag trigger or rebuilding publisher present\n' >&2
+      return 1
+    fi
     if [[ "$line" =~ uses:[[:space:]]*(.+)$ ]]; then
       reference="${BASH_REMATCH[1]%%[[:space:]#]*}"
       if [[ "$reference" != ./* \
@@ -87,6 +100,12 @@ validate_release_workflow() {
   ((has_manifest_check)) || { printf 'missing SHA-256 manifest verification\n' >&2; return 1; }
   ((has_attestation)) || { printf 'missing artifact attestation\n' >&2; return 1; }
   ((has_environment)) || { printf 'missing maven-central environment approval\n' >&2; return 1; }
+  ((has_dispatch && has_version_input)) || { printf 'missing manual version dispatch\n' >&2; return 1; }
+  ((has_security_suite)) || { printf 'missing reusable security suite\n' >&2; return 1; }
+  ((has_staging)) || { printf 'missing complete staged repository\n' >&2; return 1; }
+  ((has_draft)) || { printf 'missing draft release\n' >&2; return 1; }
+  ((has_central_bundle_upload)) || { printf 'missing Central bundle upload\n' >&2; return 1; }
+  ((has_attestation_verify)) || { printf 'missing attestation verification\n' >&2; return 1; }
 }
 
 expect_rejection() {
@@ -159,6 +178,18 @@ main() {
   sed -i.bak '/^[[:space:]]*environment:[[:space:]]*maven-central[[:space:]]*$/d' "$workflow"
   rm -f -- "$workflow.bak"
   expect_rejection "$workflow" "$marker" 'missing maven-central environment approval'
+
+  workflow="$WORKSPACE/missing-dispatch.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak '/workflow_dispatch:/d' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing manual version dispatch'
+
+  workflow="$WORKSPACE/missing-staging.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak '/releaseStagingRepository/d; /staging-repository/d' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing complete staged repository'
 
   printf 'release workflow negative controls passed\n'
 }

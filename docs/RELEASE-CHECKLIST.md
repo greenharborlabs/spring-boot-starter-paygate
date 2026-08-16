@@ -1,9 +1,11 @@
 # Release Checklist
 
 Step-by-step process for publishing a new Paygate release to Maven Central.
+The manually dispatched GitHub release workflow is the sole authoritative path:
+maintainers do not create or push release tags.
 
 Use the Codex `paygate-release` skill when working with Codex. The skill can
-prepare branches, verify builds, tag releases, and watch workflows, but the
+prepare branches, verify builds, dispatch releases, and watch workflows, but the
 release flow intentionally keeps GitHub PR merge approval as a manual stop point.
 
 ## Prerequisites
@@ -11,7 +13,8 @@ release flow intentionally keeps GitHub PR merge approval as a manual stop point
 - [ ] You have write access to the GitHub repository.
 - [ ] GitHub Actions CI is green on `main`.
 - [ ] The previous public release is visible in Maven Central metadata.
-- [ ] These GitHub Actions secrets are configured:
+- [ ] The `maven-central` environment is restricted to `main`, requires explicit
+  maintainer approval, and contains these GitHub Actions secrets:
   - `SONATYPE_USERNAME` -- Sonatype OSSRH username
   - `SONATYPE_PASSWORD` -- Sonatype OSSRH password
   - `GPG_SIGNING_KEY` -- ASCII-armored GPG private key
@@ -64,11 +67,11 @@ The release branch must not use a `-SNAPSHOT` version.
 ### 5. Run local verification and security release gates
 
 ```bash
-./gradlew build
+./gradlew spotlessCheck build
 ```
 
 - [ ] Build passes.
-- [ ] Spotless runs before Java compilation as part of the Gradle build.
+- [ ] Spotless reports no formatting drift without modifying reviewed source.
 
 For the defense-in-depth release, run the gates in this order so failures remain attributable. Record the command, commit, environment, and redacted result for each; checking this list is not evidence that an unexecuted command passed.
 
@@ -146,7 +149,7 @@ Include in the PR description:
 
 - Release version.
 - Changelog highlights.
-- Local verification result from `./gradlew build`.
+- Local verification result from `./gradlew releaseReadiness -Pintegration`.
 - Any security-sensitive notes, redacted.
 
 Manual stop point:
@@ -155,9 +158,10 @@ Manual stop point:
 - [ ] Review the PR.
 - [ ] Merge the PR into `main` through GitHub.
 
-Do not create or push the release tag until the release PR has merged.
+Do not create or push the release tag. The gated workflow creates it only after
+all read-only verification and the protected-environment approval succeed.
 
-## Phase 2: Tag, Publish, And Start The Next Snapshot
+## Phase 2: Dispatch, Publish, And Start The Next Snapshot
 
 ### 8. Sync merged `main`
 
@@ -176,14 +180,15 @@ git log --oneline --decorate -5
 - [ ] `gradle.properties` is exactly `version=X.Y.Z`.
 - [ ] The current commit is on `main`.
 
-### 10. Create and push the annotated release tag
+### 10. Dispatch the release workflow
 
 ```bash
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin vX.Y.Z
+gh workflow run release.yml --ref main -f version=X.Y.Z
 ```
 
-The release workflow requires the tag to point to a commit already on `main`.
+The workflow rejects any ref other than the exact current protected `main` SHA,
+any version mismatch or snapshot version, missing successful CodeQL evidence,
+security-gate failures, and tag/release collisions that point elsewhere.
 
 ### 11. Watch the GitHub release workflow
 
@@ -194,14 +199,15 @@ gh run watch <release-run-id> --exit-status
 
 The release workflow should:
 
-- Verify the tag is on `main`.
-- Verify the release version matches the tag.
-- Build every module in the default build. The opt-in integration module is covered by CI and by the required local `releaseReadiness -Pintegration` gate.
-- Verify publishing secrets.
-- Publish to Sonatype and release to Maven Central.
-- Generate and attach SBOMs.
-- Produce workflow provenance/attestation only where the protected release environment and workflow support it; local verification is not a substitute.
-- Create the GitHub Release.
+- Verify the input version and exact current `main` SHA.
+- Re-run the reusable deterministic security suite and
+  `releaseReadiness -Pintegration` without publishing credentials.
+- Stage every unsigned Maven artifact and metadata file once, generate SBOMs
+  and checksums, and attest that exact staging repository.
+- Pause for explicit `maven-central` environment approval.
+- Create or verify the tag and draft release for the verified SHA.
+- Sign and upload the exact staged repository without invoking Gradle again.
+- Wait for Maven Central publication, then publish the immutable GitHub release.
 
 ### 12. Verify release output
 
@@ -250,10 +256,11 @@ Manual stop point:
 - If a negative control, module coverage, integration/security suite, or disposition validation fails, stop before `releaseReadiness`; preserve the redacted failure evidence and fix forward. Do not mark a finding verified from a planned or skipped command.
 - If the hardened release rejects legacy/noncanonical L402 or MPP credentials in canary traffic, keep the release fail closed and migrate clients to newly issued exact-request credentials. Rolling back may re-enable the rejected legacy surface; require an explicit security decision and preserve current root keys/binding secrets until the migration window is resolved.
 - If GitHub CI fails on the release PR, fix the PR branch and wait for CI again.
-- If the release workflow fails before publishing, fix forward and only retag if
-  the tag has not been published publicly.
+- If the release workflow fails before publishing, fix forward. Never move or
+  manually recreate its tag; a retry accepts only the same verified SHA.
 - If Sonatype publishing fails after staging, inspect workflow logs and Sonatype
-  state before retrying.
+  deployment state before retrying. The draft release retains the deployment ID
+  so a retry resumes the same deployment instead of uploading a duplicate.
 - If GitHub Release creation fails after Maven publish succeeds, create or repair
   the GitHub Release for the same tag. Do not republish Maven artifacts.
 - If Maven Central already has the version, artifacts are immutable. Publish a

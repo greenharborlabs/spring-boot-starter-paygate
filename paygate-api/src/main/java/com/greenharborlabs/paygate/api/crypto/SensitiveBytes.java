@@ -103,33 +103,24 @@ public final class SensitiveBytes implements AutoCloseable, Destroyable {
     if (this == o) return true;
     if (!(o instanceof SensitiveBytes other)) return false;
 
-    // Acquire both locks in System.identityHashCode order to prevent deadlock.
-    int thisHash = System.identityHashCode(this);
-    int otherHash = System.identityHashCode(other);
-
-    if (thisHash < otherHash) {
-      this.lock.lock();
-      other.lock.lock();
-    } else if (thisHash > otherHash) {
-      other.lock.lock();
-      this.lock.lock();
-    } else {
-      // Identity hash collision — use global tie-breaker to establish order
-      TIE_BREAKER_LOCK.lock();
-      try {
-        this.lock.lock();
-        other.lock.lock();
-      } finally {
-        TIE_BREAKER_LOCK.unlock();
-      }
-    }
-
+    // Equality is not a hot path. A global ordering lock keeps the two instance-lock scopes simple,
+    // exception-safe, and deadlock-free, including in the identity-hash collision case.
+    TIE_BREAKER_LOCK.lock();
     try {
-      if (this.destroyed || other.destroyed) return false;
-      return CryptoUtils.constantTimeEquals(this.data, other.data);
+      this.lock.lock();
+      try {
+        other.lock.lock();
+        try {
+          if (this.destroyed || other.destroyed) return false;
+          return CryptoUtils.constantTimeEquals(this.data, other.data);
+        } finally {
+          other.lock.unlock();
+        }
+      } finally {
+        this.lock.unlock();
+      }
     } finally {
-      other.lock.unlock();
-      this.lock.unlock();
+      TIE_BREAKER_LOCK.unlock();
     }
   }
 

@@ -43,7 +43,7 @@ public final class DefaultCapabilityResolver implements CapabilityResolver {
     // Strategy 1: Cache lookup
     Set<String> result = resolveFromCache(tokenId);
     if (!result.isEmpty()) {
-      log.log(System.Logger.Level.DEBUG, "Capabilities resolved via cache for token {0}", tokenId);
+      log.log(System.Logger.Level.DEBUG, "Capabilities resolved via cache");
       return result;
     }
 
@@ -54,7 +54,7 @@ public final class DefaultCapabilityResolver implements CapabilityResolver {
       return result;
     }
 
-    log.log(System.Logger.Level.DEBUG, "No capabilities resolved for token {0}", tokenId);
+    log.log(System.Logger.Level.DEBUG, "No capabilities resolved");
     return Set.of();
   }
 

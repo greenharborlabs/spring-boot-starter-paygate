@@ -23,12 +23,13 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Verify commit is on main
+      - name: Verify exact current main commit
         run: |
           git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Snapshot publication must run from a commit already on main"
+          if [ "$GITHUB_REF" != refs/heads/main ] || [ "$GITHUB_SHA" != "$(git rev-parse origin/main)" ]; then
+            echo "::error::Snapshot publication must run from the exact current main commit"
             exit 1
           fi
 

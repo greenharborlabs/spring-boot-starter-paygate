@@ -1,0 +1,40 @@
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic-suite:
+    uses: ./.github/workflows/security-suite.yml
+    with:
+      dependency-review: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+
+  security-gate:
+    name: security-gate
+    if: always()
+    needs: deterministic-suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require the reusable security suite
+        env:
+          SECURITY_SUITE_RESULT: ${{ needs.deterministic-suite.result }}
+        run: |
+          if [ "$SECURITY_SUITE_RESULT" != success ]; then
+            echo "::error::Reusable security suite did not succeed: $SECURITY_SUITE_RESULT"
+            exit 1
+          fi

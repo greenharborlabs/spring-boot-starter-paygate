@@ -1,5 +1,5 @@
 plugins {
-    id("org.springframework.boot") version "4.0.5" apply false
+    id("org.springframework.boot") version "4.0.7" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
@@ -8,7 +8,9 @@ plugins {
     id("org.owasp.dependencycheck") version "13.0.0"
 }
 
-val springBootVersion = "4.0.5"
+val springBootVersion = "4.0.7"
+val log4jVersion = "2.25.5"
+val tomcatVersion = "11.0.24"
 val caffeineVersion = "3.2.3"
 val grpcVersion = "1.80.0"
 val protobufVersion = "4.29.3"
@@ -90,6 +92,7 @@ dependencyCheck {
     outputDirectory.set(layout.buildDirectory.dir("reports/dependency-check"))
     suppressionFile = layout.projectDirectory.file("config/dependency-check-suppressions.xml").asFile.path
     failBuildOnUnusedSuppressionRule = true
+    nvd.datafeedUrl = "https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"
     nvd.apiKey = providers.environmentVariable("NVD_API_KEY").orNull
 }
 
@@ -121,15 +124,20 @@ subprojects {
         }
     }
 
-    tasks.withType<JavaCompile>().configureEach {
-        dependsOn("spotlessApply")
-    }
-
     the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
         imports {
             mavenBom("org.springframework.boot:spring-boot-dependencies:$springBootVersion")
         }
         dependencies {
+            dependencySet("org.apache.logging.log4j:$log4jVersion") {
+                entry("log4j-api")
+                entry("log4j-to-slf4j")
+            }
+            dependencySet("org.apache.tomcat.embed:$tomcatVersion") {
+                entry("tomcat-embed-core")
+                entry("tomcat-embed-el")
+                entry("tomcat-embed-websocket")
+            }
             dependency("net.bytebuddy:byte-buddy:1.18.8")
             dependency("net.bytebuddy:byte-buddy-agent:1.18.8")
         }
@@ -258,6 +266,15 @@ subprojects {
                         }
                     }
                 }
+
+                providers.gradleProperty("releaseStagingRepository").orNull?.let { stagingPath ->
+                    repositories {
+                        maven {
+                            name = "releaseStaging"
+                            url = uri(stagingPath)
+                        }
+                    }
+                }
             }
 
             configure<SigningExtension> {
@@ -269,7 +286,6 @@ subprojects {
                 )
                 val sonatypePublishingRequested = gradle.startParameter.taskNames.any {
                     it.contains("Sonatype", ignoreCase = true)
-                        || it.contains("StagingRepository", ignoreCase = true)
                 }
 
                 isRequired = sonatypePublishingRequested

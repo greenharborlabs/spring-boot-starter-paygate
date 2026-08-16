@@ -1,0 +1,107 @@
+name: Reusable security suite
+
+on:
+  workflow_call:
+    inputs:
+      dependency-review:
+        description: Run pull-request dependency review
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    if: inputs.dependency-review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Reject new high or critical dependency vulnerabilities
+        uses: actions/dependency-review-action@40c09b7dc99638e5ddb0bfd91c1673effc064d8a # v4.8.1
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
+  semgrep:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Semgrep CE engine
+        run: python3 -m pip install --disable-pip-version-check semgrep==1.173.0
+
+      - name: Run repository high-confidence rules
+        run: |
+          semgrep scan --config config/semgrep --error --severity ERROR \
+            --exclude '**/src/test/**' \
+            --exclude '**/src/integrationTest/**' \
+            --exclude '**/src/securityTest/**' \
+            --exclude 'scripts/test-fixtures/**'
+          bash scripts/test-semgrep-rules.sh
+
+  workflow-security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.23'
+
+      - name: Install pinned workflow scanners
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
+          python3 -m pip install --disable-pip-version-check zizmor==1.29.0
+
+      - name: Lint workflow syntax and shell blocks
+        run: actionlint -color
+
+      - name: Annotate all zizmor findings
+        run: zizmor --format github --no-exit-codes .github
+
+      - name: Block high-severity zizmor findings
+        run: zizmor --min-severity high --format plain .github
+
+      - name: Validate real workflows and negative controls
+        run: |
+          bash scripts/audit-github-settings.sh --config-only
+          ./gradlew verifySupplyChainNegativeControls
+
+  suite-result:
+    if: always()
+    needs: [dependency-review, semgrep, workflow-security]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require every selected security job
+        env:
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
+          SEMGREP_RESULT: ${{ needs.semgrep.result }}
+          WORKFLOW_SECURITY_RESULT: ${{ needs.workflow-security.result }}
+        run: |
+          if [ "$DEPENDENCY_REVIEW_RESULT" != success ] && [ "$DEPENDENCY_REVIEW_RESULT" != skipped ]; then
+            echo "::error::Dependency review did not succeed: $DEPENDENCY_REVIEW_RESULT"
+            exit 1
+          fi
+          for result in "$SEMGREP_RESULT" "$WORKFLOW_SECURITY_RESULT"; do
+            if [ "$result" != success ]; then
+              echo "::error::Required security job did not succeed: $result"
+              exit 1
+            fi
+          done

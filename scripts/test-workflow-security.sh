@@ -4,6 +4,7 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly REPOSITORY_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
 readonly FIXTURE="$SCRIPT_DIR/test-fixtures/security/mutable-action.yml"
 readonly SENTINEL_NAME='.workflow-security-test-owned'
 WORKSPACE=''
@@ -46,8 +47,12 @@ require_workspace_target() {
 # as shell input and accepts an external action only at a lowercase 40-hex SHA.
 validate_workflow() {
   local workflow="$1"
-  local line reference permission_name permission_value in_permissions=0
+  local line reference permission_name permission_value in_permissions=0 permission_indent=0
+  local leading_whitespace line_indent
   local line_number=0
+  local workflow_name
+
+  workflow_name="$(basename -- "$workflow")"
 
   [[ -f "$workflow" && ! -L "$workflow" ]] || {
     printf 'invalid workflow input\n' >&2
@@ -57,18 +62,32 @@ validate_workflow() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     line_number=$((line_number + 1))
 
-    if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*uses:[[:space:]]*(.+)$ ]]; then
-      reference="${BASH_REMATCH[1]%%[[:space:]#]*}"
+    if ((in_permissions)) && [[ "$line" =~ [^[:space:]#] ]]; then
+      leading_whitespace="${line%%[![:space:]]*}"
+      line_indent=${#leading_whitespace}
+      if ((line_indent <= permission_indent)); then
+        in_permissions=0
+      fi
+    fi
+
+    if [[ "$line" =~ ^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*(.+)$ ]]; then
+      reference="${BASH_REMATCH[2]%%[[:space:]#]*}"
       if [[ "$reference" != ./* \
-        && ! "$reference" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[0-9a-f]{40}$ ]]; then
+        && ! "$reference" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+@[0-9a-f]{40}$ ]]; then
         printf 'invalid action reference at line %d\n' "$line_number" >&2
         return 1
       fi
     fi
 
+    if [[ "$line" =~ pull_request_target: ]] || [[ "$line" =~ runs-on:.*self-hosted ]]; then
+      printf 'unsafe workflow execution context at line %d\n' "$line_number" >&2
+      return 1
+    fi
+
     if [[ "$line" =~ ^([[:space:]]*)permissions:[[:space:]]*(.*)$ ]]; then
       permission_value="${BASH_REMATCH[2]%%[[:space:]#]*}"
       in_permissions=1
+      permission_indent=${#BASH_REMATCH[1]}
       if [[ -n "$permission_value" && "$permission_value" != '{}' ]]; then
         printf 'excessive or malformed permissions at line %d\n' "$line_number" >&2
         return 1
@@ -82,7 +101,9 @@ validate_workflow() {
         permission_value="${BASH_REMATCH[2]}"
         if [[ "$permission_value" == write \
           && "$permission_name" != security-events \
-          && "$permission_name" != id-token ]]; then
+          && "$permission_name" != id-token \
+          && !( "$workflow_name" == release.yml && "$permission_name" == attestations ) \
+          && !( "$workflow_name" == release.yml && "$permission_name" == contents ) ]]; then
           printf 'excessive permission %s at line %d\n' "$permission_name" "$line_number" >&2
           return 1
         fi
@@ -90,11 +111,32 @@ validate_workflow() {
           printf 'malformed permission at line %d\n' "$line_number" >&2
           return 1
         fi
-      elif [[ "$line" =~ ^[^[:space:]#] || "$line" =~ ^[[:space:]]{0,1}[A-Za-z0-9_-]+: ]]; then
-        in_permissions=0
       fi
     fi
   done < "$workflow"
+
+  if rg -q 'uses:[[:space:]]*actions/checkout@' "$workflow"; then
+    if ! awk '
+      /uses:[[:space:]]*actions\/checkout@/ {
+        checkout = 1
+        remaining = 8
+        protected = 0
+        next
+      }
+      checkout {
+        if ($0 ~ /persist-credentials:[[:space:]]*false/) {
+          protected = 1
+          checkout = 0
+        } else if (--remaining == 0) {
+          exit 1
+        }
+      }
+      END { if (checkout && !protected) exit 1 }
+    ' "$workflow"; then
+      printf 'checkout persists credentials\n' >&2
+      return 1
+    fi
+  fi
 }
 
 expect_rejection() {
@@ -119,6 +161,11 @@ copy_fixture() {
 main() {
   local workflow
   [[ -f "$FIXTURE" && ! -L "$FIXTURE" ]] || fail 'missing mutable-action fixture'
+
+  while IFS= read -r workflow; do
+    validate_workflow "$workflow" || fail "repository workflow failed security validation: $workflow"
+  done < <(find "$REPOSITORY_ROOT/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort)
+
   create_workspace
   workflow="$WORKSPACE/mutable-action.yml"
 

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "repository": "greenharborlabs/spring-boot-starter-paygate",
+  "defaultBranch": "main",
+  "securityAndAnalysis": {
+    "vulnerabilityAlerts": true,
+    "dependabotSecurityUpdates": true,
+    "secretScanning": true,
+    "secretScanningPushProtection": true,
+    "secretScanningValidityChecks": true,
+    "secretScanningNonProviderPatterns": true,
+    "immutableReleases": true
+  },
+  "actions": {
+    "enabled": true,
+    "allowedActions": "selected",
+    "shaPinningRequired": true,
+    "githubOwnedAllowed": false,
+    "verifiedAllowed": false,
+    "patternsAllowed": [
+      "actions/attest-build-provenance@*",
+      "actions/cache@*",
+      "actions/checkout@*",
+      "actions/dependency-review-action@*",
+      "actions/download-artifact@*",
+      "actions/setup-go@*",
+      "actions/setup-java@*",
+      "actions/upload-artifact@*",
+      "github/codeql-action/*@*",
+      "gradle/actions/wrapper-validation@*"
+    ]
+  },
+  "ruleset": {
+    "name": "protected-main",
+    "enforcement": "active",
+    "includeRefs": ["refs/heads/main"],
+    "requiredStatusChecks": ["CI / pr-gate", "Security / security-gate"],
+    "strictStatusChecks": true,
+    "requiredApprovals": 0,
+    "requireConversationResolution": true,
+    "blockDeletion": true,
+    "blockForcePush": true,
+    "codeScanning": {
+      "tool": "CodeQL",
+      "securityAlertsThreshold": "high_or_higher",
+      "alertsThreshold": "none"
+    },
+    "bypassActors": [
+      {
+        "actorType": "OrganizationAdmin",
+        "bypassMode": "pull_request"
+      }
+    ]
+  },
+  "environments": {
+    "maven-central": {
+      "branch": "main",
+      "requiredReviewers": 1,
+      "reviewers": ["mark-greenharbor"],
+      "preventSelfReview": false
+    },
+    "maven-snapshots": {
+      "branch": "main",
+      "requiredReviewers": 1,
+      "reviewers": ["mark-greenharbor"],
+      "preventSelfReview": false
+    }
+  }
+}
