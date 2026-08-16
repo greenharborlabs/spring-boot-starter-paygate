@@ -3,7 +3,7 @@ set -euo pipefail
 export LC_ALL=C
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-ledger="${1:-$root/specs/006-address-security-findings/finding-dispositions.md}"
+ledger="${1:-$root/docs/security/DEEPSEEK-FINDING-DISPOSITIONS.md}"
 [[ $# -le 1 && -r "$ledger" ]] || { echo 'DeepSeek finding ledger is missing or unreadable.' >&2; exit 1; }
 
 # The ledger is untrusted Markdown. awk reads cells only; it never evaluates or echoes cell content.
