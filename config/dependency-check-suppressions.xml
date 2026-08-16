@@ -5,7 +5,7 @@
             The Paygate LNbits artifact is a Java client adapter, not the LNbits server affected by
             CVE-2025-32013. The exact package URL keeps the disposition scoped to this build.
         ]]></notes>
-        <packageUrl>pkg:maven/com.greenharborlabs/paygate-lightning-lnbits@0.1.5</packageUrl>
+        <packageUrl>pkg:maven/com.greenharborlabs/paygate-lightning-lnbits@0.1.6-SNAPSHOT</packageUrl>
         <cve>CVE-2025-32013</cve>
     </suppress>
     <suppress until="2026-09-15Z">
