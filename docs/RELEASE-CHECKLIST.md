@@ -262,6 +262,18 @@ Manual stop point:
   deployment state before retrying. The draft release retains the deployment ID
   so a retry resumes the same deployment instead of uploading a duplicate.
 - If GitHub Release creation fails after Maven publish succeeds, create or repair
-  the GitHub Release for the same tag. Do not republish Maven artifacts.
+  the GitHub Release for the same tag. Do not republish Maven artifacts. Merge
+  the repair workflow through `main`, then dispatch it with the failed run ID:
+
+  ```bash
+  gh workflow run release.yml --ref main \
+    -f version=X.Y.Z \
+    -f repair_run_id=FAILED_RUN_ID
+  ```
+
+  Repair mode derives the immutable release SHA and retained evidence from the
+  failed run, requires the matching draft/tag and Central deployment marker,
+  verifies every staged byte from Maven Central, and cannot upload a new
+  deployment.
 - If Maven Central already has the version, artifacts are immutable. Publish a
   patch release instead.

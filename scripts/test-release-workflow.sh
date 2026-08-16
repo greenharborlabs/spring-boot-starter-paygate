@@ -5,6 +5,7 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly RELEASE_WORKFLOW="$SCRIPT_DIR/../.github/workflows/release.yml"
+readonly CENTRAL_VERIFIER="$SCRIPT_DIR/verify-central-publication.py"
 readonly SENTINEL_NAME='.release-workflow-test-owned'
 readonly PINNED_SHA='0123456789abcdef0123456789abcdef01234567'
 
@@ -57,6 +58,9 @@ validate_release_workflow() {
   local has_attestation=0 has_environment=0
   local has_dispatch=0 has_version_input=0 has_security_suite=0 has_staging=0 has_draft=0
   local has_central_bundle_upload=0 has_attestation_verify=0
+  local has_repair_input=0 has_repair_upload_guard=0 has_central_byte_verification=0
+  local actions_read_count=0
+  local has_exact_repair_draft=0 has_exact_release_publish=0
 
   [[ -f "$workflow" && ! -L "$workflow" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -83,6 +87,21 @@ validate_release_workflow() {
     [[ "$line" == *'draft=true'* || "$line" == *'draft: true'* ]] && has_draft=1
     [[ "$line" == *'/api/v1/publisher/upload'* ]] && has_central_bundle_upload=1
     [[ "$line" == *'gh attestation verify'* ]] && has_attestation_verify=1
+    [[ "$line" =~ ^[[:space:]]+repair_run_id: ]] && has_repair_input=1
+    [[ "$line" == *'Repair mode cannot upload a new Maven Central deployment'* ]] \
+      && has_repair_upload_guard=1
+    [[ "$line" == *'verify-central-publication.py'* ]] && has_central_byte_verification=1
+    [[ "$line" =~ ^[[:space:]]+actions:[[:space:]]+read([[:space:]]*#.*)?$ ]] \
+      && ((actions_read_count += 1))
+    [[ "$line" == *'repos/$GITHUB_REPOSITORY/releases/$REPAIR_RELEASE_ID'* ]] \
+      && has_exact_repair_draft=1
+    [[ "$line" == *'--method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"'* ]] \
+      && has_exact_release_publish=1
+    if [[ "$line" == *'gh release upload'* || "$line" == *'gh release edit'* \
+      || "$line" == *'gh release download'* ]]; then
+      printf 'ambiguous tag-based draft release operation present\n' >&2
+      return 1
+    fi
     if [[ "$line" =~ ^[[:space:]]+tags: ]] || [[ "$line" == *publishToSonatype* ]]; then
       printf 'legacy tag trigger or rebuilding publisher present\n' >&2
       return 1
@@ -110,6 +129,16 @@ validate_release_workflow() {
   ((has_draft)) || { printf 'missing draft release\n' >&2; return 1; }
   ((has_central_bundle_upload)) || { printf 'missing Central bundle upload\n' >&2; return 1; }
   ((has_attestation_verify)) || { printf 'missing attestation verification\n' >&2; return 1; }
+  ((has_repair_input)) || { printf 'missing failed-run repair input\n' >&2; return 1; }
+  ((has_repair_upload_guard)) || { printf 'missing repair upload guard\n' >&2; return 1; }
+  ((has_central_byte_verification)) \
+    || { printf 'missing Central byte verification\n' >&2; return 1; }
+  ((actions_read_count >= 2)) \
+    || { printf 'missing prior-run Actions read permissions\n' >&2; return 1; }
+  ((has_exact_repair_draft)) \
+    || { printf 'missing exact repair draft lookup\n' >&2; return 1; }
+  ((has_exact_release_publish)) \
+    || { printf 'missing exact release-ID publication\n' >&2; return 1; }
 }
 
 expect_rejection() {
@@ -200,6 +229,62 @@ main() {
   sed -i.bak '/releaseStagingRepository/d; /staging-repository/d' "$workflow"
   rm -f -- "$workflow.bak"
   expect_rejection "$workflow" "$marker" 'missing complete staged repository'
+
+  workflow="$WORKSPACE/missing-repair-upload-guard.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak '/Repair mode cannot upload a new Maven Central deployment/d' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing repair upload guard'
+
+  workflow="$WORKSPACE/missing-central-byte-verification.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak '/verify-central-publication.py/d' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing Central byte verification'
+
+  workflow="$WORKSPACE/missing-actions-read.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak '/^[[:space:]]*actions:[[:space:]]*read/d' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing prior-run Actions read permissions'
+
+  workflow="$WORKSPACE/missing-exact-repair-draft.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak '/repos\/$GITHUB_REPOSITORY\/releases\/$REPAIR_RELEASE_ID/d' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing exact repair draft lookup'
+
+  local central_repo="$WORKSPACE/central"
+  local evidence="$WORKSPACE/evidence"
+  local artifact='com/greenharborlabs/example/0.1.5/example-0.1.5.pom'
+  mkdir -p "$central_repo/$(dirname -- "$artifact")" "$evidence"
+  printf '<project/>\n' > "$central_repo/$artifact"
+  local digest
+  digest=$(sha256sum "$central_repo/$artifact" | awk '{print $1}')
+  printf '%s  staging-repository/%s\n' "$digest" "$artifact" > "$evidence/SHA256SUMS"
+  printf '%s\n' \
+    '{"deploymentState":"PUBLISHED","purls":["pkg:maven/com.greenharborlabs/example@0.1.5?type=pom"]}' \
+    > "$WORKSPACE/status.json"
+  python3 "$CENTRAL_VERIFIER" \
+    --status-json "$WORKSPACE/status.json" \
+    --evidence-dir "$evidence" \
+    --version 0.1.5 \
+    --repository-url "file://$central_repo" \
+    --attempts 1 \
+    --delay-seconds 0 >/dev/null
+
+  printf '%s\n' \
+    '{"deploymentState":"PUBLISHED","purls":["pkg:maven/com.greenharborlabs/example@0.1.4"]}' \
+    > "$WORKSPACE/status.json"
+  if python3 "$CENTRAL_VERIFIER" \
+    --status-json "$WORKSPACE/status.json" \
+    --evidence-dir "$evidence" \
+    --version 0.1.5 \
+    --repository-url "file://$central_repo" \
+    --attempts 1 \
+    --delay-seconds 0 >/dev/null 2>&1; then
+    fail 'Central verifier accepted a different component version'
+  fi
 
   printf 'release workflow negative controls passed\n'
 }
