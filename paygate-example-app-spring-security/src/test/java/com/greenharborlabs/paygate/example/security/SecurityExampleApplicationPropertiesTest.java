@@ -24,13 +24,21 @@ class SecurityExampleApplicationPropertiesTest {
   }
 
   @Test
-  @DisplayName("dev profile explicitly enables local test mode and MPP secret")
-  void devProfileEnablesLocalTestModeAndMppSecret() throws IOException {
+  @DisplayName("packaged configuration obtains its binding secret only from the environment")
+  void packagedConfigurationObtainsItsBindingSecretOnlyFromTheEnvironment() throws IOException {
+    PropertySource<?> properties = load("application.yml");
+
+    assertThat(properties.getProperty("paygate.protocols.mpp.challenge-binding-secret"))
+        .isEqualTo("${PAYGATE_MPP_SECRET:}");
+  }
+
+  @Test
+  @DisplayName("dev profile enables test mode without packaging a reusable binding secret")
+  void devProfileEnablesTestModeWithoutPackagingAReusableBindingSecret() throws IOException {
     PropertySource<?> properties = load("application-dev.yml");
 
     assertThat(properties.getProperty("paygate.test-mode")).isEqualTo(true);
-    assertThat(properties.getProperty("paygate.protocols.mpp.challenge-binding-secret"))
-        .isEqualTo("dev-only-mpp-test-secret-do-not-use-in-production");
+    assertThat(properties.getProperty("paygate.protocols.mpp.challenge-binding-secret")).isNull();
   }
 
   private PropertySource<?> load(String resourceName) throws IOException {

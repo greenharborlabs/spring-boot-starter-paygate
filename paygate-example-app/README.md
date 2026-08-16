@@ -2,7 +2,7 @@
 
 A reference Spring Boot application demonstrating how to use `spring-boot-starter-paygate` to protect API endpoints with Lightning payments using dual-protocol support (L402 + MPP).
 
-This application runs in **test mode** by default, so no real Lightning node is required. You can exercise the complete payment flow -- challenge, payment, and credential presentation -- entirely on your local machine.
+This application includes a **dev profile** that enables test mode, so no real Lightning node is required for the walkthrough. Activate that profile explicitly for a local Gradle run; the provided Docker Compose configuration activates it for you.
 
 ---
 
@@ -36,7 +36,7 @@ This application runs in **test mode** by default, so no real Lightning node is 
 - **curl** (or any HTTP client) for testing the endpoints
 - **Docker** and **Docker Compose** (optional, for containerized runs)
 
-No Lightning node or wallet is required. The application ships with test mode enabled.
+No Lightning node or wallet is required when the `dev` profile is active.
 
 ---
 
@@ -47,7 +47,7 @@ L402 is an HTTP-native payment protocol. When a client requests a protected reso
 1. The server responds with **HTTP 402 Payment Required** and a `WWW-Authenticate` header containing a **macaroon** (an authorization token) and a Lightning **invoice**.
 2. The client pays the invoice via the Lightning Network and receives a **preimage** (proof of payment).
 3. The client re-requests the resource, presenting the macaroon and preimage together in the `Authorization` header.
-4. The server verifies the macaroon signature and checks that `SHA-256(preimage) == paymentHash` embedded in the macaroon. If both check out, access is granted.
+4. The server first checks that `SHA-256(preimage) == paymentHash`, then requires the root key and verifies the macaroon (or reuses an exact cached signature result). If every boundary check passes, access is granted.
 
 ```
 Client                              Server
@@ -85,7 +85,7 @@ To enable end-to-end testing with curl, the test backend includes the preimage i
 
 ### Safety guard
 
-`TestModeLightningBackend` refuses to start if any active Spring profile is `production` or `prod`, throwing an `IllegalStateException` to prevent accidental use in production.
+Test mode requires an active `test`, `dev`, `local`, or `development` profile. It also refuses to start if any active profile is `production` or `prod` (case-insensitive), even when an allowed profile is present.
 
 ---
 
@@ -96,7 +96,7 @@ To enable end-to-end testing with curl, the test backend includes the preimage i
 From the **project root** (not from inside `paygate-example-app/`):
 
 ```bash
-./gradlew :paygate-example-app:bootRun
+./gradlew :paygate-example-app:bootRun --args='--spring.profiles.active=dev'
 ```
 
 The `gradlew` wrapper lives in the project root. The `:paygate-example-app:` prefix tells Gradle which submodule to run.
@@ -321,7 +321,7 @@ This application is a minimal but complete reference implementation covering the
 | Dynamic pricing | `ExampleController.analyze()` with `pricingStrategy = "analysisPricer"` |
 | Custom pricing strategy | `AnalysisPricingStrategy` implementing `PaygatePricingStrategy` |
 | Unprotected endpoints alongside protected ones | `ExampleController.health()` with no annotation |
-| Dual-protocol support (L402 + MPP) | `application.yml` / `application-dev.yml` with MPP challenge binding secret |
+| Dual-protocol support (L402 + MPP) | `application.yml` with an externally supplied MPP challenge binding secret |
 | Test mode configuration | `application-dev.yml` with `paygate.test-mode=true` |
 | Spring Boot auto-configuration | No manual bean wiring -- the starter auto-configures everything |
 | Integration testing | `ExampleAppIntegrationTest` exercising the full verification path |
@@ -344,8 +344,6 @@ The example uses this configuration (`src/main/resources/application.yml`):
 spring:
   application:
     name: paygate-example-app
-  profiles:
-    active: dev
 
 server:
   port: 8080
@@ -363,21 +361,34 @@ And the `dev` profile overrides (`src/main/resources/application-dev.yml`):
 ```yaml
 paygate:
   test-mode: true
-  protocols:
-    mpp:
-      challenge-binding-secret: dev-only-mpp-test-secret-do-not-use-in-production
 ```
 
-> **Note:** Test mode is enabled via the `dev` profile in `application-dev.yml`, not in the base `application.yml`. The `dev` profile is activated by default via `spring.profiles.active: dev` above.
+### Local LNbits bootstrap (explicit opt-in)
+
+The example never provisions a wallet from its container entrypoint. Supply
+`PAYGATE_LNBITS_API_KEY` for ordinary LNbits runs. For a short-lived, host-local development
+experiment only, you may explicitly set `PAYGATE_EXAMPLE_LNBITS_AUTO_PROVISION=true` when the
+backend is `lnbits` and no key is supplied. The bootstrap accepts only a complete `dev`, `local`,
+`development`, or `test` profile set and a loopback IP literal or exact `localhost` target that
+resolves only to loopback addresses. Plain HTTP also requires the existing
+`PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP=true` consent.
+
+It performs one direct bounded health request and one direct bounded wallet-creation request, does
+not follow redirects, and fails startup on timeout, non-success status, oversized/malformed JSON,
+or a missing key. The created key is held only in a highest-precedence in-memory property source.
+The JVM cannot guarantee erasure of that configuration `String`; use this path only for the
+explicitly opted-in, disposable example lifecycle. It never logs, writes, or echoes the key.
+
+> **Note:** Test mode is enabled only by `application-dev.yml`. It contains no reusable MPP challenge-binding secret. Activate `dev` explicitly for local Gradle runs. The root Docker Compose file sets `SPRING_PROFILES_ACTIVE=dev`.
 
 ### Dual-Protocol Behavior
 
-When the `dev` profile is active, both L402 and MPP protocols are enabled because:
+When the `dev` profile is active, L402 is enabled by default. To enable MPP as well, supply `PAYGATE_MPP_SECRET` with a secret of at least 32 bytes:
 
-1. L402 is enabled by default (`paygate.protocols.l402.enabled=true`)
-2. MPP is in `auto` mode (default) and the `challenge-binding-secret` is provided in `application-dev.yml`
+1. L402 is enabled by default (`paygate.protocols.l402.enabled=true`).
+2. MPP is in `auto` mode (default) when `paygate.protocols.mpp.challenge-binding-secret` is present and non-blank.
 
-When a client requests a protected endpoint without credentials, the server returns a 402 response with **multiple `WWW-Authenticate` headers** -- one for each active protocol. The client can choose which protocol to use for payment and credential presentation. In production, set `PAYGATE_MPP_SECRET` as an environment variable with a secret of at least 32 bytes.
+When both protocols are active, a client requesting a protected endpoint without credentials receives a 402 response with **multiple `WWW-Authenticate` headers** -- one for each active protocol. The client can choose which protocol to use for payment and credential presentation.
 
 ### Property Reference
 
@@ -387,6 +398,7 @@ When a client requests a protected endpoint without credentials, the server retu
 | `paygate.test-mode`    | `true`        | Uses `TestModeLightningBackend` instead of a real node.      |
 | `paygate.service-name` | `example-api` | Appears in macaroon caveats (e.g., `services=example-api:0`).|
 | `paygate.protocols.mpp.challenge-binding-secret` | `${PAYGATE_MPP_SECRET:}` | HMAC secret for MPP challenge binding. When present and non-blank, enables MPP protocol. |
+| `paygate.example.lnbits.auto-provision` | `false` | Explicitly enables the local-only, bounded example LNbits bootstrap when no API key is supplied. |
 
 ### Additional Properties (defaults)
 
@@ -417,7 +429,7 @@ paygate-example-app/
     SecurityConfig.java             Security configuration
   src/main/resources/
     application.yml                 Base configuration (protocols, service name)
-    application-dev.yml             Dev profile (test mode, MPP secret)
+    application-dev.yml             Dev profile (test mode)
   src/test/java/
     ExampleAppIntegrationTest.java  Full payment flow integration tests
   Dockerfile                        Multi-stage Docker build

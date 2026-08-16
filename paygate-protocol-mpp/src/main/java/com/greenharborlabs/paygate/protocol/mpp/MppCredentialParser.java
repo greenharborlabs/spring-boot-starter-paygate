@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.protocol.mpp;
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.PaymentValidationException.ErrorCode;
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -61,93 +62,102 @@ public final class MppCredentialParser {
     }
 
     // Step 1: base64url decode
-    byte[] jsonBytes;
+    byte[] jsonBytes = null;
+    byte[] preimageBytes = null;
+    byte[] paymentHash = null;
+    PaymentCredential credential = null;
+    boolean returned = false;
     try {
-      jsonBytes = Base64.getUrlDecoder().decode(credentialBlob);
-    } catch (IllegalArgumentException e) {
-      throw malformed("Invalid base64url encoding", e);
-    }
+      jsonBytes = decodeCanonicalBase64Url(credentialBlob, "Invalid base64url encoding");
+      String json = new String(jsonBytes, StandardCharsets.UTF_8);
 
-    String json = new String(jsonBytes, StandardCharsets.UTF_8);
-
-    // Step 2: parse JSON
-    Map<String, Object> root;
-    try {
-      var parser = new MinimalJsonParser(json, limits);
-      root = parser.parseObject();
-      parser.expectEnd();
-    } catch (MinimalJsonParser.JsonParseException e) {
-      throw malformed("Invalid JSON in credential: " + e.getMessage(), e);
-    }
-
-    // Step 3: extract challenge object
-    Object challengeRaw = root.get("challenge");
-    if (!(challengeRaw instanceof Map<?, ?> challengeMap)) {
-      throw malformed("Missing 'challenge' object in credential");
-    }
-
-    Map<String, String> echoedChallenge = new LinkedHashMap<>();
-    for (var entry : challengeMap.entrySet()) {
-      if (!(entry.getKey() instanceof String key)) {
-        throw malformed("Non-string key in challenge object");
+      // Step 2: parse JSON
+      Map<String, Object> root;
+      try {
+        var parser = new MinimalJsonParser(json, limits);
+        root = parser.parseObject();
+        parser.expectEnd();
+      } catch (MinimalJsonParser.JsonParseException e) {
+        throw malformed("Invalid JSON in credential: " + e.getMessage(), e);
       }
-      if (entry.getValue() instanceof String value) {
-        echoedChallenge.put(key, value);
-      } else {
-        throw malformed("Non-string value for key '%s' in challenge object".formatted(key));
+
+      // Step 3: extract challenge object
+      Object challengeRaw = root.get("challenge");
+      if (!(challengeRaw instanceof Map<?, ?> challengeMap)) {
+        throw malformed("Missing 'challenge' object in credential");
       }
-    }
 
-    // Step 4: extract challenge.id (tokenId)
-    String tokenId = echoedChallenge.get("id");
-    if (tokenId == null || tokenId.isEmpty()) {
-      throw malformed("Missing 'id' in challenge");
-    }
-
-    // Step 5: extract payload.preimage
-    Object payloadRaw = root.get("payload");
-    if (!(payloadRaw instanceof Map<?, ?> payloadMap)) {
-      throw malformed("Missing 'payload.preimage' in credential");
-    }
-
-    Object preimageRaw = payloadMap.get("preimage");
-    if (!(preimageRaw instanceof String preimageHex)) {
-      throw malformed("Missing 'payload.preimage' in credential");
-    }
-
-    // Step 6: validate preimage hex format
-    if (preimageHex.length() != PREIMAGE_HEX_LENGTH) {
-      throw malformed("Invalid preimage hex");
-    }
-    for (int i = 0; i < preimageHex.length(); i++) {
-      char c = preimageHex.charAt(i);
-      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
-        if (c >= 'A' && c <= 'F') {
-          throw malformed("preimage must be lowercase hex");
+      Map<String, String> echoedChallenge = new LinkedHashMap<>();
+      for (var entry : challengeMap.entrySet()) {
+        if (!(entry.getKey() instanceof String key)) {
+          throw malformed("Non-string key in challenge object");
         }
+        if (entry.getValue() instanceof String value) {
+          echoedChallenge.put(key, value);
+        } else {
+          throw malformed("Non-string value for key '%s' in challenge object".formatted(key));
+        }
+      }
+
+      // Step 4: extract challenge.id (tokenId)
+      String tokenId = echoedChallenge.get("id");
+      if (tokenId == null || tokenId.isEmpty()) {
+        throw malformed("Missing 'id' in challenge");
+      }
+
+      // Step 5: extract payload.preimage
+      Object payloadRaw = root.get("payload");
+      if (!(payloadRaw instanceof Map<?, ?> payloadMap)) {
+        throw malformed("Missing 'payload.preimage' in credential");
+      }
+
+      Object preimageRaw = payloadMap.get("preimage");
+      if (!(preimageRaw instanceof String preimageHex)) {
+        throw malformed("Missing 'payload.preimage' in credential");
+      }
+
+      // Step 6: validate preimage hex format
+      if (preimageHex.length() != PREIMAGE_HEX_LENGTH) {
         throw malformed("Invalid preimage hex");
       }
+      for (int i = 0; i < preimageHex.length(); i++) {
+        char c = preimageHex.charAt(i);
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+          if (c >= 'A' && c <= 'F') {
+            throw malformed("preimage must be lowercase hex");
+          }
+          throw malformed("Invalid preimage hex");
+        }
+      }
+
+      // Step 7: decode preimage
+      preimageBytes = HEX.parseHex(preimageHex);
+
+      // Step 7b: extract payment hash from echoed challenge's request field
+      paymentHash = extractPaymentHashFromRequest(echoedChallenge, limits);
+
+      // Step 8: extract optional source
+      Object sourceRaw = root.get("source");
+      String source = null;
+      if (sourceRaw instanceof String s) {
+        source = s;
+      }
+      // null or absent → source stays null
+
+      // Step 9: build metadata and credential
+      var metadata = new MppMetadata(echoedChallenge, source);
+
+      credential =
+          new PaymentCredential(
+              paymentHash, preimageBytes, tokenId, PROTOCOL_SCHEME, source, metadata);
+      returned = true;
+      return credential;
+    } finally {
+      CryptoUtils.zeroize(jsonBytes, paymentHash, preimageBytes);
+      if (!returned && credential != null) {
+        credential.close();
+      }
     }
-
-    // Step 7: decode preimage
-    byte[] preimageBytes = HEX.parseHex(preimageHex);
-
-    // Step 7b: extract payment hash from echoed challenge's request field
-    byte[] paymentHash = extractPaymentHashFromRequest(echoedChallenge, limits);
-
-    // Step 8: extract optional source
-    Object sourceRaw = root.get("source");
-    String source = null;
-    if (sourceRaw instanceof String s) {
-      source = s;
-    }
-    // null or absent → source stays null
-
-    // Step 9: build metadata and credential
-    var metadata = new MppMetadata(echoedChallenge, source);
-
-    return new PaymentCredential(
-        paymentHash, preimageBytes, tokenId, PROTOCOL_SCHEME, source, metadata);
   }
 
   private static final int PAYMENT_HASH_LENGTH = 32;
@@ -165,52 +175,85 @@ public final class MppCredentialParser {
       throw malformed("Missing 'request' in echoed challenge for payment hash extraction");
     }
 
-    byte[] requestJsonBytes;
     try {
-      requestJsonBytes = Base64.getUrlDecoder().decode(requestB64);
-    } catch (IllegalArgumentException e) {
-      throw malformed("Invalid base64url in echoed challenge request field", e);
+      byte[] requestJsonBytes =
+          decodeCanonicalBase64Url(
+              requestB64, "Invalid base64url in echoed challenge request field");
+      try {
+        String requestJson = new String(requestJsonBytes, StandardCharsets.UTF_8);
+        Map<String, Object> requestMap;
+        try {
+          var parser = new MinimalJsonParser(requestJson, limits);
+          requestMap = parser.parseObject();
+          parser.expectEnd();
+        } catch (MinimalJsonParser.JsonParseException e) {
+          throw malformed("Missing methodDetails.paymentHash in charge request", e);
+        }
+
+        Object methodDetailsRaw = requestMap.get("methodDetails");
+        if (!(methodDetailsRaw instanceof Map<?, ?> methodDetailsMap)) {
+          throw malformed("Missing methodDetails.paymentHash in charge request");
+        }
+
+        Object paymentHashRaw = methodDetailsMap.get("paymentHash");
+        if (!(paymentHashRaw instanceof String paymentHashHex)) {
+          throw malformed("Missing methodDetails.paymentHash in charge request");
+        }
+
+        byte[] paymentHash;
+        try {
+          paymentHash = HEX.parseHex(paymentHashHex);
+        } catch (IllegalArgumentException e) {
+          throw malformed("Invalid hex in methodDetails.paymentHash", e);
+        }
+
+        if (paymentHash.length != PAYMENT_HASH_LENGTH) {
+          CryptoUtils.zeroize(paymentHash);
+          throw malformed("Payment hash must be 32 bytes");
+        }
+
+        return paymentHash;
+      } finally {
+        CryptoUtils.zeroize(requestJsonBytes);
+      }
+    } catch (PaymentValidationException e) {
+      throw e;
     }
-
-    String requestJson = new String(requestJsonBytes, StandardCharsets.UTF_8);
-
-    Map<String, Object> requestMap;
-    try {
-      var parser = new MinimalJsonParser(requestJson, limits);
-      requestMap = parser.parseObject();
-    } catch (MinimalJsonParser.JsonParseException e) {
-      throw malformed("Missing methodDetails.paymentHash in charge request", e);
-    }
-
-    Object methodDetailsRaw = requestMap.get("methodDetails");
-    if (!(methodDetailsRaw instanceof Map<?, ?> methodDetailsMap)) {
-      throw malformed("Missing methodDetails.paymentHash in charge request");
-    }
-
-    Object paymentHashRaw = methodDetailsMap.get("paymentHash");
-    if (!(paymentHashRaw instanceof String paymentHashHex)) {
-      throw malformed("Missing methodDetails.paymentHash in charge request");
-    }
-
-    byte[] paymentHash;
-    try {
-      paymentHash = HEX.parseHex(paymentHashHex);
-    } catch (IllegalArgumentException e) {
-      throw malformed("Invalid hex in methodDetails.paymentHash", e);
-    }
-
-    if (paymentHash.length != PAYMENT_HASH_LENGTH) {
-      throw malformed("Payment hash must be 32 bytes");
-    }
-
-    return paymentHash;
   }
 
   private static PaymentValidationException malformed(String message) {
-    return new PaymentValidationException(ErrorCode.MALFORMED_CREDENTIAL, message);
+    return new PaymentValidationException(ErrorCode.MALFORMED, message);
   }
 
   private static PaymentValidationException malformed(String message, Throwable cause) {
-    return new PaymentValidationException(ErrorCode.MALFORMED_CREDENTIAL, message, cause);
+    return new PaymentValidationException(ErrorCode.MALFORMED, message, cause);
+  }
+
+  /** Decodes only the canonical, unpadded base64url representation of a value. */
+  private static byte[] decodeCanonicalBase64Url(String encoded, String errorMessage) {
+    if (encoded == null || encoded.length() % 4 == 1) {
+      throw malformed(errorMessage);
+    }
+    for (int index = 0; index < encoded.length(); index++) {
+      char character = encoded.charAt(index);
+      if (!((character >= 'A' && character <= 'Z')
+          || (character >= 'a' && character <= 'z')
+          || (character >= '0' && character <= '9')
+          || character == '-'
+          || character == '_')) {
+        throw malformed(errorMessage);
+      }
+    }
+
+    try {
+      byte[] decoded = Base64.getUrlDecoder().decode(encoded);
+      String canonical = Base64.getUrlEncoder().withoutPadding().encodeToString(decoded);
+      if (!canonical.equals(encoded)) {
+        throw malformed(errorMessage);
+      }
+      return decoded;
+    } catch (IllegalArgumentException e) {
+      throw malformed(errorMessage, e);
+    }
   }
 }

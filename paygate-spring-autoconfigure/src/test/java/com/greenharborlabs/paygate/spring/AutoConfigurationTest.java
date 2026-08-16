@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -71,6 +73,23 @@ class AutoConfigurationTest {
   @DisplayName("creates PaygateEndpointRegistry bean when paygate.enabled=true")
   void createsEndpointRegistry() {
     contextRunner.run(context -> assertThat(context).hasSingleBean(PaygateEndpointRegistry.class));
+  }
+
+  @Test
+  @DisplayName("endpoint registry uses the configured caveat value limit")
+  void endpointRegistryUsesConfiguredCaveatValueLimit() {
+    contextRunner
+        .withPropertyValues("paygate.caveat.max-values-per-caveat=1")
+        .run(
+            context -> {
+              var registry = context.getBean(PaygateEndpointRegistry.class);
+              var config =
+                  new PaygateEndpointConfig("GET", "/bounded", 10, 600, "", "", "read,write");
+
+              assertThatThrownBy(() -> registry.register(config))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("maximum allowed is 1");
+            });
   }
 
   @Test
@@ -263,8 +282,16 @@ class AutoConfigurationTest {
             context -> {
               List<CaveatVerifier> verifiers =
                   (List<CaveatVerifier>) context.getBean("caveatVerifiers");
-              assertThat(verifiers).hasSize(1);
+              assertThat(verifiers).hasSize(5);
               assertThat(verifiers.getFirst()).isInstanceOf(ServicesCaveatVerifier.class);
+              assertThat(verifiers.get(1))
+                  .isInstanceOf(
+                      com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier.class);
+              assertThat(verifiers.get(2))
+                  .isInstanceOf(
+                      com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier.class);
+              assertThat(verifiers.get(3)).isInstanceOf(CapabilitiesCaveatVerifier.class);
+              assertThat(verifiers.get(4)).isInstanceOf(ValidUntilCaveatVerifier.class);
             });
   }
 
@@ -691,6 +718,29 @@ class AutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("startup fails safely when no payment protocol implementation is present")
+    void failsWhenNoProtocolImplementationIsPresent() {
+      String configuredSecret = "operator-secret-must-not-appear-in-diagnostics-123456";
+
+      contextRunner
+          .withClassLoader(
+              new FilteredClassLoader(
+                  "com.greenharborlabs.paygate.protocol.l402",
+                  "com.greenharborlabs.paygate.protocol.mpp"))
+          .withPropertyValues("paygate.protocols.mpp.challenge-binding-secret=" + configuredSecret)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("No usable payment protocol")
+                    .hasMessageContaining("paygate.protocols")
+                    .hasMessageNotContaining(configuredSecret);
+              });
+    }
+
+    @Test
     @DisplayName("startup succeeds with both protocols enabled")
     void succeedsWithBothProtocols() {
       contextRunner
@@ -738,7 +788,12 @@ class AutoConfigurationTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50));
+      return List.of(
+          new ServicesCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier("default", 50),
+          new ValidUntilCaveatVerifier("default"));
     }
   }
 

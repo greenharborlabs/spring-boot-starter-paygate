@@ -9,7 +9,9 @@ import java.util.Objects;
  *
  * <p>The identifier is a 66-byte binary blob: {@code [version:2][paymentHash:32][tokenId:32]}. The
  * signature is a 32-byte HMAC-SHA256 digest computed over the identifier and caveat chain. The
- * location is an optional, unsigned hint and plays no role in verification.
+ * location is an optional, unsigned hint and plays no role in authorization or verification. It
+ * remains part of object equality, so cache implementations may use it when selecting credential
+ * variants.
  */
 public final class Macaroon {
 
@@ -90,8 +92,6 @@ public final class Macaroon {
   public String toString() {
     return "Macaroon[identifierLength="
         + identifier.length
-        + ", location="
-        + location
         + ", caveatCount="
         + caveats.size()
         + "]";

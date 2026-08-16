@@ -1,10 +1,12 @@
 package com.greenharborlabs.paygate.spring;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -39,6 +41,7 @@ public class PaygateChallengeService {
   private final PaygateRateLimiter rateLimiter;
   private final ClientIpResolver clientIpResolver;
   private final CapabilityCache capabilityCache;
+  private final boolean validatedTestMode;
   private final ConcurrentHashMap<String, PaygatePricingStrategy> pricingStrategyCache =
       new ConcurrentHashMap<>();
 
@@ -51,6 +54,28 @@ public class PaygateChallengeService {
       @Nullable PaygateRateLimiter rateLimiter,
       @Nullable ClientIpResolver clientIpResolver,
       @Nullable CapabilityCache capabilityCache) {
+    this(
+        rootKeyStore,
+        lightningBackend,
+        properties,
+        applicationContext,
+        earningsTracker,
+        rateLimiter,
+        clientIpResolver,
+        capabilityCache,
+        false);
+  }
+
+  PaygateChallengeService(
+      RootKeyStore rootKeyStore,
+      LightningBackend lightningBackend,
+      @Nullable PaygateProperties properties,
+      @Nullable ApplicationContext applicationContext,
+      @Nullable PaygateEarningsTracker earningsTracker,
+      @Nullable PaygateRateLimiter rateLimiter,
+      @Nullable ClientIpResolver clientIpResolver,
+      @Nullable CapabilityCache capabilityCache,
+      boolean validatedTestMode) {
     this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
     this.lightningBackend =
         Objects.requireNonNull(lightningBackend, "lightningBackend must not be null");
@@ -61,10 +86,18 @@ public class PaygateChallengeService {
     this.rateLimiter = rateLimiter;
     this.clientIpResolver = clientIpResolver;
     this.capabilityCache = capabilityCache;
+    this.validatedTestMode = validatedTestMode;
   }
 
   /**
    * Creates a protocol-agnostic challenge context for the given request and endpoint configuration.
+   *
+   * <p><strong>Route identity warning:</strong> This compatibility overload signs the exact route
+   * spelling produced by parsing {@link PaygateEndpointConfig#pathPattern()}. A manually
+   * constructed configuration using {@code /api/orders/}, for example, can fail against a
+   * registered {@code /api/orders} route. Callers that resolved policy through {@link
+   * PaygateEndpointRegistry} should pass its {@link ResolvedEndpoint} instead. A spelling mismatch
+   * intentionally fails closed and causes credential rejection and re-challenge.
    *
    * <p>Performs the following steps:
    *
@@ -89,7 +122,33 @@ public class PaygateChallengeService {
   }
 
   /**
+   * Creates a protocol-agnostic challenge using the selected policy and its canonical registered
+   * route.
+   *
+   * <p>The request's actual HTTP method remains the challenge boundary. In particular, a {@code
+   * HEAD} request resolved through a {@code GET} policy is issued a {@code HEAD}-bound credential.
+   *
+   * @param request the current HTTP request
+   * @param resolvedEndpoint the endpoint policy selected for the request
+   * @return the challenge context containing all data for protocol-specific formatting
+   * @throws PaygateLightningUnavailableException if the Lightning backend is unhealthy or fails
+   * @throws PaygateRateLimitedException if the client is rate-limited
+   */
+  public ChallengeContext createChallenge(
+      HttpServletRequest request, ResolvedEndpoint resolvedEndpoint)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    return createChallenge(request, resolvedEndpoint, ChallengeOptions.enforceRateLimit());
+  }
+
+  /**
    * Creates a protocol-agnostic challenge context with explicit Spring integration options.
+   *
+   * <p><strong>Route identity warning:</strong> This compatibility overload signs the exact route
+   * spelling produced by parsing {@link PaygateEndpointConfig#pathPattern()}. A manually
+   * constructed configuration using {@code /api/orders/}, for example, can fail against a
+   * registered {@code /api/orders} route. Callers that resolved policy through {@link
+   * PaygateEndpointRegistry} should pass its {@link ResolvedEndpoint} instead. A spelling mismatch
+   * intentionally fails closed and causes credential rejection and re-challenge.
    *
    * <p>This overload is public only so sibling Spring modules can coordinate request-body digest
    * capture with challenge rate limiting. It is internal-to-Spring integration behavior and does
@@ -105,6 +164,43 @@ public class PaygateChallengeService {
   public ChallengeContext createChallenge(
       HttpServletRequest request, PaygateEndpointConfig config, ChallengeOptions options)
       throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    Objects.requireNonNull(config, "config must not be null");
+    var routePattern = PaygateEndpointRegistry.parsePathPattern(config.pathPattern());
+    return createChallenge(request, config, routePattern.getPatternString(), options);
+  }
+
+  /**
+   * Creates a protocol-agnostic challenge using a resolved endpoint and explicit Spring integration
+   * options.
+   *
+   * <p>Policy values come from {@link ResolvedEndpoint#config()}, the route boundary comes from
+   * {@link ResolvedEndpoint#routePattern()}, and the method boundary always comes from the actual
+   * request.
+   *
+   * @param request the current HTTP request
+   * @param resolvedEndpoint the endpoint policy selected for the request
+   * @param options internal Spring integration options for challenge creation
+   * @return the challenge context containing all data for protocol-specific formatting
+   * @throws PaygateLightningUnavailableException if the Lightning backend is unhealthy or fails
+   * @throws PaygateRateLimitedException if the client is rate-limited
+   */
+  public ChallengeContext createChallenge(
+      HttpServletRequest request, ResolvedEndpoint resolvedEndpoint, ChallengeOptions options)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    Objects.requireNonNull(resolvedEndpoint, "resolvedEndpoint must not be null");
+    return createChallenge(
+        request, resolvedEndpoint.config(), resolvedEndpoint.routePattern(), options);
+  }
+
+  private ChallengeContext createChallenge(
+      HttpServletRequest request,
+      PaygateEndpointConfig config,
+      String routePattern,
+      ChallengeOptions options)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    Objects.requireNonNull(request, "request must not be null");
+    Objects.requireNonNull(config, "config must not be null");
+    Objects.requireNonNull(routePattern, "routePattern must not be null");
     Objects.requireNonNull(options, "options must not be null");
 
     // 1. Check Lightning backend health
@@ -119,7 +215,7 @@ public class PaygateChallengeService {
 
     // 3. Generate root key, create invoice, build context
     try {
-      return buildChallengeContext(request, config);
+      return buildChallengeContext(request, config, routePattern, request.getMethod());
     } catch (PaygateLightningUnavailableException e) {
       throw e;
     } catch (RuntimeException e) {
@@ -147,7 +243,9 @@ public class PaygateChallengeService {
     }
     try {
       String clientIp =
-          clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+          clientIpResolver != null
+              ? clientIpResolver.resolveRateLimitIdentity(request)
+              : request.getRemoteAddr();
       if (!limiter.tryAcquire(clientIp)) {
         throw new PaygateRateLimitedException("Rate limit exceeded for client");
       }
@@ -188,11 +286,15 @@ public class PaygateChallengeService {
   // Future optimization: consider virtual threads or structured concurrency
   // to parallelize (1) and (2) when they are independent.
   private ChallengeContext buildChallengeContext(
-      HttpServletRequest request, PaygateEndpointConfig config)
+      HttpServletRequest request,
+      PaygateEndpointConfig config,
+      String routePattern,
+      String requestMethod)
       throws PaygateLightningUnavailableException {
 
-    // Resolve effective price before creating any root key material.
+    // Resolve and validate the effective price before any persistent or network side effect.
     long effectivePrice = resolvePrice(request, config);
+    validatePrice(effectivePrice);
 
     // Create Lightning invoice before root key generation so invoice failures do not allocate
     // sensitive key material.
@@ -204,71 +306,93 @@ public class PaygateChallengeService {
           "Failed to create invoice: " + e.getMessage(), e);
     }
 
+    final String safeBolt11;
+    try {
+      safeBolt11 = L402Challenge.sanitizeBolt11ForHeader(invoice.bolt11());
+    } catch (IllegalArgumentException e) {
+      throw new PaygateLightningUnavailableException(
+          "Lightning backend returned an invalid invoice", e);
+    }
+
     // Generate root key and tokenId atomically after invoice creation; try-with-resources ensures
     // SensitiveBytes.destroy() is called if a later step fails.
     try (RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey()) {
       byte[] rootKey = generationResult.rootKey().value();
       try {
         byte[] tokenId = generationResult.tokenId();
-
-        // Record invoice creation in earnings tracker
+        boolean contextCreated = false;
         try {
-          if (earningsTracker != null) {
-            earningsTracker.recordInvoiceCreated();
-          }
-        } catch (Exception e) {
-          log.log(
-              System.Logger.Level.WARNING,
-              "Failed to record invoice creation in earnings tracker: {0}",
-              e.getMessage());
-        }
-
-        // Build opaque map for test preimage if present
-        Map<String, String> opaque = null;
-        byte[] invoicePreimage = invoice.preimage();
-        if (invoicePreimage != null) {
-          opaque = new LinkedHashMap<>();
-          opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
-        }
-
-        String tokenIdHex = HexFormat.of().formatHex(tokenId);
-        String requestDigest = RequestDigestSupport.digestAttribute(request);
-
-        // Clone rootKey so ChallengeContext has its own copy before we zeroize
-        byte[] rootKeyClone = rootKey.clone();
-        try {
-          var challengeContext =
-              new ChallengeContext(
-                  invoice.paymentHash(),
-                  tokenIdHex,
-                  invoice.bolt11(),
-                  effectivePrice,
-                  config.description(),
-                  serviceName,
-                  config.timeoutSeconds(),
-                  config.capability(),
-                  rootKeyClone,
-                  opaque,
-                  requestDigest);
-
-          // Populate capability cache after successful invoice creation
-          if (capabilityCache != null
-              && config.capability() != null
-              && !config.capability().isEmpty()) {
-            try {
-              capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
-            } catch (RuntimeException e) {
-              log.log(
-                  System.Logger.Level.WARNING,
-                  "Failed to store capability in cache for token {0}: {1}",
-                  tokenIdHex,
-                  e.getMessage());
+          // Record invoice creation in earnings tracker
+          try {
+            if (earningsTracker != null) {
+              earningsTracker.recordInvoiceCreated();
             }
+          } catch (Exception e) {
+            log.log(
+                System.Logger.Level.WARNING,
+                "Failed to record invoice creation in earnings tracker: {0}",
+                e.getMessage());
           }
 
-          return challengeContext;
+          // Build opaque map for test preimage if present
+          Map<String, String> opaque = null;
+          byte[] invoicePreimage = invoice.preimage();
+          if (validatedTestMode
+              && lightningBackend.getClass() == TestModeLightningBackend.class
+              && invoicePreimage != null) {
+            opaque = new LinkedHashMap<>();
+            opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
+          }
+
+          String tokenIdHex = HexFormat.of().formatHex(tokenId);
+          String requestDigest = RequestDigestSupport.digestAttribute(request);
+
+          // Clone rootKey so ChallengeContext has its own copy before we zeroize
+          byte[] rootKeyClone = rootKey.clone();
+          try {
+            var challengeContext =
+                new ChallengeContext(
+                    invoice.paymentHash(),
+                    tokenIdHex,
+                    safeBolt11,
+                    effectivePrice,
+                    config.description(),
+                    serviceName,
+                    config.timeoutSeconds(),
+                    config.capability(),
+                    rootKeyClone,
+                    opaque,
+                    requestDigest,
+                    routePattern,
+                    requestMethod,
+                    request.getQueryString(),
+                    request.getQueryString() != null);
+
+            // Populate capability cache after successful invoice creation
+            if (capabilityCache != null
+                && config.capability() != null
+                && !config.capability().isEmpty()) {
+              try {
+                capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
+              } catch (RuntimeException e) {
+                log.log(
+                    System.Logger.Level.WARNING,
+                    "Failed to store capability in cache for token {0}: {1}",
+                    tokenIdHex,
+                    e.getMessage());
+              }
+            }
+
+            contextCreated = true;
+            return challengeContext;
+          } finally {
+            KeyMaterial.zeroize(rootKeyClone);
+          }
         } finally {
-          KeyMaterial.zeroize(rootKeyClone);
+          if (!contextCreated) {
+            revokeGeneratedRootKey(tokenId);
+          }
+          KeyMaterial.zeroize(tokenId);
         }
       } finally {
         KeyMaterial.zeroize(rootKey);
@@ -304,6 +428,51 @@ public class PaygateChallengeService {
         return config.priceSats();
       }
     }
-    return strategy.calculatePrice(request, config.priceSats());
+    try {
+      return strategy.calculatePrice(request, config.priceSats());
+    } catch (ArithmeticException e) {
+      // Dynamic pricing implementations commonly use Math.*Exact. Treat arithmetic failure as an
+      // invalid price calculation and let the outer fail-closed path return 503 before minting.
+      throw new IllegalArgumentException("Dynamic price calculation failed", e);
+    }
+  }
+
+  private static void validatePrice(long priceSats) {
+    if (!SecurityBounds.isValidPrice(priceSats)) {
+      throw new IllegalArgumentException(
+          "Resolved price must be between "
+              + SecurityBounds.MIN_PRICE_SATS
+              + " and "
+              + SecurityBounds.MAX_PRICE_SATS);
+    }
+  }
+
+  /**
+   * Revokes challenge state that could not be safely delivered to the client.
+   *
+   * <p>This is public for the servlet and Spring Security integrations to call after every enabled
+   * protocol declined or failed to format a challenge. It intentionally accepts the
+   * service-produced context rather than a token ID supplied by a request.
+   */
+  public void discardChallenge(ChallengeContext challengeContext) {
+    Objects.requireNonNull(challengeContext, "challengeContext must not be null");
+    byte[] tokenId = HexFormat.of().parseHex(challengeContext.tokenId());
+    try {
+      revokeGeneratedRootKey(tokenId);
+    } finally {
+      KeyMaterial.zeroize(tokenId);
+    }
+  }
+
+  private void revokeGeneratedRootKey(byte[] tokenId) {
+    try {
+      rootKeyStore.revokeRootKey(tokenId);
+    } catch (RuntimeException e) {
+      // Retaining unusable credentials is safer than surfacing an internal root-key-store detail.
+      log.log(
+          System.Logger.Level.WARNING,
+          "Failed to revoke undeliverable challenge root key; failing request closed: {0}",
+          e.getClass().getSimpleName());
+    }
   }
 }

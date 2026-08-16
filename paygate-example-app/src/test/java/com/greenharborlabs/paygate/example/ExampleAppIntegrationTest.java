@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
@@ -19,6 +20,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -162,8 +164,20 @@ class ExampleAppIntegrationTest {
       // By constructing both the preimage and the macaroon ourselves we can present a
       // valid L402 credential while still exercising the full verification path.
       //
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
-      Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, List.of());
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
+      Macaroon macaroon =
+          MacaroonMinter.mint(
+              rootKey,
+              identifier,
+              null,
+              List.of(
+                  new Caveat("services", "example-api:0"),
+                  new Caveat("route", "/api/v1/data"),
+                  new Caveat("method", "GET"),
+                  new Caveat("example-api_capabilities", "~"),
+                  new Caveat(
+                      "example-api_valid_until",
+                      String.valueOf(Instant.now().plusSeconds(3600).getEpochSecond()))));
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
 

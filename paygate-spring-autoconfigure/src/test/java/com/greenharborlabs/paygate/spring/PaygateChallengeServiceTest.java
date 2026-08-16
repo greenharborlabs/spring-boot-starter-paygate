@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -12,6 +13,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
+import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -28,6 +33,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 
 /**
  * Pure unit tests for {@link PaygateChallengeService}, verifying all paths independently of the
@@ -125,6 +131,132 @@ class PaygateChallengeServiceTest {
 
       assertThat(ctx.digest()).isEqualTo("sha-256=:dGVzdA==:");
     }
+
+    @Test
+    @DisplayName("compatibility overload uses the registry route identity for accepted spellings")
+    void compatibilityOverloadUsesRegistryRouteIdentity() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      PaygateChallengeService service = createService(createTrackingRootKeyStore());
+      var routeCases =
+          List.of(
+              new RouteCase("literal", "/api/literal", "/api/literal"),
+              new RouteCase("URI template", "/api/items/{id}", "/api/items/42"),
+              new RouteCase("wildcard", "/api/files/*", "/api/files/report"),
+              new RouteCase("trailing slash", "/api/trailing/", "/api/trailing/"),
+              new RouteCase("surrounding whitespace", " /api/spaced ", " /api/spaced "),
+              new RouteCase("path case", "/Api/Case", "/Api/Case"));
+
+      for (RouteCase routeCase : routeCases) {
+        var endpointConfig =
+            new PaygateEndpointConfig(
+                "GET", routeCase.pattern(), PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "");
+        var registry = new PaygateEndpointRegistry();
+        registry.register(endpointConfig);
+        var resolved = registry.resolve("GET", routeCase.requestPath());
+        var routeRequest = new MockHttpServletRequest("GET", routeCase.requestPath());
+
+        ChallengeContext context =
+            service.createChallenge(
+                routeRequest,
+                endpointConfig,
+                PaygateChallengeService.ChallengeOptions.enforceRateLimit());
+
+        assertThat(resolved)
+            .as("registry resolution for %s spelling", routeCase.name())
+            .isNotNull();
+        assertThat(context.routePattern())
+            .as("route identity for %s spelling", routeCase.name())
+            .isEqualTo(resolved.routePattern());
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Credential lifecycle
+  // -----------------------------------------------------------------------
+
+  @Nested
+  @DisplayName("credential lifecycle")
+  class CredentialLifecycle {
+
+    @Test
+    @DisplayName("absent credential creates exactly one invoice and one root key")
+    void absentCredentialCreatesOneSharedChallengeArtifact() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      var trackingStore = createTrackingRootKeyStore();
+      var protocol = challengeProtocol();
+      var filter = createFilter(createService(trackingStore), protocol);
+      var response = new MockHttpServletResponse();
+
+      filter.doFilter(request, response, mock(jakarta.servlet.FilterChain.class));
+
+      assertThat(response.getStatus()).isEqualTo(402);
+      verify(lightningBackend, times(1)).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("undeliverable challenge root key can be revoked after protocol formatting fails")
+    void discardChallengeRevokesUndeliverableRootKey() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      var trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+
+      ChallengeContext context = service.createChallenge(request, config);
+      service.discardChallenge(context);
+
+      assertThat(trackingStore.lastRevokedTokenId)
+          .isEqualTo(HexFormat.of().parseHex(context.tokenId()));
+    }
+
+    @Test
+    @DisplayName("presented invalid credential creates no replacement invoice or root key")
+    void presentedInvalidCredentialDoesNotCreateReplacementChallengeArtifact() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(null));
+      var trackingStore = createTrackingRootKeyStore();
+      var protocol = mock(PaymentProtocol.class);
+      when(protocol.scheme()).thenReturn("Payment");
+      when(protocol.canHandle("Payment invalid-presented-credential")).thenReturn(true);
+      when(protocol.parseCredential("Payment invalid-presented-credential"))
+          .thenThrow(
+              new PaymentValidationException(
+                  PaymentValidationException.ErrorCode.INVALID,
+                  "attacker-controlled validation detail"));
+      var filter = createFilter(createService(trackingStore), protocol);
+      request.addHeader("Authorization", "Payment invalid-presented-credential");
+      var response = new MockHttpServletResponse();
+
+      filter.doFilter(request, response, mock(jakarta.servlet.FilterChain.class));
+
+      assertThat(response.getStatus()).isEqualTo(402);
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
+      verify(protocol, never()).validate(org.mockito.ArgumentMatchers.any(), anyMap());
+    }
+
+    private PaymentProtocol challengeProtocol() {
+      var protocol = mock(PaymentProtocol.class);
+      when(protocol.scheme()).thenReturn("L402");
+      when(protocol.formatChallenge(org.mockito.ArgumentMatchers.any()))
+          .thenReturn(new ChallengeResponse("L402 challenge", "L402", null));
+      return protocol;
+    }
+
+    private PaygateSecurityFilter createFilter(
+        PaygateChallengeService service, PaymentProtocol protocol) {
+      var registry = new PaygateEndpointRegistry();
+      registry.register(config);
+      return new PaygateSecurityFilter(
+          registry, List.of(protocol), service, SERVICE_NAME, null, null, null, null);
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -211,6 +343,34 @@ class PaygateChallengeServiceTest {
   class LightningHealth {
 
     @Test
+    @DisplayName("invalid compatibility route is rejected before challenge side effects")
+    void invalidCompatibilityRouteIsRejectedBeforeChallengeSideEffects() {
+      PaygateRateLimiter rateLimiter = mock(PaygateRateLimiter.class);
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service =
+          new PaygateChallengeService(
+              trackingStore,
+              lightningBackend,
+              properties,
+              applicationContext,
+              null,
+              rateLimiter,
+              null,
+              null);
+      var invalidConfig =
+          new PaygateEndpointConfig(
+              "GET", "/api/{invalid", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "", "");
+
+      assertThatThrownBy(() -> service.createChallenge(request, invalidConfig))
+          .isInstanceOf(IllegalArgumentException.class);
+
+      verify(lightningBackend, never()).isHealthy();
+      verify(rateLimiter, never()).tryAcquire(anyString());
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
+    }
+
+    @Test
     @DisplayName("throws PaygateLightningUnavailableException when backend is unhealthy")
     void throwsWhenLightningUnhealthy() {
       when(lightningBackend.isHealthy()).thenReturn(false);
@@ -261,6 +421,27 @@ class PaygateChallengeServiceTest {
   @Nested
   @DisplayName("pricing strategy")
   class PricingStrategy {
+
+    @Test
+    @DisplayName("rejects configured prices outside the inclusive security range")
+    void rejectsOutOfRangeConfiguredPrice() {
+      assertThatThrownBy(
+              () ->
+                  new PaygateEndpointConfig(
+                      "GET", "/api/protected", 0, TIMEOUT_SECONDS, DESCRIPTION, "", ""))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () ->
+                  new PaygateEndpointConfig(
+                      "GET",
+                      "/api/protected",
+                      SecurityBounds.MAX_PRICE_SATS + 1,
+                      TIMEOUT_SECONDS,
+                      DESCRIPTION,
+                      "",
+                      ""))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
 
     @Test
     @DisplayName("uses pricing strategy bean when configured and found")
@@ -374,6 +555,63 @@ class PaygateChallengeServiceTest {
           .as("Root key generation must not happen when pricing resolution fails")
           .isZero();
     }
+
+    @Test
+    @DisplayName("rejects an out-of-range dynamic price before Lightning or root-key allocation")
+    void rejectsOutOfRangeDynamicPriceBeforeSideEffects() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      PaygatePricingStrategy strategy = (req, defaultPrice) -> SecurityBounds.MAX_PRICE_SATS + 1;
+      when(applicationContext.getBean("invalidStrategy", PaygatePricingStrategy.class))
+          .thenReturn(strategy);
+
+      PaygateEndpointConfig configWithStrategy =
+          new PaygateEndpointConfig(
+              "GET",
+              "/api/protected",
+              PRICE_SATS,
+              TIMEOUT_SECONDS,
+              DESCRIPTION,
+              "invalidStrategy",
+              "");
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+
+      assertThatThrownBy(() -> service.createChallenge(request, configWithStrategy))
+          .isInstanceOf(PaygateLightningUnavailableException.class)
+          .hasCauseInstanceOf(IllegalArgumentException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
+    }
+
+    @Test
+    @DisplayName("rejects checked-arithmetic dynamic pricing failures before side effects")
+    void rejectsCheckedArithmeticDynamicPriceBeforeSideEffects() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      PaygatePricingStrategy strategy = (req, defaultPrice) -> Math.addExact(Long.MAX_VALUE, 1);
+      when(applicationContext.getBean("overflowingStrategy", PaygatePricingStrategy.class))
+          .thenReturn(strategy);
+
+      PaygateEndpointConfig configWithStrategy =
+          new PaygateEndpointConfig(
+              "GET",
+              "/api/protected",
+              PRICE_SATS,
+              TIMEOUT_SECONDS,
+              DESCRIPTION,
+              "overflowingStrategy",
+              "");
+      ZeroizationTrackingRootKeyStore trackingStore = createTrackingRootKeyStore();
+      PaygateChallengeService service = createService(trackingStore);
+
+      assertThatThrownBy(() -> service.createChallenge(request, configWithStrategy))
+          .isInstanceOf(PaygateLightningUnavailableException.class)
+          .hasCauseInstanceOf(IllegalArgumentException.class)
+          .hasRootCauseInstanceOf(ArithmeticException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(trackingStore.generateRootKeyInvocations).isZero();
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -385,8 +623,8 @@ class PaygateChallengeServiceTest {
   class TestPreimage {
 
     @Test
-    @DisplayName("opaque map includes hex-encoded test_preimage when invoice has one")
-    void includesPreimageInOpaqueWhenPresent() throws Exception {
+    @DisplayName("custom backends cannot expose a test_preimage without a validated marker")
+    void omitsPreimageWithoutValidatedTestMode() throws Exception {
       when(lightningBackend.isHealthy()).thenReturn(true);
 
       byte[] preimage = new byte[32];
@@ -397,9 +635,7 @@ class PaygateChallengeServiceTest {
       PaygateChallengeService service = createService(createTrackingRootKeyStore());
       ChallengeContext ctx = service.createChallenge(request, config);
 
-      assertThat(ctx.opaque()).isNotNull();
-      assertThat(ctx.opaque()).containsKey("test_preimage");
-      assertThat(ctx.opaque().get("test_preimage")).isEqualTo(HexFormat.of().formatHex(preimage));
+      assertThat(ctx.opaque()).isNull();
     }
 
     @Test
@@ -633,7 +869,7 @@ class PaygateChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("delegates to ClientIpResolver.resolve() when resolver is present")
+    @DisplayName("delegates to ClientIpResolver rate-limit identity when resolver is present")
     void delegatesToResolverWhenPresent() throws Exception {
       when(lightningBackend.isHealthy()).thenReturn(true);
       when(lightningBackend.createInvoice(anyLong(), anyString()))
@@ -643,7 +879,7 @@ class PaygateChallengeServiceTest {
       when(rateLimiter.tryAcquire(anyString())).thenReturn(true);
 
       ClientIpResolver resolver = mock(ClientIpResolver.class);
-      when(resolver.resolve(request)).thenReturn("10.0.0.1");
+      when(resolver.resolveRateLimitIdentity(request)).thenReturn("10.0.0.1");
 
       request.setRemoteAddr("127.0.0.1");
 
@@ -659,7 +895,7 @@ class PaygateChallengeServiceTest {
               null);
 
       service.createChallenge(request, config);
-      verify(resolver).resolve(request);
+      verify(resolver).resolveRateLimitIdentity(request);
       verify(rateLimiter).tryAcquire("10.0.0.1");
     }
   }
@@ -854,6 +1090,8 @@ class PaygateChallengeServiceTest {
         now.plus(1, ChronoUnit.HOURS));
   }
 
+  private record RouteCase(String name, String pattern, String requestPath) {}
+
   /**
    * RootKeyStore that captures the {@link SensitiveBytes} reference so tests can verify {@code
    * isDestroyed()} after the service completes.
@@ -862,6 +1100,7 @@ class PaygateChallengeServiceTest {
 
     volatile SensitiveBytes lastSensitiveBytes;
     volatile byte[] lastRawKeyArray;
+    volatile byte[] lastRevokedTokenId;
     int generateRootKeyInvocations;
 
     @Override
@@ -888,7 +1127,7 @@ class PaygateChallengeServiceTest {
 
     @Override
     public void revokeRootKey(byte[] keyId) {
-      // no-op
+      this.lastRevokedTokenId = keyId.clone();
     }
   }
 }

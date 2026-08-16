@@ -2,7 +2,6 @@ package com.greenharborlabs.paygate.spring.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -25,6 +24,7 @@ import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import java.security.SecureRandom;
@@ -41,7 +41,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -94,7 +93,8 @@ class DualProtocolSecurityTest {
       when(l402Validator.validate(
               any(L402HeaderComponents.class), any(L402VerificationContext.class)))
           .thenReturn(new L402Validator.ValidationResult(credential, true));
-      when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+          .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
           new PaygateAuthenticationProvider(l402Validator, List.of(mppProtocol), SERVICE_NAME);
@@ -113,7 +113,7 @@ class DualProtocolSecurityTest {
       assertThat(token.isAuthenticated()).isTrue();
       assertThat(token.getProtocolScheme()).isEqualTo("L402");
       assertThat(token.getTokenId()).isEqualTo(credential.tokenId());
-      assertThat(token.getL402Credential()).isEqualTo(credential);
+      assertThat(token.getL402Credential()).isNull();
       assertThat(token.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
           .containsExactlyInAnyOrder("ROLE_PAYMENT", "ROLE_L402");
@@ -135,8 +135,8 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+          .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
           new PaygateAuthenticationProvider(l402Validator, List.of(mppProtocol), SERVICE_NAME);
@@ -155,7 +155,7 @@ class DualProtocolSecurityTest {
       assertThat(token.isAuthenticated()).isTrue();
       assertThat(token.getProtocolScheme()).isEqualTo("Payment");
       assertThat(token.getTokenId()).isEqualTo(credential.tokenId());
-      assertThat(token.getPaymentCredential()).isEqualTo(credential);
+      assertThat(token.getPaymentCredential()).isNull();
       assertThat(token.getL402Credential()).isNull();
       assertThat(token.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
@@ -195,7 +195,7 @@ class DualProtocolSecurityTest {
 
       var config =
           new PaygateEndpointConfig("GET", "/api/protected", 100, 3600, "Test", "", "read");
-      when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
+      var resolvedEndpoint = resolvedEndpoint(config);
 
       var challengeContext =
           new ChallengeContext(
@@ -210,7 +210,8 @@ class DualProtocolSecurityTest {
               new byte[32],
               null,
               null);
-      when(challengeService.createChallenge(any(), eq(config), any())).thenReturn(challengeContext);
+      when(challengeService.createChallenge(any(), eq(resolvedEndpoint), any()))
+          .thenReturn(challengeContext);
 
       var entryPoint =
           new PaygateAuthenticationEntryPoint(
@@ -219,7 +220,7 @@ class DualProtocolSecurityTest {
       request.setMethod("GET");
       request.setRequestURI("/api/protected");
 
-      entryPoint.commence(request, response, new BadCredentialsException("test"));
+      entryPoint.commence(request, response, resolvedEndpoint);
 
       assertThat(response.getStatus()).isEqualTo(402);
 
@@ -288,7 +289,8 @@ class DualProtocolSecurityTest {
       when(l402Validator.validate(
               any(L402HeaderComponents.class), any(L402VerificationContext.class)))
           .thenReturn(new L402Validator.ValidationResult(credential, true));
-      when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+          .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
           new PaygateAuthenticationProvider(l402Validator, List.of(mppProtocol), SERVICE_NAME);
@@ -322,8 +324,8 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+          .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
           new PaygateAuthenticationProvider(l402Validator, List.of(mppProtocol), SERVICE_NAME);
@@ -359,8 +361,8 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+          .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
           new PaygateAuthenticationProvider(l402Validator, List.of(mppProtocol), SERVICE_NAME);
@@ -392,8 +394,8 @@ class DualProtocolSecurityTest {
 
       when(mppProtocol.canHandle(authHeader)).thenReturn(true);
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
-      when(mppProtocol.scheme()).thenReturn("Payment");
-      when(endpointRegistry.findConfig(anyString(), anyString())).thenReturn(DEFAULT_CONFIG);
+      when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+          .thenReturn(resolvedEndpoint(DEFAULT_CONFIG));
 
       var provider =
           new PaygateAuthenticationProvider(l402Validator, List.of(mppProtocol), SERVICE_NAME);
@@ -419,13 +421,17 @@ class DualProtocolSecurityTest {
 
   // ========== Helpers ==========
 
+  private static ResolvedEndpoint resolvedEndpoint(PaygateEndpointConfig config) {
+    return new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+  }
+
   private L402Credential createTestL402Credential(List<Caveat> caveats) {
     byte[] paymentHash = new byte[32];
     byte[] tokenIdBytes = new byte[32];
     RNG.nextBytes(paymentHash);
     RNG.nextBytes(tokenIdBytes);
 
-    var identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    var identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     byte[] idBytes = MacaroonIdentifier.encode(identifier);
     byte[] sig = new byte[32];
     RNG.nextBytes(sig);

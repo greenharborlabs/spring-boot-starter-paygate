@@ -1,18 +1,21 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
 /**
  * Verifies {@code {service}_capabilities} caveats per the L402 spec. The caveat value is a
- * comma-separated list of capability names (e.g., "search,analyze"). Verification checks that the
- * requested capability is present in the allowed list.
+ * comma-separated list of capability names (e.g., "search,analyze"), or the reserved {@code ~}
+ * sentinel representing no capabilities. Verification checks endpoint satisfaction against the
+ * effective (final) caveat value.
  *
- * <p>If the context does not specify a requested capability (null), verification fails closed by
- * throwing {@link MacaroonVerificationException}. Endpoints must declare which capability they
- * provide. If the capabilities list in the caveat is empty, all requests are rejected.
+ * <p>A capability-less endpoint is satisfied only by {@code ~}. A multi-valued endpoint declaration
+ * uses any-of (OR) semantics: {@code search,analyze} is satisfied when the final named set overlaps
+ * it by containing either name. A final {@code ~} cannot satisfy a named declaration. Repeated
+ * caveats may retain or narrow a named set, including narrowing it to {@code ~}, but may never
+ * expand it or turn {@code ~} into a named grant. Blank segments, mixed sentinel/name values, and
+ * malformed signed ceilings fail verification.
  */
 public class CapabilitiesCaveatVerifier implements CaveatVerifier {
 
@@ -34,43 +37,76 @@ public class CapabilitiesCaveatVerifier implements CaveatVerifier {
 
   @Override
   public void verify(Caveat caveat, L402VerificationContext context) {
+    CapabilitySet effective = parseCapabilities(caveat.value());
     String requested =
         context.getRequestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY);
     if (requested == null) {
+      if (effective.none()) {
+        return;
+      }
       throw new MacaroonVerificationException(
           VerificationFailureReason.CAVEAT_NOT_MET,
-          "Capabilities caveat present but no capability declared by endpoint");
+          "Capabilities caveat contains named capabilities but no capability declared by endpoint");
     }
 
-    String[] segments = CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat, getKey());
-    Set<String> allowed = new HashSet<>(Arrays.asList(segments));
-
-    if (!allowed.contains(requested)) {
+    CapabilitySet requestedSet = parseCapabilities(requested);
+    if (requestedSet.none()) {
       throw new MacaroonVerificationException(
-          VerificationFailureReason.CAVEAT_NOT_MET, "Capability '" + requested + "' not allowed");
+          VerificationFailureReason.CAVEAT_NOT_MET,
+          "No-capability sentinel '~' is reserved and cannot be requested by an endpoint");
+    }
+
+    boolean hasAllowedCapability =
+        !effective.none() && requestedSet.names().stream().anyMatch(effective.names()::contains);
+    if (!hasAllowedCapability) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET,
+          "Requested capabilities '" + requested + "' are not allowed by the effective ceiling");
     }
   }
 
   @Override
   public boolean isMoreRestrictive(Caveat previous, Caveat current) {
-    if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
-        || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
+    try {
+      CapabilitySet previousSet = parseCapabilities(previous.value());
+      CapabilitySet currentSet = parseCapabilities(current.value());
+      if (previousSet.none()) {
+        return currentSet.none();
+      }
+      return currentSet.none() || previousSet.names().containsAll(currentSet.names());
+    } catch (MacaroonVerificationException ignored) {
       return false;
     }
-    Set<String> previousSet = parseCapabilities(previous.value());
-    Set<String> currentSet = parseCapabilities(current.value());
-    return previousSet.containsAll(currentSet);
   }
 
-  private static Set<String> parseCapabilities(String value) {
-    String[] segments = value.split(",", -1);
+  /**
+   * Parses a verified capability ceiling using the same bounded grammar enforced by this verifier.
+   *
+   * @param value the capability caveat value
+   * @return an immutable set of named capabilities, or an empty set for {@code ~}
+   * @throws MacaroonVerificationException if the value is malformed or exceeds configured bounds
+   */
+  public Set<String> parseEffectiveCapabilities(String value) {
+    return parseCapabilities(value).names();
+  }
+
+  private CapabilitySet parseCapabilities(String value) {
+    String[] segments = CaveatValues.splitBounded(value, maxValuesPerCaveat, getKey());
+    if (segments.length == 1 && segments[0].equals("~")) {
+      return new CapabilitySet(true, Set.of());
+    }
+
     Set<String> result = new HashSet<>();
     for (String segment : segments) {
-      String trimmed = segment.trim();
-      if (!trimmed.isEmpty()) {
-        result.add(trimmed);
+      if (segment.equals("~")) {
+        throw new MacaroonVerificationException(
+            VerificationFailureReason.CAVEAT_NOT_MET,
+            "No-capability sentinel '~' cannot be mixed with named capabilities");
       }
+      result.add(segment);
     }
-    return result;
+    return new CapabilitySet(false, Set.copyOf(result));
   }
+
+  private record CapabilitySet(boolean none, Set<String> names) {}
 }

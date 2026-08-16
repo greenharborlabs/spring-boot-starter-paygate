@@ -76,25 +76,33 @@ public final class Varint {
     }
 
     long value = 0;
-    int shift = 0;
-    int pos = offset;
 
-    while (pos < data.length) {
-      byte b = data[pos];
-      value |= (long) (b & 0x7F) << shift;
-      pos++;
-
-      if ((b & 0x80) == 0) {
-        return new DecodeResult(value, pos - offset);
+    for (int bytesRead = 0; bytesRead < MAX_VARINT_BYTES; bytesRead++) {
+      int pos = offset + bytesRead;
+      if (pos >= data.length) {
+        throw new IllegalArgumentException("Truncated varint at offset " + offset);
       }
 
-      shift += 7;
-      if (shift >= 64) {
+      int current = data[pos] & 0xFF;
+      int payload = current & 0x7F;
+      boolean hasContinuation = (current & 0x80) != 0;
+
+      // The tenth byte supplies only bit 63. Checking it before shifting avoids Java's
+      // shift-count modulo behavior and rejects values outside the unsigned 64-bit range.
+      if (bytesRead == MAX_VARINT_BYTES - 1 && (hasContinuation || payload > 1)) {
         throw new IllegalArgumentException("Varint is too long — exceeds 64-bit unsigned range");
+      }
+
+      value |= (long) payload << (bytesRead * 7);
+      if (!hasContinuation) {
+        if (bytesRead > 0 && payload == 0) {
+          throw new IllegalArgumentException("Varint is not minimally encoded");
+        }
+        return new DecodeResult(value, bytesRead + 1);
       }
     }
 
-    // Reached end of array with continuation bit still set
-    throw new IllegalArgumentException("Truncated varint at offset " + offset);
+    // The tenth byte cannot have a continuation bit; this is reachable only defensively.
+    throw new IllegalArgumentException("Varint is too long — exceeds 64-bit unsigned range");
   }
 }

@@ -25,7 +25,8 @@ class TestModeProductionGuardTest {
               AutoConfigurations.of(
                   PaygateAutoConfiguration.class, TestModeAutoConfiguration.class))
           .withBean(RequestMappingHandlerMapping.class, RequestMappingHandlerMapping::new)
-          .withPropertyValues("paygate.enabled=true", "paygate.test-mode=true");
+          .withPropertyValues(
+              "paygate.enabled=true", "paygate.test-mode=true", "paygate.root-key-store=memory");
 
   // --- Denylist checks ---
 
@@ -40,7 +41,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("production profiles");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -55,7 +56,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("production profiles");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -70,7 +71,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("production profiles");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -120,6 +121,44 @@ class TestModeProductionGuardTest {
             });
   }
 
+  @Test
+  @DisplayName("test-mode + only safe profile combination → context starts successfully")
+  void testModeWithOnlySafeProfileCombinationSucceeds() {
+    contextRunner
+        .withPropertyValues("spring.profiles.active=test,dev,local,development")
+        .run(context -> assertThat(context).hasNotFailed());
+  }
+
+  @Test
+  @DisplayName("test-mode + safe profile plus unknown profile → fails (all profiles must be safe)")
+  void testModeWithSafeAndUnknownProfileFails() {
+    contextRunner
+        .withPropertyValues("spring.profiles.active=dev,staging")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .rootCause()
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("active-profiles");
+            });
+  }
+
+  @Test
+  @DisplayName("test-mode + production-like profile with dev → fails (production veto)")
+  void testModeWithProductionLikeProfileAndDevFails() {
+    contextRunner
+        .withPropertyValues("spring.profiles.active=dev,production-eu")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .rootCause()
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("active-profiles");
+            });
+  }
+
   // --- Unknown / custom production profiles ---
 
   @Test
@@ -133,7 +172,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("requires an explicit dev/test profile");
+                  .hasMessageContaining("active-profiles");
             });
   }
 
@@ -146,7 +185,7 @@ class TestModeProductionGuardTest {
           assertThat(context.getStartupFailure())
               .rootCause()
               .isInstanceOf(IllegalStateException.class)
-              .hasMessageContaining("requires an explicit dev/test profile");
+              .hasMessageContaining("active-profiles");
         });
   }
 
@@ -161,7 +200,7 @@ class TestModeProductionGuardTest {
               assertThat(context.getStartupFailure())
                   .rootCause()
                   .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("requires an explicit dev/test profile");
+                  .hasMessageContaining("active-profiles");
             });
   }
 }

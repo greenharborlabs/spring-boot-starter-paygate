@@ -3,11 +3,14 @@ package com.greenharborlabs.paygate.core.macaroon;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class VarintTest {
 
@@ -175,6 +178,79 @@ class VarintTest {
       assertThat(result.value()).isEqualTo(1);
       assertThat(result.bytesRead()).isEqualTo(1);
     }
+
+    @ParameterizedTest(name = "decodes Go binary.Uvarint vector {0}")
+    @MethodSource("goUvarintVectors")
+    @DisplayName("accepts canonical Go binary.Uvarint boundary vectors")
+    void acceptsCanonicalGoUvarintVectors(
+        byte[] encoded, long expectedValue, int expectedBytesRead) {
+      var result = Varint.decode(encoded, 0);
+
+      assertThat(result.value()).isEqualTo(expectedValue);
+      assertThat(result.bytesRead()).isEqualTo(expectedBytesRead);
+    }
+
+    private static Stream<Arguments> goUvarintVectors() {
+      return Stream.of(
+          Arguments.of(
+              new byte[] {
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                0x01
+              },
+              1L << 56,
+              9),
+          Arguments.of(
+              new byte[] {
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                0x7F
+              },
+              Long.MAX_VALUE,
+              9),
+          Arguments.of(
+              new byte[] {
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                (byte) 0x80,
+                0x01
+              },
+              Long.MIN_VALUE,
+              10),
+          Arguments.of(
+              new byte[] {
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                0x01
+              },
+              -1L,
+              10));
+    }
   }
 
   @Nested
@@ -245,6 +321,53 @@ class VarintTest {
     void rejectsTruncatedVarint() {
       // 0x80 has continuation bit set, but there is no following byte
       assertThatThrownBy(() -> Varint.decode(new byte[] {(byte) 0x80}, 0))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("rejects a tenth byte whose payload exceeds the unsigned 64-bit range")
+    void rejectsTenthByteOverflow() {
+      byte[] overflow = {
+        (byte) 0xFF,
+        (byte) 0xFF,
+        (byte) 0xFF,
+        (byte) 0xFF,
+        (byte) 0xFF,
+        (byte) 0xFF,
+        (byte) 0xFF,
+        (byte) 0xFF,
+        (byte) 0xFF,
+        0x02
+      };
+
+      assertThatThrownBy(() -> Varint.decode(overflow, 0))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("rejects a ten-byte overlong encoding of a ninth-byte value")
+    void rejectsTenByteOverlongEncoding() {
+      byte[] overlong = {
+        (byte) 0x80,
+        (byte) 0x80,
+        (byte) 0x80,
+        (byte) 0x80,
+        (byte) 0x80,
+        (byte) 0x80,
+        (byte) 0x80,
+        (byte) 0x80,
+        (byte) 0x81,
+        0x00
+      };
+
+      assertThatThrownBy(() -> Varint.decode(overlong, 0))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("rejects an overlong multi-byte encoding of zero")
+    void rejectsOverlongZeroEncoding() {
+      assertThatThrownBy(() -> Varint.decode(new byte[] {(byte) 0x80, 0x00}, 0))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

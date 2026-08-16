@@ -2,15 +2,20 @@
 .gradle/
 build/
 
-# Ignore the entire plans directory and all its contents
+# Keep planning and specification artifacts local-only.
 plans/
-# Ignore the entire plans directory and all its contents
 specs/
 # Ignore the entire specify directory and all its contents
 .specify/
+# Ignore generated local agent integrations
+.agents/
+# Ignore local Factory skill integrations
+.factory/
+# Ignore local orchestration resume checkpoints
+.orchestrate/
 # Ignore the entire claude directory and all its contents
 .claude/
-.vscode/settings.json
+.vscode/
 
 # IDE
 .idea/
@@ -33,4 +38,11 @@ bin/
 .env.*.local
 *.env
 !*.env.example
+
+# Local integration-test state (never release with production artifacts)
+/integration-tests/.venv/
+/integration-tests/.pytest_cache/
+/integration-tests/**/__pycache__/
+/integration-tests/.breez-spark-payer/
+/integration-tests/.l402-credential.env
 /reports/

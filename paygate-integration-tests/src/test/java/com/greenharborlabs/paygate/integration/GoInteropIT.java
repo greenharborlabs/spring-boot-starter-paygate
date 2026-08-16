@@ -1,23 +1,35 @@
 package com.greenharborlabs.paygate.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.InMemoryRootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeAll;
@@ -35,6 +47,8 @@ class GoInteropIT {
 
   private static final Path GO_INTEROP_DIR = resolveGoInteropDir();
   private static final int PROCESS_TIMEOUT_SECONDS = 30;
+  private static final String SERVICE_NAME = "example-api";
+  private static final String ROUTE = "/security-boundary/items/{itemId}";
 
   private static boolean goAvailable;
 
@@ -58,7 +72,7 @@ class GoInteropIT {
       byte[] rootKey = genResult.rootKey().value();
       byte[] tokenId = genResult.tokenId();
 
-      var identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      var identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       var caveats =
           List.of(
               new Caveat("service", "test-service"),
@@ -98,11 +112,14 @@ class GoInteropIT {
           .as("Second caveat readable")
           .contains("expires_at=2099-12-31T23:59:59Z");
 
-      // Verify the identifier hex contains the expected payment hash prefix
+      // Identifier v1 retains the 66-byte layout and unchanged field offsets.
       String expectedPaymentHashHex = HexFormat.of().formatHex(paymentHash);
+      String expectedTokenIdHex = HexFormat.of().formatHex(tokenId);
+      String expectedIdentifierHex = "0001" + expectedPaymentHashHex + expectedTokenIdHex;
+      assertThat(expectedIdentifierHex).hasSize(132);
       assertThat(output.stdout())
-          .as("Identifier hex contains payment hash")
-          .contains("ID (hex): 0000" + expectedPaymentHashHex);
+          .as("Identifier hex is v1 followed by payment hash and token ID")
+          .contains("ID (hex): " + expectedIdentifierHex);
     } finally {
       rootKeyStore.close();
     }
@@ -175,6 +192,86 @@ class GoInteropIT {
     } finally {
       rootKeyStore.close();
     }
+  }
+
+  @Test
+  void requestBoundaryMacaroonRemainsGoCompatibleAndEnforcesEveryBoundary() throws Exception {
+    var rootKeyStore = new InMemoryRootKeyStore();
+    byte[] rootKey = null;
+    try (var genResult = rootKeyStore.generateRootKey()) {
+      rootKey = genResult.rootKey().value();
+      byte[] signingKey = rootKey;
+      var identifier = new MacaroonIdentifier(0, new byte[32], genResult.tokenId());
+      var caveats =
+          List.of(
+              new Caveat("route", ROUTE),
+              new Caveat("method", "GET"),
+              new Caveat(SERVICE_NAME + "_capabilities", "search,analyze"));
+      Macaroon minted = MacaroonMinter.mint(rootKey, identifier, "https://example.com", caveats);
+      byte[] serialized = MacaroonSerializer.serializeV2(minted);
+
+      GoOutput output = runGoVerify(Base64.getEncoder().encodeToString(serialized));
+
+      assertThat(output.exitCode())
+          .as(
+              "Go process exit code (stderr: %s, stdout: %s)"
+                  .formatted(output.stderr().strip(), output.stdout().strip()))
+          .isZero();
+      assertThat(output.stdout())
+          .contains("Version: 2")
+          .contains("route=" + ROUTE)
+          .contains("method=GET")
+          .contains(SERVICE_NAME + "_capabilities=search,analyze");
+
+      Macaroon goCompatible = MacaroonSerializer.deserializeV2(serialized);
+      var verifiers =
+          List.of(
+              new RouteCaveatVerifier(10),
+              new MethodCaveatVerifier(10),
+              new CapabilitiesCaveatVerifier(SERVICE_NAME, 50));
+      assertThatCode(
+              () ->
+                  MacaroonVerifier.verify(
+                      goCompatible, signingKey, verifiers, requestContext(ROUTE, "GET", "search")))
+          .doesNotThrowAnyException();
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.verify(
+                      goCompatible,
+                      signingKey,
+                      verifiers,
+                      requestContext("/security-boundary/expensive", "GET", "search")))
+          .isInstanceOf(MacaroonVerificationException.class);
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.verify(
+                      goCompatible, signingKey, verifiers, requestContext(ROUTE, "POST", "search")))
+          .isInstanceOf(MacaroonVerificationException.class);
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.verify(
+                      goCompatible, signingKey, verifiers, requestContext(ROUTE, "GET", "admin")))
+          .isInstanceOf(MacaroonVerificationException.class);
+    } finally {
+      MacaroonCrypto.zeroize(rootKey);
+      rootKeyStore.close();
+    }
+  }
+
+  private static L402VerificationContext requestContext(
+      String route, String method, String capability) {
+    return L402VerificationContext.builder()
+        .serviceName(SERVICE_NAME)
+        .currentTime(Instant.now())
+        .requestMetadata(
+            Map.of(
+                VerificationContextKeys.REQUEST_ROUTE,
+                route,
+                VerificationContextKeys.REQUEST_METHOD,
+                method,
+                VerificationContextKeys.REQUESTED_CAPABILITY,
+                capability))
+        .build();
   }
 
   // -- Helper types and methods --

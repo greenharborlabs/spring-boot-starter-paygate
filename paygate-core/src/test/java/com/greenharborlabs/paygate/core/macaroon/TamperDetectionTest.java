@@ -148,7 +148,7 @@ class TamperDetectionTest {
       // Find first location content byte (after version, field-type, length varints).
       int locationContentStart = 3; // 0x02, 0x01, len(19 < 128 so 1 byte)
       byte[] tampered = serialized.clone();
-      tampered[locationContentStart] = (byte) (tampered[locationContentStart] ^ 0xFF);
+      tampered[locationContentStart] = 'H';
 
       Macaroon deserialized = MacaroonSerializer.deserializeV2(tampered);
 

@@ -155,27 +155,114 @@ public final class LnbitsConfig {
     String normalizedHost = host.toLowerCase(Locale.ROOT);
     return "localhost".equals(normalizedHost)
         || normalizedHost.endsWith(".localhost")
-        || "::1".equals(normalizedHost)
-        || "[::1]".equals(normalizedHost)
         || LOCAL_DOCKER_DEVELOPMENT_HOSTS.contains(normalizedHost)
-        || isIpv4Loopback(normalizedHost);
+        || isCanonicalIpv4Loopback(normalizedHost)
+        || isCanonicalIpv6Loopback(normalizedHost);
   }
 
-  private static boolean isIpv4Loopback(String host) {
+  private static boolean isCanonicalIpv4Loopback(String host) {
     String[] parts = host.split("\\.", -1);
-    if (parts.length != 4 || !"127".equals(parts[0])) {
+    if (parts.length != 4) {
       return false;
     }
-    for (String part : parts) {
-      try {
-        int value = Integer.parseInt(part);
-        if (value < 0 || value > 255) {
+    int[] octets = new int[4];
+    for (int index = 0; index < parts.length; index++) {
+      String part = parts[index];
+      if (part.isEmpty() || part.length() > 3 || (part.length() > 1 && part.charAt(0) == '0')) {
+        return false;
+      }
+      int value = 0;
+      for (int characterIndex = 0; characterIndex < part.length(); characterIndex++) {
+        char character = part.charAt(characterIndex);
+        if (character < '0' || character > '9') {
           return false;
         }
-      } catch (NumberFormatException e) {
+        value = value * 10 + (character - '0');
+      }
+      if (value > 255) {
+        return false;
+      }
+      octets[index] = value;
+    }
+    return octets[0] == 127;
+  }
+
+  private static boolean isCanonicalIpv6Loopback(String host) {
+    String address = stripIpv6Brackets(host);
+    if (!"::1".equals(address)) {
+      return false;
+    }
+    byte[] addressBytes = parseIpv6Address(address);
+    if (addressBytes == null) {
+      return false;
+    }
+    for (int index = 0; index < addressBytes.length - 1; index++) {
+      if (addressBytes[index] != 0) {
         return false;
       }
     }
+    return addressBytes[addressBytes.length - 1] == 1;
+  }
+
+  private static String stripIpv6Brackets(String host) {
+    if (host.length() >= 2 && host.charAt(0) == '[' && host.charAt(host.length() - 1) == ']') {
+      return host.substring(1, host.length() - 1);
+    }
+    return host;
+  }
+
+  private static byte[] parseIpv6Address(String address) {
+    int compressionIndex = address.indexOf("::");
+    if (compressionIndex != address.lastIndexOf("::")) {
+      return null;
+    }
+    String[] leftGroups = splitIpv6Groups(address.substring(0, Math.max(compressionIndex, 0)));
+    String[] rightGroups =
+        compressionIndex < 0
+            ? new String[0]
+            : splitIpv6Groups(address.substring(compressionIndex + 2));
+    if (compressionIndex < 0
+        ? leftGroups.length != 8
+        : leftGroups.length + rightGroups.length >= 8) {
+      return null;
+    }
+
+    byte[] bytes = new byte[16];
+    int byteIndex = 0;
+    for (String group : leftGroups) {
+      if (!writeIpv6Group(group, bytes, byteIndex)) {
+        return null;
+      }
+      byteIndex += 2;
+    }
+    byteIndex = 16 - rightGroups.length * 2;
+    for (String group : rightGroups) {
+      if (!writeIpv6Group(group, bytes, byteIndex)) {
+        return null;
+      }
+      byteIndex += 2;
+    }
+    return bytes;
+  }
+
+  private static String[] splitIpv6Groups(String groups) {
+    return groups.isEmpty() ? new String[0] : groups.split(":", -1);
+  }
+
+  private static boolean writeIpv6Group(String group, byte[] bytes, int byteIndex) {
+    if (group.isEmpty() || group.length() > 4) {
+      return false;
+    }
+    int value = 0;
+    for (int index = 0; index < group.length(); index++) {
+      int digit = Character.digit(group.charAt(index), 16);
+      if (digit < 0) {
+        return false;
+      }
+      value = value * 16 + digit;
+    }
+    bytes[byteIndex] = (byte) (value >>> 8);
+    bytes[byteIndex + 1] = (byte) value;
     return true;
   }
 

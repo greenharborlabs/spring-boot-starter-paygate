@@ -76,6 +76,8 @@ public class CaffeineCredentialStore implements CredentialStore, AutoCloseable {
   private volatile Runnable beforeCopyForTesting = () -> {};
 
   private final Cache<String, CacheEntry> cache;
+  private final ReentrantLock lifecycleLock = new ReentrantLock();
+  private boolean closed;
 
   public CaffeineCredentialStore(int maxSize) {
     this.cache =
@@ -114,40 +116,86 @@ public class CaffeineCredentialStore implements CredentialStore, AutoCloseable {
   public void store(String tokenId, L402Credential credential, long ttlSeconds) {
     long ttlNanos = TimeUnit.SECONDS.toNanos(ttlSeconds);
     L402Credential retained = credential.copy();
+    lifecycleLock.lock();
     try {
+      if (closed) {
+        retained.destroy();
+        throw new IllegalStateException("Credential store is closed");
+      }
       cache.put(tokenId, new CacheEntry(retained, ttlNanos));
     } catch (RuntimeException | Error e) {
       retained.destroy();
       throw e;
+    } finally {
+      lifecycleLock.unlock();
     }
   }
 
   @Override
   public L402Credential get(String tokenId) {
-    CacheEntry entry = cache.getIfPresent(tokenId);
-    return entry != null ? entry.copyIfActive(beforeCopyForTesting) : null;
+    lifecycleLock.lock();
+    try {
+      if (closed) {
+        return null;
+      }
+      CacheEntry entry = cache.getIfPresent(tokenId);
+      return entry != null ? entry.copyIfActive(beforeCopyForTesting) : null;
+    } finally {
+      lifecycleLock.unlock();
+    }
   }
 
   @Override
   public void revoke(String tokenId) {
-    cache.invalidate(tokenId);
+    lifecycleLock.lock();
+    try {
+      if (!closed) {
+        cache.invalidate(tokenId);
+      }
+    } finally {
+      lifecycleLock.unlock();
+    }
   }
 
   @Override
   public long activeCount() {
-    cache.cleanUp();
-    return cache.estimatedSize();
+    lifecycleLock.lock();
+    try {
+      if (closed) {
+        return 0;
+      }
+      cache.cleanUp();
+      return cache.estimatedSize();
+    } finally {
+      lifecycleLock.unlock();
+    }
   }
 
   @Override
   public void close() {
-    cache.invalidateAll();
-    cache.cleanUp();
+    lifecycleLock.lock();
+    try {
+      if (!closed) {
+        closed = true;
+        cache.invalidateAll();
+        cache.cleanUp();
+      }
+    } finally {
+      lifecycleLock.unlock();
+    }
   }
 
   L402Credential peekRetainedForTesting(String tokenId) {
-    CacheEntry entry = cache.getIfPresent(tokenId);
-    return entry != null ? entry.credentialForTesting() : null;
+    lifecycleLock.lock();
+    try {
+      if (closed) {
+        return null;
+      }
+      CacheEntry entry = cache.getIfPresent(tokenId);
+      return entry != null ? entry.credentialForTesting() : null;
+    } finally {
+      lifecycleLock.unlock();
+    }
   }
 
   void setBeforeCopyForTesting(Runnable beforeCopyForTesting) {

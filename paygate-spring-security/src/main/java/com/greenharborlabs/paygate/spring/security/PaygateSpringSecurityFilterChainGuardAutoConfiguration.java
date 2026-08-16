@@ -2,9 +2,12 @@ package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.spring.PaygateProperties;
 import com.greenharborlabs.paygate.spring.PaygateSpringSecurityModeCondition;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
+import jakarta.servlet.http.HttpServletRequest;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.Collection;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -20,6 +23,7 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 /**
  * Fails closed when Paygate is in Spring Security mode but the effective filter chain does not
@@ -57,12 +61,96 @@ public class PaygateSpringSecurityFilterChainGuardAutoConfiguration {
       if (properties.getSpringSecurity().isCustomFilterChainAcknowledged()) {
         return;
       }
-      if (filterChainProxies.stream().anyMatch(this::containsPaygateAuthenticationFilter)) {
-        return;
+      var chains =
+          filterChainProxies.stream().flatMap(proxy -> proxy.getFilterChains().stream()).toList();
+      if (chains.isEmpty()) {
+        throw missingFilter();
       }
-      throw new IllegalStateException(
+      for (SecurityFilterChain chain : chains) {
+        validateChain(chain);
+      }
+    }
+
+    private void validateChain(SecurityFilterChain chain) {
+      List<Filter> filters = chain.getFilters();
+      int paygateIndex = directPaygateFilterIndex(filters);
+      if (paygateIndex < 0 && !containsPaygateAuthenticationFilter(filters)) {
+        throw missingFilter();
+      }
+      int authorizationIndex = directAuthorizationFilterIndex(filters);
+      if (paygateIndex >= 0 && authorizationIndex >= 0 && paygateIndex > authorizationIndex) {
+        throw new IllegalStateException(
+            "PaygateAuthenticationFilter must run before downstream authorization in every "
+                + "effective Spring Security filter chain.");
+      }
+      int rateLimitIndex = directRateLimitFilterIndex(filters);
+      if (rateLimitIndex >= 0 && paygateIndex >= 0 && rateLimitIndex > paygateIndex) {
+        throw new IllegalStateException(
+            "PaygateAuthFailureRateLimitFilter must run before PaygateAuthenticationFilter in "
+                + "every effective Spring Security filter chain.");
+      }
+      validateErrorDispatcherCoverage(chain);
+    }
+
+    private static int directPaygateFilterIndex(List<Filter> filters) {
+      for (int index = 0; index < filters.size(); index++) {
+        if (filters.get(index) instanceof PaygateAuthenticationFilter) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    private static int directAuthorizationFilterIndex(List<Filter> filters) {
+      for (int index = 0; index < filters.size(); index++) {
+        if (filters.get(index) instanceof AuthorizationFilter) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    private static int directRateLimitFilterIndex(List<Filter> filters) {
+      for (int index = 0; index < filters.size(); index++) {
+        if (filters.get(index) instanceof PaygateAuthFailureRateLimitFilter) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    private void validateErrorDispatcherCoverage(SecurityFilterChain chain) {
+      var requestDispatcher = new DispatcherType[] {DispatcherType.REQUEST};
+      HttpServletRequest request = dispatcherProbe(requestDispatcher);
+      requestDispatcher[0] = DispatcherType.ERROR;
+      if (!chain.matches(request)) {
+        throw new IllegalStateException(
+            "Paygate Spring Security filter-chain dispatcher coverage excludes ERROR dispatches; "
+                + "paid routes must remain enforced on redispatch.");
+      }
+    }
+
+    private static HttpServletRequest dispatcherProbe(DispatcherType[] dispatcher) {
+      return (HttpServletRequest)
+          Proxy.newProxyInstance(
+              HttpServletRequest.class.getClassLoader(),
+              new Class<?>[] {HttpServletRequest.class},
+              (_, method, _) ->
+                  switch (method.getName()) {
+                    case "getMethod" -> "GET";
+                    case "getRequestURI" -> "/paid";
+                    case "getDispatcherType" -> dispatcher[0];
+                    case "getContextPath", "getServletPath" -> "";
+                    case "isSecure" -> false;
+                    default -> null;
+                  });
+    }
+
+    private static IllegalStateException missingFilter() {
+      return new IllegalStateException(
           "Paygate servlet enforcement is disabled in Spring Security mode, but no "
-              + "PaygateAuthenticationFilter was found in any FilterChainProxy. Add the reference "
+              + "PaygateAuthenticationFilter was found in every effective FilterChainProxy chain. "
+              + "Add the reference "
               + "wiring, for example http.addFilterBefore(paygateFilter, "
               + "BasicAuthenticationFilter.class), or set "
               + ACKNOWLEDGEMENT_PROPERTY
@@ -74,6 +162,11 @@ public class PaygateSpringSecurityFilterChainGuardAutoConfiguration {
       return filterChainProxy.getFilterChains().stream()
           .map(SecurityFilterChain::getFilters)
           .flatMap(List::stream)
+          .anyMatch(filter -> containsPaygateAuthenticationFilter(filter, new IdentityHashMap<>()));
+    }
+
+    private boolean containsPaygateAuthenticationFilter(List<Filter> filters) {
+      return filters.stream()
           .anyMatch(filter -> containsPaygateAuthenticationFilter(filter, new IdentityHashMap<>()));
     }
 

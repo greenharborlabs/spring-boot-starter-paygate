@@ -1,6 +1,16 @@
 # paygate-protocol-mpp
 
-The MPP (Message Payment Protocol) implementation for the `spring-boot-starter-paygate` project. This is a **pure Java module with zero external dependencies** -- it depends only on `paygate-api` (which is itself JDK-only) and uses only JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.time`).
+## Replay and state-changing operations
+
+MPP credentials are reusable exact-request bearer material until their authenticated expiry. They
+bind the HTTP method, route, exact raw query, body digest where configured, and capability, but do
+not provide a single-use replay ledger. Use short expiries for all paid routes. For state-changing
+operations, also use application idempotency or transaction-uniqueness controls; deployments that
+need one-time consumption must maintain an application-owned consumed-state record keyed to the
+business operation. Do not treat a payment credential as an authorization substitute for those
+controls.
+
+The MPP (Modern Payment Protocol) implementation for the `spring-boot-starter-paygate` project. This is a **pure Java module with zero external dependencies** -- it depends only on `paygate-api` (which is itself JDK-only) and uses only JDK classes (`javax.crypto`, `java.security`, `java.util`, `java.nio`, `java.time`).
 
 **KEY CONSTRAINT:** This module has **NO dependency on `paygate-core`**. It is an entirely independent protocol implementation that shares only the `paygate-api` abstraction layer with the L402 protocol module. This architectural separation ensures that MPP can evolve independently and that applications can include one or both protocol modules without pulling in unnecessary dependencies.
 
@@ -40,7 +50,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Maven:**
@@ -49,14 +59,14 @@ implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
 If you need to depend on `paygate-protocol-mpp` directly:
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-protocol-mpp:0.1.0")
+implementation("com.greenharborlabs:paygate-protocol-mpp:0.1.4")
 ```
 
 ### Build Dependencies
@@ -122,6 +132,16 @@ Utility class that computes and verifies HMAC-SHA256 challenge IDs for stateless
 | `verify(id, realm, method, intent, requestB64, expires, digest, opaqueB64, secret)` | Recomputes the HMAC and compares against the presented ID using constant-time comparison |
 
 The HMAC input is a pipe-delimited string with 7 slots. For MPP challenges created by `MppProtocol.formatChallenge()`, `digest` is required and is always populated in the header and response body. The low-level binding helper still accepts nullable optional slots for callers that use it directly; null `expires`, `digest`, or `opaque` values map to an empty string in their slot. A fresh `Mac.getInstance("HmacSHA256")` is obtained per call for virtual-thread safety; JCA provider lookups are cached after the first call, so the overhead is negligible.
+
+### Request-digest migration
+
+Applications integrating MPP directly should create request digests with
+`CanonicalRequestDigest.create(...)` from `paygate-api`; this keeps request binding available
+without making the MPP module a dependency of Spring integrations. `MppChallengeBinding
+.createRequestDigest(...)` remains as a compatible façade and returns the same value. Existing
+`ChallengeContext` constructor signatures remain supported for legacy direct-MPP and receipt-only
+callers; use the newer request-bound context fields when issuing an MPP challenge that must bind a
+raw query and body.
 
 ### MppCredentialParser
 
@@ -241,6 +261,14 @@ Client                                  Server (MppProtocol)
 **Step 3: Credential presentation.** The client echoes back the entire challenge object plus the payment preimage in a base64url-encoded JSON blob in the `Authorization: Payment` header.
 
 **Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, digest binding, HMAC binding, expiry, and method. The echoed challenge digest must be present and must match the request digest from the validation context. On success, a `Payment-Receipt` header is included in the response.
+
+### Request Identity, Reuse, and Migration
+
+The digest binds a credential to the request method, application-relative UTF-8 path, query presence, exact raw query, and bounded body. The query is not parsed, decoded, sorted, or normalized: absent and explicit-empty queries differ, and query order, duplicate parameters, empty values, and encoding spelling are all part of the identity.
+
+An MPP credential is transferable bearer material. It may be presented repeatedly until expiry for that same bound request; it is not single-use and does not provide replay prevention because stateless validation keeps no server-side single-use or replay ledger. Treat the credential and payment preimage accordingly: anyone who obtains them can present them within those binding and expiry constraints. A request with any different bound component must obtain its own challenge.
+
+This binding format adds authenticated query presence and raw-query bytes to the older path/body identity. Credentials issued for the older identity do not authorize under this format and clients must obtain a new challenge. Integrations must preserve the servlet raw query rather than reconstructing it from parsed parameters.
 
 ---
 
@@ -462,7 +490,7 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions. No external JSON l
 | Parses valid credential with null source | Null source handling |
 | Parses valid credential with absent source | Missing source handling |
 | Extracts echoed challenge as map with all fields | Challenge extraction |
-| Metadata contains raw JSON and source | Metadata completeness |
+| Metadata contains echoed challenge and source but no raw JSON | Metadata completeness without retaining preimage-bearing input |
 | Rejects invalid base64url encoding | Input validation |
 | Rejects invalid JSON | Parse error handling |
 | Rejects trailing content | Strict JSON parsing |

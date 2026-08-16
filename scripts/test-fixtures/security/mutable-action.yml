@@ -1,0 +1,15 @@
+name: Unsafe action fixture
+
+on: workflow_dispatch
+
+jobs:
+  unsafe-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # This is intentionally inert fixture text. The test must reject the
+      # workflow before a runner can interpret it.
+      - run: touch payload-ran.marker
+
+permissions:
+  contents: write

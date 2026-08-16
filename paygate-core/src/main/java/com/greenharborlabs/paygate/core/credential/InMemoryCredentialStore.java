@@ -2,7 +2,9 @@ package com.greenharborlabs.paygate.core.credential;
 
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -21,6 +23,7 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
   private final int maxSize;
   private final ScheduledExecutorService cleanupExecutor;
   private volatile EvictionListener evictionListener;
+  private boolean closed;
 
   public InMemoryCredentialStore() {
     this(DEFAULT_MAX_SIZE, DEFAULT_CLEANUP_INTERVAL_SECONDS);
@@ -63,70 +66,84 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
 
   @Override
   public void store(String tokenId, L402Credential credential, long ttlSeconds) {
-    Instant expiresAt = Instant.now().plusSeconds(ttlSeconds);
+    Instant expiresAt = expirationFor(ttlSeconds);
     CachedCredential cached = new CachedCredential(credential.copy(), expiresAt);
+    var evictionEvents = new ArrayList<EvictionEvent>();
 
     storeLock.lock();
     try {
+      if (closed) {
+        destroyCached(cached);
+        throw new IllegalStateException("Credential store is closed");
+      }
       // If updating an existing entry, always allow it (updates access order too)
       if (entries.containsKey(tokenId)) {
         destroyCached(entries.put(tokenId, cached));
-        return;
-      }
-
-      // If under capacity, store directly
-      if (entries.size() < maxSize) {
+      } else if (entries.size() < maxSize) {
+        // If under capacity, store directly.
         entries.put(tokenId, cached);
-        return;
-      }
-
-      // At capacity: evict expired entries first
-      evictExpired();
-
-      if (entries.size() < maxSize) {
+      } else {
+        // At capacity: evict expired entries first, then the least-recently-used entry.
+        evictExpired(evictionEvents);
+        if (entries.size() == maxSize) {
+          evictLru(evictionEvents);
+        }
         entries.put(tokenId, cached);
-        return;
       }
-
-      // Still full: evict the least-recently-used entry
-      evictLru();
-      entries.put(tokenId, cached);
     } finally {
       storeLock.unlock();
     }
+    notifyListeners(evictionEvents);
   }
 
   @Override
   public L402Credential get(String tokenId) {
+    EvictionEvent evictionEvent = null;
+    L402Credential result;
     storeLock.lock();
     try {
+      if (closed) {
+        return null;
+      }
       CachedCredential cached = entries.get(tokenId);
       if (cached == null) {
         return null;
       }
       if (cached.isExpired()) {
         destroyCached(entries.remove(tokenId));
-        notifyListener(tokenId, EvictionReason.EXPIRED);
-        return null;
+        evictionEvent = new EvictionEvent(tokenId, EvictionReason.EXPIRED);
+        result = null;
+      } else {
+        // LinkedHashMap.get() already updated access order under lock
+        result = cached.credential().copy();
       }
-      // LinkedHashMap.get() already updated access order under lock
-      return cached.credential().copy();
     } finally {
       storeLock.unlock();
     }
+    if (evictionEvent != null) {
+      notifyListener(evictionEvent);
+    }
+    return result;
   }
 
   @Override
   public void revoke(String tokenId) {
+    EvictionEvent evictionEvent = null;
     storeLock.lock();
     try {
+      if (closed) {
+        return;
+      }
       CachedCredential removed = entries.remove(tokenId);
       if (removed != null) {
         destroyCached(removed);
-        notifyListener(tokenId, EvictionReason.REVOKED);
+        evictionEvent = new EvictionEvent(tokenId, EvictionReason.REVOKED);
       }
     } finally {
       storeLock.unlock();
+    }
+    if (evictionEvent != null) {
+      notifyListener(evictionEvent);
     }
   }
 
@@ -134,6 +151,9 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
   public long activeCount() {
     storeLock.lock();
     try {
+      if (closed) {
+        return 0;
+      }
       return entries.values().stream().filter(cached -> !cached.isExpired()).count();
     } finally {
       storeLock.unlock();
@@ -142,6 +162,17 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
 
   @Override
   public void close() {
+    storeLock.lock();
+    try {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      entries.values().forEach(InMemoryCredentialStore::destroyCached);
+      entries.clear();
+    } finally {
+      storeLock.unlock();
+    }
     if (cleanupExecutor != null) {
       cleanupExecutor.shutdown();
       try {
@@ -153,23 +184,21 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
         Thread.currentThread().interrupt();
       }
     }
-    storeLock.lock();
-    try {
-      entries.values().forEach(InMemoryCredentialStore::destroyCached);
-      entries.clear();
-    } finally {
-      storeLock.unlock();
-    }
   }
 
   private void scheduledCleanup() {
     try {
+      var evictionEvents = new ArrayList<EvictionEvent>();
       storeLock.lock();
       try {
-        evictExpired();
+        if (closed) {
+          return;
+        }
+        evictExpired(evictionEvents);
       } finally {
         storeLock.unlock();
       }
+      notifyListeners(evictionEvents);
     } catch (Exception e) {
       log.log(System.Logger.Level.WARNING, "Scheduled credential cleanup failed", e);
     }
@@ -183,13 +212,16 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
   CachedCredential peekRetainedForTesting(String tokenId) {
     storeLock.lock();
     try {
+      if (closed) {
+        return null;
+      }
       return entries.get(tokenId);
     } finally {
       storeLock.unlock();
     }
   }
 
-  private void evictExpired() {
+  private void evictExpired(List<EvictionEvent> evictionEvents) {
     // Must be called under storeLock
     var iterator = entries.entrySet().iterator();
     while (iterator.hasNext()) {
@@ -199,12 +231,12 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
         CachedCredential cached = entry.getValue();
         iterator.remove();
         destroyCached(cached);
-        notifyListener(tokenId, EvictionReason.EXPIRED);
+        evictionEvents.add(new EvictionEvent(tokenId, EvictionReason.EXPIRED));
       }
     }
   }
 
-  private void evictLru() {
+  private void evictLru(List<EvictionEvent> evictionEvents) {
     // Must be called under storeLock
     // In access-ordered LinkedHashMap, the first entry is the least-recently-used
     var iterator = entries.entrySet().iterator();
@@ -214,7 +246,7 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
       CachedCredential cached = eldest.getValue();
       iterator.remove();
       destroyCached(cached);
-      notifyListener(tokenId, EvictionReason.CAPACITY);
+      evictionEvents.add(new EvictionEvent(tokenId, EvictionReason.CAPACITY));
     }
   }
 
@@ -224,14 +256,31 @@ public class InMemoryCredentialStore implements CredentialStore, AutoCloseable {
     }
   }
 
-  private void notifyListener(String tokenId, EvictionReason reason) {
+  private static Instant expirationFor(long ttlSeconds) {
+    try {
+      Instant now = Instant.now();
+      long expirationEpochSecond = Math.addExact(now.getEpochSecond(), ttlSeconds);
+      return Instant.ofEpochSecond(expirationEpochSecond, now.getNano());
+    } catch (ArithmeticException | java.time.DateTimeException e) {
+      throw new IllegalArgumentException(
+          "ttlSeconds produces an invalid expiration: " + ttlSeconds, e);
+    }
+  }
+
+  private void notifyListeners(List<EvictionEvent> evictionEvents) {
+    evictionEvents.forEach(this::notifyListener);
+  }
+
+  private void notifyListener(EvictionEvent evictionEvent) {
     EvictionListener listener = this.evictionListener;
     if (listener != null) {
       try {
-        listener.onEviction(tokenId, reason);
+        listener.onEviction(evictionEvent.tokenId(), evictionEvent.reason());
       } catch (Exception e) {
         log.log(System.Logger.Level.WARNING, "Eviction listener threw exception", e);
       }
     }
   }
+
+  private record EvictionEvent(String tokenId, EvictionReason reason) {}
 }

@@ -24,10 +24,18 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.text.MessageFormat;
+import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -110,6 +118,28 @@ class LndChannelFactoryTest {
 
     assertThat(channel).isNotNull();
     assertThat(channel.isShutdown()).isFalse();
+  }
+
+  @Test
+  void plaintextChannelRejectsNonLocalHostBeforeChannelCreation() {
+    var config = LndConfig.plaintextForTesting("wallet.example", 10009);
+
+    assertThatThrownBy(() -> LndChannelFactory.create(config))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("approved local target");
+  }
+
+  @Test
+  void plaintextTargetAcceptsLoopbackLiteralsAndRejectsAmbiguousForms() {
+    assertThat(ValidatedLndTarget.validate("127.0.0.1").address().isLoopbackAddress()).isTrue();
+    assertThat(ValidatedLndTarget.validate("::1").address().isLoopbackAddress()).isTrue();
+
+    assertThatThrownBy(() -> ValidatedLndTarget.validate("127.0.0.2.example"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> ValidatedLndTarget.validate("192.168.1.1"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> ValidatedLndTarget.validate("http://localhost"))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -275,6 +305,132 @@ class LndChannelFactoryTest {
 
     assertThat(channel).isNotNull();
     assertThat(channel.isShutdown()).isFalse();
+  }
+
+  @Test
+  void overlyBroadMacaroonPermissionsWarnWithoutRevealingMacaroonContents(@TempDir Path tempDir)
+      throws IOException {
+    assumePosixPermissions(tempDir);
+    String secretMarker = "macaroon-secret-must-not-appear-in-logs";
+    Path macaroonFile = tempDir.resolve("admin.macaroon");
+    Files.writeString(macaroonFile, secretMarker);
+    Files.setPosixFilePermissions(
+        macaroonFile,
+        EnumSet.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ));
+
+    var warnings = new AtomicReference<String>();
+    Handler handler = permissionWarningHandler(warnings);
+    Logger logger = Logger.getLogger(LndChannelFactory.class.getName());
+    logger.addHandler(handler);
+    try {
+      var config =
+          new LndConfig(
+              "localhost", 10009, null, macaroonFile.toString(), true, 60, 20, 5, 4_194_304, 5);
+
+      channel = LndChannelFactory.create(config);
+
+      assertThat(warnings.get()).contains("permission");
+      assertThat(warnings.get()).doesNotContain(secretMarker);
+    } finally {
+      logger.removeHandler(handler);
+    }
+  }
+
+  @Test
+  void overlyBroadCertificatePermissionsWarnWithoutRevealingCertificateContents(
+      @TempDir Path tempDir) throws IOException {
+    assumePosixPermissions(tempDir);
+    String secretMarker = "certificate-secret-must-not-appear-in-logs";
+    Path certFile = tempDir.resolve("tls.cert");
+    Files.writeString(certFile, secretMarker);
+    Files.setPosixFilePermissions(
+        certFile,
+        EnumSet.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ));
+
+    var warnings = new AtomicReference<String>();
+    Handler handler = permissionWarningHandler(warnings);
+    Logger logger = Logger.getLogger(LndChannelFactory.class.getName());
+    logger.addHandler(handler);
+    try {
+      var config =
+          new LndConfig(
+              "localhost", 10009, certFile.toString(), null, false, 60, 20, 5, 4_194_304, 5);
+
+      assertThatThrownBy(() -> LndChannelFactory.create(config)).isInstanceOf(LndException.class);
+
+      assertThat(warnings.get()).contains("permission");
+      assertThat(warnings.get()).doesNotContain(secretMarker);
+    } finally {
+      logger.removeHandler(handler);
+    }
+  }
+
+  @Test
+  void trustedSecretMountMacaroonSymlinkRemainsUsable(@TempDir Path tempDir) throws IOException {
+    Path secretMount = Files.createDirectories(tempDir.resolve("trusted-secret-mount"));
+    Path macaroon = secretMount.resolve("admin.macaroon");
+    Files.write(macaroon, new byte[] {0x01, 0x02, 0x03});
+    Path configuredPath = tempDir.resolve("macaroon-from-mounted-secret");
+    Files.createSymbolicLink(configuredPath, macaroon);
+
+    var config =
+        new LndConfig(
+            "localhost", 10009, null, configuredPath.toString(), true, 60, 20, 5, 4_194_304, 5);
+
+    channel = LndChannelFactory.create(config);
+
+    assertThat(channel).isNotNull();
+    assertThat(channel.isShutdown()).isFalse();
+  }
+
+  @Test
+  void trustedSecretMountCertificateSymlinkRemainsUsable(@TempDir Path tempDir) throws IOException {
+    Path secretMount = Files.createDirectories(tempDir.resolve("trusted-secret-mount"));
+    Path certificate = secretMount.resolve("tls.cert");
+    Files.writeString(certificate, SELF_SIGNED_CERT_PEM);
+    Path configuredPath = tempDir.resolve("certificate-from-mounted-secret");
+    Files.createSymbolicLink(configuredPath, certificate);
+
+    var config =
+        new LndConfig(
+            "localhost", 10009, configuredPath.toString(), null, false, 60, 20, 5, 4_194_304, 5);
+
+    channel = LndChannelFactory.create(config);
+
+    assertThat(channel).isNotNull();
+    assertThat(channel.isShutdown()).isFalse();
+  }
+
+  private static void assumePosixPermissions(Path directory) throws IOException {
+    Assumptions.assumeTrue(
+        Files.getFileStore(directory).supportsFileAttributeView("posix"),
+        "POSIX file permissions are required for this test");
+  }
+
+  private static Handler permissionWarningHandler(AtomicReference<String> warnings) {
+    return new Handler() {
+      @Override
+      public void publish(LogRecord record) {
+        if (record.getLevel().intValue() >= Level.WARNING.intValue()
+            && record.getMessage().toLowerCase().contains("permission")) {
+          warnings.set(MessageFormat.format(record.getMessage(), record.getParameters()));
+        }
+      }
+
+      @Override
+      public void flush() {}
+
+      @Override
+      public void close() {}
+    };
   }
 
   // --- Integration tests with a real gRPC server on localhost ---
@@ -507,8 +663,7 @@ class LndChannelFactoryTest {
     assertThat(response).isNotNull();
     assertThat(channel.isShutdown()).isFalse();
 
-    // Verify the channel string representation includes authority with correct host:port,
-    // confirming the config was wired through properly
-    assertThat(channel.authority()).isEqualTo("localhost:" + port);
+    // Plaintext localhost is connected through the validator's numeric resolution snapshot.
+    assertThat(channel.authority()).endsWith(":" + port).startsWith("127.");
   }
 }

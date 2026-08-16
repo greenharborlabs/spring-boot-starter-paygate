@@ -212,12 +212,13 @@ class PaygateAuthenticationProviderDelegationTest {
       assertThat(result.isAuthenticated()).isTrue();
 
       var authToken = (PaygateAuthenticationToken) result;
-      assertThat(authToken.getPaymentCredential()).isEqualTo(credential);
+      assertThat(authToken.getPaymentCredential()).isNull();
       assertThat(authToken.getTokenId()).isEqualTo(credential.tokenId());
       assertThat(authToken.getServiceName()).isEqualTo(SERVICE_NAME);
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
           .contains("ROLE_PAYMENT");
+      assertThat(credential.isDestroyed()).isTrue();
     }
 
     @Test
@@ -254,7 +255,7 @@ class PaygateAuthenticationProviderDelegationTest {
       when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
       doThrow(
               new PaymentValidationException(
-                  PaymentValidationException.ErrorCode.INVALID_PREIMAGE, "bad preimage"))
+                  PaymentValidationException.ErrorCode.INVALID, "bad preimage"))
           .when(mppProtocol)
           .validate(eq(credential), any());
 
@@ -264,6 +265,7 @@ class PaygateAuthenticationProviderDelegationTest {
           .isInstanceOf(BadCredentialsException.class)
           .hasMessageContaining("Payment authentication failed")
           .hasCauseInstanceOf(PaymentValidationException.class);
+      assertThat(credential.isDestroyed()).isTrue();
     }
 
     @Test
@@ -274,7 +276,7 @@ class PaygateAuthenticationProviderDelegationTest {
       when(mppProtocol.parseCredential(authHeader))
           .thenThrow(
               new PaymentValidationException(
-                  PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL, "cannot parse"));
+                  PaymentValidationException.ErrorCode.MALFORMED, "cannot parse"));
 
       var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
 
@@ -450,7 +452,7 @@ class PaygateAuthenticationProviderDelegationTest {
     RNG.nextBytes(paymentHash);
     RNG.nextBytes(tokenIdBytes);
 
-    var identifier = new MacaroonIdentifier(0, paymentHash, tokenIdBytes);
+    var identifier = new MacaroonIdentifier(1, paymentHash, tokenIdBytes);
     byte[] idBytes = MacaroonIdentifier.encode(identifier);
     byte[] sig = new byte[32];
     RNG.nextBytes(sig);

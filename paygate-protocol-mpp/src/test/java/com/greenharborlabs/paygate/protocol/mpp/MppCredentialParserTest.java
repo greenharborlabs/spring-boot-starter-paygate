@@ -80,6 +80,28 @@ class MppCredentialParserTest {
         .formatted(challengeId, requestB64, sourceValue, preimageHex);
   }
 
+  /** Returns an alternative final base64url character that decodes to the same bytes. */
+  private static String nonCanonicalBase64url(String canonical) {
+    int remainder = canonical.length() % 4;
+    if (remainder == 0) {
+      throw new IllegalArgumentException("Base64url input must have unused trailing bits");
+    }
+
+    String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    int lastIndex = alphabet.indexOf(canonical.charAt(canonical.length() - 1));
+    int replacement = lastIndex + 1;
+    return canonical.substring(0, canonical.length() - 1) + alphabet.charAt(replacement);
+  }
+
+  private static void assertMalformed(String credentialBlob) {
+    assertThatThrownBy(() -> MppCredentialParser.parse(credentialBlob))
+        .isInstanceOf(PaymentValidationException.class)
+        .satisfies(
+            e ->
+                assertThat(((PaymentValidationException) e).getErrorCode())
+                    .isEqualTo(ErrorCode.MALFORMED));
+  }
+
   // --- Happy path ---
 
   @Test
@@ -97,6 +119,18 @@ class MppCredentialParserTest {
     assertThat(cred.tokenId()).isEqualTo(VALID_CHALLENGE_ID);
     assertThat(cred.sourceProtocolScheme()).isEqualTo("Payment");
     assertThat(cred.source()).isEqualTo("did:example:alice");
+  }
+
+  @Test
+  void returnedCredentialOwnsIndependentSensitiveCopiesAndCanBeClosed() {
+    PaymentCredential credential = MppCredentialParser.parse(toBlob(validJson()));
+    byte[] firstCopy = credential.preimage();
+    firstCopy[0] ^= 0x7f;
+
+    assertThat(credential.preimage()).isNotEqualTo(firstCopy);
+    credential.close();
+    assertThat(credential.isDestroyed()).isTrue();
+    assertThatThrownBy(credential::preimage).isInstanceOf(IllegalStateException.class);
   }
 
   @Test
@@ -180,8 +214,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).contains("Invalid base64url encoding");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -196,8 +230,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).contains("Invalid JSON");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -210,7 +244,7 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
             });
   }
 
@@ -231,8 +265,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).contains("Missing 'challenge' object");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -252,7 +286,7 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getMessage()).contains("Missing 'challenge' object");
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -277,7 +311,7 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getMessage()).contains("Missing 'id' in challenge");
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -300,7 +334,7 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getMessage()).contains("Missing 'id' in challenge");
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -320,7 +354,7 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getMessage()).contains("Missing 'payload.preimage'");
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -339,7 +373,7 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getMessage()).contains("Missing 'payload.preimage'");
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -372,8 +406,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).contains("Invalid preimage hex");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -394,8 +428,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).contains("lowercase hex");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -449,15 +483,25 @@ class MppCredentialParserTest {
   }
 
   @Test
-  void base64urlWithPaddingIsAlsoAccepted() {
-    // Base64.getUrlDecoder() handles both padded and unpadded
-    String json = validJson();
+  void rejectsPaddedOuterCredentialBlob() {
+    String json = validJson() + " ";
     byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-
     String blob = Base64.getUrlEncoder().encodeToString(bytes);
 
-    PaymentCredential cred = MppCredentialParser.parse(blob);
-    assertThat(cred.tokenId()).isEqualTo(VALID_CHALLENGE_ID);
+    assertMalformed(blob);
+  }
+
+  @Test
+  void rejectsNonUrlAlphabetInOuterCredentialBlob() {
+    assertMalformed("++++");
+  }
+
+  @Test
+  void rejectsNonCanonicalOuterCredentialBlob() {
+    String blob = toBlob(validJson() + " ");
+    assertThat(blob.length() % 4).isNotZero();
+
+    assertMalformed(nonCanonicalBase64url(blob));
   }
 
   // --- Request field extraction errors ---
@@ -478,9 +522,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage())
-                  .isEqualTo("Missing 'request' in echoed challenge for payment hash extraction");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -500,10 +543,59 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage())
-                  .isEqualTo("Invalid base64url in echoed challenge request field");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
+  }
+
+  @Test
+  void rejectsPaddedRequestField() {
+    String paddedRequest =
+        Base64.getUrlEncoder()
+            .encodeToString(
+                (new String(
+                        Base64.getUrlDecoder().decode(VALID_REQUEST_B64), StandardCharsets.UTF_8))
+                    .concat(" ")
+                    .getBytes(StandardCharsets.UTF_8));
+    String json =
+        """
+                {"challenge":{"id":"test-id","request":"%s"},"payload":{"preimage":"%s"}}"""
+            .formatted(paddedRequest, VALID_PREIMAGE_HEX);
+
+    assertMalformed(toBlob(json));
+  }
+
+  @Test
+  void rejectsNonUrlAlphabetInRequestField() {
+    String json =
+        """
+                {"challenge":{"id":"test-id","request":"////"},"payload":{"preimage":"%s"}}"""
+            .formatted(VALID_PREIMAGE_HEX);
+
+    assertMalformed(toBlob(json));
+  }
+
+  @Test
+  void rejectsNonCanonicalRequestField() {
+    String requestJson =
+        new String(Base64.getUrlDecoder().decode(VALID_REQUEST_B64), StandardCharsets.UTF_8) + " ";
+    String request = toBlob(requestJson);
+    assertThat(request.length() % 4).isNotZero();
+    String json =
+        """
+                {"challenge":{"id":"test-id","request":"%s"},"payload":{"preimage":"%s"}}"""
+            .formatted(nonCanonicalBase64url(request), VALID_PREIMAGE_HEX);
+
+    assertMalformed(toBlob(json));
+  }
+
+  @Test
+  void rejectsTrailingContentInRequestJson() {
+    String requestJson =
+        new String(Base64.getUrlDecoder().decode(VALID_REQUEST_B64), StandardCharsets.UTF_8) + "{}";
+    String requestB64 = toBlob(requestJson);
+
+    assertMalformed(toBlob(validJson().replace(VALID_REQUEST_B64, requestB64)));
   }
 
   @Test
@@ -528,9 +620,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage())
-                  .isEqualTo("Missing methodDetails.paymentHash in charge request");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -556,8 +647,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).isEqualTo("Invalid hex in methodDetails.paymentHash");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -575,8 +666,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).isEqualTo("Credential exceeds maximum size");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -591,8 +682,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).isEqualTo("Credential exceeds maximum size");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 
@@ -608,7 +699,7 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
             });
   }
 
@@ -649,8 +740,8 @@ class MppCredentialParserTest {
         .satisfies(
             e -> {
               PaymentValidationException pve = (PaymentValidationException) e;
-              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED_CREDENTIAL);
-              assertThat(pve.getMessage()).isEqualTo("Payment hash must be 32 bytes");
+              assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+              assertThat(pve.getMessage()).isEqualTo("Payment validation failed: MALFORMED");
             });
   }
 }

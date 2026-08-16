@@ -20,4 +20,17 @@ public record L402Metadata(
     Objects.requireNonNull(rawAuthorizationHeader, "rawAuthorizationHeader must not be null");
     additionalMacaroons = List.copyOf(additionalMacaroons);
   }
+
+  /**
+   * Returns a fixed, non-recursive diagnostic summary without rendering bearer credential material.
+   */
+  @Override
+  public String toString() {
+    return "L402Metadata[macaroon=<redacted>, additionalMacaroons=<redacted>, "
+        + "additionalMacaroonCount="
+        + additionalMacaroons.size()
+        + ", rawAuthorizationHeader=<redacted>, rawAuthorizationHeaderLength="
+        + rawAuthorizationHeader.length()
+        + "]";
+  }
 }

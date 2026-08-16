@@ -157,6 +157,40 @@ class MppProtocolTest {
     }
   }
 
+  @Nested
+  class BindingSecretLifecycleTests {
+
+    @Test
+    void callerCanDestroyTransferredSecretWithoutBreakingChallengeIssuance() {
+      SensitiveBytes callerSecret = secret();
+      MppProtocol protocolWithOwnedSecret = new MppProtocol(callerSecret);
+
+      callerSecret.destroy();
+
+      assertThat(
+              protocolWithOwnedSecret
+                  .formatChallenge(challengeContext("test", null))
+                  .wwwAuthenticateHeader())
+          .startsWith("Payment ");
+    }
+
+    @Test
+    void closingProtocolDestroysOwnedSecretAndMapsFurtherUseToUnavailable() {
+      MppProtocol protocolWithOwnedSecret = new MppProtocol(secret());
+
+      protocolWithOwnedSecret.close();
+      protocolWithOwnedSecret.close();
+
+      assertThatThrownBy(
+              () -> protocolWithOwnedSecret.formatChallenge(challengeContext("test", null)))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              e ->
+                  assertThat(((PaymentValidationException) e).getErrorCode())
+                      .isEqualTo(ErrorCode.UNAVAILABLE));
+    }
+  }
+
   // --- scheme() ---
 
   @Test
@@ -470,6 +504,8 @@ class MppProtocolTest {
       assertThat(cred.sourceProtocolScheme()).isEqualTo("Payment");
       assertThat(cred.preimage()).isEqualTo(PREIMAGE);
       assertThat(cred.paymentHash()).isEqualTo(PAYMENT_HASH);
+      cred.close();
+      assertThat(cred.isDestroyed()).isTrue();
     }
 
     @Test
@@ -481,8 +517,8 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.METHOD_UNSUPPORTED);
-                assertThat(pve.getMessage()).contains("Unsupported payment method");
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
+                assertThat(pve.getMessage()).isEqualTo("Payment validation failed: INVALID");
               });
     }
 
@@ -490,6 +526,23 @@ class MppProtocolTest {
     void rejectsNullHeader() {
       assertThatThrownBy(() -> protocol.parseCredential(null))
           .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void mapsMalformedParserInputToSafeMalformedFailure() {
+      String bearerMarker = "mpp-bearer-secret-9c4a7e";
+
+      assertThatThrownBy(() -> protocol.parseCredential("Payment " + bearerMarker))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              error -> {
+                PaymentValidationException failure = (PaymentValidationException) error;
+                assertThat(failure.getErrorCode()).isEqualTo(ErrorCode.MALFORMED);
+                assertThat(failure.getMessage())
+                    .isEqualTo("Payment validation failed: MALFORMED")
+                    .doesNotContain(bearerMarker);
+                assertThat(failure.getCause()).isNull();
+              });
     }
   }
 
@@ -532,8 +585,8 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_PREIMAGE);
-                assertThat(pve.getMessage()).contains("Preimage does not match payment hash");
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
+                assertThat(pve.getMessage()).isEqualTo("Payment validation failed: INVALID");
               });
     }
 
@@ -568,8 +621,8 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
-                assertThat(pve.getMessage()).contains("Challenge binding verification failed");
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
+                assertThat(pve.getMessage()).isEqualTo("Payment validation failed: INVALID");
               });
     }
 
@@ -591,9 +644,10 @@ class MppProtocolTest {
             .satisfies(
                 e -> {
                   PaymentValidationException pve = (PaymentValidationException) e;
-                  assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
-                  assertThat(pve.getMessage()).contains("Challenge binding verification failed");
-                  assertThat(pve.getCause()).isInstanceOf(IllegalArgumentException.class);
+                  assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
+                  assertThat(pve.getMessage()).isEqualTo("Payment validation failed: INVALID");
+                  assertThat(pve.getCause()).isNull();
+                  assertThat(pve.getMessage()).doesNotContain(invalidValue);
                 });
       }
     }
@@ -610,8 +664,8 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.EXPIRED_CREDENTIAL);
-                assertThat(pve.getMessage()).contains("expired");
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
+                assertThat(pve.getMessage()).isEqualTo("Payment validation failed: INVALID");
               });
     }
 
@@ -652,7 +706,7 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_PREIMAGE);
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
               });
     }
 
@@ -685,8 +739,8 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                // Must be INVALID_PREIMAGE, not INVALID_CHALLENGE_BINDING
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_PREIMAGE);
+                // Preimage validation must win over challenge-binding validation.
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
               });
     }
 
@@ -700,7 +754,7 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
               });
     }
 
@@ -716,7 +770,7 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
               });
     }
 
@@ -756,7 +810,7 @@ class MppProtocolTest {
           .satisfies(
               e -> {
                 PaymentValidationException pve = (PaymentValidationException) e;
-                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID_CHALLENGE_BINDING);
+                assertThat(pve.getErrorCode()).isEqualTo(ErrorCode.INVALID);
               });
     }
   }

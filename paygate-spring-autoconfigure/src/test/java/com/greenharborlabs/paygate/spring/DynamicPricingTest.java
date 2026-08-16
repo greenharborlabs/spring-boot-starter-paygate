@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -23,6 +24,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,8 @@ class DynamicPricingTest {
   private static final long STATIC_PRICE = 50;
   private static final long DYNAMIC_PRICE = 150;
   private static final String DYNAMIC_PATH = "/api/dynamic-price";
+  private static final AtomicReference<PaygatePricingStrategy> DYNAMIC_PRICER =
+      new AtomicReference<>((request, defaultPrice) -> DYNAMIC_PRICE);
 
   static {
     new SecureRandom().nextBytes(ROOT_KEY);
@@ -70,6 +74,7 @@ class DynamicPricingTest {
     stub.setHealthy(true);
     stub.setNextInvoice(createStubInvoice());
     stub.resetCapturedAmount();
+    DYNAMIC_PRICER.set((request, defaultPrice) -> DYNAMIC_PRICE);
   }
 
   // -----------------------------------------------------------------------
@@ -105,6 +110,61 @@ class DynamicPricingTest {
         .andExpect(jsonPath("$.price_sats", is(150)));
   }
 
+  @Test
+  @DisplayName("dynamic pricing accepts the inclusive one-satoshi lower bound")
+  void dynamicPricingAcceptsInclusiveLowerBound() throws Exception {
+    assertAcceptedDynamicPrice(SecurityBounds.MIN_PRICE_SATS);
+  }
+
+  @Test
+  @DisplayName("dynamic pricing accepts the inclusive total-supply upper bound")
+  void dynamicPricingAcceptsInclusiveUpperBound() throws Exception {
+    assertAcceptedDynamicPrice(SecurityBounds.MAX_PRICE_SATS);
+  }
+
+  @Test
+  @DisplayName("dynamic pricing rejects zero before calling Lightning")
+  void dynamicPricingRejectsZeroBeforeCallingLightning() throws Exception {
+    assertRejectedBeforeLightning(0);
+  }
+
+  @Test
+  @DisplayName("dynamic pricing rejects values above the total-supply bound before Lightning")
+  void dynamicPricingRejectsAboveUpperBoundBeforeCallingLightning() throws Exception {
+    assertRejectedBeforeLightning(SecurityBounds.MAX_PRICE_SATS + 1);
+  }
+
+  @Test
+  @DisplayName("dynamic pricing checked-arithmetic overflow fails closed before Lightning")
+  void dynamicPricingOverflowFailsClosedBeforeCallingLightning() throws Exception {
+    DYNAMIC_PRICER.set((request, defaultPrice) -> Math.addExact(Long.MAX_VALUE, 1));
+
+    mockMvc.perform(get(DYNAMIC_PATH)).andExpect(status().isServiceUnavailable());
+
+    assertThat(((CapturingStubLightningBackend) lightningBackend).getLastRequestedAmountSats())
+        .as("an overflowing pricing strategy must fail before createInvoice")
+        .isEqualTo(-1);
+  }
+
+  private void assertAcceptedDynamicPrice(long priceSats) throws Exception {
+    DYNAMIC_PRICER.set((request, defaultPrice) -> priceSats);
+
+    mockMvc.perform(get(DYNAMIC_PATH)).andExpect(status().isPaymentRequired());
+
+    assertThat(((CapturingStubLightningBackend) lightningBackend).getLastRequestedAmountSats())
+        .isEqualTo(priceSats);
+  }
+
+  private void assertRejectedBeforeLightning(long priceSats) throws Exception {
+    DYNAMIC_PRICER.set((request, defaultPrice) -> priceSats);
+
+    mockMvc.perform(get(DYNAMIC_PATH)).andExpect(status().isServiceUnavailable());
+
+    assertThat(((CapturingStubLightningBackend) lightningBackend).getLastRequestedAmountSats())
+        .as("an invalid dynamic price must fail before createInvoice")
+        .isEqualTo(-1);
+  }
+
   // -----------------------------------------------------------------------
   // Test application and configuration
   // -----------------------------------------------------------------------
@@ -130,12 +190,18 @@ class DynamicPricingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of();
+      return List.of(
+          new com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+              "test-service", 50),
+          new com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier("test-service"));
     }
 
     @Bean("myPricer")
     PaygatePricingStrategy myPricer() {
-      return (request, defaultPrice) -> DYNAMIC_PRICE;
+      return (request, defaultPrice) -> DYNAMIC_PRICER.get().calculatePrice(request, defaultPrice);
     }
 
     @Bean

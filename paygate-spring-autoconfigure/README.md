@@ -17,6 +17,7 @@ You do not use this module directly. Instead, add the `paygate-spring-boot-start
 - [@PaymentRequired Annotation](#paymentrequired-annotation)
 - [PaygateResponseWriter](#paygateresponsewriter)
 - [Security Filter](#security-filter)
+- [Operational Security Limitations](#operational-security-limitations)
 - [Rate Limiting](#rate-limiting)
 - [Health Cache](#health-cache)
 - [Health Indicator (Actuator)](#health-indicator-actuator)
@@ -50,7 +51,7 @@ All beans are guarded with `@ConditionalOnMissingBean`, so you can override any 
 
 ## Dual-Protocol Auto-Configuration
 
-The auto-configuration supports two payment protocols that can run simultaneously: L402 and MPP (Message Payment Protocol). Protocol beans are created by nested `@Configuration` classes inside `PaygateAutoConfiguration`.
+The auto-configuration supports two payment protocols that can run simultaneously: L402 and MPP (Modern Payment Protocol). Protocol beans are created by nested `@Configuration` classes inside `PaygateAutoConfiguration`.
 
 ### L402ProtocolConfiguration
 
@@ -95,6 +96,10 @@ Startup fails with `IllegalStateException` if any validation fails.
 | `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present; `true` requires secret; `false` disables |
 | `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 UTF-8 bytes. |
 | `paygate.protocols.mpp.previous-challenge-binding-secret` | `string` | -- | Optional previous HMAC secret for key rotation. Minimum 32 UTF-8 bytes when set. New challenges are still signed with `challenge-binding-secret`. |
+| `paygate.protocols.mpp.max-credential-bytes` | `int` | `65536` | Maximum raw credential size before parsing. |
+| `paygate.protocols.mpp.max-json-depth` | `int` | `5` | Maximum JSON nesting depth. |
+| `paygate.protocols.mpp.max-string-length` | `int` | `8192` | Maximum length of an individual parsed string. |
+| `paygate.protocols.mpp.max-keys-per-object` | `int` | `32` | Maximum keys allowed in one parsed JSON object. |
 
 ### Delegation Caveat Properties
 
@@ -120,6 +125,9 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.default-timeout-seconds` | `long` | `3600` | Default invoice expiry in seconds. |
 | `paygate.test-mode` | `boolean` | `false` | Enables test mode with an in-memory Lightning backend. Must not be used in production. See [Test Mode](#test-mode). |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Whether to read `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. See [Rate Limiting](#rate-limiting). |
+| `paygate.security-mode` | `string` | `"auto"` | Selects `auto`, `servlet`, or `spring-security` enforcement. |
+| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Advanced opt-out for the Spring Security filter-chain startup guard when enforcement is deliberately wired elsewhere. |
+| `paygate.actuator.enabled` | `boolean` | `false` | Registers the sensitive `/actuator/paygate` endpoint when Actuator is present and the endpoint is exposed. |
 
 ### Root Key Store Properties
 
@@ -149,6 +157,14 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.health-cache.enabled` | `boolean` | `true` | Whether to cache `isHealthy()` results from the Lightning backend. |
 | `paygate.health-cache.ttl-seconds` | `int` | `5` | How long health check results are cached, in seconds. |
 
+### Lightning and Metrics Properties
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paygate.lightning.timeout-seconds` | `int` | `5` | Global Lightning call timeout; backend-specific request/deadline properties override it. |
+| `paygate.metrics.max-endpoint-cardinality` | `int` | `100` | Maximum distinct endpoint tags before overflow bucketing. |
+| `paygate.metrics.overflow-tag-value` | `string` | `"_other"` | Endpoint tag value used after the cardinality cap is reached. |
+
 ### LNbits Backend Properties
 
 | Property | Type | Default | Required | Description |
@@ -167,7 +183,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnd.port` | `int` | `10009` | When `paygate.backend=lnd` | Port of the LND gRPC endpoint. |
 | `paygate.lnd.tls-cert-path` | `string` | -- | When `paygate.backend=lnd` (unless plaintext) | Path to the LND TLS certificate (`tls.cert`). |
 | `paygate.lnd.macaroon-path` | `string` | -- | No | Path to the LND admin macaroon file (`admin.macaroon`). |
-| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Allow plaintext gRPC (no TLS). For local development only. |
+| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Explicit local-development opt-in for plaintext gRPC. It requires only `dev`, `local`, `development`, or `test` profiles and an exact `localhost` or loopback-IP target. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | gRPC keepalive ping interval. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Keepalive ping ack timeout. |
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle connection timeout. |
@@ -258,7 +274,7 @@ If `paygate.backend` is set but the corresponding module is not on the classpath
 When `paygate.backend=lnd`, the auto-configuration builds a gRPC `ManagedChannel`:
 
 - If `paygate.lnd.tls-cert-path` is set, the channel uses TLS with the provided certificate. If `paygate.lnd.macaroon-path` is also set, a `MacaroonClientInterceptor` attaches the macaroon hex as gRPC metadata on every call.
-- If `paygate.lnd.tls-cert-path` is not set and `paygate.lnd.allow-plaintext=true`, a plaintext channel is created (a warning is logged). This is only suitable for local development.
+- If `paygate.lnd.tls-cert-path` is not set and `paygate.lnd.allow-plaintext=true`, a plaintext channel is created only after startup verifies a nonempty all-allowed `dev`/`local`/`development`/`test` profile set and an exact `localhost` or loopback-IP target. The connection uses the validated numeric address and emits a secret-free warning. Other hostnames, private/public addresses, URI-shaped values, and mixed/empty localhost resolution fail before channel creation.
 - If neither TLS cert nor plaintext is configured, startup fails with `IllegalStateException`.
 
 ---
@@ -274,11 +290,21 @@ The root key store holds the signing keys for macaroons. Two implementations are
 
 The `~` prefix in `paygate.root-key-store-path` is expanded to `System.getProperty("user.home")`.
 
+The file-backed store requires a filesystem with POSIX permissions and protects the directory and
+new key files accordingly. This is not a substitute for deployment security: root-key directories
+and LND TLS certificate/macaroon paths still rely on secure host ownership, permissions, and
+trusted mount behavior. Do not infer cross-platform filesystem-security guarantees from this
+integration; protect those paths at the operating-system and deployment layers.
+
 ---
 
 ## Credential Cache
 
 Validated L402 credentials are cached to avoid re-verifying macaroon signatures and re-querying the Lightning backend on every request with the same credential.
+
+Cache reuse never overrides root-key revocation. After proof-of-payment succeeds, `L402Validator` performs a root-key lookup before reading the credential cache. Exact variants still skip HMAC/signature recomputation and return `freshValidation=false`, but every successful cache hit now pays the cost of one root-key-store lookup. A missing or failed lookup best-effort evicts the token's cache slot and returns the same sanitized `REVOKED_CREDENTIAL` failure.
+
+A request that obtained its defensive root-key copy before concurrent revocation may complete. Any request whose authoritative lookup occurs after revocation fails, and later requests cannot reuse a stale cache entry. The Spring revocation listener eagerly evicts entries to reduce stale residency; the per-request root-key check is the correctness boundary.
 
 | Caffeine on classpath? | Implementation | Behavior |
 |------------------------|----------------|----------|
@@ -286,6 +312,11 @@ Validated L402 credentials are cached to avoid re-verifying macaroon signatures 
 | No | `InMemoryCredentialStore` | Simple `ConcurrentHashMap`-based store with configurable max size. |
 
 `CaffeineCredentialStore` uses Caffeine's variable expiry API (`Expiry`) so each cached credential expires independently based on its own TTL, rather than a global expiration.
+
+The credential cache is bounded and is only a validation optimization. Cache eviction, expiry, or
+capacity removal does not itself revoke a still-valid credential; a cache miss causes
+authoritative validation to remain server-side. Use root-key revocation (with the per-request
+root-key check described above) when a credential must be invalidated.
 
 Custom `CredentialStore` implementations must treat credentials passed to `store()` as caller-owned. If the store retains credentials in Redis, a database, or another cache, copy them before storing and return caller-owned copies from `get()`. Cache eviction, expiry, replacement, removal, or shutdown must destroy only the store's private retained copies and must not invalidate validation results already returned to callers. If backend removal or destruction fails or becomes uncertain, fail closed and stop serving the affected credential.
 
@@ -302,6 +333,14 @@ public QuoteResponse quote() { ... }
 ```
 
 **Attributes:** `priceSats`, `timeoutSeconds` (default `-1` for global default), `description`, `pricingStrategy`, `capability`.
+
+Capability lists use **any-of (OR)** semantics. For example,
+`@PaymentRequired(priceSats = 5, capability = "search,analyze")` accepts a credential whose final
+verified capability ceiling contains `search` OR `analyze`; the annotation is not an all-of
+expression. A wholly blank annotation value (or a null/wholly blank manually registered endpoint
+value) is normalized to no named capability and minted as `~`. In contrast, blank comma-separated
+segments such as `search,,analyze` are invalid. The reserved `~` cannot appear in an endpoint
+declaration, alone or mixed with names.
 
 `PaygateEndpointRegistry` scans for `@PaymentRequired` annotations during `scanAnnotatedEndpoints()`.
 
@@ -320,6 +359,7 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 | `writeMppError(response, exception, challenges)` | varies | MPP validation failure using RFC 9457 Problem Details format. Includes fresh challenges for 402 responses. |
 | `writeRateLimited(response)` | 429 | Rate limit exceeded. Includes `Retry-After: 1` header. |
 | `writeLightningUnavailable(response)` | 503 | Lightning backend is down. |
+| `writeInternalError(response)` | 500 | Sanitized response for endpoint-policy resolution failures. |
 | `writeReceipt(response, receipt)` | -- | Sets `Payment-Receipt` header with base64url-nopad encoded JSON receipt. |
 | `writeMethodUnsupported(response, message)` | 400 | Unsupported payment method (RFC 9457 Problem Details). |
 
@@ -331,11 +371,57 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 
 ### Request Flow
 
-1. **Match**: The filter checks if the request path and HTTP method match any `@PaymentRequired` endpoint in the `PaygateEndpointRegistry`. If no match, the request passes through untouched.
+1. **Match**: The filter resolves the application-relative request path and actual HTTP method against `PaygateEndpointRegistry`. The result includes the endpoint policy and canonical route pattern. Context paths and applicable path-prefix servlet mappings are excluded before lookup. If no match, the request passes through untouched.
 2. **Credential validation**: If the `Authorization` header contains an `L402` or `LSAT` prefix, the credential is validated locally via `L402Validator` (no Lightning network call needed). Valid credentials pass through; malformed headers get HTTP 400; expired or invalid credentials get the appropriate error status.
 3. **Health check**: If no valid credential is present, the Lightning backend's `isHealthy()` is checked. If the backend is down, the filter returns HTTP 503 (fail-closed).
 4. **Rate limit check**: Before creating an invoice, the filter checks the `PaygateRateLimiter`. If the client IP has exceeded the rate limit, HTTP 429 is returned with a `Retry-After: 1` header.
-5. **Invoice creation**: A root key is generated, a Lightning invoice is created, a macaroon is minted with service and expiry caveats, and HTTP 402 is returned with a `WWW-Authenticate` header containing the macaroon and invoice.
+5. **Invoice creation**: A root key is generated, a Lightning invoice is created, and the L402 macaroon is minted with service, canonical `route`, actual `method`, explicit capability ceiling, and expiry caveats. HTTP 402 is returned with a `WWW-Authenticate` header containing the macaroon and invoice.
+
+### Endpoint Resolution and Credential Boundaries
+
+The registry catalogs both paid and unprotected mappings from supported MVC mapping sources in their Spring order, retaining complete mapping conditions. It resolves an `HttpServletRequest` with Spring MVC's matching and comparison rules, including path patterns, HTTP method, parameters, headers, media types, version, and custom conditions. Application-relative paths use DispatcherServlet-compatible decoded segments and the active path-parser behavior.
+
+Resolution is deterministic: exact paths precede patterns, Spring pattern specificity selects among patterns, and unresolved equal-specificity ambiguity fails closed. Conflicting paid policies with the same signed method and canonical route are rejected at registration; equally selected requests with different paid policies fail closed. A detectable unsupported mapping source that serves a paid handler also fails startup rather than leaving the handler unprotected. For `HEAD`, an explicit HEAD policy wins; otherwise the matching GET policy is inherited in full, followed by a wildcard policy. The actual method remains `HEAD`, so a GET-bound credential cannot be reused for HEAD. Other methods use their own bucket and then wildcard; `OPTIONS` does not inherit GET.
+
+The canonical registered pattern is bound separately from the concrete request path. This keeps route identity stable for root, context-path, servlet-mapped, and combined-prefix deployments. Malformed or ambiguous prefix/path state does not invoke the protected handler.
+
+### Redispatch and Final MVC Check
+
+Servlet enforcement applies to `REQUEST`, `ASYNC`, `FORWARD`, and `ERROR` dispatches. After a successful payment decision, Paygate keeps a private decision for the selected target and reuses it only when a redispatch resolves to that same target. A redispatch to a different paid target is authorized again. This avoids rereading a request body for a same-target redispatch while preserving payment checks when routing changes.
+
+MVC also performs a final check immediately before controller invocation. If the handler selected by MVC does not match the paid handler marked by the successful decision, the request fails closed. This protects against a routing difference between early filter resolution and final handler selection.
+
+Code that already resolved endpoint policy through `PaygateEndpointRegistry` should call a `PaygateChallengeService.createChallenge(..., ResolvedEndpoint)` overload. The retained config-based overloads sign the exact parsed spelling of `PaygateEndpointConfig.pathPattern()`: a manually constructed `/api/orders/` configuration can mismatch the registered `/api/orders` identity. That mismatch intentionally fails closed, so the credential is rejected and the client is re-challenged.
+
+Every first-party L402 macaroon has a capability ceiling. A blank endpoint capability mints `~` (the empty set); named ceilings may only be retained or narrowed by holder attenuation. Endpoint satisfaction uses set overlap, so a `search,analyze` declaration accepts a final `{search}` or `{analyze}` ceiling, but rejects `{export}` and `~`. Expansion, sentinel-to-name escalation, blank segments, mixed sentinel/name values, and malformed signed ceiling values fail closed at registration or verification. Credentials missing `route`, `method`, or the capability ceiling are intentionally invalid, including cache hits, and must be replaced through a new challenge.
+
+Error responses and diagnostics do not echo full macaroons, preimages, `Authorization` headers, root keys, or sensitive validation reasons. Log only permitted non-secret identifiers and redacted structural metadata.
+
+## Operational Security Limitations
+
+The auto-configuration enforces payment for endpoint selections it can resolve through the
+supported servlet and Spring Security integration paths; it is not a general-purpose request
+firewall. Verify filter placement, redispatch behavior, and application routing configuration in
+the deployed application, especially when using custom filter chains or nonstandard dispatching.
+
+When MPP request-body digest processing is active, `paygate.request-body.max-bytes` bounds the
+captured body. The value must be within the inclusive `SecurityBounds` range of 1 byte through
+16 MiB (16,777,216 bytes). Over-limit requests are rejected before protected handler work. This
+bounded capture does not make arbitrary streaming or upload workloads suitable.
+
+### 0.1.5 resolver constructor migration
+
+The unused service-name constructor argument has been removed from the Spring Security fallback resolver:
+
+```java
+// Before
+new DefaultCapabilityResolver(cache, serviceName);
+
+// 0.1.5+
+new DefaultCapabilityResolver(cache);
+```
+
+This is an intentional source and binary break for direct constructor callers. Service identity comes from `CapabilityResolutionContext`. The `paygate.service-name` property remains supported by challenge, authentication, and validation components; only the resolver bean no longer receives it.
 
 ### Fail-Closed Semantics
 
@@ -343,6 +429,7 @@ The filter follows a strict fail-closed security model:
 
 - Lightning backend unreachable: HTTP 503, never HTTP 200
 - Invoice creation failure: HTTP 503
+- Endpoint-policy resolution failure: HTTP 500; no challenge or protected handler is invoked
 - Unexpected validation error: HTTP 503
 - Protected content is never returned when the Lightning backend cannot verify payments
 
@@ -354,6 +441,7 @@ The filter follows a strict fail-closed security model:
 | 400 | Bad Request | Malformed `Authorization` header (unparseable L402/LSAT token) |
 | 402 | Payment Required | No credential; includes `WWW-Authenticate` header with macaroon and Lightning invoice |
 | 429 | Too Many Requests | Rate limit exceeded for challenge issuance |
+| 500 | Internal Server Error | Endpoint-policy resolution failed; response details are sanitized |
 | 503 | Service Unavailable | Lightning backend is down or invoice creation failed |
 
 ---
@@ -379,6 +467,12 @@ By default, the filter uses `request.getRemoteAddr()` for rate limiting. If the 
 - Set `paygate.trust-forwarded-headers=true` to read the client IP from the `X-Forwarded-For` header (leftmost value).
 - When an `X-Forwarded-For` header is detected but `trust-forwarded-headers` is `false`, the filter logs a one-time warning suggesting you enable it.
 - When `trust-forwarded-headers` is `false`, spoofed `X-Forwarded-For` headers are ignored, preventing rate limit bypass.
+
+`paygate.rate-limit.ipv6-prefix-length` controls how many leading IPv6 bits (0–128) form a
+rate-limit identity; the default is `/64`. This grouping is an abuse-control bucket, not a user
+identity or authorization boundary. Forwarded addresses are authoritative only when forwarding is
+enabled *and* the direct peer is configured in `paygate.trusted-proxy-addresses`; do not trust
+forwarded headers supplied by untrusted peers.
 
 ### Overriding the Rate Limiter
 
@@ -425,9 +519,18 @@ To disable health caching, set `paygate.health-cache.enabled=false`.
 
 ## Health Indicator (Actuator)
 
-When Spring Boot Actuator is on the classpath, `PaygateActuatorAutoConfiguration` registers an `PaygateLightningHealthIndicator` that reports the Lightning backend status in the `/actuator/health` endpoint.
+`PaygateLightningHealthIndicator` is provided as a reusable health contributor, but it is not registered automatically. Applications that want Lightning status in `/actuator/health` should declare it as a bean and choose an appropriate cache TTL.
 
-The health indicator caches its own result using the `paygate.health-cache.ttl-seconds` value (in milliseconds) to avoid redundant checks during actuator scrapes.
+```java
+@Bean
+PaygateLightningHealthIndicator paygateLightningHealthIndicator(
+        LightningBackend backend, PaygateProperties properties) {
+    return new PaygateLightningHealthIndicator(
+            backend, properties.getHealthCache().getTtlSeconds() * 1_000L);
+}
+```
+
+The health indicator caches its own result for the TTL passed to its constructor. The example above reuses `paygate.health-cache.ttl-seconds`.
 
 | Health Status | Condition |
 |---------------|-----------|
@@ -518,10 +621,17 @@ Test mode provides a fully functional L402 flow without requiring a real Lightni
 
 ### Production Safety Guards
 
-Test mode has a two-layer guard to prevent accidental production use:
+Test mode has a fail-closed startup guard. Every active profile must be one of `test`, `dev`,
+`local`, or `development`; the set must be nonempty. It also requires `paygate.root-key-store=memory`,
+an effective `EPHEMERAL` root-key-store capability after wrapping or bean overrides, and exactly the
+built-in `TestModeLightningBackend`. Empty, unknown, mixed, persistent, custom, replaced, and
+ambiguous configurations fail before traffic is accepted. Only this validated flow can include a
+`test_preimage` in a challenge, and startup logs one secret-free payment-bypass warning.
 
-1. **Denylist (belt):** If any active Spring profile matches `production` or `prod` (case-insensitive), startup fails immediately with `IllegalStateException`, even if an allowed profile is also active.
-2. **Allowlist (suspenders):** At least one of `test`, `dev`, `local`, or `development` must be an active profile. This catches custom production profile names like `prd`, `live`, or `staging` that would bypass the denylist.
+Paygate-generated 401, 402, malformed-credential, validation-failure, and authentication-failure
+responses also include `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. These
+headers do not replace the existing status, bounded body, content type, or protocol-required
+`WWW-Authenticate` challenge header.
 
 ### Usage
 
@@ -796,7 +906,7 @@ Tests use Spring Boot's `WebApplicationContextRunner` to spin up the auto-config
 | `PaygateSecurityFilterTest` | Full filter flow: pass-through for unprotected paths, 402 challenge, credential validation, 503 on backend failure, header sanitization |
 | `PaygateSecurityFilterRealStoreTest` | End-to-end filter test with real `FileBasedRootKeyStore` |
 | `FailClosedTest` | HTTP 503 when Lightning backend is unhealthy; protected content never leaks |
-| `L402RateLimitingTest` | Rate limiting integration with the security filter; 429 responses |
+| `PaygateRateLimitingTest` | Rate limiting integration with the security filter; 429 responses |
 | `TokenBucketRateLimiterTest` | Token bucket algorithm: burst, refill, stale cleanup, max buckets cap |
 | `TestModeConfigTest` | `TestModeLightningBackend` is created when `paygate.test-mode=true`; not created when `false` |
 | `TestModeLightningBackendTest` | Dummy invoice creation, always-settled lookup, preimage/hash consistency |

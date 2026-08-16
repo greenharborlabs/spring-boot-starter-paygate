@@ -204,6 +204,15 @@ class ObservableRootKeyStoreTest {
     }
   }
 
+  @Test
+  @DisplayName("persistence capability delegates without concrete-type inference")
+  void persistenceCapabilityDelegates() {
+    delegate.persistenceCapability = RootKeyStore.PersistenceCapability.EPHEMERAL;
+
+    assertThat(store.persistenceCapability())
+        .isEqualTo(RootKeyStore.PersistenceCapability.EPHEMERAL);
+  }
+
   // --- Stub delegate for testing ---
 
   private static final class StubRootKeyStore implements RootKeyStore {
@@ -212,6 +221,8 @@ class ObservableRootKeyStoreTest {
     byte[] revokeKeyIdReceived;
     boolean closeCalled;
     RuntimeException revokeThrows;
+    RootKeyStore.PersistenceCapability persistenceCapability =
+        RootKeyStore.PersistenceCapability.UNKNOWN;
 
     @Override
     public GenerationResult generateRootKey() {
@@ -238,6 +249,11 @@ class ObservableRootKeyStoreTest {
     @Override
     public void close() {
       closeCalled = true;
+    }
+
+    @Override
+    public PersistenceCapability persistenceCapability() {
+      return persistenceCapability;
     }
   }
 }

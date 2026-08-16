@@ -8,11 +8,28 @@ Docker Compose environments for testing the Paygate Spring Boot Starter (L402 + 
 - ~2 GB free disk space for container images
 - `curl`, `jq`, and `python3` on your host (used by setup and smoke scripts)
 
+## Disposable Test Infrastructure and Credentials
+
+The Compose environments in this directory are disposable local test
+infrastructure, not production deployment templates. They may generate regtest
+LND certificates and macaroons, LNbits test API keys, payment preimages, and
+local payer state. Grant those values only to the test container or local tool
+that needs them, keep mounted credential material scoped to the integration
+environment, and remove the containers and volumes when testing is complete.
+
+Use only test credentials and test wallets here. Never copy real credentials,
+local environment files, generated credentials or secrets, Python virtual
+environments, or interpreter caches into the repository or a production image,
+release, or artifact. The repository ignores the local integration-test state
+that these tools create; tracked example configuration remains the only
+configuration intended to ship with the source.
+
 ## Environments
 
 | File | Backend | What it runs |
 |------|---------|-------------|
 | `docker-compose-lnd.yml` | LND (gRPC) | bitcoind (regtest) + LND + example app |
+| `docker-compose-lnd-two-node.yml` | LND (gRPC) | bitcoind (regtest) + payee LND + payer LND + example app |
 | `docker-compose-lnbits.yml` | LNbits (REST) | LNbits (FakeWallet) + example app |
 | `docker-compose-lnbits-lnd.yml` | LNbits (REST) over LND | bitcoind (regtest) + payee LND + payer LND + LNbits + example app |
 
@@ -49,7 +66,7 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 # Start LNbits (example app needs an API key)
 docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 
-# Create a wallet and write the API key to .env
+# Provision through host loopback and write a disposable API key to ignored .env
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 
 # Now start the example app (picks up LNBITS_API_KEY from .env)
@@ -89,51 +106,16 @@ under `~/.cache/paygate`, installs `breez-sdk-spark==0.17.1` on first use, pays
 with `prefer_spark=false`, rejects fees above `BREEZ_MAX_FEE_SATS`, and verifies
 `sha256(preimage) == payment_hash` before printing proof variables.
 
-The broader `paygate-client` repository also has Breez diagnostics under
-`/Users/mark/code/greenharborlabs/paygate-client/scripts`, including
-`breez-preimage-doctor.py`, `check-breez-wallet.sh`, and
-`breez-payment-history.sh`. Use those for client-side investigation and wallet
-diagnostics. The local `pay-breez-spark-invoice.sh` wrapper exists only to give
-these smoke tests a stable shell output contract: `PAYMENT_HASH`, `PREIMAGE`,
-and `FEE_SATS`.
+The local `pay-breez-spark-invoice.sh` wrapper gives the smoke tests a stable
+shell output contract: `PAYMENT_HASH`, `PREIMAGE`, and `FEE_SATS`.
 
-### Proven reference service flow: Paygate Agent Trust + Breez
+### External service flow with Breez
 
-This flow was verified against
-`/Users/mark/code/greenharborlabs/paygate-agent-trust` running locally as the
-Paygate reference service. The reference service issues real mainnet LNbits
-payee invoices; Breez SDK Spark is used only as the payer.
-
-Start the reference service in one terminal:
+The same smoke scripts can target any Paygate service whose payer network matches
+the Breez wallet. Start the service separately, then run from this repository:
 
 ```bash
-cd /Users/mark/code/greenharborlabs/paygate-agent-trust
-
-source ~/.zshrc
-source scripts/local-dev-env.sh
-
-export PAYGATE_ENABLED=true
-export PAYGATE_TEST_MODE=false
-export PAYGATE_BACKEND=lnbits
-export PAYGATE_LNBITS_URL="<your LNbits payee URL>"
-export PAYGATE_LNBITS_API_KEY="<your LNbits payee wallet api key>"
-export PAYGATE_PROTOCOLS_MPP_CHALLENGE_BINDING_SECRET="${PAYGATE_PROTOCOLS_MPP_CHALLENGE_BINDING_SECRET:-$(openssl rand -base64 32)}"
-
-./gradlew bootRun
-```
-
-Confirm the service is healthy:
-
-```bash
-curl -s http://localhost:8080/healthz
-```
-
-Run both proof-verifying smoke tests from this repository:
-
-```bash
-cd /Users/mark/code/greenharborlabs/spring-boot-starter-l402/integration-tests
-
-source ~/.zshrc
+cd integration-tests
 
 export APP_URL="http://localhost:8080"
 export HEALTH_ENDPOINT="http://localhost:8080/healthz"
@@ -148,14 +130,14 @@ bash scripts/run-smoke-test.sh
 bash scripts/run-mpp-smoke-test.sh
 ```
 
-Expected result for both scripts: `ALL CHECKS PASSED`. The L402 script should
+Expected result for both scripts is `ALL CHECKS PASSED`. The L402 script should
 pay via Breez, verify the preimage hash, retry the protected endpoint with an
 `Authorization: L402 ...` credential, and receive `200`. The MPP script should
 do the same with `Authorization: Payment ...` and also validate a
 `Payment-Receipt` response header.
 
-If this flow fails with `Invoice network does not match`, the reference service
-is issuing non-mainnet invoices. Breez mainnet can pay hosted/mainnet LNbits
+If this flow fails with `Invoice network does not match`, the target service
+is issuing invoices for a different network. Breez mainnet can pay hosted/mainnet LNbits
 invoices, but it cannot pay the local Docker regtest invoices.
 
 The `docker-compose-lnbits.yml` FakeWallet stack remains useful for fast setup
@@ -192,6 +174,7 @@ Edit `.env` before starting to avoid port conflicts with services already runnin
 ```bash
 # Stop and remove containers + volumes for a clean slate
 docker compose -f docker-compose-lnd.yml down -v
+docker compose -f docker-compose-lnd-two-node.yml down -v
 docker compose -f docker-compose-lnbits.yml down -v
 docker compose -f docker-compose-lnbits-lnd.yml down -v
 ```
@@ -233,7 +216,10 @@ LNbits 0.12.x may require a super-user key for API wallet creation. If `setup-ln
 
 For local Docker testing, `setup-lnbits.sh` initializes the first-install
 superuser automatically when LNbits redirects to `/first_install`, logs in, and
-stores a fresh wallet admin key in `.env`.
+stores a fresh disposable wallet admin key in ignored `.env`. The example entrypoint only launches
+the JVM; it never provisions through the nonlocal `lnbits` Compose hostname. Compose injects a
+pre-provisioned key and explicitly disables the example auto-provision setting. Starting it without
+that injected key fails safely.
 
 ### Example app fails to connect to LND
 
@@ -264,8 +250,8 @@ bash scripts/run-smoke-test.sh
 bash scripts/run-mpp-smoke-test.sh
 ```
 
-The deployed testnet host must set `SPRING_PROFILES_ACTIVE=lnbits-testnet` to override
-the default `dev` profile.
+The target service must use a real Lightning backend rather than Paygate test mode,
+and its invoice network must match the payer wallet.
 
 An optional `MAX_INVOICE_SATS` environment variable (default `50`) enforces a spend cap
 in `run-smoke-test.sh` before paying any invoice.

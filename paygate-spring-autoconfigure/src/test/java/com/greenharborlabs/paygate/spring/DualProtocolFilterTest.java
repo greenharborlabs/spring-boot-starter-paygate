@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -100,7 +101,8 @@ class DualProtocolFilterTest {
       "Both protocols enabled, no auth header -> response has two WWW-Authenticate headers")
   void dualWwwAuthenticateHeadersOn402() throws Exception {
     var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
+    when(challengeService.createChallenge(any(), any(ResolvedEndpoint.class), any()))
+        .thenReturn(challengeContext);
 
     when(l402Protocol.formatChallenge(any()))
         .thenReturn(
@@ -152,19 +154,27 @@ class DualProtocolFilterTest {
     when(l402Protocol.canHandle("Payment method=\"lightning\"")).thenReturn(false);
     when(mppProtocol.scheme()).thenReturn("Payment");
     when(mppProtocol.canHandle("Payment method=\"lightning\"")).thenReturn(true);
-    when(mppProtocol.parseCredential("Payment method=\"lightning\""))
-        .thenReturn(
-            new PaymentCredential(
-                PAYMENT_HASH, PREIMAGE, TOKEN_ID, "Payment", null, mock(ProtocolMetadata.class)));
+    PaymentCredential credential =
+        new PaymentCredential(
+            PAYMENT_HASH, PREIMAGE, TOKEN_ID, "Payment", null, mock(ProtocolMetadata.class));
+    when(mppProtocol.parseCredential("Payment method=\"lightning\"")).thenReturn(credential);
     doNothing().when(mppProtocol).validate(any(), anyMap());
     when(mppProtocol.createReceipt(any(), any())).thenReturn(Optional.empty());
 
     request.addHeader("Authorization", "Payment method=\"lightning\"");
 
     var filter = createFilter(List.of(l402Protocol, mppProtocol));
+    doAnswer(
+            invocation -> {
+              assertThat(credential.isDestroyed()).isTrue();
+              return null;
+            })
+        .when(filterChain)
+        .doFilter(any(), any());
     filter.doFilter(request, response, filterChain);
 
     verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
+    assertThat(credential.isDestroyed()).isTrue();
   }
 
   // --- Test 4: Payment-Receipt on MPP success ---
@@ -208,7 +218,8 @@ class DualProtocolFilterTest {
   @DisplayName("Unauthenticated request -> Cache-Control: no-store on 402")
   void cacheControlNoStoreOn402() throws Exception {
     var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
+    when(challengeService.createChallenge(any(), any(ResolvedEndpoint.class), any()))
+        .thenReturn(challengeContext);
 
     when(l402Protocol.formatChallenge(any()))
         .thenReturn(new ChallengeResponse("L402 challenge", "L402", Map.of("macaroon", "abc")));
@@ -250,11 +261,11 @@ class DualProtocolFilterTest {
     verify(filterChain).doFilter(any(HttpServletRequest.class), eq(response));
   }
 
-  // --- Test 7: 400 for METHOD_UNSUPPORTED ---
+  // --- Test 7: invalid payment method ---
 
   @Test
-  @DisplayName("Protocol throws METHOD_UNSUPPORTED -> 400 Bad Request")
-  void methodUnsupported400() throws Exception {
+  @DisplayName("Protocol throws INVALID -> 402 Payment Required")
+  void invalidMethod402() throws Exception {
     when(mppProtocol.scheme()).thenReturn("Payment");
     when(mppProtocol.canHandle("Payment bad-method")).thenReturn(true);
     when(mppProtocol.parseCredential("Payment bad-method"))
@@ -263,8 +274,7 @@ class DualProtocolFilterTest {
                 PAYMENT_HASH, PREIMAGE, TOKEN_ID, "Payment", null, mock(ProtocolMetadata.class)));
     doThrow(
             new PaymentValidationException(
-                PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED,
-                "Only lightning method is supported"))
+                PaymentValidationException.ErrorCode.INVALID, "Only lightning method is supported"))
         .when(mppProtocol)
         .validate(any(), anyMap());
 
@@ -273,9 +283,9 @@ class DualProtocolFilterTest {
     var filter = createFilter(List.of(mppProtocol));
     filter.doFilter(request, response, filterChain);
 
-    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getStatus()).isEqualTo(402);
     assertThat(response.getContentType()).isEqualTo("application/problem+json");
-    assertThat(response.getContentAsString()).contains("method-unsupported");
+    assertThat(response.getContentAsString()).contains("INVALID");
     verify(filterChain, never()).doFilter(any(), any());
   }
 
@@ -310,7 +320,8 @@ class DualProtocolFilterTest {
   @DisplayName("Both protocols receive the same ChallengeContext from a single invoice creation")
   void singleSharedInvoice() throws Exception {
     var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
+    when(challengeService.createChallenge(any(), any(ResolvedEndpoint.class), any()))
+        .thenReturn(challengeContext);
 
     var l402ContextCaptor = ArgumentCaptor.forClass(ChallengeContext.class);
     var mppContextCaptor = ArgumentCaptor.forClass(ChallengeContext.class);
@@ -332,18 +343,10 @@ class DualProtocolFilterTest {
   // --- Test 10: No auth header match falls through to challenge ---
 
   @Test
-  @DisplayName("Auth header that no protocol handles -> 402 challenge response")
-  void noAuthHeaderMatchFallsThrough() throws Exception {
+  @DisplayName("Presented unsupported auth header is rejected without a recovery challenge")
+  void unsupportedAuthHeaderIsRejectedWithoutChallenge() throws Exception {
     when(l402Protocol.canHandle("Bearer some-jwt")).thenReturn(false);
     when(mppProtocol.canHandle("Bearer some-jwt")).thenReturn(false);
-
-    var challengeContext = createChallengeContext();
-    when(challengeService.createChallenge(any(), any(), any())).thenReturn(challengeContext);
-
-    when(l402Protocol.formatChallenge(any()))
-        .thenReturn(new ChallengeResponse("L402 challenge", "L402", Map.of("macaroon", "abc")));
-    when(mppProtocol.formatChallenge(any()))
-        .thenReturn(new ChallengeResponse("Payment challenge", "Payment", Map.of("token", "xyz")));
 
     request.addHeader("Authorization", "Bearer some-jwt");
 
@@ -351,8 +354,8 @@ class DualProtocolFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(402);
-    List<String> wwwAuthHeaders = response.getHeaders("WWW-Authenticate");
-    assertThat(wwwAuthHeaders).hasSize(2);
+    assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
     verify(filterChain, never()).doFilter(any(), any());
   }
 }

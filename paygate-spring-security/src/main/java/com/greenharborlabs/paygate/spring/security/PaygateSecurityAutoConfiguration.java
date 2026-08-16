@@ -16,6 +16,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -50,9 +51,8 @@ public class PaygateSecurityAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean(CapabilityResolver.class)
   public CapabilityResolver defaultCapabilityResolver(
-      @Autowired(required = false) CapabilityCache capabilityCache,
-      @Value("${paygate.service-name:default}") String serviceName) {
-    return new DefaultCapabilityResolver(capabilityCache, serviceName);
+      @Autowired(required = false) CapabilityCache capabilityCache) {
+    return new DefaultCapabilityResolver(capabilityCache);
   }
 
   @Bean
@@ -74,9 +74,30 @@ public class PaygateSecurityAutoConfiguration {
       List<PaymentProtocol> protocols,
       PaygateEndpointRegistry paygateEndpointRegistry,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
-      @Value("${paygate.service-name:default}") String serviceName) {
+      @Value("${paygate.service-name:default}") String serviceName,
+      PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint) {
     return new PaygateAuthenticationFilter(
-        authenticationManager, protocols, paygateEndpointRegistry, clientIpResolver, serviceName);
+        authenticationManager,
+        protocols,
+        paygateEndpointRegistry,
+        clientIpResolver,
+        serviceName,
+        paygateAuthenticationEntryPoint);
+  }
+
+  /**
+   * Keeps Spring Boot from also registering the security-chain filter with the servlet container.
+   * The application must place this filter in its {@code SecurityFilterChain}; registering it in
+   * both locations would execute payment authentication twice.
+   */
+  @Bean
+  @ConditionalOnBean(PaygateAuthenticationFilter.class)
+  public FilterRegistrationBean<PaygateAuthenticationFilter>
+      paygateAuthenticationFilterDisabledRegistration(
+          PaygateAuthenticationFilter paygateAuthenticationFilter) {
+    var registration = new FilterRegistrationBean<>(paygateAuthenticationFilter);
+    registration.setEnabled(false);
+    return registration;
   }
 
   @Bean

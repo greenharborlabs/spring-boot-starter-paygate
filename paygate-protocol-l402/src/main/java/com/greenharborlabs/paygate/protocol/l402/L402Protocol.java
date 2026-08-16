@@ -12,11 +12,13 @@ import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -32,14 +34,20 @@ import java.util.Objects;
 public class L402Protocol implements PaymentProtocol {
 
   private static final String SCHEME = "L402";
-  private static final int MACAROON_IDENTIFIER_VERSION = 0;
+  private static final int MACAROON_IDENTIFIER_VERSION = 1;
 
   private final L402Validator validator;
   private final String serviceName;
+  private final Clock clock;
 
   public L402Protocol(L402Validator validator, String serviceName) {
+    this(validator, serviceName, Clock.systemUTC());
+  }
+
+  public L402Protocol(L402Validator validator, String serviceName, Clock clock) {
     this.validator = Objects.requireNonNull(validator, "validator must not be null");
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
+    this.clock = Objects.requireNonNull(clock, "clock must not be null");
   }
 
   @Override
@@ -84,22 +92,31 @@ public class L402Protocol implements PaymentProtocol {
       }
     } catch (L402Exception e) {
       throw mapL402Exception(e);
+    } catch (RuntimeException e) {
+      // A failure while handling attacker-controlled header data is malformed input, never an
+      // implementation detail that can escape to a response.
+      throw malformedCredential();
     }
   }
 
   @Override
   public ChallengeResponse formatChallenge(ChallengeContext context) {
+    Objects.requireNonNull(context, "context must not be null");
+    String routePattern = requireChallengeBoundary(context.routePattern(), "route pattern");
+    String requestMethod = requireChallengeBoundary(context.requestMethod(), "request method");
+
     byte[] tokenIdBytes = HexFormat.of().parseHex(context.tokenId());
     MacaroonIdentifier identifier =
         new MacaroonIdentifier(MACAROON_IDENTIFIER_VERSION, context.paymentHash(), tokenIdBytes);
 
     List<Caveat> caveats = new ArrayList<>();
     caveats.add(new Caveat("services", serviceName + ":0"));
+    caveats.add(new Caveat("route", routePattern));
+    caveats.add(new Caveat("method", requestMethod));
     String capability = context.capability();
-    if (capability != null && !capability.isBlank()) {
-      caveats.add(new Caveat(serviceName + "_capabilities", capability));
-    }
-    Instant validUntil = Instant.now().plusSeconds(context.timeoutSeconds());
+    String capabilityCeiling = capability == null || capability.isBlank() ? "~" : capability;
+    caveats.add(new Caveat(serviceName + "_capabilities", capabilityCeiling));
+    Instant validUntil = Instant.now(clock).plusSeconds(context.timeoutSeconds());
     caveats.add(
         new Caveat(serviceName + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
 
@@ -128,6 +145,14 @@ public class L402Protocol implements PaymentProtocol {
     return new ChallengeResponse(wwwAuth, SCHEME, null);
   }
 
+  /**
+   * Validates an L402 credential for a trusted request boundary.
+   *
+   * @param credential the parsed L402 credential
+   * @param requestContext request metadata containing non-blank {@link
+   *     VerificationContextKeys#REQUEST_ROUTE} and {@link VerificationContextKeys#REQUEST_METHOD}
+   * @throws PaymentValidationException when validation fails
+   */
   @Override
   public void validate(PaymentCredential credential, Map<String, String> requestContext)
       throws PaymentValidationException {
@@ -136,7 +161,7 @@ public class L402Protocol implements PaymentProtocol {
 
     if (!(credential.metadata() instanceof L402Metadata metadata)) {
       throw new PaymentValidationException(
-          PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL,
+          PaymentValidationException.ErrorCode.MALFORMED,
           "Expected L402Metadata but got " + credential.metadata().getClass().getName(),
           credential.tokenId());
     }
@@ -144,7 +169,7 @@ public class L402Protocol implements PaymentProtocol {
     L402VerificationContext context =
         L402VerificationContext.builder()
             .serviceName(serviceName)
-            .currentTime(Instant.now())
+            .currentTime(Instant.now(clock))
             .requestMetadata(requestContext)
             .build();
 
@@ -153,11 +178,22 @@ public class L402Protocol implements PaymentProtocol {
       result = validator.validate(metadata.rawAuthorizationHeader(), context);
     } catch (L402Exception e) {
       throw mapL402Exception(e);
+    } catch (RuntimeException e) {
+      // Validator implementation failures cannot be attributed safely to the credential. Treat
+      // them as transient service failures and keep both the cause and header out of the response.
+      throw unavailableValidationService();
     } finally {
       if (result != null && result.credential() != null) {
         result.credential().destroy();
       }
     }
+  }
+
+  private static String requireChallengeBoundary(String value, String boundaryName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(boundaryName + " must not be blank");
+    }
+    return value;
   }
 
   /**
@@ -167,13 +203,37 @@ public class L402Protocol implements PaymentProtocol {
   private static PaymentValidationException mapL402Exception(L402Exception e) {
     PaymentValidationException.ErrorCode mapped =
         switch (e.getErrorCode()) {
-          case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL;
-          case INVALID_PREIMAGE -> PaymentValidationException.ErrorCode.INVALID_PREIMAGE;
-          case EXPIRED_CREDENTIAL -> PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL;
+          case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED;
+          case INVALID_PREIMAGE, EXPIRED_CREDENTIAL, MISSING_REQUEST_CONTEXT ->
+              PaymentValidationException.ErrorCode.INVALID;
           case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
-              PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING;
-          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE;
+              PaymentValidationException.ErrorCode.INVALID;
+          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.UNAVAILABLE;
         };
-    return new PaymentValidationException(mapped, e.getMessage(), e.getTokenId());
+    return new PaymentValidationException(
+        mapped, safeFailureMessage(e.getErrorCode()), e.getTokenId());
+  }
+
+  private static PaymentValidationException malformedCredential() {
+    return new PaymentValidationException(
+        PaymentValidationException.ErrorCode.MALFORMED, "Malformed L402 credential");
+  }
+
+  private static PaymentValidationException unavailableValidationService() {
+    return new PaymentValidationException(
+        PaymentValidationException.ErrorCode.UNAVAILABLE,
+        "Lightning validation service is unavailable");
+  }
+
+  private static String safeFailureMessage(ErrorCode errorCode) {
+    return switch (errorCode) {
+      case MALFORMED_HEADER -> "Malformed L402 credential";
+      case INVALID_PREIMAGE -> "L402 credential proof is invalid";
+      case EXPIRED_CREDENTIAL -> "L402 credential has expired";
+      case MISSING_REQUEST_CONTEXT -> "Request route and method context are required";
+      case INVALID_MACAROON, INVALID_SERVICE, REVOKED_CREDENTIAL ->
+          "L402 credential validation failed";
+      case LIGHTNING_UNAVAILABLE -> "Lightning validation service is unavailable";
+    };
   }
 }

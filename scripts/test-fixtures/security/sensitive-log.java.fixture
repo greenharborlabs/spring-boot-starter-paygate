@@ -1,0 +1,5 @@
+final class SensitiveLogFixture {
+  void logSecret(System.Logger logger, String token) {
+    logger.log(System.Logger.Level.INFO, "credential={0}", token);
+  }
+}

@@ -42,7 +42,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Maven:**
@@ -51,14 +51,14 @@ implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
 If you need to depend on `paygate-core` directly (for example, to implement a custom `LightningBackend` or `RootKeyStore`):
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-core:0.1.0")
+implementation("com.greenharborlabs:paygate-core:0.1.4")
 ```
 
 ### Build Dependencies
@@ -87,7 +87,7 @@ paygate-core/
       CapabilitiesCaveatVerifier.java Verifier for capabilities caveats
       PathCaveatVerifier.java         Verifier for "path" caveats (glob pattern matching)
       MethodCaveatVerifier.java       Verifier for "method" caveats (HTTP method matching)
-      ClientIpCaveatVerifier.java     Verifier for "client_ip" caveats (IPv6 normalization)
+      ClientIpCaveatVerifier.java     Verifier for "client_ip" caveats (literal exact-string matching)
       PathGlobMatcher.java            Path normalization and glob matching utility
       VerificationContextKeys.java    Standard keys for request metadata in verification context
       L402VerificationContext.java    Context object passed to caveat verifiers
@@ -130,15 +130,15 @@ paygate-core/
 | `Caveat` | record | First-party caveat as `key=value`. Serialized to UTF-8 bytes for HMAC chain input. |
 | `MacaroonCrypto` | utility class | `deriveKey()`, `hmac()`, `constantTimeEquals()`, `bindForRequest()`. |
 | `MacaroonMinter` | utility class | Creates new macaroons by computing the HMAC-SHA256 signature chain. |
-| `MacaroonVerifier` | utility class | Recomputes the signature chain and delegates caveat verification to registered `CaveatVerifier` instances. |
+| `MacaroonVerifier` | utility class | Generic HMAC-chain and configured-caveat verification. It is not a complete first-party L402 validator. |
 | `MacaroonSerializer` | utility class | V2 binary format serialization and deserialization, compatible with Go `go-macaroon`. |
 | `Varint` | utility class | Unsigned LEB128 encoding/decoding for V2 format field types and payload lengths. |
 | `Invoice` | record | Lightning invoice with payment hash, bolt11, amount, status, optional preimage, and timestamps. |
 | `PaymentPreimage` | record | 32-byte preimage with `matchesHash()` (SHA-256 + constant-time comparison) and hex conversion. |
 | `L402Challenge` | record | Payment challenge with `toWwwAuthenticateHeader()` and `toJsonBody()` methods. |
 | `L402Credential` | record | Parsed L402/LSAT Authorization header with macaroon, preimage, and token ID. |
-| `L402Validator` | class | Full validation pipeline: parse header, check cache, verify signature, verify preimage, run caveat verifiers, cache on success. |
-| `ErrorCode` | enum | `INVALID_MACAROON(401)`, `INVALID_PREIMAGE(401)`, `EXPIRED_CREDENTIAL(401)`, `INVALID_SERVICE(401)`, `REVOKED_CREDENTIAL(401)`, `LIGHTNING_UNAVAILABLE(503)`, `MALFORMED_HEADER(402)`. |
+| `L402Validator` | class | Full first-party validation pipeline: parse, decode, verify preimage, require the root key, inspect the cache, verify signatures/caveats when needed, and cache on success. |
+| `ErrorCode` | enum | `INVALID_MACAROON(401)`, `INVALID_PREIMAGE(401)`, `EXPIRED_CREDENTIAL(401)`, `INVALID_SERVICE(401)`, `MISSING_REQUEST_CONTEXT(401)`, `REVOKED_CREDENTIAL(401)`, `LIGHTNING_UNAVAILABLE(503)`, `MALFORMED_HEADER(400)`. |
 | `LightningBackend` | interface | Contract for Lightning implementations (`createInvoice`, `lookupInvoice`, `isHealthy`). |
 | `RootKeyStore` | interface | Contract for root key generation, retrieval, and revocation. |
 | `CredentialStore` | interface | Contract for caching validated credentials with TTL. |
@@ -196,14 +196,14 @@ The macaroon identifier is a fixed 66-byte binary blob:
 ```
 Offset  Length  Field
 ------  ------  -----
-0       2       version    (uint16, big-endian) -- currently always 0
+0       2       version    (uint16, big-endian) -- v1 for newly issued credentials
 2       32      paymentHash (SHA-256 hash of the payment preimage)
 34      32      tokenId     (random 32-byte key ID for root key lookup)
 ```
 
 Total: 66 bytes.
 
-The `MacaroonIdentifier` record provides `encode()` and `decode()` methods for converting between the structured representation and the 66-byte binary form. The `decode()` method rejects any version other than 0.
+The `MacaroonIdentifier` record provides `encode()` and `decode()` methods for converting between the structured representation and the 66-byte binary form. It structurally decodes supported v0 and v1 identifiers; `L402Validator` accepts only authenticated v1 credentials.
 
 ### Key Derivation
 
@@ -252,7 +252,9 @@ public interface CaveatVerifier {
 }
 ```
 
-During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by key. If no verifier is found for a caveat, that caveat is **skipped** -- verification continues without evaluating it. This follows the L402 cross-service delegation model, where a macaroon may carry caveats intended for other services that this service does not understand. Note that this differs from the original macaroons paper, which recommends failing closed on unknown caveats. If your application requires strict unknown-caveat rejection, register a custom `CaveatVerifier` that rejects all unrecognized keys.
+During macaroon verification, `MacaroonVerifier` matches each caveat to a registered `CaveatVerifier` by its exact key. If no verifier is found for a truly unregistered caveat key, that caveat is **skipped** -- verification continues without evaluating it. This supports L402 cross-service delegation for names this service does not understand. It does not make registered first-party boundary names optional: `route`, `method`, and the active `{serviceName}_capabilities` key are reserved and mandatory for `L402Validator`, so delegated credentials using those names are evaluated against this application's trusted boundary context. This differs from the original macaroons paper, which recommends failing closed on all unknown caveats. `CaveatVerifier` registration is exact-key only; the current API does not provide a catch-all verifier for rejecting every unregistered key.
+
+`MacaroonVerifier` is deliberately generic: it authenticates the HMAC chain and evaluates only configured caveat verifiers. It does not verify payment preimages, require identifier v1, unconditionally require the complete first-party L402 boundary set, or apply credential-cache policy. Direct first-party L402 integrations must use `L402Validator`. Callers intentionally using the generic verifier must authenticate the signature with `verify(...)` and separately enforce their issuer schema and every caveat their policy requires.
 
 ### Built-in Caveat Verifiers
 
@@ -263,7 +265,7 @@ During macaroon verification, `MacaroonVerifier` matches each caveat to a regist
 | `CapabilitiesCaveatVerifier` | `capabilities` | Verifies that the macaroon grants the required capabilities for the request. |
 | `PathCaveatVerifier` | `path` | Comma-separated glob patterns matched against `VerificationContextKeys.REQUEST_PATH`. Rejects encoded slashes (`%2F`), normalizes paths via `PathGlobMatcher`. Supports `*` (one segment) and `**` (zero or more trailing segments). |
 | `MethodCaveatVerifier` | `method` | Comma-separated HTTP methods matched case-insensitively against `VerificationContextKeys.REQUEST_METHOD`. |
-| `ClientIpCaveatVerifier` | `client_ip` | Comma-separated IP addresses matched against `VerificationContextKeys.REQUEST_CLIENT_IP`. Normalizes IPv6 via `InetAddress.ofLiteral()` so equivalent representations (e.g. `::1` and `0:0:0:0:0:0:0:1`) match. Falls back to exact string comparison for non-IP values. |
+| `ClientIpCaveatVerifier` | `client_ip` | Comma-separated client-IP strings matched by literal exact-string comparison against `VerificationContextKeys.REQUEST_CLIENT_IP`. No DNS resolution or CIDR/network-range interpretation occurs. |
 
 ### L402VerificationContext
 
@@ -322,6 +324,7 @@ Standard keys for request metadata entries in `L402VerificationContext`:
 | Constant | Value | Populated by |
 |----------|-------|--------------|
 | `REQUEST_PATH` | `request.path` | `PaygateSecurityFilter` (path from request URI) |
+| `REQUEST_ROUTE` | `request.route` | Enforcement integration (canonical registered route selected by the endpoint registry) |
 | `REQUEST_METHOD` | `request.method` | `PaygateSecurityFilter` (HTTP method) |
 | `REQUEST_CLIENT_IP` | `request.client_ip` | `PaygateSecurityFilter` (via `ClientIpResolver`) |
 | `REQUESTED_CAPABILITY` | `request.capability` | `PaygateSecurityFilter` (from endpoint config) |
@@ -370,9 +373,9 @@ Verifies that the request HTTP method matches at least one method in the `method
 
 ### ClientIpCaveatVerifier
 
-Verifies that the request client IP matches at least one address in the `client_ip` caveat value. IPv6 addresses are normalized via `InetAddress.ofLiteral()` before comparison so that equivalent representations match correctly. `ofLiteral()` never performs DNS lookups -- non-IP strings fall back to exact string comparison.
+Verifies that the request client IP exactly matches at least one comma-separated value in the `client_ip` caveat. This is literal string matching: no DNS resolution or CIDR/network-range interpretation occurs. Configure the caveat with the exact client-IP string the integration supplies in `REQUEST_CLIENT_IP`; values such as `10.0.0.0/8` are not ranges and match only that same literal string.
 
-**`isMoreRestrictive()`:** Checks that the set of normalized IPs in the current caveat is a subset of the set in the previous caveat.
+**`isMoreRestrictive()`:** Checks that the set of literal client-IP strings in the current caveat is a subset of the set in the previous caveat.
 
 ### CaveatVerifier.isMoreRestrictive()
 
@@ -411,7 +414,7 @@ Verification (in MacaroonVerifier):
   +-- ClientIpCaveatVerifier
         client_ip=10.0.0.1,10.0.0.2
         request=10.0.0.1
-        InetAddress.ofLiteral("10.0.0.1") match --> PASS
+        literal "10.0.0.1" match --> PASS
 
 All caveats passed --> credential accepted
 ```
@@ -501,6 +504,10 @@ public interface RootKeyStore {
 
 The `CredentialStore` interface caches validated L402 credentials to avoid re-verifying the full macaroon signature chain on every request.
 
+The cache is a performance optimization, not a revocation authority. After proof-of-payment succeeds, `L402Validator` performs an authoritative root-key lookup before every cache read. An exact cached variant can then skip HMAC recomputation while still re-evaluating request-specific caveats. This adds one root-key-store lookup to every successful cache hit. A missing root key is permanent revocation: validation fails with sanitized `REVOKED_CREDENTIAL` and best-effort evicts the token's cache slot. A transient root-key-store or credential-store failure instead fails closed as temporary unavailability and does not evict a valid cached credential; a later successful lookup can use it again. Cached authority is never a fallback when current root-key state is unavailable.
+
+Revocation has a narrow concurrency boundary: a validation that obtained its defensive root-key copy before concurrent revocation may complete. A validation whose lookup occurs after revocation fails, and subsequent requests cannot reuse a stale cache entry. Spring's revocation listener remains an eager-eviction optimization rather than the correctness boundary.
+
 ```java
 public interface CredentialStore {
     void store(String tokenId, L402Credential credential, long ttlSeconds);
@@ -516,6 +523,7 @@ Credential ownership follows a caller-owned boundary:
 - `get()` returns a caller-owned copy. Later cache eviction, expiry, replacement, `revoke()`, or `close()` must not invalidate credentials or validation results already returned to callers.
 - `revoke()`, expiry, replacement, backend removal, and `close()` may destroy only private retained copies owned by the store.
 - Stores that retain payment preimages must define invalidate-all behavior for shutdown or administrative cache clearing, and must zeroize only their own retained preimage bytes.
+- Closing a built-in store is terminal: a racing insertion either becomes a private entry that shutdown destroys or is rejected and its speculative copy is destroyed. After close, reads are absent, the count is zero, and repeated close is safe.
 - Custom backends should fail closed if destruction, expiry, or backend removal is uncertain or fails: do not serve removed, expired, or uncertain credentials.
 
 ### InMemoryCredentialStore
@@ -555,24 +563,32 @@ The `parse()` method:
 4. Extracts the token ID from the macaroon identifier
 5. Returns an `L402Credential` record or throws `L402Exception(MALFORMED_HEADER)`
 
+Only a single primary macaroon is supported. Third-party caveats are rejected by the V2
+macaroon parser, and additional macaroons (including discharge macaroons) in an L402 or LSAT
+Authorization header are rejected by the credential parser. Paygate does not partially process a
+third-party/discharge-macaroon flow.
+
 ### L402Validator
 
 Orchestrates the full credential validation pipeline:
 
 1. **Parse** the Authorization header into an `L402Credential`
-2. **Check cache** -- if a cached credential exists for this token ID:
-   - Verify the root key has not been revoked
-   - Verify the presented macaroon signature matches the cached signature (constant-time)
-   - Verify the presented preimage matches the cached preimage (constant-time)
-   - Re-verify time-based caveats against the current time
-   - Return the cached credential with `freshValidation=false`
-3. **Look up root key** by token ID from the `RootKeyStore`
-4. **Verify macaroon signature** using `MacaroonVerifier` (recomputes HMAC chain, runs all caveat verifiers)
-5. **Verify preimage** -- SHA-256(preimage) must equal the payment hash (constant-time comparison)
-6. **Cache the credential** with a TTL derived from `valid_until` caveats (minus 30-second safety margin), capped at the default TTL of 3600 seconds
-7. Return the credential with `freshValidation=true`
+2. **Verify proof of payment** -- decode the identifier and compare SHA-256(preimage) with its payment hash before consulting the cache
+3. **Require the root key** -- authoritative lookup happens before cache inspection; a missing key best-effort evicts the cache slot and fails as `REVOKED_CREDENTIAL`, while a store failure fails closed as temporary unavailability without permanent eviction
+4. **Check cache** -- an exact cached macaroon variant skips HMAC recomputation, re-runs required-boundary and request-specific caveat checks, and returns with `freshValidation=false`
+5. **Fall back for attenuation** -- a different macaroon variant with the same token ID reuses the loaded root key for full signature and caveat validation instead of failing solely because another variant is cached
+6. **Cache after complete validation** with a TTL derived from `valid_until` caveats, then return with `freshValidation=true`
 
-The `ValidationResult` record wraps the credential with a `freshValidation` flag indicating whether it was freshly verified or served from cache.
+Custom issuers should construct the identifier explicitly:
+
+```java
+var identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
+var macaroon = MacaroonMinter.mint(rootKey, identifier, location, caveats);
+```
+
+Public direct-validator callers choose which service and expiry verifiers to register; `L402Validator` does not universally add `ServicesCaveatVerifier` or `ValidUntilCaveatVerifier` for them. They must register the verifiers required by their issuer contract. Identifier v0 is rejected after proof-of-payment and signature checks even when a holder has appended otherwise valid boundaries.
+
+The `ValidationResult` record wraps the credential, a `freshValidation` flag, and the immutable final `effectiveCapabilities` set. Its two-argument compatibility constructor supplies an empty set.
 
 ### ErrorCode
 
@@ -584,9 +600,10 @@ Maps protocol-level error types to HTTP status codes:
 | `INVALID_PREIMAGE` | 401 | SHA-256(preimage) does not match payment hash |
 | `EXPIRED_CREDENTIAL` | 401 | `valid_until` caveat timestamp is in the past |
 | `INVALID_SERVICE` | 401 | Service name not found in `services` caveat |
+| `MISSING_REQUEST_CONTEXT` | 401 | Trusted request route or method metadata is absent for boundary-bound validation |
 | `REVOKED_CREDENTIAL` | 401 | Root key has been revoked or not found |
 | `LIGHTNING_UNAVAILABLE` | 503 | Lightning backend is unreachable |
-| `MALFORMED_HEADER` | 402 | Authorization header does not match L402/LSAT format |
+| `MALFORMED_HEADER` | 400 | Authorization header does not match L402/LSAT format |
 
 ---
 
@@ -618,8 +635,8 @@ This prevents timing side-channel attacks. The method is used for:
 
 ### No Secret Logging
 
-- `Macaroon.toString()` returns `Macaroon[identifierLength=66, location=..., caveatCount=N]` -- no signature or identifier bytes
-- `MacaroonIdentifier.toString()` returns `MacaroonIdentifier[version=0]` -- no payment hash or token ID
+- `Macaroon.toString()` returns `Macaroon[identifierLength=66, caveatCount=N]` -- no location, signature, identifier bytes, or caveat values
+- `MacaroonIdentifier.toString()` returns only the structural version (for example, `MacaroonIdentifier[version=1]`) -- no payment hash or token ID
 - `L402Credential.toString()` returns `L402Credential[tokenId=...]` -- only the token ID, not the macaroon or preimage
 - `Invoice.toString()` returns `Invoice[bolt11=..., amountSats=..., status=...]` -- no payment hash or preimage
 
@@ -637,9 +654,24 @@ All byte array fields in immutable types are defensively copied on construction 
 
 - If the Lightning backend is unreachable, `isHealthy()` returns `false` and the filter returns HTTP 503
 - Protected content is **never** served with HTTP 200 when the backend cannot be reached
-- Unknown caveats are skipped during verification to support cross-service delegation (fail-closed applies to Lightning backend connectivity and signature verification, not to unknown caveats)
+- Truly unregistered caveat keys are skipped to support cross-service delegation; registered `route`, `method`, and `{serviceName}_capabilities` keys are reserved mandatory first-party boundaries and fail closed when absent, unverifiable, or unsatisfied
 - Revoked root keys are detected both on fresh validation and on cache hits
+- Transient root-key-store and credential-store failures fail closed as temporary unavailability; they are not treated as proof of revocation and do not permanently evict an otherwise valid cache entry
 - Expired credentials in the cache are re-verified against the current time and evicted if expired
+
+### Required L402 Boundaries and Capability Ceilings
+
+`L402Validator` unconditionally requires matching signed `route` and `method` caveats, their registered verifiers, and trusted `REQUEST_ROUTE` and `REQUEST_METHOD` context for first-party validation. The same requirements apply on fresh verification and cache hits. The retained `validate(String)` descriptor cannot successfully validate an otherwise valid boundary-bound credential without request context; callers must use a context-bearing overload with the trusted canonical route and actual method. Missing context fails closed with a sanitized client-facing diagnostic. Callers recover by supplying trusted metadata, never by weakening caveat enforcement. A different concrete path may match the same route pattern, but a different canonical route or actual method is rejected. Thus a `HEAD` request that inherited a `GET` endpoint policy still requires `method=HEAD`; a `GET`-bound credential cannot authorize it.
+
+Every first-party credential also carries `{serviceName}_capabilities`. The reserved `~` value is an explicit empty ceiling. Repeated capability caveats are parsed in order and must narrow monotonically: named sets may be reduced (including to `~`), while expansion, `~`-to-name escalation, mixed sentinel/name values, and blank entries are rejected. `L402Validator.ValidationResult.effectiveCapabilities()` is the immutable final verified set and is the only L402 authority source.
+
+The request path supplied by Spring integrations is application-relative: deployment context paths and path-prefix servlet mappings are removed before the project's existing path handling and route selection. The config-based compatibility challenge overload signs the exact parsed spelling of `PaygateEndpointConfig.pathPattern()`. A manually constructed `/api/orders/` configuration can therefore mismatch a registered `/api/orders` route. Callers that resolved policy through the registry should pass `ResolvedEndpoint`. The registered route identity is signed and compared exactly; a mismatch intentionally rejects and re-challenges. Current behavior does not promise normalization of case, percent-encoding spelling, whitespace, or trailing slash. Credentials lacking required `route`, `method`, or capability-ceiling caveats are intentionally rejected, including on cache hits; legacy clients must obtain a new challenge.
+
+Authenticated identifier-v0 and missing-boundary failures deliberately share `INVALID_SERVICE` (HTTP 401) and the generic message `Credential constraints were not satisfied`; validation does not reveal which invariant failed.
+
+Macaroon location is an unsigned, authorization-neutral V2 serialization hint. The accessor and V2 round trip preserve it, but diagnostic rendering omits it entirely, including null and attacker-controlled values. Location remains part of `Macaroon.equals` and `hashCode`, so presenting a same-token location-only variant takes the full-validation path and, on success, replaces the cache slot; presenting the original then repeats that behavior. Signature verification still protects every signed field.
+
+Diagnostic text remains redacted. Core types and validation paths must not render full macaroons, preimages, authorization headers, root keys, or sensitive validation reasons.
 
 ### Path Traversal Protection
 

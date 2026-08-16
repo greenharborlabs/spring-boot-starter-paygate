@@ -25,7 +25,7 @@ LND (Lightning Network Daemon) is the most widely deployed Lightning Network imp
 ## Prerequisites
 
 - **Java 25** (LTS)
-- **A running LND node** (v0.15+ recommended) with gRPC enabled
+- **A running LND node** with gRPC enabled. The repository's Docker integration environments currently exercise LND `v0.18.4-beta`.
 - **TLS certificate** (`tls.cert`) -- LND generates this on startup (typically at `~/.lnd/tls.cert`)
 - **Macaroon file** -- an `invoice.macaroon` or `admin.macaroon` (typically at `~/.lnd/data/chain/bitcoin/mainnet/`)
 
@@ -60,8 +60,8 @@ Add this module alongside the starter. You must include both the starter (which 
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
+implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.4")
 ```
 
 **Maven:**
@@ -70,12 +70,12 @@ implementation("com.greenharborlabs:paygate-lightning-lnd:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-lightning-lnd</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
@@ -145,7 +145,7 @@ paygate.lnd.macaroon-path=/path/to/invoice.macaroon
 | `paygate.lnd.port` | `int` | `10009` | No | Port number of the LND gRPC endpoint. LND defaults to `10009`. |
 | `paygate.lnd.tls-cert-path` | `string` | `null` | Yes* | Absolute path to the LND TLS certificate file (`tls.cert`). Required unless `allow-plaintext=true`. |
 | `paygate.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup and attached to every gRPC call as lower-case hex metadata. |
-| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC connections. Intended only for local development with a localhost LND node. A warning is logged when active. |
+| `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC only with an all-allowed `dev`, `local`, `development`, or `test` profile set and a loopback literal or exact `localhost` resolving entirely to loopback. Other hostnames, Docker service names, private/public addresses, malformed targets, and mixed/empty resolution fail before channel creation. A secret-free warning is logged when active. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | Interval between gRPC keepalive pings. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Timeout for keepalive ping acknowledgement. |
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle gRPC connection timeout. |
@@ -162,7 +162,24 @@ The TLS certificate and macaroon file are sensitive credentials. Recommended app
 - **Docker volume mounts**: Mount LND credential files into the container and reference the mount paths
 - **Kubernetes secrets**: Mount as files via secret volumes
 
-The macaroon file is read once at startup and held in memory as zeroizable bytes. Factory-created channels clear those bytes when the channel is shut down. The file path itself may appear in logs, but the macaroon value is never logged.
+The macaroon file is read once at startup and held in memory as zeroizable bytes. The interceptor
+precomputes one canonical lower-case metadata encoding for its lifecycle rather than allocating a
+new full encoding per RPC. Factory-created channels clear mutable credential bytes, release that
+encoding, and reject later interceptor starts when the channel is shut down. The file path itself
+may appear in logs, but the macaroon value is never logged.
+
+### Credential Lifecycle and Memory Limits
+
+Zeroization here is best effort, not a complete memory-erasure guarantee. The owner of a closeable sensitive-data resource must call `close()` or `destroy()` at its defined lifecycle boundary; for the factory-created channel, that boundary is application-context shutdown. Custom channel/interceptor owners must arrange equivalent deterministic shutdown. The implementation does not rely on finalizers or `Cleaner`, and garbage collection provides no timing guarantee for credential cleanup.
+
+Ownership transfer must be explicit. When a component takes ownership of a macaroon byte array or other sensitive state, callers must not mutate or destroy it before the owner has finished and closed it. A caller that retains ownership remains responsible for closing or destroying it.
+
+Java and the gRPC/TLS/protobuf stack can create immutable string-backed (for example, Java
+`String`) or copied representations while processing configuration, certificate paths and
+contents, macaroon metadata, and request headers. Application code can zeroize only mutable
+buffers it controls; it cannot erase every JVM, library, or transport copy. Avoid placing
+credential values in strings where a byte-oriented API is available, but account for unavoidable
+copies in the threat model.
 
 ---
 
@@ -420,7 +437,7 @@ From the project root:
 
 ### Test Architecture
 
-Tests use **gRPC in-process transport** (`grpc-testing` and `grpc-inprocess`) to simulate LND's gRPC service without requiring a real LND node or network connections. A `FakeLightningService` extends the generated `LightningGrpc.LightningImplBase` and returns configurable responses.
+Tests use **gRPC in-process transport** (`grpc-inprocess`) to simulate LND's gRPC service without requiring a real LND node or network connections. Individual tests provide small `LightningGrpc.LightningImplBase` implementations with controlled responses.
 
 This approach:
 
@@ -435,13 +452,12 @@ This approach:
 
 | Test Case | What It Verifies |
 |-----------|-----------------|
-| `createInvoice_callsAddInvoice` | Correct `AddInvoice` RPC with `value`, `memo`, and `expiry=3600`; response mapped to `Invoice` with `PENDING` status; `createdAt` and `expiresAt` timestamps are reasonable |
-| `lookupInvoice_callsLookupInvoice` | Correct `LookupInvoice` RPC with payment hash; `OPEN` state mapped to `PENDING` status |
-| `lookupInvoice_settledInvoice_returnsSettledStatus` | `SETTLED` state mapped to `SETTLED` status with preimage extracted |
-| `isHealthy_returnsTrue_whenSynced` | `GetInfo` with `synced_to_chain=true` produces `true` |
-| `isHealthy_returnsFalse_whenNotSynced` | `GetInfo` with `synced_to_chain=false` produces `false` |
-| `isHealthy_returnsFalse_whenRpcFails` | `UNAVAILABLE` gRPC error produces `false` (no exception thrown) |
-| `implementsLightningBackendInterface` | `LndBackend` is an instance of `LightningBackend` (compile-time and runtime check) |
+| `createInvoice_returnsInvoiceOnSuccess` | Successful `AddInvoice` response mapping |
+| `lookupInvoice_returnsInvoiceOnSuccess` | Successful `LookupInvoice` response mapping, including state and preimage handling |
+| `createInvoice_wrapsStatusRuntimeExceptionInLndException` | gRPC failures are translated to the backend exception model |
+| `createInvoice_throwsLndTimeoutExceptionOnDeadlineExceeded` | Deadline failures use the specific timeout exception |
+| `isHealthy_returnsFalseOnGrpcFailure` | Health checks fail closed without propagating backend exceptions |
+| `close_shutsDownAndTerminatesChannel` | Backend shutdown closes its managed channel |
 
 ### Writing Your Own Tests
 
@@ -513,7 +529,6 @@ The following test-scoped dependencies are used:
 
 | Dependency | Purpose |
 |------------|---------|
-| `io.grpc:grpc-testing` | gRPC test utilities and helpers |
 | `io.grpc:grpc-inprocess` | In-process gRPC transport (no network, no TLS) |
 | `org.junit.jupiter:junit-jupiter` | JUnit 5 test framework |
 | `org.assertj:assertj-core` | Fluent assertion library |
@@ -627,7 +642,7 @@ Returns general information about the LND node.
 - [LND API Documentation](https://api.lightning.community/)
 - [LND gRPC API Reference (lightning.proto)](https://api.lightning.community/#lnd-grpc-api-reference)
 - [LND Installation Guide](https://docs.lightning.engineering/lightning-network-tools/lnd/run-lnd)
-- [LND Macaroons Guide](https://docs.lightning.engineering/the-lightning-network/lnd/macaroons)
+- [LND Macaroons Guide](https://docs.lightning.engineering/lightning-network-tools/lnd/macaroons)
 - [L402 Protocol Specification](https://docs.lightning.engineering/the-lightning-network/l402)
 
 ---

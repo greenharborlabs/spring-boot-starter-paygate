@@ -70,11 +70,11 @@ public class PaygateLightningHealthIndicator implements HealthIndicator {
   private Health checkHealth() {
     try {
       if (backend.isHealthy()) {
-        return Health.up().withDetail("backend", "reachable").build();
+        return Health.up().build();
       }
-      return Health.down().withDetail("backend", "unreachable").build();
+      return Health.down().build();
     } catch (Exception ex) {
-      return Health.down(ex).withDetail("backend", "error").build();
+      return Health.down().build();
     }
   }
 }

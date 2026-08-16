@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.lightning.lnbits;
 
+import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -8,6 +9,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -71,15 +74,17 @@ public class LnbitsBackend implements LightningBackend {
       checkResponseStatus(response, "createInvoice", "");
       JsonNode json = objectMapper.readTree(response.body());
 
-      String paymentHashHex =
-          requireField(json, "payment_hash", "create invoice response").asString();
+      byte[] providerPaymentHash =
+          parseProviderHash(
+              requireField(json, "payment_hash", "create invoice response").asString(),
+              "payment_hash");
       String bolt11 = requireField(json, "payment_request", "create invoice response").asString();
       Instant now = Instant.now();
 
-      log.log(System.Logger.Level.DEBUG, "LNbits invoice created, paymentHash={0}", paymentHashHex);
+      log.log(System.Logger.Level.DEBUG, "LNbits invoice created");
 
       return new Invoice(
-          HEX.parseHex(paymentHashHex),
+          providerPaymentHash,
           bolt11,
           amountSats,
           memo,
@@ -181,6 +186,15 @@ public class LnbitsBackend implements LightningBackend {
     boolean paid = requireField(json, "paid", "lookup response").asBoolean();
     JsonNode details = requireField(json, "details", "lookup response");
 
+    byte[] providerPaymentHash =
+        parseProviderHash(
+            requireField(details, "payment_hash", "lookup response", "details.payment_hash")
+                .asString(),
+            "details.payment_hash");
+    if (!CryptoUtils.constantTimeEquals(providerPaymentHash, paymentHash)) {
+      throw new LnbitsException("LNbits response payment_hash does not match requested invoice");
+    }
+
     String bolt11 = requireField(details, "bolt11", "lookup response", "details.bolt11").asString();
     long amount =
         requireField(details, "amount", "lookup response", "details.amount").asLong()
@@ -189,8 +203,13 @@ public class LnbitsBackend implements LightningBackend {
 
     InvoiceStatus status = paid ? InvoiceStatus.SETTLED : InvoiceStatus.PENDING;
     byte[] preimage = null;
-    if (paid && json.has("preimage") && !json.get("preimage").isNull()) {
-      preimage = HEX.parseHex(json.get("preimage").asString());
+    if (paid) {
+      preimage =
+          parseProviderHash(
+              requireField(json, "preimage", "lookup response").asString(), "preimage");
+      if (!CryptoUtils.constantTimeEquals(sha256(preimage), paymentHash)) {
+        throw new LnbitsException("LNbits response preimage does not match requested invoice");
+      }
     }
 
     Instant createdAt = parseEpochField(details, Instant.now());
@@ -198,6 +217,28 @@ public class LnbitsBackend implements LightningBackend {
         parseExpiryField(details, createdAt, createdAt.plus(DEFAULT_INVOICE_EXPIRY));
 
     return new Invoice(paymentHash, bolt11, amount, memo, status, preimage, createdAt, expiresAt);
+  }
+
+  /** Decodes a provider-supplied hash or preimage and requires the Lightning 32-byte width. */
+  private static byte[] parseProviderHash(String value, String fieldName) {
+    try {
+      byte[] valueBytes = HEX.parseHex(value);
+      if (valueBytes.length != 32) {
+        throw new LnbitsException("LNbits response " + fieldName + " must be exactly 32 bytes");
+      }
+      return valueBytes;
+    } catch (IllegalArgumentException e) {
+      throw new LnbitsException("LNbits response " + fieldName + " is not valid hexadecimal", e);
+    }
+  }
+
+  /** Computes a SHA-256 digest using a fresh JCA object for each provider response. */
+  private static byte[] sha256(byte[] input) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(input);
+    } catch (NoSuchAlgorithmException e) {
+      throw new AssertionError("SHA-256 is not available", e);
+    }
   }
 
   /** Parses an optional epoch-seconds field, returning the default if absent or non-numeric. */

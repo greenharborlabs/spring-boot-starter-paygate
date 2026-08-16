@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.ChallengeResponse;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.protocol.ErrorCode;
 import java.util.List;
 import java.util.Map;
@@ -156,19 +157,34 @@ class PaygateResponseWriterTest {
     assertThat(body).contains("tok\\\"with\\nnewline");
   }
 
+  @Test
+  @DisplayName("writeMalformedHeader uses the fixed safe 400 response contract")
+  void writeMalformedHeader_usesSafeResponseContract() throws Exception {
+    PaygateResponseWriter.writeMalformedHeader(
+        response, "secret parser diagnostic", "token-prefix");
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 400, \"error\": \"MALFORMED_HEADER\", \"message\": \"Malformed L402 Authorization header\", \"details\": {\"token_id\": \"token-prefix\"}}")
+        .doesNotContain("secret parser diagnostic");
+  }
+
   // --- writeValidationError ---
 
   @Test
-  @DisplayName("writeValidationError sets status from ErrorCode and includes error name")
+  @DisplayName("writeValidationError maps invalid L402 credentials to payment required")
   void writeValidationError_setsStatusAndBody() throws Exception {
     PaygateResponseWriter.writeValidationError(
         response, ErrorCode.INVALID_MACAROON, "internal detail", "tok-456");
 
-    assertThat(response.getStatus()).isEqualTo(401);
+    assertThat(response.getStatus()).isEqualTo(402);
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
-            "{\"code\": 401, \"error\": \"INVALID_MACAROON\", \"message\": \"Invalid L402 credential\", \"details\": {\"token_id\": \"tok-456\"}}");
+            "{\"code\": 402, \"error\": \"INVALID_MACAROON\", \"message\": \"Invalid L402 credential\", \"details\": {\"token_id\": \"tok-456\"}}");
   }
 
   @Test
@@ -191,6 +207,87 @@ class PaygateResponseWriterTest {
     assertThat(response.getContentAsString()).contains("\"error\": \"LIGHTNING_UNAVAILABLE\"");
   }
 
+  @Test
+  @DisplayName("malformed credential has fixed 400 response with safe cache and type headers")
+  void malformedCredentialUsesSafeResponseContract() throws Exception {
+    PaygateResponseWriter.writeMppError(
+        response,
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.MALFORMED, "secret parser detail"),
+        List.of());
+
+    assertSafeFailureResponse(400, "MALFORMED", "secret parser detail");
+  }
+
+  @Test
+  @DisplayName("invalid credential has fixed 402 response without a replacement challenge")
+  void invalidCredentialUsesSafeResponseContract() throws Exception {
+    PaygateResponseWriter.writeMppError(
+        response,
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INVALID, "secret verifier detail"),
+        List.of());
+
+    assertSafeFailureResponse(402, "INVALID", "secret verifier detail");
+    assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("expired credential maps to the fixed invalid 402 response")
+  void expiredCredentialUsesSafeInvalidResponseContract() throws Exception {
+    PaygateResponseWriter.writeMppError(
+        response,
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INVALID, "credential expired at secret instant"),
+        List.of());
+
+    assertSafeFailureResponse(402, "INVALID", "credential expired at secret instant");
+    assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("insufficient credential has fixed 402 response without a replacement challenge")
+  void insufficientCredentialUsesSafeResponseContract() throws Exception {
+    PaygateResponseWriter.writeMppError(
+        response,
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INSUFFICIENT, "secret amount detail"),
+        List.of());
+
+    assertSafeFailureResponse(402, "INSUFFICIENT", "secret amount detail");
+    assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("unavailable credential validation has fixed 503 response")
+  void unavailableCredentialUsesSafeResponseContract() throws Exception {
+    PaygateResponseWriter.writeMppError(
+        response,
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.UNAVAILABLE, "secret backend detail"),
+        List.of());
+
+    assertSafeFailureResponse(503, "UNAVAILABLE", "secret backend detail");
+  }
+
+  @Test
+  @DisplayName("L402 invalid and expired failures map to 402 rather than authentication 401")
+  void l402InvalidAndExpiredFailuresMapToPaymentRequired() throws Exception {
+    for (ErrorCode errorCode : List.of(ErrorCode.INVALID_MACAROON, ErrorCode.EXPIRED_CREDENTIAL)) {
+      response = new MockHttpServletResponse();
+
+      PaygateResponseWriter.writeValidationError(
+          response, errorCode, "secret protocol diagnostic", "token-prefix");
+
+      assertThat(response.getStatus()).as(errorCode.name()).isEqualTo(402);
+      assertThat(response.getHeader("Cache-Control")).as(errorCode.name()).isEqualTo("no-store");
+      assertThat(response.getHeader("X-Content-Type-Options"))
+          .as(errorCode.name())
+          .isEqualTo("nosniff");
+      assertThat(response.getContentAsString()).doesNotContain("secret protocol diagnostic");
+    }
+  }
+
   // --- writeRateLimited ---
 
   @Test
@@ -200,6 +297,8 @@ class PaygateResponseWriterTest {
 
     assertThat(response.getStatus()).isEqualTo(429);
     assertThat(response.getHeader("Retry-After")).isEqualTo("1");
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -214,10 +313,28 @@ class PaygateResponseWriterTest {
     PaygateResponseWriter.writeLightningUnavailable(response);
 
     assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
             "{\"code\": 503, \"error\": \"LIGHTNING_UNAVAILABLE\", \"message\": \"Lightning backend is not available. Please try again later.\"}");
+  }
+
+  @Test
+  @DisplayName("writeInternalError sets 500 status and a bounded sanitized JSON body")
+  void writeInternalError_setsStatusAndSanitizedBody() throws Exception {
+    PaygateResponseWriter.writeInternalError(response);
+
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .isEqualTo(
+            "{\"code\": 500, \"error\": \"INTERNAL_ERROR\", \"message\": \"An internal error occurred\"}")
+        .doesNotContain("secret", "policy", "path")
+        .hasSizeLessThan(256);
   }
 
   @Test
@@ -226,6 +343,8 @@ class PaygateResponseWriterTest {
     PaygateResponseWriter.writeMalformedUri(response);
 
     assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -238,6 +357,8 @@ class PaygateResponseWriterTest {
     PaygateResponseWriter.writeRequestBodyTooLarge(response);
 
     assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -253,6 +374,8 @@ class PaygateResponseWriterTest {
 
     assertThat(response.getStatus()).isEqualTo(401);
     assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -269,9 +392,22 @@ class PaygateResponseWriterTest {
 
     assertThat(response.getStatus()).isEqualTo(401);
     assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("L402");
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
             "{\"code\": 401, \"error\": \"AUTHENTICATION_FAILED\", \"message\": \"L402 authentication failed\"}");
+  }
+
+  private void assertSafeFailureResponse(int status, String category, String diagnostic)
+      throws Exception {
+    assertThat(response.getStatus()).isEqualTo(status);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+    assertThat(response.getContentAsString())
+        .contains("\"title\": \"" + category + "\"")
+        .contains("\"detail\": \"Payment validation failed: " + category + "\"")
+        .doesNotContain(diagnostic);
   }
 }

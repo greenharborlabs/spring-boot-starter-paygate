@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.protocol.l402;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -25,6 +26,9 @@ import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -69,6 +73,13 @@ class L402ProtocolTest {
     assertThatThrownBy(() -> new L402Protocol(validator, null))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("serviceName");
+  }
+
+  @Test
+  void clockConstructor_rejectsNullClock() {
+    assertThatThrownBy(() -> new L402Protocol(validator, SERVICE_NAME, null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("clock");
   }
 
   @Nested
@@ -191,6 +202,17 @@ class L402ProtocolTest {
     }
 
     @Test
+    void parsesIssuerAuthenticatedVersionOneCredential() {
+      String authHeader = buildValidAuthHeader("L402");
+
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      L402Metadata metadata = (L402Metadata) credential.metadata();
+
+      assertThat(MacaroonIdentifier.decode(metadata.macaroon().identifier()).version())
+          .isEqualTo(1);
+    }
+
+    @Test
     void throwsPaymentValidationExceptionForMalformedHeader() {
       assertThatThrownBy(() -> protocol.parseCredential("L402 not-valid"))
           .isInstanceOf(PaymentValidationException.class)
@@ -198,8 +220,38 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
               });
+    }
+
+    @Test
+    void malformedHeaderDoesNotExposePresentedBearerMaterial() {
+      String bearerMarker = "BEARER-MATERIAL-SECRET-6e9cb";
+
+      PaymentValidationException exception =
+          catchThrowableOfType(
+              PaymentValidationException.class,
+              () -> protocol.parseCredential("L402 " + bearerMarker));
+
+      assertThat(exception.getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
+      assertThat(exception).hasMessage("Payment validation failed: MALFORMED").hasNoCause();
+      assertThat(exception.getMessage()).doesNotContain(bearerMarker);
+    }
+
+    @Test
+    void unsupportedIdentifierVersionMapsToSanitizedMalformedCredential() {
+      String authHeader = buildAuthHeaderWithIdentifierVersion("L402", 0x3137);
+
+      PaymentValidationException exception =
+          catchThrowableOfType(
+              PaymentValidationException.class, () -> protocol.parseCredential(authHeader));
+
+      assertThat(exception.getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
+      assertThat(exception).hasMessage("Payment validation failed: MALFORMED").hasNoCause();
+      assertThat(exception.getTokenId()).isNull();
+      assertThat(exception.getMessage()).doesNotContain("Unsupported", "version", "12599", "3137");
     }
 
     @Test
@@ -210,7 +262,7 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
               });
     }
 
@@ -222,13 +274,88 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
               });
     }
   }
 
   @Nested
   class FormatChallenge {
+
+    @Test
+    void fixedClockProducesDeterministicBoundCaveatOrderAndExpiry() {
+      Instant issuanceTime = Instant.parse("2026-01-02T03:04:05Z");
+      protocol =
+          new L402Protocol(validator, SERVICE_NAME, Clock.fixed(issuanceTime, ZoneOffset.UTC));
+      byte[] rootKey = new byte[32];
+      Arrays.fill(rootKey, (byte) 0x01);
+      byte[] paymentHash = new byte[32];
+      Arrays.fill(paymentHash, (byte) 0x02);
+      byte[] tokenId = new byte[32];
+      Arrays.fill(tokenId, (byte) 0x03);
+      ChallengeContext context =
+          new ChallengeContext(
+              paymentHash,
+              HEX.formatHex(tokenId),
+              "lnbc1invoice",
+              10L,
+              "test description",
+              SERVICE_NAME,
+              3600L,
+              "read",
+              rootKey,
+              null,
+              null,
+              "/widgets/{id}",
+              "POST");
+
+      ChallengeResponse response = protocol.formatChallenge(context);
+      ChallengeResponse repeatedResponse = protocol.formatChallenge(context);
+      byte[] serialized =
+          Base64.getDecoder().decode(extractQuotedValue(response.wwwAuthenticateHeader(), "token"));
+      var macaroon = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(repeatedResponse.wwwAuthenticateHeader())
+          .isEqualTo(response.wwwAuthenticateHeader());
+      assertThat(extractQuotedValue(response.wwwAuthenticateHeader(), "token"))
+          .isEqualTo(
+              "AgJCAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAIXc2VydmljZXM9dGVzdC1zZXJ2aWNlOjAAAhNyb3V0ZT0vd2lkZ2V0cy97aWR9AAILbWV0aG9kPVBPU1QAAh50ZXN0LXNlcnZpY2VfY2FwYWJpbGl0aWVzPXJlYWQAAiN0ZXN0LXNlcnZpY2VfdmFsaWRfdW50aWw9MTc2NzMyNjY0NQAABiADF6Jr/FXe0HDLAv9t3OJY7/cVEGNkapmCsorFxm3Wcg==");
+      assertThat(MacaroonIdentifier.decode(macaroon.identifier()).version()).isEqualTo(1);
+      assertThat(macaroon.caveats())
+          .extracting(caveat -> caveat.key() + "=" + caveat.value())
+          .containsExactly(
+              "services=" + SERVICE_NAME + ":0",
+              "route=/widgets/{id}",
+              "method=POST",
+              SERVICE_NAME + "_capabilities=read",
+              SERVICE_NAME + "_valid_until=1767326645");
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", " ", "\t"})
+    void rejectsMissingOrBlankRouteBoundaryBeforeIssuance(String routePattern) {
+      ChallengeContext context = challengeContext(routePattern, "GET", "read");
+
+      assertThatThrownBy(() -> protocol.formatChallenge(context))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("route pattern must not be blank")
+          .hasMessageNotContaining("secret-invoice")
+          .hasMessageNotContaining(context.tokenId());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", " ", "\t"})
+    void rejectsMissingOrBlankMethodBoundaryBeforeIssuance(String requestMethod) {
+      ChallengeContext context = challengeContext("/widgets/{id}", requestMethod, "read");
+
+      assertThatThrownBy(() -> protocol.formatChallenge(context))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("request method must not be blank")
+          .hasMessageNotContaining("secret-invoice")
+          .hasMessageNotContaining(context.tokenId());
+    }
 
     @Test
     void producesCorrectWwwAuthenticateHeaderFormat() {
@@ -253,7 +380,9 @@ class L402ProtocolTest {
               "read",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
 
@@ -286,7 +415,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -321,7 +452,9 @@ class L402ProtocolTest {
               "write",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "POST");
 
       ChallengeResponse response = protocol.formatChallenge(context);
 
@@ -343,7 +476,7 @@ class L402ProtocolTest {
     }
 
     @Test
-    void challengeOmitsCapabilityCaveatWhenNull() {
+    void challengeIncludesNoCapabilityCeilingWhenNull() {
       byte[] rootKey = new byte[32];
       byte[] paymentHash = new byte[32];
       byte[] tokenId = new byte[32];
@@ -361,7 +494,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -372,8 +507,14 @@ class L402ProtocolTest {
       var macaroon = MacaroonSerializer.deserializeV2(macBytes);
 
       assertThat(macaroon.caveats())
-          .noneSatisfy(
-              caveat -> assertThat(caveat.key()).isEqualTo(SERVICE_NAME + "_capabilities"));
+          .extracting(caveat -> caveat.key())
+          .containsExactly(
+              "services",
+              "route",
+              "method",
+              SERVICE_NAME + "_capabilities",
+              SERVICE_NAME + "_valid_until");
+      assertThat(macaroon.caveats().get(3).value()).isEqualTo("~");
     }
 
     @Test
@@ -395,7 +536,9 @@ class L402ProtocolTest {
               "read",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -432,7 +575,9 @@ class L402ProtocolTest {
               "read",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -471,7 +616,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       assertThatThrownBy(() -> protocol.formatChallenge(context))
           .isInstanceOf(IllegalArgumentException.class)
@@ -498,7 +645,9 @@ class L402ProtocolTest {
               null,
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -513,6 +662,22 @@ class L402ProtocolTest {
 
   @Nested
   class Validate {
+
+    @Test
+    void validationUsesInjectedClock() {
+      Instant currentTime = Instant.parse("2026-03-04T05:06:07Z");
+      protocol =
+          new L402Protocol(validator, SERVICE_NAME, Clock.fixed(currentTime, ZoneOffset.UTC));
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      ArgumentCaptor<L402VerificationContext> contextCaptor =
+          ArgumentCaptor.forClass(L402VerificationContext.class);
+      when(validator.validate(eq(authHeader), contextCaptor.capture())).thenReturn(null);
+
+      protocol.validate(credential, Map.of());
+
+      assertThat(contextCaptor.getValue().getCurrentTime()).isEqualTo(currentTime);
+    }
 
     @Test
     void delegatesToL402Validator() {
@@ -596,7 +761,7 @@ class L402ProtocolTest {
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
                 assertThat(pve.getErrorCode())
-                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED);
                 assertThat(pve.getTokenId()).isEqualTo("tok123");
               });
     }
@@ -608,55 +773,121 @@ class L402ProtocolTest {
     @Test
     void malformedHeaderMapsTOMalformedCredential() {
       verifyErrorMapping(
-          ErrorCode.MALFORMED_HEADER, PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL);
+          ErrorCode.MALFORMED_HEADER, PaymentValidationException.ErrorCode.MALFORMED);
     }
 
     @Test
     void invalidPreimageMapsToInvalidPreimage() {
-      verifyErrorMapping(
-          ErrorCode.INVALID_PREIMAGE, PaymentValidationException.ErrorCode.INVALID_PREIMAGE);
+      verifyErrorMapping(ErrorCode.INVALID_PREIMAGE, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void expiredCredentialMapsToExpiredCredential() {
       verifyErrorMapping(
-          ErrorCode.EXPIRED_CREDENTIAL, PaymentValidationException.ErrorCode.EXPIRED_CREDENTIAL);
+          ErrorCode.EXPIRED_CREDENTIAL, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void invalidMacaroonMapsToInvalidChallengeBinding() {
-      verifyErrorMapping(
-          ErrorCode.INVALID_MACAROON,
-          PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+      verifyErrorMapping(ErrorCode.INVALID_MACAROON, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void invalidServiceMapsToInvalidChallengeBinding() {
-      verifyErrorMapping(
-          ErrorCode.INVALID_SERVICE,
-          PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+      verifyErrorMapping(ErrorCode.INVALID_SERVICE, PaymentValidationException.ErrorCode.INVALID);
+    }
+
+    @Test
+    void missingRequestContextPreservesSpecificSafeMessage() {
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+
+      doThrow(
+              new L402Exception(
+                  ErrorCode.MISSING_REQUEST_CONTEXT,
+                  "unsafe route=/private method=DELETE",
+                  "tok-1"))
+          .when(validator)
+          .validate(eq(authHeader), any());
+
+      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              exception -> {
+                PaymentValidationException validationException =
+                    (PaymentValidationException) exception;
+                assertThat(validationException.getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID);
+                assertThat(validationException.getMessage())
+                    .isEqualTo("Payment validation failed: INVALID")
+                    .doesNotContain("unsafe route=/private method=DELETE");
+              });
+    }
+
+    @Test
+    void invalidServiceRemainsGenericallySanitized() {
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      String sensitiveDetail = "SENSITIVE-VALIDATION-DETAIL-7f3c9a";
+
+      doThrow(new L402Exception(ErrorCode.INVALID_SERVICE, sensitiveDetail, "tok-1"))
+          .when(validator)
+          .validate(eq(authHeader), any());
+
+      assertThatThrownBy(() -> protocol.validate(credential, Map.of()))
+          .isInstanceOf(PaymentValidationException.class)
+          .satisfies(
+              error -> {
+                PaymentValidationException failure = (PaymentValidationException) error;
+                assertThat(failure.getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID);
+                assertThat(failure.getHttpStatus()).isEqualTo(402);
+                assertThat(failure.getMessage())
+                    .isEqualTo("Payment validation failed: INVALID")
+                    .doesNotContain(sensitiveDetail);
+                assertThat(failure.getTokenId()).isEqualTo("tok-1");
+              });
     }
 
     @Test
     void revokedCredentialMapsToInvalidChallengeBinding() {
       verifyErrorMapping(
-          ErrorCode.REVOKED_CREDENTIAL,
-          PaymentValidationException.ErrorCode.INVALID_CHALLENGE_BINDING);
+          ErrorCode.REVOKED_CREDENTIAL, PaymentValidationException.ErrorCode.INVALID);
     }
 
     @Test
     void lightningUnavailableMapsToServiceUnavailable() {
       verifyErrorMapping(
-          ErrorCode.LIGHTNING_UNAVAILABLE,
-          PaymentValidationException.ErrorCode.SERVICE_UNAVAILABLE);
+          ErrorCode.LIGHTNING_UNAVAILABLE, PaymentValidationException.ErrorCode.UNAVAILABLE);
     }
 
     @Test
-    void errorMessageAndTokenIdArePreserved() {
+    void unexpectedValidatorFailureMapsToSanitizedUnavailable() {
       String authHeader = buildValidAuthHeader("L402");
       PaymentCredential credential = protocol.parseCredential(authHeader);
+      String sensitiveDetail = "VALIDATOR-FAILURE-SECRET-24d1c";
 
-      doThrow(new L402Exception(ErrorCode.INVALID_PREIMAGE, "bad preimage", "tok-42"))
+      doThrow(new IllegalStateException(sensitiveDetail))
+          .when(validator)
+          .validate(eq(authHeader), any());
+
+      PaymentValidationException exception =
+          catchThrowableOfType(
+              PaymentValidationException.class, () -> protocol.validate(credential, Map.of()));
+
+      assertThat(exception.getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.UNAVAILABLE);
+      assertThat(exception).hasMessage("Payment validation failed: UNAVAILABLE").hasNoCause();
+      assertThat(exception.getMessage()).doesNotContain(sensitiveDetail, authHeader);
+    }
+
+    @Test
+    void errorMessageIsSanitizedAndTokenIdIsPreserved() {
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      String credentialMarker = "CREDENTIAL-DETAIL-SECRET-e0d68e3c";
+
+      doThrow(new L402Exception(ErrorCode.INVALID_PREIMAGE, credentialMarker, "tok-42"))
           .when(validator)
           .validate(eq(authHeader), any());
 
@@ -665,7 +896,9 @@ class L402ProtocolTest {
           .satisfies(
               ex -> {
                 PaymentValidationException pve = (PaymentValidationException) ex;
-                assertThat(pve.getMessage()).isEqualTo("bad preimage");
+                assertThat(pve.getMessage())
+                    .isEqualTo("Payment validation failed: INVALID")
+                    .doesNotContain(credentialMarker);
                 assertThat(pve.getTokenId()).isEqualTo("tok-42");
               });
     }
@@ -741,7 +974,7 @@ class L402ProtocolTest {
   class FormatChallengeBlankCapability {
 
     @Test
-    void omitsCapabilityCaveatWhenCapabilityIsBlank() {
+    void includesNoCapabilityCeilingWhenCapabilityIsBlank() {
       byte[] rootKey = new byte[32];
       byte[] paymentHash = new byte[32];
       byte[] tokenId = new byte[32];
@@ -759,7 +992,9 @@ class L402ProtocolTest {
               "  ",
               rootKey,
               null,
-              null);
+              null,
+              "/widgets/{id}",
+              "GET");
 
       ChallengeResponse response = protocol.formatChallenge(context);
       String header = response.wwwAuthenticateHeader();
@@ -770,7 +1005,12 @@ class L402ProtocolTest {
       var macaroon = MacaroonSerializer.deserializeV2(macBytes);
 
       assertThat(macaroon.caveats())
-          .noneSatisfy(caveat -> assertThat(caveat.key()).contains("_capabilities"));
+          .extracting(caveat -> caveat.key() + "=" + caveat.value())
+          .startsWith(
+              "services=" + SERVICE_NAME + ":0",
+              "route=/widgets/{id}",
+              "method=GET",
+              SERVICE_NAME + "_capabilities=~");
     }
   }
 
@@ -802,6 +1042,30 @@ class L402ProtocolTest {
 
   // --- Test helpers ---
 
+  private ChallengeContext challengeContext(
+      String routePattern, String requestMethod, String capability) {
+    byte[] paymentHash = new byte[32];
+    Arrays.fill(paymentHash, (byte) 0x22);
+    byte[] tokenId = new byte[32];
+    Arrays.fill(tokenId, (byte) 0x33);
+    byte[] rootKey = new byte[32];
+    Arrays.fill(rootKey, (byte) 0x44);
+    return new ChallengeContext(
+        paymentHash,
+        HEX.formatHex(tokenId),
+        "secret-invoice",
+        1L,
+        null,
+        SERVICE_NAME,
+        60L,
+        capability,
+        rootKey,
+        null,
+        null,
+        routePattern,
+        requestMethod);
+  }
+
   /** Builds a valid L402/LSAT Authorization header using real macaroon infrastructure. */
   private String buildValidAuthHeader(String scheme) {
     byte[] preimage = new byte[32];
@@ -824,13 +1088,50 @@ class L402ProtocolTest {
     byte[] rootKey = new byte[32];
     Arrays.fill(rootKey, (byte) 0xFF);
 
-    MacaroonIdentifier id = new MacaroonIdentifier(0, paymentHash, tokenId);
+    MacaroonIdentifier id = new MacaroonIdentifier(1, paymentHash, tokenId);
     var macaroon = MacaroonMinter.mint(rootKey, id, null, List.of());
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String base64 = Base64.getEncoder().encodeToString(serialized);
     String preimageHex = HEX.formatHex(preimage);
 
     return scheme + " " + base64 + ":" + preimageHex;
+  }
+
+  private String buildAuthHeaderWithIdentifierVersion(String scheme, int version) {
+    byte[] preimage = new byte[32];
+    Arrays.fill(preimage, (byte) 0x42);
+    byte[] paymentHash = sha256(preimage);
+    byte[] tokenId = new byte[32];
+    Arrays.fill(tokenId, (byte) 0x07);
+    byte[] rootKey = new byte[32];
+    Arrays.fill(rootKey, (byte) 0xFF);
+
+    MacaroonIdentifier id = new MacaroonIdentifier(0, paymentHash, tokenId);
+    var macaroon = MacaroonMinter.mint(rootKey, id, null, List.of());
+    byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
+    byte[] identifierBytes = macaroon.identifier();
+    int identifierOffset = findSubarray(serialized, identifierBytes);
+    assertThat(identifierOffset).isNotNegative();
+    serialized[identifierOffset] = (byte) (version >>> 8);
+    serialized[identifierOffset + 1] = (byte) version;
+    return scheme
+        + " "
+        + Base64.getEncoder().encodeToString(serialized)
+        + ":"
+        + HEX.formatHex(preimage);
+  }
+
+  private static int findSubarray(byte[] bytes, byte[] target) {
+    outer:
+    for (int i = 0; i <= bytes.length - target.length; i++) {
+      for (int j = 0; j < target.length; j++) {
+        if (bytes[i + j] != target[j]) {
+          continue outer;
+        }
+      }
+      return i;
+    }
+    return -1;
   }
 
   private static byte[] sha256(byte[] input) {

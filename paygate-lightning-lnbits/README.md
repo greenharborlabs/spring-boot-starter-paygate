@@ -44,8 +44,8 @@ Add this module alongside the starter. You must include both the starter (which 
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
-implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
+implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.4")
 ```
 
 **Maven:**
@@ -54,12 +54,12 @@ implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-lightning-lnbits</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 

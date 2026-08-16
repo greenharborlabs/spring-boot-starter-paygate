@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.api.crypto;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.DisplayName;
@@ -23,6 +24,18 @@ class SensitiveBytesTest {
       var sb = new SensitiveBytes(raw);
       assertThat(raw).containsOnly(0);
       assertThat(sb.value()).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    @DisplayName("takes ownership before zeroizing the caller array")
+    void constructorTransfersOwnershipBeforeZeroizingCallerArray() {
+      byte[] raw = new byte[] {(byte) 0x80, 0, (byte) 0xFF};
+
+      var sensitiveBytes = new SensitiveBytes(raw);
+
+      assertThat(raw).containsOnly(0);
+      raw[0] = 42;
+      assertThat(sensitiveBytes.value()).containsExactly((byte) 0x80, 0, (byte) 0xFF);
     }
 
     @Test
@@ -89,6 +102,17 @@ class SensitiveBytesTest {
     }
 
     @Test
+    @DisplayName("close content-zeroizes the owned array")
+    void closeContentZeroizesOwnedArray() throws ReflectiveOperationException {
+      var sb = new SensitiveBytes(new byte[] {(byte) 0x80, 1, (byte) 0xFF});
+      byte[] ownedArray = ownedArrayOf(sb);
+
+      sb.close();
+
+      assertThat(ownedArray).containsOnly(0);
+    }
+
+    @Test
     @DisplayName("destroy() works directly, not just via close()")
     void destroyDirectly() {
       var sb = new SensitiveBytes(new byte[] {4, 5, 6});
@@ -103,6 +127,19 @@ class SensitiveBytesTest {
       var sb = new SensitiveBytes(new byte[] {7, 8, 9});
       sb.close();
       sb.close(); // must not throw
+      assertThat(sb.isDestroyed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("repeated close retains zeroized owned content")
+    void repeatedCloseRetainsZeroizedOwnedContent() throws ReflectiveOperationException {
+      var sb = new SensitiveBytes(new byte[] {7, 8, 9});
+      byte[] ownedArray = ownedArrayOf(sb);
+
+      sb.close();
+      sb.close();
+
+      assertThat(ownedArray).containsOnly(0);
       assertThat(sb.isDestroyed()).isTrue();
     }
 
@@ -411,5 +448,12 @@ class SensitiveBytesTest {
       t.join();
       assertThat(results).isEmpty();
     }
+  }
+
+  private static byte[] ownedArrayOf(SensitiveBytes sensitiveBytes)
+      throws ReflectiveOperationException {
+    Field data = SensitiveBytes.class.getDeclaredField("data");
+    data.setAccessible(true);
+    return (byte[]) data.get(sensitiveBytes);
   }
 }

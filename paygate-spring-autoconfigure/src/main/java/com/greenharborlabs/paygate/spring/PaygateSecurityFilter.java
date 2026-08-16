@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
@@ -43,11 +44,16 @@ import org.jspecify.annotations.Nullable;
  *       health, rate limits, and creates the 402 challenge
  * </ol>
  */
+@SuppressWarnings("PMD.CyclomaticComplexity") // Security response classification must stay explicit
 public class PaygateSecurityFilter implements Filter {
 
   private static final System.Logger log = System.getLogger(PaygateSecurityFilter.class.getName());
 
   private static final String AUTHORIZATION_HEADER = "Authorization";
+  private static final String SUCCESSFUL_PAID_HANDLER_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPaidHandler";
+  private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
 
   private final PaygateEndpointRegistry registry;
   private final List<PaymentProtocol> protocols;
@@ -58,6 +64,7 @@ public class PaygateSecurityFilter implements Filter {
   private final PaygateEarningsTracker earningsTracker;
   private final PaygateRateLimiter rateLimiter;
   private final boolean mppEnabled;
+  private final int requestBodyMaxBytes;
 
   /**
    * Canonical constructor. All dependencies are provided up front; optional collaborators ({@code
@@ -72,6 +79,29 @@ public class PaygateSecurityFilter implements Filter {
       @Nullable PaygateMetrics metrics,
       @Nullable PaygateEarningsTracker earningsTracker,
       @Nullable PaygateRateLimiter rateLimiter) {
+    this(
+        registry,
+        protocols,
+        challengeService,
+        serviceName,
+        clientIpResolver,
+        metrics,
+        earningsTracker,
+        rateLimiter,
+        RequestDigestSupport.MAX_CACHED_BODY_BYTES);
+  }
+
+  /** Creates a filter with the configured protected request-body bound. */
+  public PaygateSecurityFilter(
+      PaygateEndpointRegistry registry,
+      List<PaymentProtocol> protocols,
+      PaygateChallengeService challengeService,
+      String serviceName,
+      @Nullable ClientIpResolver clientIpResolver,
+      @Nullable PaygateMetrics metrics,
+      @Nullable PaygateEarningsTracker earningsTracker,
+      @Nullable PaygateRateLimiter rateLimiter,
+      int requestBodyMaxBytes) {
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.challengeService =
@@ -82,6 +112,7 @@ public class PaygateSecurityFilter implements Filter {
     this.earningsTracker = earningsTracker;
     this.rateLimiter = rateLimiter;
     this.mppEnabled = this.protocols.stream().anyMatch(RequestDigestSupport::isMppProtocol);
+    this.requestBodyMaxBytes = requestBodyMaxBytes;
   }
 
   @Override
@@ -95,11 +126,9 @@ public class PaygateSecurityFilter implements Filter {
     }
 
     String method = httpRequest.getMethod();
-    String rawRequestUri;
     String path;
     try {
-      rawRequestUri = httpRequest.getRequestURI();
-      path = normalizePath(rawRequestUri);
+      path = ApplicationRelativeRequestResolver.resolve(httpRequest);
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING, "Rejected request with malformed URI: {0}", "<unavailable>");
@@ -111,8 +140,26 @@ public class PaygateSecurityFilter implements Filter {
     String safePath = LogSanitizer.sanitize(path);
 
     // 1. Check if this endpoint is protected
-    PaygateEndpointConfig config = registry.findConfig(method, path);
-    if (config == null) {
+    ResolvedEndpoint resolvedEndpoint;
+    try {
+      resolvedEndpoint = registry.resolve(httpRequest, path);
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Endpoint policy resolution failed for {0} {1}: {2}",
+          method,
+          safePath,
+          e.getClass().getSimpleName());
+      PaygateResponseWriter.writeInternalError(httpResponse);
+      recordRejected("_resolution_error", "unknown");
+      return;
+    }
+    if (resolvedEndpoint == null) {
+      chain.doFilter(request, response);
+      return;
+    }
+
+    if (hasSuccessfulDecisionFor(httpRequest, resolvedEndpoint)) {
       chain.doFilter(request, response);
       return;
     }
@@ -120,20 +167,24 @@ public class PaygateSecurityFilter implements Filter {
     // 2. Check Authorization header — validate credentials before checking Lightning health,
     //    so requests with valid cached credentials skip the health-check cost entirely.
     String authHeader = httpRequest.getHeader(AUTHORIZATION_HEADER);
-    if (authHeader != null) {
+    CredentialState credentialState =
+        authHeader == null ? CredentialState.NO_CREDENTIAL : CredentialState.PRESENTED;
+    if (credentialState == CredentialState.PRESENTED) {
       for (PaymentProtocol protocol : protocols) {
         if (protocol.canHandle(authHeader)) {
           if (!tryAcquireRateLimit(httpRequest)) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
+            recordRateLimitRejection(resolvedEndpoint.routePattern());
             return;
           }
           HttpServletRequest protocolRequest = httpRequest;
           if (RequestDigestSupport.isMppProtocol(protocol)) {
             try {
-              protocolRequest = RequestDigestSupport.wrapForDigest(httpRequest);
+              protocolRequest =
+                  RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
             } catch (RequestBodyTooLargeException e) {
               PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
-              recordRejected(config.pathPattern(), protocol.scheme());
+              recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
               return;
             }
           }
@@ -145,36 +196,47 @@ public class PaygateSecurityFilter implements Filter {
               path,
               method,
               safePath,
-              config,
+              resolvedEndpoint,
               chain,
               protocolRequest,
               response);
           return;
         }
       }
-      // No protocol matched the auth header — fall through to challenge
+      // A presented credential that no enabled protocol accepts is not a request for a new
+      // credential. Bound its cost with the normal validation limiter and fail closed without
+      // consulting Lightning or minting replacement state.
+      if (!tryAcquireRateLimit(httpRequest)) {
+        PaygateResponseWriter.writeRateLimited(httpResponse);
+        recordRateLimitRejection(resolvedEndpoint.routePattern());
+        return;
+      }
+      PaygateResponseWriter.writeMethodUnsupported(httpResponse, "Unsupported payment credential");
+      recordRejected(resolvedEndpoint.routePattern(), "unknown");
+      return;
     }
 
-    // 3. No valid credential — delegate to ChallengeService for health check,
+    // 3. Only NO_CREDENTIAL reaches ChallengeService for health check,
     //    rate limiting, invoice creation, and macaroon minting.
     HttpServletRequest challengeRequest = httpRequest;
     try {
       challengeService.acquireChallengeRateLimit(httpRequest);
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
+      recordRateLimitRejection(resolvedEndpoint.routePattern());
       return;
     }
     if (mppEnabled) {
       try {
-        challengeRequest = RequestDigestSupport.wrapForDigest(httpRequest);
-        RequestDigestSupport.ensureDigestAttribute(challengeRequest, path);
+        challengeRequest = RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
+        RequestDigestSupport.ensureDigestAttribute(challengeRequest, path, requestBodyMaxBytes);
       } catch (RequestBodyTooLargeException e) {
         PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
-        recordRejected(config.pathPattern(), "Payment");
+        recordRejected(resolvedEndpoint.routePattern(), "Payment");
         return;
       }
     }
-    issuePaymentChallenge(challengeRequest, httpResponse, method, safePath, config);
+    issuePaymentChallenge(challengeRequest, httpResponse, method, safePath, resolvedEndpoint);
   }
 
   /**
@@ -185,15 +247,20 @@ public class PaygateSecurityFilter implements Filter {
       HttpServletRequest httpRequest,
       String path,
       String method,
-      PaygateEndpointConfig config,
+      ResolvedEndpoint resolvedEndpoint,
       boolean includeDigest)
       throws IOException {
     String clientIp = resolveClientIp(httpRequest);
+    PaygateEndpointConfig config = resolvedEndpoint.config();
     String capability = config.capability();
-    String digest = includeDigest ? RequestDigestSupport.computeDigest(httpRequest, path) : null;
+    String digest =
+        includeDigest
+            ? RequestDigestSupport.computeDigest(httpRequest, path, requestBodyMaxBytes)
+            : null;
 
-    var context = new java.util.LinkedHashMap<String, String>(5);
+    var context = new java.util.LinkedHashMap<String, String>(6);
     context.put(VerificationContextKeys.REQUEST_PATH, path);
+    context.put(VerificationContextKeys.REQUEST_ROUTE, resolvedEndpoint.routePattern());
     context.put(VerificationContextKeys.REQUEST_METHOD, method);
     context.put(VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
     if (digest != null) {
@@ -215,19 +282,25 @@ public class PaygateSecurityFilter implements Filter {
       HttpServletResponse httpResponse,
       String method,
       String safePath,
-      PaygateEndpointConfig config)
+      ResolvedEndpoint resolvedEndpoint)
       throws IOException {
     try {
       ChallengeContext challengeContext =
           challengeService.createChallenge(
               httpRequest,
-              config,
+              resolvedEndpoint,
               PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
       List<ChallengeResponse> challenges = buildChallenges(challengeContext);
+      if (challenges.isEmpty()) {
+        challengeService.discardChallenge(challengeContext);
+        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+        return;
+      }
       PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
-      recordChallenge(config.pathPattern());
+      recordChallenge(resolvedEndpoint.routePattern());
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
+      recordRateLimitRejection(resolvedEndpoint.routePattern());
     } catch (PaygateLightningUnavailableException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -264,7 +337,7 @@ public class PaygateSecurityFilter implements Filter {
       String path,
       String method,
       String safePath,
-      PaygateEndpointConfig config,
+      ResolvedEndpoint resolvedEndpoint,
       FilterChain chain,
       ServletRequest request,
       ServletResponse response)
@@ -272,35 +345,57 @@ public class PaygateSecurityFilter implements Filter {
 
     long verifyStart = System.nanoTime();
     try {
-      PaymentCredential credential = protocol.parseCredential(authHeader);
-      Map<String, String> requestContext =
-          buildRequestContext(
-              httpRequest, path, method, config, RequestDigestSupport.isMppProtocol(protocol));
-      protocol.validate(credential, requestContext);
+      PaygateEndpointConfig config = resolvedEndpoint.config();
+      try (PaymentCredential credential = protocol.parseCredential(authHeader)) {
+        Map<String, String> requestContext =
+            buildRequestContext(
+                httpRequest,
+                path,
+                method,
+                resolvedEndpoint,
+                RequestDigestSupport.isMppProtocol(protocol));
+        protocol.validate(credential, requestContext);
 
-      log.log(
-          System.Logger.Level.DEBUG, "{0} credential validated successfully", protocol.scheme());
+        markSuccessfulDecision(httpRequest, resolvedEndpoint);
 
-      if ("L402".equals(protocol.scheme())) {
-        handleL402Success(credential, config, httpResponse);
+        log.log(
+            System.Logger.Level.DEBUG, "{0} credential validated successfully", protocol.scheme());
+
+        if ("L402".equals(protocol.scheme())) {
+          handleL402Success(credential, config, httpResponse);
+        }
+        generateReceipt(credential, config, protocol, httpResponse);
       }
-      generateReceipt(credential, config, protocol, httpResponse);
 
+      // The parsed credential has been closed before protected application code can run.
       chain.doFilter(request, response);
       recordCaveatVerifyDuration(verifyStart);
-      recordPassed(config.pathPattern(), config.priceSats(), protocol.scheme());
+      recordPassed(resolvedEndpoint.routePattern(), config.priceSats(), protocol.scheme());
 
     } catch (PaymentValidationException e) {
       recordCaveatVerifyDuration(verifyStart);
-      handlePaymentValidationFailure(e, protocol, httpRequest, httpResponse, config);
+      handlePaymentValidationFailure(e, protocol, httpRequest, httpResponse, resolvedEndpoint);
 
     } catch (RequestBodyTooLargeException e) {
       recordCaveatVerifyDuration(verifyStart);
       PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
-      recordRejected(config.pathPattern(), protocol.scheme());
+      recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
     } catch (Exception e) {
       recordCaveatVerifyDuration(verifyStart);
       handleUnexpectedValidationError(e, protocol, httpRequest, httpResponse, method, safePath);
+    }
+  }
+
+  private static boolean hasSuccessfulDecisionFor(
+      HttpServletRequest request, ResolvedEndpoint endpoint) {
+    return endpoint.equals(request.getAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE));
+  }
+
+  private static void markSuccessfulDecision(
+      HttpServletRequest request, ResolvedEndpoint endpoint) {
+    request.setAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, endpoint);
+    if (endpoint.handlerMethod() != null) {
+      request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, endpoint.handlerMethod());
     }
   }
 
@@ -313,8 +408,9 @@ public class PaygateSecurityFilter implements Filter {
       PaymentProtocol protocol,
       HttpServletRequest httpRequest,
       HttpServletResponse httpResponse,
-      PaygateEndpointConfig config)
+      ResolvedEndpoint resolvedEndpoint)
       throws IOException {
+    PaygateEndpointConfig config = resolvedEndpoint.config();
     recordCaveatRejected(LogSanitizer.sanitize(e.getMessage() != null ? e.getMessage() : ""));
     consumeRateLimitPenalty(httpRequest);
 
@@ -326,41 +422,41 @@ public class PaygateSecurityFilter implements Filter {
         protocol.scheme(),
         e.getErrorCode());
 
-    if (e.getErrorCode() == PaymentValidationException.ErrorCode.METHOD_UNSUPPORTED) {
-      PaygateResponseWriter.writeMethodUnsupported(httpResponse, e.getMessage());
-      recordRejected(config.pathPattern(), protocol.scheme());
-      return;
-    }
-
-    if (e.getErrorCode() == PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL
+    if (e.getErrorCode() == PaymentValidationException.ErrorCode.MALFORMED
         && "L402".equals(protocol.scheme())) {
       log.log(
           System.Logger.Level.WARNING, "Malformed L402 header for protocol {0}", protocol.scheme());
       PaygateResponseWriter.writeMalformedHeader(httpResponse, e.getMessage(), e.getTokenId());
-      recordRejected(config.pathPattern(), protocol.scheme());
+      recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
       return;
     }
 
-    // For non-L402 protocols or non-malformed errors: use RFC 9457 error response
+    // An unsupported MPP method is a classified, presented-credential failure. Do not allocate a
+    // replacement challenge, and use a response-safe exception so its diagnostic token ID cannot
+    // be serialized to the client.
+    if (RequestDigestSupport.isMppProtocol(protocol)
+        && e instanceof UnsupportedPaymentMethodException) {
+      PaygateResponseWriter.writeMethodUnsupported(httpResponse, "Unsupported payment method");
+      recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
+      return;
+    }
+
+    // Every remaining validation error came from a presented credential. Return its safe RFC
+    // 9457 response without allocating a replacement invoice or root key.
     log.log(
         System.Logger.Level.WARNING,
         "{0} validation failed for tokenCorrelationId {1}, errorCode={2}",
         protocol.scheme(),
         tokenCorrelationId,
         e.getErrorCode());
-    try {
-      PaygateChallengeService.ChallengeOptions challengeOptions =
-          rateLimiter != null
-              ? PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed()
-              : PaygateChallengeService.ChallengeOptions.enforceRateLimit();
-      ChallengeContext challengeContext =
-          challengeService.createChallenge(httpRequest, config, challengeOptions);
-      List<ChallengeResponse> challenges = buildChallenges(challengeContext);
-      PaygateResponseWriter.writeMppError(httpResponse, e, challenges);
-    } catch (Exception challengeEx) {
-      PaygateResponseWriter.writeMppError(httpResponse, e, List.of());
-    }
-    recordRejected(config.pathPattern(), protocol.scheme());
+    PaygateResponseWriter.writeMppError(httpResponse, e, List.of());
+    recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
+  }
+
+  /** Distinguishes legitimate challenge requests from presented-credential validation attempts. */
+  private enum CredentialState {
+    NO_CREDENTIAL,
+    PRESENTED
   }
 
   /**
@@ -378,15 +474,11 @@ public class PaygateSecurityFilter implements Filter {
     if (e instanceof MacaroonVerificationException) {
       recordCaveatRejected(LogSanitizer.sanitize(e.getMessage() != null ? e.getMessage() : ""));
     }
-    consumeRateLimitPenalty(httpRequest);
-    String safeMessage = LogSanitizer.sanitize(e.getMessage());
+    // Exception messages can be supplied by protocol providers and may contain request credentials.
+    // Do not include the exception (or any of its content) in production logs.
     log.log(
         System.Logger.Level.WARNING,
-        "Unexpected error during {0} validation for {1} {2}: {3}",
-        protocol.scheme(),
-        method,
-        safePath,
-        safeMessage);
+        "Unexpected credential validation error; failing closed with service unavailable");
     if (!httpResponse.isCommitted()) {
       PaygateResponseWriter.writeLightningUnavailable(httpResponse);
     }
@@ -411,7 +503,7 @@ public class PaygateSecurityFilter implements Filter {
       return true;
     }
     try {
-      return limiter.tryAcquire(resolveClientIp(request));
+      return limiter.tryAcquire(resolveRateLimitIdentity(request));
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -431,7 +523,7 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
     try {
-      limiter.tryAcquire(resolveClientIp(request));
+      limiter.tryAcquire(resolveRateLimitIdentity(request));
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -440,11 +532,35 @@ public class PaygateSecurityFilter implements Filter {
     }
   }
 
-  /** Builds challenge responses from all registered protocols. */
+  /** Records a rejection against the resolved route, never the request's raw path. */
+  private void recordRateLimitRejection(String routePattern) {
+    if (metrics != null) {
+      metrics.recordRateLimitRejection(routePattern);
+    }
+  }
+
+  private String resolveRateLimitIdentity(HttpServletRequest request) {
+    return clientIpResolver != null
+        ? clientIpResolver.resolveRateLimitIdentity(request)
+        : request.getRemoteAddr();
+  }
+
+  /** Builds the challenge responses that can be safely delivered to the client. */
   private List<ChallengeResponse> buildChallenges(ChallengeContext challengeContext) {
     List<ChallengeResponse> challenges = new ArrayList<>();
     for (PaymentProtocol protocol : protocols) {
-      challenges.add(protocol.formatChallenge(challengeContext));
+      try {
+        ChallengeResponse challenge = protocol.formatChallenge(challengeContext);
+        if (challenge != null) {
+          challenges.add(challenge);
+        }
+      } catch (RuntimeException e) {
+        // A formatter must not prevent another enabled protocol from issuing a usable challenge.
+        // Do not log its message because it may contain credential material.
+        log.log(
+            System.Logger.Level.WARNING,
+            "Payment challenge formatter failed; attempting remaining enabled protocols");
+      }
     }
     return challenges;
   }

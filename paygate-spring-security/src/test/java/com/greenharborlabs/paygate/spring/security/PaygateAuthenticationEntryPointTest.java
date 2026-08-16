@@ -15,6 +15,7 @@ import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -23,8 +24,10 @@ import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.MappingMatch;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Arrays;
@@ -35,9 +38,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletMapping;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @ExtendWith(MockitoExtension.class)
 class PaygateAuthenticationEntryPointTest {
@@ -73,7 +79,7 @@ class PaygateAuthenticationEntryPointTest {
       new ChallengeResponse("L402 token=\"test-token\", invoice=\"lnbc1000n1test\"", "L402", null);
 
   @BeforeEach
-  void setUp() {
+  void setUp() throws Exception {
     org.mockito.Mockito.lenient()
         .when(protocol.formatChallenge(any()))
         .thenReturn(DEFAULT_CHALLENGE);
@@ -82,6 +88,33 @@ class PaygateAuthenticationEntryPointTest {
     request = new MockHttpServletRequest("GET", "/api/protected");
     request.setRequestURI("/api/protected");
     response = new MockHttpServletResponse();
+    org.mockito.Mockito.lenient()
+        .doAnswer(
+            invocation -> {
+              HttpServletRequest endpointRequest = invocation.getArgument(0);
+              String method = endpointRequest.getMethod();
+              String path = ApplicationRelativeRequestResolver.resolve(endpointRequest);
+              PaygateEndpointConfig config = endpointRegistry.findConfig(method, path);
+              return config == null
+                  ? null
+                  : new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+            })
+        .when(endpointRegistry)
+        .resolve(any(HttpServletRequest.class));
+    org.mockito.Mockito.lenient()
+        .doAnswer(
+            invocation -> {
+              HttpServletRequest challengeRequest = invocation.getArgument(0);
+              ResolvedEndpoint resolvedEndpoint = invocation.getArgument(1);
+              PaygateChallengeService.ChallengeOptions options = invocation.getArgument(2);
+              return challengeService.createChallenge(
+                  challengeRequest, resolvedEndpoint.config(), options);
+            })
+        .when(challengeService)
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
   }
 
   @Test
@@ -118,6 +151,140 @@ class PaygateAuthenticationEntryPointTest {
     assertThat(response.getContentAsString()).contains("\"code\": 402");
     assertThat(response.getContentAsString()).contains("\"price_sats\": 100");
     assertThat(response.getContentAsString()).contains("\"invoice\": \"lnbc1000n1test\"");
+    verify(endpointRegistry).resolve(request);
+    verify(endpointRegistry, never()).resolve(any(String.class), any(String.class));
+  }
+
+  @Test
+  void resolvedEndpointChallengeDoesNotResolveEndpointAgain() throws Exception {
+    var resolvedEndpoint =
+        new ResolvedEndpoint(TEST_CONFIG, TEST_CONFIG.pathPattern(), TEST_CONFIG.httpMethod());
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
+
+    entryPoint.commence(request, response, resolvedEndpoint);
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry, never()).resolve(any(String.class), any(String.class));
+    verify(challengeService)
+        .createChallenge(
+            request,
+            resolvedEndpoint,
+            PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
+  }
+
+  @Test
+  void rejectsPresentedUnsupportedCredentialWithoutCreatingChallengeState() throws Exception {
+    request.addHeader("Authorization", "Bearer opaque-credential");
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry, never()).resolve(any(String.class), any(String.class));
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
+  @Test
+  void rejectsBlankPresentedCredentialWithoutCreatingChallengeState() throws Exception {
+    request.addHeader("Authorization", "   ");
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry, never()).resolve(any(String.class), any(String.class));
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
+  @Test
+  void headChallengeUsesInheritedGetPolicyCanonicalRouteAndActualHeadMethod() throws Exception {
+    request.setMethod("HEAD");
+    request.setRequestURI("/shop/api/orders/42");
+    request.setContextPath("/shop");
+    var getConfig =
+        new PaygateEndpointConfig("GET", "/api/orders/{orderId}", 100, 3600, "Order", "", "read");
+    var resolvedEndpoint = new ResolvedEndpoint(getConfig, "/api/orders/{orderId}", "GET");
+    org.mockito.Mockito.doReturn(resolvedEndpoint).when(endpointRegistry).resolve(request);
+    org.mockito.Mockito.doReturn(TEST_CONTEXT)
+        .when(challengeService)
+        .createChallenge(
+            any(HttpServletRequest.class),
+            eq(resolvedEndpoint),
+            any(PaygateChallengeService.ChallengeOptions.class));
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(request.getMethod()).isEqualTo("HEAD");
+    verify(endpointRegistry).resolve(request);
+    verify(challengeService)
+        .createChallenge(
+            request,
+            resolvedEndpoint,
+            PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
+  }
+
+  @Test
+  void explicitHeadPolicyWinsForHeadChallenge() throws Exception {
+    request.setMethod("HEAD");
+    var headConfig =
+        new PaygateEndpointConfig("HEAD", "/api/protected", 200, 3600, "Head", "", "head-read");
+    var resolvedEndpoint = new ResolvedEndpoint(headConfig, "/api/protected", "HEAD");
+    org.mockito.Mockito.doReturn(resolvedEndpoint).when(endpointRegistry).resolve(request);
+    org.mockito.Mockito.doReturn(TEST_CONTEXT)
+        .when(challengeService)
+        .createChallenge(
+            any(HttpServletRequest.class),
+            eq(resolvedEndpoint),
+            any(PaygateChallengeService.ChallengeOptions.class));
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(challengeService)
+        .createChallenge(
+            request,
+            resolvedEndpoint,
+            PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
+  }
+
+  @Test
+  void optionsChallengeDoesNotInheritGetPolicy() throws Exception {
+    request.setMethod("OPTIONS");
+    org.mockito.Mockito.doReturn(null).when(endpointRegistry).resolve(request);
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(401);
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
+  @Test
+  void writes402ForProtectedRouteUnderPathServletMapping() throws Exception {
+    request.setRequestURI("/gateway/api/protected");
+    request.setServletPath("/gateway");
+    request.setHttpServletMapping(
+        new MockHttpServletMapping("", "/gateway/*", "dispatcher", MappingMatch.PATH));
+    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
+
+    entryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    verify(endpointRegistry).findConfig("GET", "/api/protected");
   }
 
   @Test
@@ -191,7 +358,8 @@ class PaygateAuthenticationEntryPointTest {
     PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
     var postConfig =
         new PaygateEndpointConfig("POST", "/api/protected", 100, 3600, "Test endpoint", "", "");
-    when(registry.findConfig("POST", "/api/protected")).thenReturn(postConfig);
+    when(registry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(postConfig, "/api/protected", "POST"));
     when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(false);
     var throwingRequest = new ThrowingBodyRequest();
     throwingRequest.setMethod("POST");
@@ -222,7 +390,8 @@ class PaygateAuthenticationEntryPointTest {
     PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
     var postConfig =
         new PaygateEndpointConfig("POST", "/api/protected", 100, 3600, "Test endpoint", "", "");
-    when(registry.findConfig("POST", "/api/protected")).thenReturn(postConfig);
+    when(registry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(postConfig, "/api/protected", "POST"));
     when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(true);
     var oversizedRequest = new MockHttpServletRequest("POST", "/api/protected");
     oversizedRequest.setRequestURI("/api/protected");
@@ -257,6 +426,27 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
+  void writesSanitized500WhenEndpointResolutionFailsWithoutChallengeSideEffects() throws Exception {
+    when(endpointRegistry.resolve(request))
+        .thenThrow(new IllegalStateException("secret policy detail"));
+    SecurityContextHolder.getContext()
+        .setAuthentication(new TestingAuthenticationToken("user", "secret"));
+
+    entryPoint.commence(request, response, new BadCredentialsException("credential secret"));
+
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+    assertThat(response.getContentType()).isEqualTo("application/json");
+    assertThat(response.getContentAsString())
+        .contains("INTERNAL_ERROR")
+        .doesNotContain("secret policy detail", "credential secret", "/api/protected");
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
+  }
+
+  @Test
   void writes503OnUnexpectedException() throws Exception {
     when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
     when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any()))
@@ -265,6 +455,8 @@ class PaygateAuthenticationEntryPointTest {
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
     assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     assertThat(response.getContentAsString())
         .isEqualTo(
@@ -280,6 +472,8 @@ class PaygateAuthenticationEntryPointTest {
     entryPoint.commence(malformedRequest, response, new BadCredentialsException("test"));
 
     assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
     assertThat(response.getContentType()).isEqualTo("application/json");
     MockHttpServletResponse expected = new MockHttpServletResponse();
     PaygateResponseWriter.writeMalformedUri(expected);
@@ -363,14 +557,13 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
-  void writes503WhenEndpointRegistryThrows() throws Exception {
-    when(endpointRegistry.findConfig("GET", "/api/protected"))
-        .thenThrow(new RuntimeException("Registry broken"));
+  void writes500WhenEndpointRegistryThrows() throws Exception {
+    when(endpointRegistry.resolve(request)).thenThrow(new RuntimeException("Registry broken"));
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(503);
-    assertThat(response.getContentAsString()).contains("LIGHTNING_UNAVAILABLE");
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentAsString()).contains("INTERNAL_ERROR");
   }
 
   @Test
@@ -437,7 +630,29 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
-  void emptyProtocolListProducesNoWwwAuthenticateHeader() throws Exception {
+  void oneFormatterFailurePreservesAnotherUsableChallenge() throws Exception {
+    PaymentProtocol successfulProtocol = mock(PaymentProtocol.class);
+    when(successfulProtocol.formatChallenge(any()))
+        .thenReturn(new ChallengeResponse("L402 usable", "L402", Map.of()));
+    PaymentProtocol failingProtocol = mock(PaymentProtocol.class);
+    when(failingProtocol.formatChallenge(any())).thenThrow(new IllegalStateException("secret"));
+    var multiEntryPoint =
+        new PaygateAuthenticationEntryPoint(
+            challengeService, endpointRegistry, List.of(successfulProtocol, failingProtocol));
+
+    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
+    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
+
+    multiEntryPoint.commence(request, response, new BadCredentialsException("test"));
+
+    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getHeaders("WWW-Authenticate")).containsExactly("L402 usable");
+    assertThat(response.getContentAsString()).doesNotContain("secret");
+    verify(challengeService, never()).discardChallenge(any());
+  }
+
+  @Test
+  void noSafeChallengeDiscardsGeneratedStateAndReturnsUnavailable() throws Exception {
     var emptyEntryPoint =
         new PaygateAuthenticationEntryPoint(challengeService, endpointRegistry, List.of());
 
@@ -446,8 +661,9 @@ class PaygateAuthenticationEntryPointTest {
 
     emptyEntryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getStatus()).isEqualTo(503);
     assertThat(response.getHeaders("WWW-Authenticate")).isEmpty();
+    verify(challengeService).discardChallenge(TEST_CONTEXT);
   }
 
   private static final class ThrowingBodyRequest extends MockHttpServletRequest {

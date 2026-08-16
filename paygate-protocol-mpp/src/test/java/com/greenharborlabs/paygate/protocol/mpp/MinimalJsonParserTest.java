@@ -129,6 +129,42 @@ class MinimalJsonParserTest {
   }
 
   @Test
+  void rejectsNumericFormsAtTheCredentialBoundary() {
+    for (String numericValue : new String[] {"0", "-1", "1.5", "1e3"}) {
+      assertThatThrownBy(() -> parse("{\"key\": " + numericValue + "}"))
+          .as("numeric value %s", numericValue)
+          .isInstanceOf(MinimalJsonParser.JsonParseException.class);
+    }
+  }
+
+  @Test
+  void rejectsDuplicateObjectKeysRatherThanSilentlyOverwritingTheFirstValue() {
+    assertThatThrownBy(() -> parse("{\"key\": \"first\", \"key\": \"second\"}"))
+        .isInstanceOf(MinimalJsonParser.JsonParseException.class)
+        .hasMessageContaining("duplicate");
+  }
+
+  @Test
+  void rejectsLoneHighSurrogateUnicodeEscape() {
+    assertThatThrownBy(() -> parse("{\"key\": \"" + '\\' + "uD800\"}"))
+        .isInstanceOf(MinimalJsonParser.JsonParseException.class)
+        .hasMessageContaining("surrogate");
+  }
+
+  @Test
+  void rejectsLoneLowSurrogateUnicodeEscape() {
+    assertThatThrownBy(() -> parse("{\"key\": \"" + '\\' + "uDC00\"}"))
+        .isInstanceOf(MinimalJsonParser.JsonParseException.class)
+        .hasMessageContaining("surrogate");
+  }
+
+  @Test
+  void acceptsPairedSurrogateUnicodeEscape() {
+    assertThat(parse("{\"key\": \"" + '\\' + "uD83D" + '\\' + "uDE00\"}"))
+        .containsEntry("key", "\uD83D\uDE00");
+  }
+
+  @Test
   void rejectsTrailingContent() {
     var parser =
         new MinimalJsonParser(

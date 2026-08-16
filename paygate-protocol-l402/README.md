@@ -41,7 +41,7 @@ This module is not used directly by application developers. It is pulled in tran
 **Gradle (Kotlin DSL):**
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
+implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.4")
 ```
 
 **Maven:**
@@ -50,14 +50,14 @@ implementation("com.greenharborlabs:paygate-spring-boot-starter:0.1.0")
 <dependency>
     <groupId>com.greenharborlabs</groupId>
     <artifactId>paygate-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 
 If you need to depend on `paygate-protocol-l402` directly:
 
 ```kotlin
-implementation("com.greenharborlabs:paygate-protocol-l402:0.1.0")
+implementation("com.greenharborlabs:paygate-protocol-l402:0.1.4")
 ```
 
 ### Build Dependencies
@@ -97,9 +97,10 @@ The central class in this module. It implements `PaymentProtocol` and adapts the
 
 ```java
 public L402Protocol(L402Validator validator, String serviceName)
+public L402Protocol(L402Validator validator, String serviceName, Clock clock)
 ```
 
-Both parameters are required and must not be null. The `validator` is the `paygate-core` validation pipeline; `serviceName` is embedded in macaroon caveats during challenge formatting and used for service verification during validation.
+All supplied parameters are required and must not be null. The two-argument overload uses `Clock.systemUTC()`; the clock overload supports deterministic issuance and expiry tests. The `validator` is the `paygate-core` validation pipeline, and `serviceName` is embedded in macaroon caveats during challenge formatting and used during validation.
 
 #### `scheme()`
 
@@ -123,9 +124,11 @@ Parses a raw `Authorization` header into a protocol-agnostic `PaymentCredential`
    - `tokenId` -- hex-encoded 32-byte token ID from the macaroon identifier
    - `sourceProtocolScheme` -- `"L402"`
    - `source` -- `null` (no source URI for L402)
-   - `metadata` -- an `L402Metadata` record carrying the parsed macaroon, additional macaroons, and raw header
+   - `metadata` -- an `L402Metadata` record carrying the parsed macaroon, an empty additional-macaroon list, and raw header
 
 Throws `PaymentValidationException` with error code `MALFORMED_CREDENTIAL` if the header cannot be parsed.
+
+L402 credential headers contain exactly one primary macaroon. Additional/discharge macaroons and third-party-caveat flows are unsupported and rejected as malformed credentials; they are never partially parsed or retained for downstream processing.
 
 #### `formatChallenge(ChallengeContext context)`
 
@@ -133,10 +136,12 @@ Formats an HTTP 402 challenge response. This is the server-side operation that c
 
 The method:
 
-1. Decodes the hex token ID from the context and constructs a `MacaroonIdentifier` with version 0, the payment hash, and the token ID
+1. Decodes the hex token ID from the context and constructs a `MacaroonIdentifier` with signed identifier version 1, the payment hash, and the token ID
 2. Builds a caveat list:
    - `services` caveat: `"{serviceName}:0"` (always present)
-   - `{serviceName}_capabilities` caveat: the requested capability (only if non-null and non-blank)
+   - `route` caveat: the canonical registered route pattern
+   - `method` caveat: the actual request method
+   - `{serviceName}_capabilities` caveat: the declared capability ceiling, or `~` for no capability
    - `{serviceName}_valid_until` caveat: Unix epoch timestamp of `now + timeoutSeconds`
 3. Mints the macaroon via `MacaroonMinter.mint()` using the root key from the context
 4. Serializes to V2 binary format via `MacaroonSerializer.serializeV2()` and encodes with **standard base64 with padding** (not base64url)
@@ -176,7 +181,7 @@ public record L402Metadata(
 | Field | Type | Description |
 |-------|------|-------------|
 | `macaroon` | `Macaroon` | The primary macaroon from the `Authorization` header |
-| `additionalMacaroons` | `List<Macaroon>` | Any additional macaroons presented alongside the primary one (immutable copy via `List.copyOf()`) |
+| `additionalMacaroons` | `List<Macaroon>` | Always empty for parsed headers. It remains an immutable defensive copy (`List.copyOf()`) for metadata construction. |
 | `rawAuthorizationHeader` | `String` | The original `Authorization` header value, preserved for downstream validation by `L402Validator` |
 
 All fields are required (non-null). The compact constructor validates this and creates a defensive copy of the additional macaroons list.
@@ -250,12 +255,16 @@ When `L402Validator` throws an `L402Exception`, the `L402Protocol` maps the L402
 | `MALFORMED_HEADER` | `MALFORMED_CREDENTIAL` | Authorization header does not match L402/LSAT format |
 | `INVALID_PREIMAGE` | `INVALID_PREIMAGE` | SHA-256(preimage) does not match payment hash |
 | `EXPIRED_CREDENTIAL` | `EXPIRED_CREDENTIAL` | `valid_until` caveat timestamp is in the past |
-| `INVALID_MACAROON` | `INVALID_CHALLENGE_BINDING` | Macaroon signature verification failed |
-| `INVALID_SERVICE` | `INVALID_CHALLENGE_BINDING` | Service name not found in `services` caveat |
+| `INVALID_MACAROON` | `INVALID_CHALLENGE_BINDING` | Macaroon authenticity, structure, or attenuation validation failed |
+| `INVALID_SERVICE` | `INVALID_CHALLENGE_BINDING` | Authenticated identifier schema, request boundary, or service constraints were not satisfied |
 | `REVOKED_CREDENTIAL` | `INVALID_CHALLENGE_BINDING` | Root key has been revoked |
 | `LIGHTNING_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | Lightning backend is unreachable (503) |
 
-The original error message and token ID from the `L402Exception` are preserved in the mapped exception.
+The token ID from the `L402Exception` is preserved in the mapped exception. The adapter replaces
+core validation details with a fixed safe message for each mapped category; in particular,
+`INVALID_SERVICE` becomes `INVALID_CHALLENGE_BINDING` with HTTP 402 and exactly
+`L402 credential validation failed`. The underlying core contract remains `INVALID_SERVICE`, HTTP
+401, with exactly `Credential constraints were not satisfied`.
 
 ---
 
@@ -287,7 +296,32 @@ L402 macaroons use **standard base64 with padding** (`java.util.Base64.getEncode
 
 ### Immutable Metadata
 
-`L402Metadata` is an immutable record. The `additionalMacaroons` list is defensively copied via `List.copyOf()` in the compact constructor, preventing external mutation after construction.
+`L402Metadata` is an immutable record. The `additionalMacaroons` list is defensively copied via `List.copyOf()` in the compact constructor, preventing external mutation after construction. Parsed headers always supply an empty list because L402 rejects additional/discharge macaroons and does not support third-party-caveat flows.
+
+Its `toString()` is deliberately non-recursive and redacts the primary macaroon, additional macaroons, and raw `Authorization` header. It reports only the metadata type, redaction labels, additional-macaroon count, and raw-header length; diagnostics must not include credentials, preimages, root keys, or sensitive validation reasons.
+
+### Request Boundaries and Attenuation
+
+This tracked README is the canonical integration guidance for custom L402 issuers and adapters;
+ignored workspace specifications are planning artifacts only.
+
+Challenge formatting fails closed unless the canonical route and actual method are present. A `HEAD` request can inherit the complete `GET` endpoint policy, but its macaroon is still minted with `method=HEAD`, so GET- and HEAD-bound credentials are not interchangeable. The route is application-relative and remains stable when the application is deployed under a context path or path-prefix servlet mapping.
+
+The capability caveat is an authenticated ceiling, not an additive grant. `~` means no capability; holder-added caveats may retain or narrow a named ceiling, including narrowing it to `~`, but cannot expand it or turn `~` into a named grant. Validation derives the effective capability set only after the entire attenuation chain succeeds.
+
+Previously issued L402 credentials without `route`, `method`, or the capability ceiling are intentionally rejected, including cached credentials. Accepting the legacy `LSAT` scheme name does not grandfather those unbound credentials; clients must obtain a new challenge.
+
+Built-in issuance always uses identifier version 1 and the five caveats listed above, in that
+sequence. This sequence is a guarantee of the built-in issuer, not a universal caveat-position
+requirement for custom issuers. A custom issuer must begin with
+`new MacaroonIdentifier(1, paymentHash, tokenId)` and sign a canonical `route`, the actual `method`,
+the active service's `{serviceName}_capabilities` ceiling, and every caveat required by the
+verifiers registered with its validator. For applications that construct an `L402Validator`
+directly, `ServicesCaveatVerifier` and `ValidUntilCaveatVerifier` are caller-selected; include their
+caveats when those verifiers are registered. Registered verifiers determine required caveats, not
+a universal caveat position. A correctly signed identifier-v0 credential is rejected even if its holder appends matching route, method, and capability caveats; clients must obtain and pay a new challenge.
+
+This migration changes only the signed identifier version. The identifier remains 66 bytes (`[version:2 BE][paymentHash:32][tokenId:32]`), the HTTP challenge still advertises `version="0"`, and the macaroon still uses V2 binary encoding compatible with Go `go-macaroon` parsers.
 
 ### Fail Closed
 
@@ -329,7 +363,6 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions and **Mockito** for
 | Test Case | What It Verifies |
 |-----------|-----------------|
 | `trueForL402OrLsatPrefix` | Accepts `L402 `, `LSAT `, `l402 `, `lsat ` prefixes (case-insensitive) |
-| `trueForVariousCaseVariations` | Accepts mixed-case variations and minimal headers |
 | `falseForNull` | Returns `false` for null input |
 | `falseForShortStrings` | Returns `false` for strings shorter than 5 characters |
 | `falseForNonL402Schemes` | Returns `false` for `Bearer`, `Basic`, `Payment`, and similar prefixes |
@@ -354,7 +387,7 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions and **Mockito** for
 | `macaroonInHeaderIsValidBase64` | The base64 macaroon decodes without error |
 | `challengeIncludesServicesCaveat` | Macaroon contains `services={serviceName}:0` caveat |
 | `challengeIncludesCapabilityCaveatWhenPresent` | Macaroon contains `{serviceName}_capabilities` caveat when capability is specified |
-| `challengeOmitsCapabilityCaveatWhenNull` | Capability caveat is absent when capability is null |
+| `challengeIncludesNoCapabilityCeilingWhenNull` | Null capability is authenticated explicitly with the `~` empty capability ceiling |
 | `challengeIncludesValidUntilCaveat` | Macaroon contains `{serviceName}_valid_until` caveat with a future epoch timestamp |
 | `rejectsBolt11WithControlCharacters` | BOLT11 containing `\r\n` throws `IllegalArgumentException` |
 | `tokenAndMacaroonFieldsAreIdentical` | The `token` and `macaroon` field values in the header are identical |
@@ -377,10 +410,10 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions and **Mockito** for
 | `invalidPreimageMapsToInvalidPreimage` | `INVALID_PREIMAGE` maps to `INVALID_PREIMAGE` |
 | `expiredCredentialMapsToExpiredCredential` | `EXPIRED_CREDENTIAL` maps to `EXPIRED_CREDENTIAL` |
 | `invalidMacaroonMapsToInvalidChallengeBinding` | `INVALID_MACAROON` maps to `INVALID_CHALLENGE_BINDING` |
-| `invalidServiceMapsToInvalidChallengeBinding` | `INVALID_SERVICE` maps to `INVALID_CHALLENGE_BINDING` |
+| `invalidServiceRemainsGenericallySanitized` | Core `INVALID_SERVICE` maps to `INVALID_CHALLENGE_BINDING`/402 with a fixed message and preserved token ID |
 | `revokedCredentialMapsToInvalidChallengeBinding` | `REVOKED_CREDENTIAL` maps to `INVALID_CHALLENGE_BINDING` |
-| `lightningUnavailableMapsTOMalformedCredential` | `LIGHTNING_UNAVAILABLE` maps to `MALFORMED_CREDENTIAL` |
-| `errorMessageAndTokenIdArePreserved` | Original message and token ID survive the mapping |
+| `lightningUnavailableMapsToServiceUnavailable` | `LIGHTNING_UNAVAILABLE` maps to `SERVICE_UNAVAILABLE` |
+| `errorMessageIsSanitizedAndTokenIdIsPreserved` | Unsafe core detail is replaced while the token ID survives the mapping |
 
 ---
 

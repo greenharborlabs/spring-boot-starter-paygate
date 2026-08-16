@@ -325,4 +325,29 @@ class PaymentCredentialTest {
     assertThat(cred.source()).isEqualTo("did:key:z6Mk123");
     assertThat(cred.metadata()).isEqualTo(metadata);
   }
+
+  @Test
+  void destroyIsIdempotentAndMakesSensitiveAccessFailClosed() {
+    var credential = validCredential();
+    int hashCode = credential.hashCode();
+
+    credential.destroy();
+    credential.close();
+
+    assertThat(credential.isDestroyed()).isTrue();
+    assertThat(credential.hashCode()).isEqualTo(hashCode);
+    assertThatThrownBy(credential::paymentHash).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(credential::preimage).isInstanceOf(IllegalStateException.class);
+    assertThat(credential.toString()).doesNotContain("paymentHash", "preimage");
+  }
+
+  @Test
+  void concurrentAccessAndDestroyEitherReturnAnIndependentCopyOrFailClosed() throws Exception {
+    var credential = validCredential();
+    var accessor = Thread.ofVirtual().start(() -> credential.preimage());
+    credential.destroy();
+    accessor.join();
+
+    assertThat(credential.isDestroyed()).isTrue();
+  }
 }

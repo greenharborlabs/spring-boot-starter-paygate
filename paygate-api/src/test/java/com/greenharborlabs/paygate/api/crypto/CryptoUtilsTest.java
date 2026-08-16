@@ -74,6 +74,16 @@ class CryptoUtilsTest {
     }
 
     @Test
+    @DisplayName("observably clears every value in the caller-owned array")
+    void clearsAllOriginalContent() {
+      byte[] data = new byte[] {(byte) 0x80, -1, 1, 127, 0};
+
+      CryptoUtils.zeroize(data);
+
+      assertThat(data).containsOnly(0);
+    }
+
+    @Test
     @DisplayName("null is a no-op")
     void nullIsNoOp() {
       CryptoUtils.zeroize((byte[]) null); // must not throw
@@ -87,6 +97,18 @@ class CryptoUtilsTest {
       CryptoUtils.zeroize(arr1, null, arr2);
       assertThat(arr1).containsExactly(0, 0, 0);
       assertThat(arr2).containsExactly(0, 0);
+    }
+
+    @Test
+    @DisplayName("varargs observes and clears each distinct caller array")
+    void varargsClearsEachDistinctCallerArray() {
+      byte[] first = new byte[] {(byte) 0x80, 1};
+      byte[] second = new byte[] {(byte) 0xFF, 2, 3};
+
+      CryptoUtils.zeroize(first, second);
+
+      assertThat(first).containsOnly(0);
+      assertThat(second).containsOnly(0);
     }
 
     @Test

@@ -5,7 +5,6 @@ import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -36,9 +35,6 @@ public record L402Credential(
   }
 
   private static final HexFormat HEX = HexFormat.of();
-
-  /** Maximum number of comma-separated tokens allowed in a single header. */
-  static final int MAX_TOKENS = 5;
 
   /**
    * Maximum decoded macaroon byte size (base64 can encode up to ~6144 bytes within the 8192-char
@@ -76,38 +72,22 @@ public record L402Credential(
     String tokensString = components.macaroonBase64();
     String preimageHex = components.preimageHex();
 
-    // Split on comma to support multi-token headers: "token1,token2:preimage"
+    // A credential contains exactly one primary macaroon. Discharge/additional macaroons are not
+    // supported, so reject them before decoding or retaining attacker-controlled extra content.
     String[] tokenParts = tokensString.split(",", -1);
-
-    // Reject excessive token count to bound CPU work from comma-separated amplification
-    if (tokenParts.length > MAX_TOKENS) {
-      throw new L402Exception(
-          ErrorCode.MALFORMED_HEADER,
-          "Too many tokens in header: %d, max: %d".formatted(tokenParts.length, MAX_TOKENS),
-          null);
-    }
-
-    // Validate no empty tokens (e.g. from "token1,,token2" or ",token1" or "token1,")
-    for (String part : tokenParts) {
-      if (part.isEmpty()) {
+    for (String tokenPart : tokenParts) {
+      if (tokenPart.isEmpty()) {
         throw new L402Exception(
             ErrorCode.MALFORMED_HEADER, "Empty token in multi-token header", null);
       }
     }
+    if (tokenParts.length != 1) {
+      throw new L402Exception(
+          ErrorCode.MALFORMED_HEADER, "Additional macaroons are unsupported", null);
+    }
 
     // Decode primary (first) macaroon
     Macaroon primaryMacaroon = decodeMacaroon(tokenParts[0]);
-
-    // Decode additional macaroons
-    List<Macaroon> additionalMacaroons;
-    if (tokenParts.length > 1) {
-      additionalMacaroons = new ArrayList<>(tokenParts.length - 1);
-      for (int i = 1; i < tokenParts.length; i++) {
-        additionalMacaroons.add(decodeMacaroon(tokenParts[i]));
-      }
-    } else {
-      additionalMacaroons = List.of();
-    }
 
     PaymentPreimage preimage;
     try {
@@ -117,10 +97,16 @@ public record L402Credential(
           ErrorCode.MALFORMED_HEADER, "Invalid preimage hex: " + e.getMessage(), null);
     }
 
-    MacaroonIdentifier id = MacaroonIdentifier.decode(primaryMacaroon.identifier());
+    MacaroonIdentifier id;
+    try {
+      id = MacaroonIdentifier.decode(primaryMacaroon.identifier());
+    } catch (IllegalArgumentException e) {
+      preimage.destroy();
+      throw new L402Exception(ErrorCode.MALFORMED_HEADER, "Malformed L402 credential", null);
+    }
     String tokenId = HEX.formatHex(id.tokenId());
 
-    return new L402Credential(primaryMacaroon, preimage, tokenId, additionalMacaroons);
+    return new L402Credential(primaryMacaroon, preimage, tokenId, List.of());
   }
 
   /**
@@ -172,8 +158,7 @@ public record L402Credential(
     try {
       return MacaroonSerializer.deserializeV2(macaroonBytes);
     } catch (IllegalArgumentException e) {
-      throw new L402Exception(
-          ErrorCode.MALFORMED_HEADER, "Invalid macaroon data: " + e.getMessage(), null);
+      throw new L402Exception(ErrorCode.MALFORMED_HEADER, "Invalid macaroon data", null);
     }
   }
 

@@ -34,7 +34,7 @@ public final class PaygateResponseWriter {
   public static void writeMalformedHeader(
       HttpServletResponse response, String message, String tokenId) throws IOException {
     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     String tokenDetail = tokenId != null ? tokenId : "";
     response
         .getWriter()
@@ -55,8 +55,9 @@ public final class PaygateResponseWriter {
   public static void writeValidationError(
       HttpServletResponse response, ErrorCode errorCode, String message, String tokenId)
       throws IOException {
-    response.setStatus(errorCode.getHttpStatus());
-    response.setContentType("application/json");
+    int status = validationStatus(errorCode);
+    response.setStatus(status);
+    setSafeErrorHeaders(response, "application/json");
     String tokenDetail = tokenId != null ? tokenId : "";
     String clientMessage = "Invalid L402 credential";
     response
@@ -65,7 +66,7 @@ public final class PaygateResponseWriter {
             """
                 {"code": %d, "error": "%s", "message": "%s", "details": {"token_id": "%s"}}"""
                 .formatted(
-                    errorCode.getHttpStatus(),
+                    status,
                     errorCode.name(),
                     JsonEscaper.escape(clientMessage),
                     JsonEscaper.escape(tokenDetail)));
@@ -75,7 +76,7 @@ public final class PaygateResponseWriter {
   public static void writeRateLimited(HttpServletResponse response) throws IOException {
     response.setStatus(429);
     response.setHeader("Retry-After", "1");
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -86,7 +87,7 @@ public final class PaygateResponseWriter {
   /** Writes a 503 Service Unavailable response when the Lightning backend is down. */
   public static void writeLightningUnavailable(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -94,17 +95,28 @@ public final class PaygateResponseWriter {
                 {"code": 503, "error": "LIGHTNING_UNAVAILABLE", "message": "Lightning backend is not available. Please try again later."}""");
   }
 
+  /** Writes a sanitized 500 response for internal application or configuration failures. */
+  public static void writeInternalError(HttpServletResponse response) throws IOException {
+    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+    setSafeErrorHeaders(response, "application/json");
+    response
+        .getWriter()
+        .write(
+            """
+                {"code": 500, "error": "INTERNAL_ERROR", "message": "An internal error occurred"}""");
+  }
+
   /** Writes a 400 response for malformed/invalid request URI input. */
   public static void writeMalformedUri(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response.getWriter().write(MALFORMED_URI_BODY);
   }
 
   /** Writes a 400 response when request-body digest binding input exceeds configured bounds. */
   public static void writeRequestBodyTooLarge(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -116,7 +128,7 @@ public final class PaygateResponseWriter {
   public static void writeUnauthorized(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
     response.setHeader("WWW-Authenticate", "L402");
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -128,7 +140,7 @@ public final class PaygateResponseWriter {
   public static void writeAuthenticationFailed(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
     response.setHeader("WWW-Authenticate", "L402");
-    response.setContentType("application/json");
+    setSafeErrorHeaders(response, "application/json");
     response
         .getWriter()
         .write(
@@ -149,12 +161,10 @@ public final class PaygateResponseWriter {
       HttpServletResponse response, ChallengeContext context, List<ChallengeResponse> challenges)
       throws IOException {
     response.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-    response.setHeader("Cache-Control", "no-store");
+    setSafeErrorHeaders(response, "application/json");
     for (ChallengeResponse challenge : challenges) {
       response.addHeader("WWW-Authenticate", challenge.wwwAuthenticateHeader());
     }
-    response.setContentType("application/json");
-
     var sb = new StringBuilder();
     sb.append("{\"code\": 402, \"message\": \"Payment required\"");
     sb.append(", \"price_sats\": ").append(context.priceSats());
@@ -231,23 +241,17 @@ public final class PaygateResponseWriter {
   }
 
   /**
-   * Writes a 400 Bad Request response for an unsupported payment method, using RFC 9457 Problem
-   * Details format.
+   * Writes the standard invalid-credential response when a payment method is unsupported.
    *
    * @param response the servlet response
-   * @param message detail message describing why the method is unsupported
+   * @param message detail message for caller logging, not exposed publicly
    */
   public static void writeMethodUnsupported(HttpServletResponse response, String message)
       throws IOException {
-    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-    response.setHeader("Cache-Control", "no-store");
-    response.setContentType("application/problem+json");
-    response
-        .getWriter()
-        .write(
-            """
-                {"type": "https://paymentauth.org/problems/method-unsupported", "title": "Method Unsupported", "status": 400, "detail": "%s"}"""
-                .formatted(JsonEscaper.escape(message)));
+    writeMppError(
+        response,
+        new PaymentValidationException(PaymentValidationException.ErrorCode.INVALID, message),
+        List.of());
   }
 
   /**
@@ -266,15 +270,13 @@ public final class PaygateResponseWriter {
       throws IOException {
     int status = exception.getHttpStatus();
     response.setStatus(status);
-    response.setHeader("Cache-Control", "no-store");
+    setSafeErrorHeaders(response, "application/problem+json");
 
     if (status == HttpServletResponse.SC_PAYMENT_REQUIRED && challenges != null) {
       for (ChallengeResponse challenge : challenges) {
         response.addHeader("WWW-Authenticate", challenge.wwwAuthenticateHeader());
       }
     }
-
-    response.setContentType("application/problem+json");
 
     var sb = new StringBuilder();
     sb.append("{\"type\": \"")
@@ -320,5 +322,23 @@ public final class PaygateResponseWriter {
       case Boolean b -> sb.append(b);
       default -> sb.append('"').append(JsonEscaper.escape(value.toString())).append('"');
     }
+  }
+
+  /** Applies headers required for client-safe error responses. */
+  private static void setSafeErrorHeaders(HttpServletResponse response, String contentType) {
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setContentType(contentType);
+  }
+
+  /**
+   * Maps legacy protocol validation categories to the public credential failure status contract.
+   */
+  private static int validationStatus(ErrorCode errorCode) {
+    return switch (errorCode) {
+      case MALFORMED_HEADER -> HttpServletResponse.SC_BAD_REQUEST;
+      case LIGHTNING_UNAVAILABLE -> HttpServletResponse.SC_SERVICE_UNAVAILABLE;
+      default -> HttpServletResponse.SC_PAYMENT_REQUIRED;
+    };
   }
 }

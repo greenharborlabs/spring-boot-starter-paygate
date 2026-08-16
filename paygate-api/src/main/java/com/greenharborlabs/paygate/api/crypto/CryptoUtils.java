@@ -3,7 +3,7 @@ package com.greenharborlabs.paygate.api.crypto;
 import java.util.Arrays;
 
 /**
- * Canonical constant-time comparison and zeroization utility for the paygate API.
+ * Canonical constant-time comparison and best-effort zeroization utility for the paygate API.
  *
  * <p>All modules that need timing-safe byte comparisons or secure memory clearing should delegate
  * to this class rather than implementing their own.
@@ -47,8 +47,10 @@ public final class CryptoUtils {
   }
 
   /**
-   * Fills the given byte array with zeros and writes a volatile fence to prevent the JIT from
-   * eliminating the fill as a dead store.
+   * Fills the given caller-supplied byte array with zeros and writes a volatile fence to prevent
+   * the JIT from eliminating the fill as a dead store. The cleared contents are immediately
+   * observable through every reference to that array. This is best-effort zeroization: the JVM
+   * cannot guarantee erasure of copies made by callers, native code, or garbage collectors.
    *
    * <p>Null-safe: passing {@code null} is a no-op.
    *
@@ -62,7 +64,8 @@ public final class CryptoUtils {
   }
 
   /**
-   * Zeroizes all non-null arrays in the given varargs. Null entries are skipped.
+   * Zeroizes all non-null caller-supplied arrays in the given varargs. Null entries are skipped.
+   * Each supplied array is cleared independently, including repeated references to the same array.
    *
    * <p>Null-safe: passing {@code null} as the varargs array itself is a no-op.
    *

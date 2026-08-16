@@ -40,6 +40,7 @@ class MacaroonSerializerTest {
   private static final int FIELD_EOS = 0;
   private static final int FIELD_LOCATION = 1;
   private static final int FIELD_IDENTIFIER = 2;
+  private static final int FIELD_VERIFICATION_ID = 4;
   private static final int FIELD_SIGNATURE = 6;
 
   private static final int VERSION_BYTE = 0x02;
@@ -122,6 +123,22 @@ class MacaroonSerializerTest {
     // Signature packet (field type 6)
     out.write(packet(FIELD_SIGNATURE, signature));
 
+    return out.toByteArray();
+  }
+
+  /** Constructs V2 bytes whose caveat sections are supplied as their exact wire packets. */
+  private static byte[] buildV2BytesWithRawCaveatSections(
+      byte[] identifier, List<byte[]> caveatSections, byte[] signature) throws IOException {
+    var out = new ByteArrayOutputStream();
+    out.write(VERSION_BYTE);
+    out.write(packet(FIELD_IDENTIFIER, identifier));
+    out.write(FIELD_EOS);
+    for (byte[] caveatSection : caveatSections) {
+      out.write(caveatSection);
+      out.write(FIELD_EOS);
+    }
+    out.write(FIELD_EOS);
+    out.write(packet(FIELD_SIGNATURE, signature));
     return out.toByteArray();
   }
 
@@ -499,6 +516,58 @@ class MacaroonSerializerTest {
           .hasMessageContaining("Trailing bytes after V2 macaroon signature");
     }
 
+    @Test
+    @DisplayName("rejects malformed UTF-8 in a first-party caveat payload")
+    void rejectsMalformedUtf8Caveat() throws IOException {
+      byte[] identifier = identifierFilledWith((byte) 0x01);
+      byte[] signature = signatureFilledWith((byte) 0x02);
+      byte[] malformedCaveat = packet(FIELD_IDENTIFIER, new byte[] {'k', '=', (byte) 0xC3, 0x28});
+      byte[] serialized =
+          buildV2BytesWithRawCaveatSections(identifier, List.of(malformedCaveat), signature);
+
+      assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(serialized))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("UTF-8");
+    }
+
+    @Test
+    @DisplayName(
+        "rejects an unsupported third-party caveat before treating it as a first-party caveat")
+    void rejectsThirdPartyCaveat() throws IOException {
+      byte[] identifier = identifierFilledWith((byte) 0x01);
+      byte[] signature = signatureFilledWith((byte) 0x02);
+      var thirdPartyCaveat = new ByteArrayOutputStream();
+      thirdPartyCaveat.write(
+          packet(FIELD_IDENTIFIER, "account=alice".getBytes(StandardCharsets.UTF_8)));
+      thirdPartyCaveat.write(packet(FIELD_VERIFICATION_ID, new byte[] {0x01, 0x02, 0x03}));
+      thirdPartyCaveat.write(
+          packet(FIELD_LOCATION, "https://idp.example.com".getBytes(StandardCharsets.UTF_8)));
+      byte[] serialized =
+          buildV2BytesWithRawCaveatSections(
+              identifier, List.of(thirdPartyCaveat.toByteArray()), signature);
+
+      assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(serialized))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("third-party caveats are unsupported");
+    }
+
+    @Test
+    @DisplayName("rejects a second serialized macaroon instead of accepting unverified delegation")
+    void rejectsAdditionalMacaroon() throws IOException {
+      byte[] identifier = identifierFilledWith((byte) 0x01);
+      byte[] signature = signatureFilledWith((byte) 0x02);
+      byte[] primary = buildExpectedV2Bytes(null, identifier, List.of(), signature);
+      byte[] additional =
+          buildExpectedV2Bytes(
+              null, identifierFilledWith((byte) 0x03), List.of(), signatureFilledWith((byte) 0x04));
+      byte[] serialized = Arrays.copyOf(primary, primary.length + additional.length);
+      System.arraycopy(additional, 0, serialized, primary.length, additional.length);
+
+      assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(serialized))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Additional macaroons are unsupported");
+    }
+
     /**
      * Finds the position of the second EOS (0x00) byte that marks the end of the caveats section.
      * This is the byte right before the signature packet in a no-caveats macaroon.
@@ -531,7 +600,7 @@ class MacaroonSerializerTest {
 
     @Test
     @DisplayName("deserializes macaroon with MAX_CAVEATS - 1 caveats")
-    void acceptsExactlyMaxCaveats() {
+    void acceptsMaxCaveatsMinusOne() {
       byte[] identifier = identifierFilledWith((byte) 0xA1);
       byte[] signature = signatureFilledWith((byte) 0xB2);
       int count = MacaroonSerializer.MAX_CAVEATS - 1;
@@ -546,25 +615,23 @@ class MacaroonSerializerTest {
     }
 
     @Test
-    @DisplayName("deserialize rejects macaroon with exactly MAX_CAVEATS caveats")
-    void rejectsExceedingMaxCaveats() {
+    @DisplayName("serializes and deserializes macaroon with exactly MAX_CAVEATS caveats")
+    void acceptsExactlyMaxCaveats() {
       byte[] identifier = identifierFilledWith((byte) 0xA1);
       byte[] signature = signatureFilledWith((byte) 0xB2);
       int count = MacaroonSerializer.MAX_CAVEATS;
       List<Caveat> caveats = generateCaveats(count);
       var original = new Macaroon(identifier, null, caveats, signature);
 
-      // Serialize bypasses the check only if we build raw bytes, but now serialize
-      // also validates — so we expect serialize to reject it too.
-      assertThatThrownBy(() -> MacaroonSerializer.serializeV2(original))
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessage(
-              "Too many caveats: %d, max: %d".formatted(count, MacaroonSerializer.MAX_CAVEATS));
+      byte[] serialized = MacaroonSerializer.serializeV2(original);
+      Macaroon result = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(result.caveats()).isEqualTo(caveats);
     }
 
     @Test
-    @DisplayName("serialize rejects macaroon with >= MAX_CAVEATS caveats")
-    void serializeRejectsExceedingMaxCaveats() {
+    @DisplayName("serialize rejects macaroon with MAX_CAVEATS + 1 caveats")
+    void serializeRejectsExceedingMaxCaveats() throws IOException {
       byte[] identifier = identifierFilledWith((byte) 0xA1);
       byte[] signature = signatureFilledWith((byte) 0xB2);
       int count = MacaroonSerializer.MAX_CAVEATS + 1;
@@ -572,6 +639,26 @@ class MacaroonSerializerTest {
       var original = new Macaroon(identifier, null, caveats, signature);
 
       assertThatThrownBy(() -> MacaroonSerializer.serializeV2(original))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(
+              "Too many caveats: %d, max: %d".formatted(count, MacaroonSerializer.MAX_CAVEATS));
+
+      List<byte[]> rawCaveatSections =
+          caveats.stream()
+              .map(caveat -> caveat.toString().getBytes(StandardCharsets.UTF_8))
+              .map(
+                  caveatBytes -> {
+                    try {
+                      return packet(FIELD_IDENTIFIER, caveatBytes);
+                    } catch (IOException exception) {
+                      throw new IllegalStateException(exception);
+                    }
+                  })
+              .toList();
+      byte[] serializedWithOneTooMany =
+          buildV2BytesWithRawCaveatSections(identifier, rawCaveatSections, signature);
+
+      assertThatThrownBy(() -> MacaroonSerializer.deserializeV2(serializedWithOneTooMany))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage(
               "Too many caveats: %d, max: %d".formatted(count, MacaroonSerializer.MAX_CAVEATS));

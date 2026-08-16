@@ -15,13 +15,14 @@ class L402ExceptionTest {
   class ErrorCodeTests {
 
     @Test
-    @DisplayName("all 7 error codes exist")
+    @DisplayName("all 8 error codes exist")
     void allErrorCodesExist() {
-      assertThat(ErrorCode.values()).hasSize(7);
+      assertThat(ErrorCode.values()).hasSize(8);
       assertThat(ErrorCode.valueOf("INVALID_MACAROON")).isNotNull();
       assertThat(ErrorCode.valueOf("INVALID_PREIMAGE")).isNotNull();
       assertThat(ErrorCode.valueOf("EXPIRED_CREDENTIAL")).isNotNull();
       assertThat(ErrorCode.valueOf("INVALID_SERVICE")).isNotNull();
+      assertThat(ErrorCode.valueOf("MISSING_REQUEST_CONTEXT")).isNotNull();
       assertThat(ErrorCode.valueOf("REVOKED_CREDENTIAL")).isNotNull();
       assertThat(ErrorCode.valueOf("LIGHTNING_UNAVAILABLE")).isNotNull();
       assertThat(ErrorCode.valueOf("MALFORMED_HEADER")).isNotNull();
@@ -49,6 +50,12 @@ class L402ExceptionTest {
     @DisplayName("INVALID_SERVICE maps to HTTP 401")
     void invalidServiceMapsTo401() {
       assertThat(ErrorCode.INVALID_SERVICE.getHttpStatus()).isEqualTo(401);
+    }
+
+    @Test
+    @DisplayName("MISSING_REQUEST_CONTEXT maps to HTTP 401")
+    void missingRequestContextMapsTo401() {
+      assertThat(ErrorCode.MISSING_REQUEST_CONTEXT.getHttpStatus()).isEqualTo(401);
     }
 
     @Test

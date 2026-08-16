@@ -1,6 +1,9 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +35,7 @@ public final class MacaroonSerializer {
   private static final int FIELD_EOS = 0;
   private static final int FIELD_LOCATION = 1;
   private static final int FIELD_IDENTIFIER = 2;
+  private static final int FIELD_VERIFICATION_ID = 4;
   private static final int FIELD_SIGNATURE = 6;
 
   static final int MAX_CAVEATS = 20;
@@ -43,7 +47,7 @@ public final class MacaroonSerializer {
     ByteArrayOutputStream buf = new ByteArrayOutputStream();
     buf.write(VERSION_BYTE);
 
-    if (macaroon.caveats().size() >= MAX_CAVEATS) {
+    if (macaroon.caveats().size() > MAX_CAVEATS) {
       throw new IllegalArgumentException(
           "Too many caveats: %d, max: %d".formatted(macaroon.caveats().size(), MAX_CAVEATS));
     }
@@ -105,7 +109,7 @@ public final class MacaroonSerializer {
       int len = (int) rawLen;
       pos += lenResult.bytesRead();
 
-      if (pos + len > data.length) {
+      if (len > data.length - pos) {
         throw new IllegalArgumentException(
             "Truncated V2 macaroon: need %d bytes at offset %d but only %d remain"
                 .formatted(len, pos, data.length - pos));
@@ -115,7 +119,7 @@ public final class MacaroonSerializer {
       pos += len;
 
       switch (fieldType) {
-        case FIELD_LOCATION -> location = new String(payload, StandardCharsets.UTF_8);
+        case FIELD_LOCATION -> location = decodeUtf8(payload, "location");
         case FIELD_IDENTIFIER -> identifier = payload;
         default -> {
           /* skip unknown fields */
@@ -151,7 +155,7 @@ public final class MacaroonSerializer {
       int len = (int) rawLen;
       pos += lenResult.bytesRead();
 
-      if (pos + len > data.length) {
+      if (len > data.length - pos) {
         throw new IllegalArgumentException(
             "Truncated V2 macaroon caveat: need %d bytes at offset %d but only %d remain"
                 .formatted(len, pos, data.length - pos));
@@ -160,21 +164,33 @@ public final class MacaroonSerializer {
       System.arraycopy(data, pos, payload, 0, len);
       pos += len;
 
-      if (fieldType == FIELD_IDENTIFIER) {
-        String caveatStr = new String(payload, StandardCharsets.UTF_8);
-        int eqIdx = caveatStr.indexOf('=');
-        if (eqIdx <= 0) {
-          throw new IllegalArgumentException("Malformed caveat (no '=' separator): " + caveatStr);
-        }
-        caveats.add(new Caveat(caveatStr.substring(0, eqIdx), caveatStr.substring(eqIdx + 1)));
-        if (caveats.size() >= MAX_CAVEATS) {
-          throw new IllegalArgumentException(
-              "Too many caveats: %d, max: %d".formatted(caveats.size(), MAX_CAVEATS));
-        }
+      if (fieldType == FIELD_VERIFICATION_ID || fieldType == FIELD_LOCATION) {
+        throw new IllegalArgumentException("third-party caveats are unsupported");
+      }
+      if (fieldType != FIELD_IDENTIFIER) {
+        throw new IllegalArgumentException("Unsupported caveat field type: " + fieldType);
+      }
+
+      String caveatStr = decodeUtf8(payload, "caveat");
+      int eqIdx = caveatStr.indexOf('=');
+      if (eqIdx <= 0) {
+        throw new IllegalArgumentException("Malformed caveat (no '=' separator): " + caveatStr);
+      }
+      caveats.add(new Caveat(caveatStr.substring(0, eqIdx), caveatStr.substring(eqIdx + 1)));
+      if (caveats.size() > MAX_CAVEATS) {
+        throw new IllegalArgumentException(
+            "Too many caveats: %d, max: %d".formatted(caveats.size(), MAX_CAVEATS));
       }
 
       // EOS after caveat section is mandatory per Go format
       if (pos >= data.length || data[pos] != FIELD_EOS) {
+        if (pos < data.length) {
+          Varint.DecodeResult nextFieldResult = Varint.decode(data, pos);
+          int nextFieldType = checkedFieldType(nextFieldResult.value());
+          if (nextFieldType == FIELD_VERIFICATION_ID || nextFieldType == FIELD_LOCATION) {
+            throw new IllegalArgumentException("third-party caveats are unsupported");
+          }
+        }
         throw new IllegalArgumentException(
             "Expected EOS (0x00) after caveat at offset %d".formatted(pos));
       }
@@ -203,7 +219,7 @@ public final class MacaroonSerializer {
     int sigLen = (int) rawSigLen;
     pos += sigLenResult.bytesRead();
 
-    if (pos + sigLen > data.length) {
+    if (sigLen > data.length - pos) {
       throw new IllegalArgumentException(
           "Truncated V2 macaroon signature: need %d bytes at offset %d but only %d remain"
               .formatted(sigLen, pos, data.length - pos));
@@ -213,6 +229,9 @@ public final class MacaroonSerializer {
     pos += sigLen;
 
     if (pos != data.length) {
+      if ((data[pos] & 0xFF) == VERSION_BYTE) {
+        throw new IllegalArgumentException("Additional macaroons are unsupported");
+      }
       throw new IllegalArgumentException(
           "Trailing bytes after V2 macaroon signature: %d bytes".formatted(data.length - pos));
     }
@@ -224,5 +243,25 @@ public final class MacaroonSerializer {
     buf.writeBytes(Varint.encode(fieldType));
     buf.writeBytes(Varint.encode(data.length));
     buf.writeBytes(data);
+  }
+
+  private static int checkedFieldType(long rawFieldType) {
+    if (rawFieldType < 0 || rawFieldType > Integer.MAX_VALUE) {
+      throw new IllegalArgumentException("Invalid field type: " + rawFieldType);
+    }
+    return (int) rawFieldType;
+  }
+
+  private static String decodeUtf8(byte[] payload, String field) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(payload))
+          .toString();
+    } catch (CharacterCodingException exception) {
+      throw new IllegalArgumentException("Invalid UTF-8 " + field + " payload", exception);
+    }
   }
 }

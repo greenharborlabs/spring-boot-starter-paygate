@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.spring;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -14,11 +15,14 @@ import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.InMemoryRootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
@@ -33,6 +37,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,6 +49,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -63,6 +70,9 @@ class PaygateSecurityFilterRealStoreTest {
   private static final HexFormat HEX = HexFormat.of();
   private static final long PRICE_SATS = 10;
   private static final String PROTECTED_PATH = "/api/real-store-test";
+  private static final String CHEAP_PATH = "/api/replay/cheap";
+  private static final String EXPENSIVE_PATH = "/api/replay/expensive";
+  private static final String FAMILY_ROUTE = "/api/replay/items/{id}";
   private static final String SERVICE_NAME = "test-service";
   private static final long TIMEOUT_SECONDS = 600;
 
@@ -77,6 +87,7 @@ class PaygateSecurityFilterRealStoreTest {
     var stub = (StubLightningBackend) lightningBackend;
     stub.setHealthy(true);
     stub.setNextInvoice(createStubInvoice());
+    RealStoreTestController.resetInvocationCounts();
   }
 
   @Test
@@ -94,30 +105,7 @@ class PaygateSecurityFilterRealStoreTest {
   @Test
   @DisplayName("full 402 -> credential -> 200 flow using real InMemoryRootKeyStore")
   void fullFlowWithRealStore() throws Exception {
-    // Generate a preimage and compute its SHA-256 payment hash
-    byte[] preimage = new byte[32];
-    new SecureRandom().nextBytes(preimage);
-    byte[] paymentHash = sha256(preimage);
-
-    // Use the REAL InMemoryRootKeyStore to generate a root key and tokenId
-    RootKeyStore.GenerationResult genResult = rootKeyStore.generateRootKey();
-    byte[] rootKey = genResult.rootKey().value();
-    byte[] tokenId = genResult.tokenId();
-
-    // Mint a macaroon using the real root key with service and expiry caveats
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
-    Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
-    List<Caveat> caveats =
-        List.of(
-            new Caveat("services", SERVICE_NAME + ":0"),
-            new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
-    Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
-    byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-    String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-
-    // Build L402 Authorization header
-    String preimageHex = HEX.formatHex(preimage);
-    String authHeader = "L402 " + macaroonBase64 + ":" + preimageHex;
+    String authHeader = mintCredential(PROTECTED_PATH, "GET", true);
 
     // Present credential and expect 200
     mockMvc
@@ -126,6 +114,77 @@ class PaygateSecurityFilterRealStoreTest {
         .andExpect(header().doesNotExist("X-L402-Token-Id"))
         .andExpect(header().exists("X-L402-Credential-Expires"))
         .andExpect(content().string("real-store-content"));
+  }
+
+  @Test
+  @DisplayName("credential paid for a cheap route cannot replay on a more expensive route")
+  void rejectsCredentialOnDifferentRegisteredRouteBeforeHandler() throws Exception {
+    String credential = mintCredential(CHEAP_PATH, "GET", true);
+
+    mockMvc.perform(get(CHEAP_PATH).header("Authorization", credential)).andExpect(status().isOk());
+    mockMvc
+        .perform(get(EXPENSIVE_PATH).header("Authorization", credential))
+        .andExpect(status().isPaymentRequired());
+
+    org.assertj.core.api.Assertions.assertThat(RealStoreTestController.cheapInvocations()).isOne();
+    org.assertj.core.api.Assertions.assertThat(RealStoreTestController.expensiveInvocations())
+        .isZero();
+  }
+
+  @Test
+  @DisplayName("credential cannot replay under a different request method")
+  void rejectsCredentialOnDifferentRequestMethodBeforeHandler() throws Exception {
+    String credential = mintCredential(PROTECTED_PATH, "GET", true);
+
+    mockMvc
+        .perform(post(PROTECTED_PATH).header("Authorization", credential))
+        .andExpect(status().isPaymentRequired());
+
+    org.assertj.core.api.Assertions.assertThat(RealStoreTestController.postInvocations()).isZero();
+  }
+
+  @Test
+  @DisplayName("credential applies to every concrete path in its registered route family")
+  void acceptsCredentialAcrossConcretePathsOfSameRoutePattern() throws Exception {
+    String credential = mintCredential(FAMILY_ROUTE, "GET", true);
+
+    mockMvc
+        .perform(get("/api/replay/items/one").header("Authorization", credential))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(get("/api/replay/items/two").header("Authorization", credential))
+        .andExpect(status().isOk());
+
+    org.assertj.core.api.Assertions.assertThat(RealStoreTestController.familyInvocations())
+        .isEqualTo(2);
+  }
+
+  @Test
+  @DisplayName("legacy credential without route and method boundaries fails closed")
+  void rejectsLegacyCredentialMissingRequestBoundaryBeforeHandler() throws Exception {
+    String credential = mintCredential(PROTECTED_PATH, "GET", false);
+
+    mockMvc
+        .perform(get(PROTECTED_PATH).header("Authorization", credential))
+        .andExpect(status().isPaymentRequired());
+
+    org.assertj.core.api.Assertions.assertThat(RealStoreTestController.getInvocations()).isZero();
+  }
+
+  @Test
+  @DisplayName("correctly bound unexpired credential works on fresh and cached validation")
+  void acceptsCorrectlyBoundUnexpiredCredential() throws Exception {
+    String credential = mintCredential(PROTECTED_PATH, "GET", true);
+
+    mockMvc
+        .perform(get(PROTECTED_PATH).header("Authorization", credential))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(get(PROTECTED_PATH).header("Authorization", credential))
+        .andExpect(status().isOk());
+
+    org.assertj.core.api.Assertions.assertThat(RealStoreTestController.getInvocations())
+        .isEqualTo(2);
   }
 
   @Test
@@ -166,7 +225,13 @@ class PaygateSecurityFilterRealStoreTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return List.of(
+          new ServicesCaveatVerifier(50),
+          new RouteCaveatVerifier(50),
+          new MethodCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(
+              SERVICE_NAME, 50),
+          new ValidUntilCaveatVerifier(SERVICE_NAME));
     }
 
     @Bean
@@ -175,6 +240,15 @@ class PaygateSecurityFilterRealStoreTest {
       registry.register(
           new PaygateEndpointConfig(
               "GET", PROTECTED_PATH, PRICE_SATS, 600, "Real store test endpoint", "", ""));
+      registry.register(
+          new PaygateEndpointConfig(
+              "POST", PROTECTED_PATH, PRICE_SATS, 600, "POST endpoint", "", ""));
+      registry.register(
+          new PaygateEndpointConfig("GET", CHEAP_PATH, 1, 600, "Cheap endpoint", "", ""));
+      registry.register(
+          new PaygateEndpointConfig("GET", EXPENSIVE_PATH, 100, 600, "Expensive endpoint", "", ""));
+      registry.register(
+          new PaygateEndpointConfig("GET", FAMILY_ROUTE, 10, 600, "Route family", "", ""));
       return registry;
     }
 
@@ -211,10 +285,73 @@ class PaygateSecurityFilterRealStoreTest {
   @RestController
   static class RealStoreTestController {
 
+    private static final AtomicInteger getInvocations = new AtomicInteger();
+    private static final AtomicInteger postInvocations = new AtomicInteger();
+    private static final AtomicInteger cheapInvocations = new AtomicInteger();
+    private static final AtomicInteger expensiveInvocations = new AtomicInteger();
+    private static final AtomicInteger familyInvocations = new AtomicInteger();
+
     @PaymentRequired(priceSats = 10, description = "Real store test endpoint")
     @GetMapping(PROTECTED_PATH)
     String protectedEndpoint() {
+      getInvocations.incrementAndGet();
       return "real-store-content";
+    }
+
+    @PaymentRequired(priceSats = 10, description = "POST endpoint")
+    @PostMapping(PROTECTED_PATH)
+    String protectedPostEndpoint() {
+      postInvocations.incrementAndGet();
+      return "post-content";
+    }
+
+    @PaymentRequired(priceSats = 1, description = "Cheap endpoint")
+    @GetMapping(CHEAP_PATH)
+    String cheapEndpoint() {
+      cheapInvocations.incrementAndGet();
+      return "cheap-content";
+    }
+
+    @PaymentRequired(priceSats = 100, description = "Expensive endpoint")
+    @GetMapping(EXPENSIVE_PATH)
+    String expensiveEndpoint() {
+      expensiveInvocations.incrementAndGet();
+      return "expensive-content";
+    }
+
+    @PaymentRequired(priceSats = 10, description = "Route family")
+    @GetMapping(FAMILY_ROUTE)
+    String familyEndpoint(@PathVariable("id") String id) {
+      familyInvocations.incrementAndGet();
+      return id;
+    }
+
+    static void resetInvocationCounts() {
+      getInvocations.set(0);
+      postInvocations.set(0);
+      cheapInvocations.set(0);
+      expensiveInvocations.set(0);
+      familyInvocations.set(0);
+    }
+
+    static int getInvocations() {
+      return getInvocations.get();
+    }
+
+    static int postInvocations() {
+      return postInvocations.get();
+    }
+
+    static int cheapInvocations() {
+      return cheapInvocations.get();
+    }
+
+    static int expensiveInvocations() {
+      return expensiveInvocations.get();
+    }
+
+    static int familyInvocations() {
+      return familyInvocations.get();
     }
   }
 
@@ -242,6 +379,38 @@ class PaygateSecurityFilterRealStoreTest {
       return MessageDigest.getInstance("SHA-256").digest(input);
     } catch (Exception e) {
       throw new AssertionError("SHA-256 not available", e);
+    }
+  }
+
+  private String mintCredential(
+      String routePattern, String requestMethod, boolean includeBoundary) {
+    byte[] preimage = new byte[32];
+    new SecureRandom().nextBytes(preimage);
+    byte[] paymentHash = sha256(preimage);
+
+    try (RootKeyStore.GenerationResult generationResult = rootKeyStore.generateRootKey()) {
+      byte[] rootKey = generationResult.rootKey().value();
+      try {
+        var identifier = new MacaroonIdentifier(1, paymentHash, generationResult.tokenId());
+        var caveats = new java.util.ArrayList<Caveat>();
+        caveats.add(new Caveat("services", SERVICE_NAME + ":0"));
+        if (includeBoundary) {
+          caveats.add(new Caveat("route", routePattern));
+          caveats.add(new Caveat("method", requestMethod));
+          caveats.add(new Caveat(SERVICE_NAME + "_capabilities", "~"));
+        }
+        caveats.add(
+            new Caveat(
+                SERVICE_NAME + "_valid_until",
+                String.valueOf(Instant.now().plusSeconds(TIMEOUT_SECONDS).getEpochSecond())));
+        Macaroon macaroon = MacaroonMinter.mint(rootKey, identifier, null, caveats);
+        String macaroonBase64 =
+            Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(macaroon));
+        return "L402 " + macaroonBase64 + ":" + HEX.formatHex(preimage);
+      } finally {
+        KeyMaterial.zeroize(rootKey);
+        KeyMaterial.zeroize(preimage);
+      }
     }
   }
 
@@ -301,17 +470,24 @@ class PaygateSecurityFilterRealStoreTest {
 
     @Override
     public void store(String tokenId, L402Credential credential, long ttlSeconds) {
-      store.put(tokenId, credential);
+      L402Credential previous = store.put(tokenId, credential.copy());
+      if (previous != null) {
+        previous.destroy();
+      }
     }
 
     @Override
     public L402Credential get(String tokenId) {
-      return store.get(tokenId);
+      L402Credential credential = store.get(tokenId);
+      return credential != null ? credential.copy() : null;
     }
 
     @Override
     public void revoke(String tokenId) {
-      store.remove(tokenId);
+      L402Credential removed = store.remove(tokenId);
+      if (removed != null) {
+        removed.destroy();
+      }
     }
 
     @Override

@@ -32,11 +32,11 @@ class JcsSerializerTest {
     @DisplayName("sorts keys by Unicode code point order")
     void unicodeCodePointOrder() {
       var map = new LinkedHashMap<String, Object>();
-      map.put("z", 3);
-      map.put("a", 1);
-      map.put("m", 2);
+      map.put("z", "3");
+      map.put("a", "1");
+      map.put("m", "2");
 
-      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"a\":1,\"m\":2,\"z\":3}");
+      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"a\":\"1\",\"m\":\"2\",\"z\":\"3\"}");
     }
   }
 
@@ -76,33 +76,28 @@ class JcsSerializerTest {
   }
 
   @Nested
-  @DisplayName("mixed types")
+  @DisplayName("supported types")
   class MixedTypes {
 
     @Test
-    @DisplayName("serializes String, Integer, Long, Double, Boolean, and null in a single map")
+    @DisplayName("serializes String, Boolean, and null in a single map")
     void mixedTypesInSingleMap() {
       var map = new LinkedHashMap<String, Object>();
       map.put("bool", true);
-      map.put("dbl", 3.14);
-      map.put("int", 42);
-      map.put("lng", 9999999999L);
       map.put("nil", null);
       map.put("str", "hello");
 
       assertThat(JcsSerializer.serialize(map))
-          .isEqualTo(
-              "{\"bool\":true,\"dbl\":3.14,\"int\":42,\"lng\":9999999999,\"nil\":null,\"str\":\"hello\"}");
+          .isEqualTo("{\"bool\":true,\"nil\":null,\"str\":\"hello\"}");
     }
 
     @Test
-    @DisplayName("serializes false and zero correctly")
-    void falseAndZero() {
+    @DisplayName("serializes false correctly")
+    void falseValue() {
       var map = new LinkedHashMap<String, Object>();
       map.put("f", false);
-      map.put("z", 0);
 
-      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"f\":false,\"z\":0}");
+      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"f\":false}");
     }
   }
 
@@ -130,12 +125,11 @@ class JcsSerializerTest {
     @DisplayName("serializes nested list in map")
     void nestedListInMap() {
       var inner = new LinkedHashMap<String, Object>();
-      inner.put("id", 1);
+      inner.put("id", "1");
 
       var list = new java.util.ArrayList<>();
       list.add(inner);
       list.add("text");
-      list.add(42);
       list.add(true);
       list.add(null);
 
@@ -143,21 +137,54 @@ class JcsSerializerTest {
       map.put("data", list);
 
       assertThat(JcsSerializer.serialize(map))
-          .isEqualTo("{\"data\":[{\"id\":1},\"text\",42,true,null]}");
+          .isEqualTo("{\"data\":[{\"id\":\"1\"},\"text\",true,null]}");
     }
 
     @Test
-    @DisplayName("serializes list with mixed types")
-    void listWithMixedTypes() {
-      var map = Map.<String, Object>of("mix", List.of(1, "two", true));
+    @DisplayName("serializes list with supported types")
+    void listWithSupportedTypes() {
+      var map = Map.<String, Object>of("mix", List.of("one", "two", true));
 
-      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"mix\":[1,\"two\",true]}");
+      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"mix\":[\"one\",\"two\",true]}");
     }
   }
 
   @Nested
   @DisplayName("string escaping")
   class StringEscaping {
+
+    @Test
+    @DisplayName("serializes an accepted canonical credential object without altering Unicode")
+    void canonicalAcceptedObjectVector() {
+      var credential = new LinkedHashMap<String, Object>();
+      credential.put("z", "\uD83D\uDE00");
+      credential.put("a", "A/B");
+      credential.put("nested", Map.of("receipt", "r1", "challenge", "c1"));
+
+      assertThat(JcsSerializer.serialize(credential))
+          .isEqualTo(
+              "{\"a\":\"A/B\",\"nested\":{\"challenge\":\"c1\",\"receipt\":\"r1\"},\"z\":\"\uD83D\uDE00\"}");
+    }
+
+    @Test
+    @DisplayName("rejects a lone high surrogate rather than emitting invalid JSON")
+    void loneHighSurrogateRejected() {
+      var map = Map.<String, Object>of("value", "\uD800");
+
+      assertThatThrownBy(() -> JcsSerializer.serialize(map))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("surrogate");
+    }
+
+    @Test
+    @DisplayName("rejects a lone low surrogate rather than emitting invalid JSON")
+    void loneLowSurrogateRejected() {
+      var map = Map.<String, Object>of("value", "\uDC00");
+
+      assertThatThrownBy(() -> JcsSerializer.serialize(map))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("surrogate");
+    }
 
     @Test
     @DisplayName("escapes quotes and backslashes")
@@ -227,63 +254,19 @@ class JcsSerializerTest {
   }
 
   @Nested
-  @DisplayName("number serialization")
+  @DisplayName("numeric rejection")
   class NumberSerialization {
 
     @Test
-    @DisplayName("integer doubles render without decimal point")
-    void integerDoublesNoDecimal() {
-      var map = Map.<String, Object>of("val", 42.0);
+    @DisplayName("rejects every numeric type recursively")
+    void numericValuesRejected() {
+      var values = List.of(0, 1L, 3.14, Float.NaN, java.math.BigDecimal.ONE);
 
-      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"val\":42}");
-    }
-
-    @Test
-    @DisplayName("non-integer doubles render with decimal")
-    void nonIntegerDoubles() {
-      var map = Map.<String, Object>of("val", 3.14);
-
-      assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"val\":3.14}");
-    }
-
-    @Test
-    @DisplayName("NaN throws IllegalArgumentException")
-    void nanRejected() {
-      var map = Map.<String, Object>of("val", Double.NaN);
-
-      assertThatThrownBy(() -> JcsSerializer.serialize(map))
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("NaN");
-    }
-
-    @Test
-    @DisplayName("positive Infinity throws IllegalArgumentException")
-    void positiveInfinityRejected() {
-      var map = Map.<String, Object>of("val", Double.POSITIVE_INFINITY);
-
-      assertThatThrownBy(() -> JcsSerializer.serialize(map))
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("Infinity");
-    }
-
-    @Test
-    @DisplayName("negative Infinity throws IllegalArgumentException")
-    void negativeInfinityRejected() {
-      var map = Map.<String, Object>of("val", Double.NEGATIVE_INFINITY);
-
-      assertThatThrownBy(() -> JcsSerializer.serialize(map))
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("Infinity");
-    }
-
-    @Test
-    @DisplayName("Float NaN throws IllegalArgumentException")
-    void floatNanRejected() {
-      var map = Map.<String, Object>of("val", Float.NaN);
-
-      assertThatThrownBy(() -> JcsSerializer.serialize(map))
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("NaN");
+      for (var value : values) {
+        assertThatThrownBy(() -> JcsSerializer.serialize(Map.of("nested", List.of(value))))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Numeric");
+      }
     }
   }
 

@@ -14,6 +14,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -171,12 +172,99 @@ class TimeoutEnforcingLightningBackendWrapperTest {
   }
 
   @Test
-  @DisplayName("close shuts down the executor without error")
-  void closeShutdownsExecutor() {
+  @DisplayName("close is idempotent and rejects further work")
+  void closeIsIdempotentAndRejectsFurtherWork() {
     var wrapper = new TimeoutEnforcingLightningBackendWrapper(new StubBackend(), 5);
     wrapper.close();
-    // After close, submitting new tasks should fail
+    wrapper.close();
+
     assertThatThrownBy(() -> wrapper.createInvoice(100, "test")).isInstanceOf(Exception.class);
+  }
+
+  @Test
+  @DisplayName("close cancels outstanding work and returns promptly")
+  void closeCancelsOutstandingWorkAndReturnsPromptly() throws InterruptedException {
+    var workStarted = new CountDownLatch(1);
+    var workCancelled = new CountDownLatch(1);
+    var allowCleanup = new CountDownLatch(1);
+    LightningBackend delegate =
+        new StubBackend() {
+          @Override
+          public Invoice createInvoice(long amountSats, String memo) {
+            workStarted.countDown();
+            try {
+              allowCleanup.await();
+            } catch (InterruptedException e) {
+              workCancelled.countDown();
+              Thread.currentThread().interrupt();
+            }
+            return stubInvoice(amountSats, memo);
+          }
+        };
+    var wrapper = new TimeoutEnforcingLightningBackendWrapper(delegate, 30);
+    var caller = Thread.ofVirtual().start(() -> wrapper.createInvoice(100, "test"));
+    assertThat(workStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+    var closeCompleted = new CountDownLatch(1);
+    Thread.ofVirtual()
+        .start(
+            () -> {
+              wrapper.close();
+              closeCompleted.countDown();
+            });
+
+    try {
+      assertThat(workCancelled.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThat(closeCompleted.await(1, TimeUnit.SECONDS)).isTrue();
+    } finally {
+      allowCleanup.countDown();
+      caller.join(1_000);
+    }
+  }
+
+  @Test
+  @DisplayName("repeated application contexts close each timeout wrapper")
+  void repeatedApplicationContextsCloseEachTimeoutWrapper() {
+    var wrappers = new java.util.ArrayList<TimeoutEnforcingLightningBackendWrapper>();
+
+    for (var contextNumber = 0; contextNumber < 3; contextNumber++) {
+      contextRunner
+          .withPropertyValues("paygate.health-cache.enabled=false")
+          .withBean(LightningBackend.class, StubBackend::new)
+          .run(
+              context ->
+                  wrappers.add(context.getBean(TimeoutEnforcingLightningBackendWrapper.class)));
+    }
+
+    assertThat(wrappers).hasSize(3);
+    for (var wrapper : wrappers) {
+      assertThatThrownBy(() -> wrapper.createInvoice(100, "after-context-close"))
+          .isInstanceOf(Exception.class);
+    }
+  }
+
+  @Test
+  @DisplayName("completed operations run on virtual threads that terminate")
+  void completedOperationsUseTerminatedVirtualThreads() {
+    var workerThread = new AtomicReference<Thread>();
+    LightningBackend delegate =
+        new StubBackend() {
+          @Override
+          public Invoice createInvoice(long amountSats, String memo) {
+            workerThread.set(Thread.currentThread());
+            return stubInvoice(amountSats, memo);
+          }
+        };
+    var wrapper = new TimeoutEnforcingLightningBackendWrapper(delegate, 5);
+
+    try {
+      assertThat(wrapper.createInvoice(100, "test")).isNotNull();
+      assertThat(workerThread.get()).isNotNull();
+      assertThat(workerThread.get().isVirtual()).isTrue();
+      assertThat(workerThread.get().getState()).isEqualTo(Thread.State.TERMINATED);
+    } finally {
+      wrapper.close();
+    }
   }
 
   @Test

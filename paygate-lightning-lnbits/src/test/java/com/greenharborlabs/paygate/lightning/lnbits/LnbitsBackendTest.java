@@ -10,6 +10,8 @@ import com.greenharborlabs.paygate.core.lightning.LightningTimeoutException;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -145,6 +147,9 @@ class LnbitsBackendTest {
   void lookupInvoice_settledInvoice_returnsSettledStatus() throws Exception {
     // Given: LNbits returns a paid invoice with preimage
     String preimageHex = "ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00";
+    byte[] preimage = HEX.parseHex(preimageHex);
+    byte[] paymentHash = sha256(preimage);
+    String paymentHashHex = HEX.formatHex(paymentHash);
     String responseBody =
         """
                 {
@@ -160,7 +165,7 @@ class LnbitsBackendTest {
                     }
                 }
                 """
-            .formatted(preimageHex, PAYMENT_HASH_HEX, BOLT11);
+            .formatted(preimageHex, paymentHashHex, BOLT11);
 
     server.enqueue(
         new MockResponse()
@@ -169,18 +174,16 @@ class LnbitsBackendTest {
             .setBody(responseBody));
 
     // When
-    Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
+    Invoice invoice = backend.lookupInvoice(paymentHash);
 
     // Then
     assertThat(invoice.status()).isEqualTo(InvoiceStatus.SETTLED);
-    assertThat(invoice.preimage()).isEqualTo(HEX.parseHex(preimageHex));
+    assertThat(invoice.preimage()).isEqualTo(preimage);
     assertThat(invoice.amountSats()).isEqualTo(250);
   }
 
   @Test
-  void lookupInvoice_settledInvoiceWithoutPreimage_returnsSettledStatusWithNullPreimage()
-      throws Exception {
-    // Given: some LNbits funding sources report settlement without exposing proof material
+  void lookupInvoice_throws_whenSettledResponseOmitsPreimage() {
     String responseBody =
         """
                 {
@@ -203,11 +206,8 @@ class LnbitsBackendTest {
             .setHeader("Content-Type", "application/json")
             .setBody(responseBody));
 
-    Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
-
-    assertThat(invoice.status()).isEqualTo(InvoiceStatus.SETTLED);
-    assertThat(invoice.preimage()).isNull();
-    assertThat(invoice.amountSats()).isEqualTo(250);
+    assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+        .isInstanceOf(LnbitsException.class);
   }
 
   @Test
@@ -453,6 +453,23 @@ class LnbitsBackendTest {
   }
 
   @Test
+  void createInvoice_throws_whenPaymentHashHasWrongLength() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"payment_hash": "%s", "payment_request": "%s"}
+                        """
+                    .formatted(HEX.formatHex(new byte[31]), BOLT11)));
+
+    assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
+        .isInstanceOf(LnbitsException.class)
+        .hasMessageContaining("payment_hash");
+  }
+
+  @Test
   void lookupInvoice_throws_whenPaidFieldMissing() {
     server.enqueue(
         new MockResponse()
@@ -493,8 +510,9 @@ class LnbitsBackendTest {
             .setHeader("Content-Type", "application/json")
             .setBody(
                 """
-                        {"paid": false, "details": {"amount": 100}}
-                        """));
+                        {"paid": false, "details": {"payment_hash": "%s", "amount": 100}}
+                        """
+                    .formatted(PAYMENT_HASH_HEX)));
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -509,13 +527,84 @@ class LnbitsBackendTest {
             .setHeader("Content-Type", "application/json")
             .setBody(
                 """
-                        {"paid": false, "details": {"bolt11": "%s"}}
+                        {"paid": false, "details": {"payment_hash": "%s", "bolt11": "%s"}}
                         """
-                    .formatted(BOLT11)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
         .hasMessageContaining("Missing 'details.amount'");
+  }
+
+  // --- Provider proof validation tests ---
+
+  @Test
+  void lookupInvoice_throws_whenResponsePaymentHashHasWrongLength() {
+    String shortHashHex = HEX.formatHex(new byte[31]);
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(200)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"paid": false, "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
+                        """
+                    .formatted(shortHashHex, BOLT11)));
+
+    assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+        .isInstanceOf(LnbitsException.class);
+  }
+
+  @Test
+  void lookupInvoice_throws_whenResponsePaymentHashDoesNotMatchQueriedHash() {
+    String differentHashHex = HEX.formatHex(new byte[32]);
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(200)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"paid": false, "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
+                        """
+                    .formatted(differentHashHex, BOLT11)));
+
+    assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+        .isInstanceOf(LnbitsException.class);
+  }
+
+  @Test
+  void lookupInvoice_throws_whenSettledPreimageHasWrongLength() {
+    String shortPreimageHex = HEX.formatHex(new byte[31]);
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(200)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"paid": true, "preimage": "%s", "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
+                        """
+                    .formatted(shortPreimageHex, PAYMENT_HASH_HEX, BOLT11)));
+
+    assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+        .isInstanceOf(LnbitsException.class)
+        .hasMessageContaining("preimage");
+  }
+
+  @Test
+  void lookupInvoice_throws_whenSettledPreimageDoesNotHashToQueriedPaymentHash() {
+    String preimageHex = HEX.formatHex(new byte[32]);
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(200)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"paid": true, "preimage": "%s", "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
+                        """
+                    .formatted(preimageHex, PAYMENT_HASH_HEX, BOLT11)));
+
+    assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+        .isInstanceOf(LnbitsException.class);
   }
 
   // --- Timestamp parsing tests ---
@@ -711,12 +800,13 @@ class LnbitsBackendTest {
   }
 
   @Test
-  void lookupInvoice_settledWithoutPreimage_returnsNullPreimage() throws Exception {
+  void lookupInvoice_settledWithoutPreimage_throws() {
     String responseBody =
         """
                 {
                     "paid": true,
                     "details": {
+                        "payment_hash": "%s",
                         "bolt11": "%s",
                         "amount": 100000,
                         "time": 1700000000,
@@ -724,7 +814,7 @@ class LnbitsBackendTest {
                     }
                 }
                 """
-            .formatted(BOLT11);
+            .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
         new MockResponse()
@@ -732,10 +822,8 @@ class LnbitsBackendTest {
             .setHeader("Content-Type", "application/json")
             .setBody(responseBody));
 
-    Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
-
-    assertThat(invoice.status()).isEqualTo(InvoiceStatus.SETTLED);
-    assertThat(invoice.preimage()).isNull();
+    assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+        .isInstanceOf(LnbitsException.class);
   }
 
   @Test
@@ -745,6 +833,7 @@ class LnbitsBackendTest {
                 {
                     "paid": false,
                     "details": {
+                        "payment_hash": "%s",
                         "bolt11": "%s",
                         "amount": 100000,
                         "time": 1700000000,
@@ -752,7 +841,7 @@ class LnbitsBackendTest {
                     }
                 }
                 """
-            .formatted(BOLT11);
+            .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
         new MockResponse()
@@ -772,6 +861,7 @@ class LnbitsBackendTest {
                 {
                     "paid": false,
                     "details": {
+                        "payment_hash": "%s",
                         "bolt11": "%s",
                         "amount": 100000,
                         "time": "not-a-number",
@@ -779,7 +869,7 @@ class LnbitsBackendTest {
                     }
                 }
                 """
-            .formatted(BOLT11);
+            .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
         new MockResponse()
@@ -823,5 +913,13 @@ class LnbitsBackendTest {
     server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START));
 
     assertThat(backend.isHealthy()).isFalse();
+  }
+
+  private static byte[] sha256(byte[] value) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(value);
+    } catch (NoSuchAlgorithmException e) {
+      throw new AssertionError("SHA-256 must be available", e);
+    }
   }
 }

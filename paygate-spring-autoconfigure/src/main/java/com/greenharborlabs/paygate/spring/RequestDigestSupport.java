@@ -1,6 +1,8 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.CanonicalRequestDigest;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,15 +13,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
 import java.util.Objects;
 
 /** Utilities for bounded request-body capture and canonical request digest generation. */
 public final class RequestDigestSupport {
 
-  public static final int MAX_CACHED_BODY_BYTES = 8 * 1024;
+  public static final int MAX_CACHED_BODY_BYTES = CanonicalRequestDigest.MAX_BODY_BYTES;
   public static final String REQUEST_DIGEST_ATTRIBUTE =
       RequestDigestSupport.class.getName() + ".REQUEST_DIGEST";
   private static final String MPP_SCHEME = "Payment";
@@ -31,42 +30,57 @@ public final class RequestDigestSupport {
   }
 
   public static HttpServletRequest wrapForDigest(HttpServletRequest request) throws IOException {
+    return wrapForDigest(request, MAX_CACHED_BODY_BYTES);
+  }
+
+  /**
+   * Captures the request body up to {@code maxBytes} so it remains available to downstream handlers
+   * after digest calculation.
+   */
+  public static HttpServletRequest wrapForDigest(HttpServletRequest request, int maxBytes)
+      throws IOException {
     Objects.requireNonNull(request, "request must not be null");
-    if (request instanceof CachedBodyRequestWrapper) {
+    requireValidMaxBytes(maxBytes);
+    if (request instanceof CachedBodyRequestWrapper wrapped) {
+      wrapped.ensureWithinBound(maxBytes);
       return request;
     }
-    return new CachedBodyRequestWrapper(request, MAX_CACHED_BODY_BYTES);
+    return new CachedBodyRequestWrapper(request, maxBytes);
   }
 
   public static String computeDigest(HttpServletRequest request, String normalizedPath)
       throws IOException {
+    return computeDigest(request, normalizedPath, MAX_CACHED_BODY_BYTES);
+  }
+
+  /** Creates the canonical request digest using the configured protected-body bound. */
+  public static String computeDigest(
+      HttpServletRequest request, String normalizedPath, int maxBytes) throws IOException {
     Objects.requireNonNull(request, "request must not be null");
     Objects.requireNonNull(normalizedPath, "normalizedPath must not be null");
+    requireValidMaxBytes(maxBytes);
 
-    byte[] bodyBytes = extractBodyBytes(request, MAX_CACHED_BODY_BYTES);
-    byte[] methodBytes = request.getMethod().getBytes(StandardCharsets.UTF_8);
-    byte[] pathBytes = normalizedPath.getBytes(StandardCharsets.UTF_8);
-
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      digest.update(methodBytes);
-      digest.update((byte) 0);
-      digest.update(pathBytes);
-      digest.update((byte) 0);
-      digest.update(bodyBytes);
-      String b64 = Base64.getEncoder().encodeToString(digest.digest());
-      return "sha-256=:" + b64 + ":";
-    } catch (NoSuchAlgorithmException e) {
-      throw new AssertionError("SHA-256 not available", e);
-    }
+    return CanonicalRequestDigest.create(
+        request.getMethod(),
+        normalizedPath,
+        request.getQueryString() != null,
+        request.getQueryString(),
+        extractBodyBytes(request, maxBytes));
   }
 
   public static void ensureDigestAttribute(HttpServletRequest request, String normalizedPath)
       throws IOException {
+    ensureDigestAttribute(request, normalizedPath, MAX_CACHED_BODY_BYTES);
+  }
+
+  /** Stores the configured-bound canonical request digest unless one is already present. */
+  public static void ensureDigestAttribute(
+      HttpServletRequest request, String normalizedPath, int maxBytes) throws IOException {
     if (request.getAttribute(REQUEST_DIGEST_ATTRIBUTE) != null) {
       return;
     }
-    request.setAttribute(REQUEST_DIGEST_ATTRIBUTE, computeDigest(request, normalizedPath));
+    request.setAttribute(
+        REQUEST_DIGEST_ATTRIBUTE, computeDigest(request, normalizedPath, maxBytes));
   }
 
   public static String digestAttribute(HttpServletRequest request) {
@@ -77,6 +91,7 @@ public final class RequestDigestSupport {
   private static byte[] extractBodyBytes(HttpServletRequest request, int maxBytes)
       throws IOException {
     if (request instanceof CachedBodyRequestWrapper wrapped) {
+      wrapped.ensureWithinBound(maxBytes);
       return wrapped.cachedBodyBytes();
     }
     return readBounded(request.getInputStream(), maxBytes);
@@ -91,6 +106,18 @@ public final class RequestDigestSupport {
     return buffer;
   }
 
+  private static void requireValidMaxBytes(int maxBytes) {
+    if (!SecurityBounds.isValidRequestBodySize(maxBytes)) {
+      throw new IllegalArgumentException(
+          "request body maximum must be between "
+              + SecurityBounds.MIN_REQUEST_BODY_SIZE_BYTES
+              + " and "
+              + SecurityBounds.MAX_REQUEST_BODY_SIZE_BYTES
+              + ", got: "
+              + maxBytes);
+    }
+  }
+
   private static final class CachedBodyRequestWrapper extends HttpServletRequestWrapper {
     private final byte[] cachedBody;
 
@@ -101,6 +128,13 @@ public final class RequestDigestSupport {
 
     byte[] cachedBodyBytes() {
       return cachedBody.clone();
+    }
+
+    void ensureWithinBound(int maxBytes) {
+      if (cachedBody.length > maxBytes) {
+        throw new RequestBodyTooLargeException(
+            "Request body exceeds " + maxBytes + " bytes for digest binding");
+      }
     }
 
     @Override

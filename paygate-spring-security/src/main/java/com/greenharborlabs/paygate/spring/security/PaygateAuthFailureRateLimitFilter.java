@@ -1,8 +1,8 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
-import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -116,16 +116,9 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
   }
 
   private @Nullable PaygateEndpointConfig lookupEndpointConfig(HttpServletRequest request) {
-    String rawPath;
-    try {
-      rawPath = request.getRequestURI();
-    } catch (RuntimeException e) {
-      throw new MalformedRequestUriException(e);
-    }
-
     String normalizedPath;
     try {
-      normalizedPath = PathNormalizer.normalize(rawPath);
+      normalizedPath = ApplicationRelativeRequestResolver.resolve(request);
     } catch (RuntimeException e) {
       throw new MalformedRequestUriException(e);
     }
@@ -148,7 +141,7 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
    */
   private boolean tryAcquireRateLimit(HttpServletRequest request) {
     try {
-      return rateLimiter.tryAcquire(resolveClientIp(request));
+      return rateLimiter.tryAcquire(resolveRateLimitIdentity(request));
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -160,7 +153,7 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
 
   private void consumeRateLimitPenalty(HttpServletRequest request) {
     try {
-      rateLimiter.tryAcquire(resolveClientIp(request));
+      rateLimiter.tryAcquire(resolveRateLimitIdentity(request));
     } catch (Exception e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -169,8 +162,10 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
     }
   }
 
-  private String resolveClientIp(HttpServletRequest request) {
-    return clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+  private String resolveRateLimitIdentity(HttpServletRequest request) {
+    return clientIpResolver != null
+        ? clientIpResolver.resolveRateLimitIdentity(request)
+        : request.getRemoteAddr();
   }
 
   private boolean matchesAnyProtocol(String authHeader) {

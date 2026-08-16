@@ -14,18 +14,22 @@ import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ObservableRootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.PathCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
+import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ValidUntilCaveatVerifier;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.lightning.lnd.LndChannelFactory;
 import com.greenharborlabs.paygate.lightning.lnd.LndConfig;
 import com.greenharborlabs.paygate.protocol.l402.L402Protocol;
+import jakarta.servlet.DispatcherType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -46,6 +50,10 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.core.type.AnnotatedTypeMetadata;
+import org.springframework.web.servlet.HandlerExecutionChain;
+import org.springframework.web.servlet.HandlerMapping;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
@@ -95,7 +103,9 @@ public class PaygateAutoConfiguration {
       case "memory" -> new InMemoryRootKeyStore();
       case "file" ->
           new FileBasedRootKeyStore(Path.of(resolvePath(properties.getRootKeyStorePath())));
-      default -> new FileBasedRootKeyStore(Path.of(resolvePath(properties.getRootKeyStorePath())));
+      default ->
+          throw new IllegalStateException(
+              "Unsupported root-key-store configuration; use memory or file");
     };
   }
 
@@ -199,6 +209,7 @@ public class PaygateAutoConfiguration {
         new ValidUntilCaveatVerifier(svcName),
         new CapabilitiesCaveatVerifier(svcName, maxValues),
         new PathCaveatVerifier(maxValues),
+        new RouteCaveatVerifier(maxValues),
         new MethodCaveatVerifier(maxValues),
         new ClientIpCaveatVerifier(maxValues));
   }
@@ -207,7 +218,9 @@ public class PaygateAutoConfiguration {
   @ConditionalOnMissingBean
   public ClientIpResolver clientIpResolver(PaygateProperties properties) {
     return new ClientIpResolver(
-        properties.isTrustForwardedHeaders(), properties.getTrustedProxyAddresses());
+        properties.isTrustForwardedHeaders(),
+        properties.getTrustedProxyAddresses(),
+        properties.getRateLimit().getIpv6PrefixLength());
   }
 
   @Bean
@@ -330,7 +343,8 @@ public class PaygateAutoConfiguration {
   }
 
   @Bean
-  ProtocolStartupValidator protocolStartupValidator(PaygateProperties properties) {
+  ProtocolStartupValidator protocolStartupValidator(
+      PaygateProperties properties, ApplicationContext applicationContext) {
     var mppConfig = properties.getProtocols().getMpp();
     String mppEnabled = mppConfig.getEnabled();
     String secret = mppConfig.getChallengeBindingSecret();
@@ -341,14 +355,22 @@ public class PaygateAutoConfiguration {
 
     // Determine which protocols will be active based on configuration + classpath
     boolean l402OnClasspath =
-        isClassPresent("com.greenharborlabs.paygate.protocol.l402.L402Protocol");
-    boolean mppOnClasspath = isClassPresent("com.greenharborlabs.paygate.protocol.mpp.MppProtocol");
+        isClassPresent(
+            "com.greenharborlabs.paygate.protocol.l402.L402Protocol",
+            applicationContext.getClassLoader());
+    boolean mppOnClasspath =
+        isClassPresent(
+            "com.greenharborlabs.paygate.protocol.mpp.MppProtocol",
+            applicationContext.getClassLoader());
     boolean l402Active = properties.getProtocols().getL402().isEnabled() && l402OnClasspath;
     boolean mppActive = isMppEffectivelyEnabled(mppEnabled, secretPresent) && mppOnClasspath;
 
-    // Only validate "no protocols" when at least one protocol JAR is on the classpath.
-    // If no protocol JARs are present, this is a dependency setup issue, not a config error.
-    if ((l402OnClasspath || mppOnClasspath) && !l402Active && !mppActive) {
+    if (!l402Active && !mppActive) {
+      if (!l402OnClasspath && !mppOnClasspath) {
+        throw new IllegalStateException(
+            "No usable payment protocol implementation is present. Check paygate.protocols "
+                + "configuration and runtime dependencies.");
+      }
       throw new IllegalStateException(
           "No payment protocols are enabled. At least one protocol must be active. "
               + "Enable L402 (paygate.protocols.l402.enabled=true) or MPP "
@@ -422,9 +444,9 @@ public class PaygateAutoConfiguration {
     };
   }
 
-  private static boolean isClassPresent(String className) {
+  private static boolean isClassPresent(String className, ClassLoader classLoader) {
     try {
-      Class.forName(className, false, PaygateAutoConfiguration.class.getClassLoader());
+      Class.forName(className, false, classLoader);
       return true;
     } catch (ClassNotFoundException _) {
       return false;
@@ -435,12 +457,78 @@ public class PaygateAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
-  public PaygateEndpointRegistry paygateEndpointRegistry(
-      @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping,
-      PaygateProperties properties) {
-    var registry = new PaygateEndpointRegistry(properties.getDefaultTimeoutSeconds());
-    registry.scanAnnotatedEndpoints(handlerMapping);
-    return registry;
+  public PaygateEndpointRegistry paygateEndpointRegistry(PaygateProperties properties) {
+    return new PaygateEndpointRegistry(
+        properties.getDefaultTimeoutSeconds(), properties.getCaveat().getMaxValuesPerCaveat());
+  }
+
+  /** Scans mappings only after MVC has completed constructing its configuration graph. */
+  @Bean
+  SmartInitializingSingleton paygateEndpointRegistryScanner(
+      PaygateEndpointRegistry registry, Map<String, HandlerMapping> handlerMappings) {
+    return () -> {
+      int sourceOrder = 0;
+      for (var entry : handlerMappings.entrySet()) {
+        HandlerMapping handlerMapping = entry.getValue();
+        if (handlerMapping instanceof RequestMappingHandlerMapping requestMappingHandlerMapping) {
+          registry.scanAnnotatedEndpoints(requestMappingHandlerMapping, sourceOrder++);
+        } else {
+          rejectUnsupportedPaidHandlerSource(entry.getKey(), handlerMapping);
+        }
+      }
+    };
+  }
+
+  private static void rejectUnsupportedPaidHandlerSource(
+      String beanName, HandlerMapping handlerMapping) {
+    try {
+      var request =
+          (jakarta.servlet.http.HttpServletRequest)
+              java.lang.reflect.Proxy.newProxyInstance(
+                  PaygateAutoConfiguration.class.getClassLoader(),
+                  new Class<?>[] {jakarta.servlet.http.HttpServletRequest.class},
+                  (proxy, method, args) -> {
+                    if (method.getName().equals("getMethod")) return "GET";
+                    if (method.getName().equals("getRequestURI")) return "/";
+                    Class<?> type = method.getReturnType();
+                    if (type == boolean.class) return false;
+                    if (type.isPrimitive()) return 0;
+                    return null;
+                  });
+      HandlerExecutionChain chain = handlerMapping.getHandler(request);
+      if (chain != null
+          && chain.getHandler()
+              instanceof org.springframework.web.method.HandlerMethod handlerMethod
+          && handlerMethod.getMethodAnnotation(PaymentRequired.class) != null) {
+        throw new IllegalStateException(
+            "unsupported HandlerMapping bean '" + beanName + "' returned a paid handler");
+      }
+    } catch (IllegalStateException e) {
+      throw e;
+    } catch (Exception e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Unable to inspect unsupported HandlerMapping {0}; paid handlers from it are not supported",
+          beanName);
+    }
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(PaygateHandlerInterceptor.class)
+  public PaygateHandlerInterceptor paygateHandlerInterceptor(PaygateEndpointRegistry registry) {
+    return new PaygateHandlerInterceptor(registry);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(name = "paygateHandlerInterceptorConfigurer")
+  public WebMvcConfigurer paygateHandlerInterceptorConfigurer(
+      PaygateHandlerInterceptor paygateHandlerInterceptor) {
+    return new WebMvcConfigurer() {
+      @Override
+      public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(paygateHandlerInterceptor).order(Ordered.LOWEST_PRECEDENCE);
+      }
+    };
   }
 
   @Configuration(proxyBeanMethods = false)
@@ -481,7 +569,9 @@ public class PaygateAutoConfiguration {
       @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
       @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
-      @Autowired(required = false) CapabilityCache capabilityCache) {
+      @Autowired(required = false) CapabilityCache capabilityCache,
+      org.springframework.beans.factory.ObjectProvider<DevelopmentSafetyPolicy.ValidatedTestMode>
+          validatedTestMode) {
     return new PaygateChallengeService(
         rootKeyStore,
         lightningBackend,
@@ -490,7 +580,8 @@ public class PaygateAutoConfiguration {
         paygateEarningsTracker,
         paygateRateLimiter,
         clientIpResolver,
-        capabilityCache);
+        capabilityCache,
+        validatedTestMode.getIfAvailable() != null);
   }
 
   @Bean
@@ -512,7 +603,8 @@ public class PaygateAutoConfiguration {
         clientIpResolver,
         paygateMetrics,
         paygateEarningsTracker,
-        paygateRateLimiter);
+        paygateRateLimiter,
+        properties.getRequestBody().getMaxBytes());
   }
 
   @Bean
@@ -522,6 +614,8 @@ public class PaygateAutoConfiguration {
     var registration = new FilterRegistrationBean<>(paygateSecurityFilter);
     registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
     registration.addUrlPatterns("/*");
+    registration.setDispatcherTypes(
+        DispatcherType.REQUEST, DispatcherType.ASYNC, DispatcherType.FORWARD, DispatcherType.ERROR);
     return registration;
   }
 
@@ -561,7 +655,8 @@ public class PaygateAutoConfiguration {
     @Bean
     static org.springframework.beans.factory.config.BeanPostProcessor
         lightningBackendWrappingPostProcessor(
-            org.springframework.core.env.Environment environment) {
+            org.springframework.core.env.Environment environment,
+            org.springframework.beans.factory.support.DefaultListableBeanFactory beanFactory) {
       return new org.springframework.beans.factory.config.BeanPostProcessor() {
         @Override
         public Object postProcessAfterInitialization(Object bean, String beanName) {
@@ -579,6 +674,8 @@ public class PaygateAutoConfiguration {
                   .orElse(5);
           LightningBackend wrapped =
               new TimeoutEnforcingLightningBackendWrapper(backend, timeoutSeconds);
+          var timeoutWrapper = (TimeoutEnforcingLightningBackendWrapper) wrapped;
+          beanFactory.registerDisposableBean(beanName, timeoutWrapper::close);
 
           // Apply caching wrapper (outermost) if health-cache is enabled
           boolean healthCacheEnabled =
@@ -641,8 +738,12 @@ public class PaygateAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(LndConfig.class)
-    LndConfig lndConfig(PaygateProperties properties) {
+    LndConfig lndConfig(
+        PaygateProperties properties, org.springframework.core.env.Environment environment) {
       var lnd = properties.getLnd();
+      if (lnd.isAllowPlaintext()) {
+        DevelopmentSafetyPolicy.validatePlaintextLnd(environment, lnd.getHost());
+      }
       int rpcDeadline =
           lnd.getRpcDeadlineSeconds() != null
               ? lnd.getRpcDeadlineSeconds()

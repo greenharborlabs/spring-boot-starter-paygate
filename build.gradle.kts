@@ -1,13 +1,16 @@
 plugins {
-    id("org.springframework.boot") version "4.0.5" apply false
+    id("org.springframework.boot") version "4.0.7" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.2.2" apply false
     id("com.diffplug.spotless") version "7.2.1" apply false
+    id("org.owasp.dependencycheck") version "13.0.0"
 }
 
-val springBootVersion = "4.0.5"
+val springBootVersion = "4.0.7"
+val log4jVersion = "2.25.5"
+val tomcatVersion = "11.0.24"
 val caffeineVersion = "3.2.3"
 val grpcVersion = "1.80.0"
 val protobufVersion = "4.29.3"
@@ -81,6 +84,18 @@ nexusPublishing {
 
 val exampleModules = setOf("paygate-example-app", "paygate-example-app-spring-security")
 
+dependencyCheck {
+    autoUpdate = true
+    failOnError = true
+    failBuildOnCVSS = 0F
+    formats = listOf("HTML", "JSON", "JUNIT")
+    outputDirectory.set(layout.buildDirectory.dir("reports/dependency-check"))
+    suppressionFile = layout.projectDirectory.file("config/dependency-check-suppressions.xml").asFile.path
+    failBuildOnUnusedSuppressionRule = true
+    nvd.datafeedUrl = "https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"
+    nvd.apiKey = providers.environmentVariable("NVD_API_KEY").orNull
+}
+
 subprojects {
     if (project.name in exampleModules) {
         pluginManager.apply("java")
@@ -109,15 +124,20 @@ subprojects {
         }
     }
 
-    tasks.withType<JavaCompile>().configureEach {
-        dependsOn("spotlessApply")
-    }
-
     the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
         imports {
             mavenBom("org.springframework.boot:spring-boot-dependencies:$springBootVersion")
         }
         dependencies {
+            dependencySet("org.apache.logging.log4j:$log4jVersion") {
+                entry("log4j-api")
+                entry("log4j-to-slf4j")
+            }
+            dependencySet("org.apache.tomcat.embed:$tomcatVersion") {
+                entry("tomcat-embed-core")
+                entry("tomcat-embed-el")
+                entry("tomcat-embed-websocket")
+            }
             dependency("net.bytebuddy:byte-buddy:1.18.8")
             dependency("net.bytebuddy:byte-buddy-agent:1.18.8")
         }
@@ -175,6 +195,7 @@ subprojects {
         else -> "0.60"
     }
     tasks.withType<JacocoCoverageVerification> {
+        dependsOn(tasks.named("test"))
         violationRules {
             rule {
                 limit {
@@ -245,6 +266,15 @@ subprojects {
                         }
                     }
                 }
+
+                providers.gradleProperty("releaseStagingRepository").orNull?.let { stagingPath ->
+                    repositories {
+                        maven {
+                            name = "releaseStaging"
+                            url = uri(stagingPath)
+                        }
+                    }
+                }
             }
 
             configure<SigningExtension> {
@@ -256,7 +286,6 @@ subprojects {
                 )
                 val sonatypePublishingRequested = gradle.startParameter.taskNames.any {
                     it.contains("Sonatype", ignoreCase = true)
-                        || it.contains("StagingRepository", ignoreCase = true)
                 }
 
                 isRequired = sonatypePublishingRequested
@@ -297,13 +326,6 @@ tasks.register("installGitHook") {
     }
 }
 
-// Auto-install the hook when any subproject is compiled
-subprojects {
-    tasks.matching { it.name == "compileJava" }.configureEach {
-        dependsOn(rootProject.tasks.named("installGitHook"))
-    }
-}
-
 // Aggregate Javadoc task: collects sources from all subprojects with Java sources
 tasks.register<Javadoc>("aggregateJavadoc") {
     group = "documentation"
@@ -327,6 +349,74 @@ tasks.register<Javadoc>("aggregateJavadoc") {
     }
 }
 
+val supplyChainNegativeControlTasks = mapOf(
+    "verifyBuildIntegrityNegativeControls" to "scripts/test-build-integrity.sh",
+    "verifyWorkflowSecurityNegativeControls" to "scripts/test-workflow-security.sh",
+    "verifyAgentsMdSecurityNegativeControls" to "scripts/test-agents-md-security.sh",
+    "verifyReleaseHygieneNegativeControls" to "scripts/test-release-hygiene.sh",
+    "verifyReleaseWorkflowNegativeControls" to "scripts/test-release-workflow.sh",
+    "verifyAddressSecurityFindingNegativeControls" to "scripts/test-address-security-finding-dispositions.sh",
+    "verifyExampleArtifactSafetyNegativeControls" to "scripts/test-example-artifact-safety.sh",
+    "verifyDependencyCheckRiskNegativeControls" to "scripts/test-dependency-check-risk-dispositions.sh",
+).map { (taskName, scriptPath) ->
+    tasks.register<Exec>(taskName) {
+        group = "verification"
+        description = "Runs ${scriptPath.substringAfterLast('/')} against its isolated temporary fixtures."
+
+        val scriptFile = layout.projectDirectory.file(scriptPath)
+        workingDir(layout.projectDirectory)
+        commandLine("bash", scriptFile.asFile.absolutePath)
+        outputs.upToDateWhen { false }
+    }
+}
+
+val verifySupplyChainNegativeControls = tasks.register("verifySupplyChainNegativeControls") {
+    group = "verification"
+    description = "Runs all isolated supply-chain and release negative controls."
+    dependsOn(supplyChainNegativeControlTasks)
+}
+
+val validateFindingDispositions = tasks.register<Exec>("validateFindingDispositions") {
+    group = "verification"
+    description = "Validates that every security finding has a complete, verified disposition."
+
+    val validator = layout.projectDirectory.file("scripts/validate-finding-dispositions.sh")
+    workingDir(layout.projectDirectory)
+    commandLine("bash", validator.asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val validateAddressSecurityFindingDispositions = tasks.register<Exec>("validateAddressSecurityFindingDispositions") {
+    group = "verification"
+    description = "Validates the eleven-finding DeepSeek security disposition ledger."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-address-security-finding-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val validateDependencyCheckRiskDispositions = tasks.register<Exec>("validateDependencyCheckRiskDispositions") {
+    group = "verification"
+    description = "Rejects dependency suppressions without a scoped, approved, current risk record."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-dependency-check-risk-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyExampleArtifactSafety = tasks.register<Exec>("verifyExampleArtifactSafety") {
+    group = "verification"
+    description = "Checks example source defaults and built boot JARs for secrets and management exposure."
+    dependsOn(":paygate-example-app:bootJar", ":paygate-example-app-spring-security:bootJar")
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/verify-example-artifact-safety.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyModuleCoverage = tasks.register("verifyModuleCoverage") {
+    group = "verification"
+    description = "Enforces the configured JaCoCo coverage minimum for every module."
+    dependsOn(subprojects.map { it.tasks.named("jacocoTestCoverageVerification") })
+}
+
 tasks.register("releaseReadiness") {
     group = "verification"
     description = "Runs the full local release gate: build, dependency health, integration tests, and aggregate Javadoc."
@@ -337,6 +427,13 @@ tasks.register("releaseReadiness") {
     dependsOn("aggregateJavadoc")
     dependsOn(":paygate-integration-tests:test")
     dependsOn(":paygate-integration-tests:securityTest")
+    dependsOn(verifySupplyChainNegativeControls)
+    dependsOn(validateFindingDispositions)
+    dependsOn(validateAddressSecurityFindingDispositions)
+    dependsOn(validateDependencyCheckRiskDispositions)
+    dependsOn(verifyExampleArtifactSafety)
+    dependsOn("dependencyCheckAggregate")
+    dependsOn(verifyModuleCoverage)
 
     doFirst {
         if (!providers.gradleProperty("integration").isPresent) {

@@ -1,0 +1,28 @@
+{
+  "properties": [
+    {
+      "name": "paygate.example.lnbits.auto-provision",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Explicitly permits example-only LNbits wallet bootstrap for a local development target when no API key is supplied."
+    },
+    {
+      "name": "paygate.example.lnbits.connect-timeout-seconds",
+      "type": "java.lang.Integer",
+      "defaultValue": 2,
+      "description": "Finite connect timeout used by the example-only LNbits bootstrap client."
+    },
+    {
+      "name": "paygate.example.lnbits.request-timeout-seconds",
+      "type": "java.lang.Integer",
+      "defaultValue": 5,
+      "description": "Finite request timeout used by the example-only LNbits bootstrap client."
+    },
+    {
+      "name": "paygate.example.lnbits.max-response-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 8192,
+      "description": "Maximum direct LNbits bootstrap response size in bytes."
+    }
+  ]
+}

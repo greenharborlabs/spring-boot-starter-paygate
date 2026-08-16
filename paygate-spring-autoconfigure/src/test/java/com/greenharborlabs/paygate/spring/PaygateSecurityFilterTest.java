@@ -6,7 +6,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -17,6 +23,8 @@ import com.greenharborlabs.paygate.api.ChallengeResponse;
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.api.ProtocolMetadata;
+import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -44,7 +52,11 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -55,7 +67,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -85,6 +100,7 @@ class PaygateSecurityFilterTest {
   private static final long PRICE_SATS = 10;
   private static final String PROTECTED_PATH = "/api/protected";
   private static final String CAPABILITY_PROTECTED_PATH = "/api/capability-protected";
+  private static final String EXPLICIT_HEAD_PATH = "/api/explicit-head";
   private static final String PUBLIC_PATH = "/api/public";
   private static final String SERVICE_NAME = "test-service";
   private static final long TIMEOUT_SECONDS = 600;
@@ -102,6 +118,91 @@ class PaygateSecurityFilterTest {
   @Autowired private PaygateSecurityFilter paygateSecurityFilter;
 
   @Autowired private CapturingPaymentProtocol capturingPaymentProtocol;
+
+  @Autowired private TestController testController;
+
+  @Test
+  @DisplayName("returns sanitized 500 when endpoint policy resolution fails")
+  void resolutionFailureReturnsInternalErrorWithoutSideEffects() throws Exception {
+    PaygateEndpointRegistry registry = mock(PaygateEndpointRegistry.class);
+    PaygateChallengeService challengeService = mock(PaygateChallengeService.class);
+    jakarta.servlet.FilterChain chain = mock(jakarta.servlet.FilterChain.class);
+    when(registry.resolve(any(jakarta.servlet.http.HttpServletRequest.class), any(String.class)))
+        .thenThrow(new IllegalStateException("secret policy detail"));
+    var filter =
+        new PaygateSecurityFilter(
+            registry, List.of(), challengeService, SERVICE_NAME, null, null, null, null);
+    var request = new MockHttpServletRequest("GET", "/items/1");
+    request.setRequestURI("/items/1");
+    var response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, chain);
+
+    assertThat(response.getStatus()).isEqualTo(500);
+    assertThat(response.getContentAsString())
+        .contains("INTERNAL_ERROR")
+        .doesNotContain("secret policy detail", "/items/1");
+    verify(chain, never()).doFilter(any(), any());
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
+  }
+
+  @Test
+  @DisplayName("does not log credential markers from unexpected validation exceptions")
+  void unexpectedValidationFailureDoesNotLogCredentialMarker() throws Exception {
+    String credentialMarker = "AUTOCONFIG_SECRET_MACAROON_MARKER";
+    capturingPaymentProtocol.throwUnexpectedValidationFailure(credentialMarker);
+
+    try (var logCapture = LogCapture.attach(PaygateSecurityFilter.class.getName())) {
+      mockMvc
+          .perform(get(PROTECTED_PATH).header("Authorization", "Payment " + credentialMarker))
+          .andExpect(status().isServiceUnavailable());
+
+      assertThat(logCapture.contents())
+          .contains(
+              "Unexpected credential validation error; failing closed with service unavailable")
+          .doesNotContain(credentialMarker);
+    }
+  }
+
+  @Test
+  @DisplayName("presented unsupported Payment credential is rejected without creating a challenge")
+  void presentedUnsupportedPaymentCredentialDoesNotCreateChallenge() throws Exception {
+    String tokenMarker = "credential-token-marker";
+    long invoicesBefore = earningsTracker.getTotalInvoicesCreated();
+    capturingPaymentProtocol.reset();
+    capturingPaymentProtocol.throwValidationFailure(
+        new UnsupportedPaymentMethodException(tokenMarker));
+
+    mockMvc
+        .perform(get(PROTECTED_PATH).header("Authorization", "Payment method=unsupported"))
+        .andExpect(status().isPaymentRequired())
+        .andExpect(jsonPath("$.title", is("INVALID")))
+        .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")))
+        .andExpect(header().doesNotExist("WWW-Authenticate"))
+        .andExpect(content().string(org.hamcrest.Matchers.not(containsString(tokenMarker))));
+
+    assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore);
+    assertThat(capturingPaymentProtocol.lastChallengeContext()).isNull();
+    capturingPaymentProtocol.reset();
+  }
+
+  @Test
+  @DisplayName("other invalid Payment credentials are rejected without challenge creation")
+  void otherInvalidPaymentCredentialDoesNotCreateChallenge() throws Exception {
+    long invoicesBefore = earningsTracker.getTotalInvoicesCreated();
+    capturingPaymentProtocol.reset();
+    capturingPaymentProtocol.throwValidationFailure(
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INVALID, "Invalid credential", "token-marker"));
+
+    mockMvc
+        .perform(get(PROTECTED_PATH).header("Authorization", "Payment invalid"))
+        .andExpect(status().isPaymentRequired());
+
+    assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore);
+    capturingPaymentProtocol.reset();
+  }
 
   // -----------------------------------------------------------------------
   // Test application and configuration
@@ -130,6 +231,8 @@ class PaygateSecurityFilterTest {
     List<CaveatVerifier> caveatVerifiers() {
       return List.of(
           new ServicesCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+          new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
           new ValidUntilCaveatVerifier("test-service"),
           new CapabilitiesCaveatVerifier("test-service", 50));
     }
@@ -149,6 +252,12 @@ class PaygateSecurityFilterTest {
               "Capability protected endpoint",
               "",
               "search"));
+      registry.register(
+          new PaygateEndpointConfig(
+              "GET", EXPLICIT_HEAD_PATH, PRICE_SATS, 600, "GET policy", "", "get"));
+      registry.register(
+          new PaygateEndpointConfig(
+              "HEAD", EXPLICIT_HEAD_PATH, 25, 120, "HEAD policy", "", "head"));
       return registry;
     }
 
@@ -212,10 +321,20 @@ class PaygateSecurityFilterTest {
   @RestController
   static class TestController {
 
+    private final AtomicInteger protectedInvocations = new AtomicInteger();
+    private final AtomicInteger explicitHeadInvocations = new AtomicInteger();
+
     @PaymentRequired(priceSats = 10, description = "Test protected endpoint")
     @GetMapping(PROTECTED_PATH)
     String protectedEndpoint() {
+      protectedInvocations.incrementAndGet();
       return "protected-content";
+    }
+
+    @GetMapping(EXPLICIT_HEAD_PATH)
+    String explicitHeadEndpoint() {
+      explicitHeadInvocations.incrementAndGet();
+      return "explicit-head-content";
     }
 
     @PaymentRequired(
@@ -231,10 +350,19 @@ class PaygateSecurityFilterTest {
     String publicEndpoint() {
       return "public-content";
     }
+
+    void resetInvocations() {
+      protectedInvocations.set(0);
+      explicitHeadInvocations.set(0);
+    }
   }
 
   static class CapturingPaymentProtocol implements PaymentProtocol {
     private final AtomicReference<ChallengeContext> lastChallengeContext = new AtomicReference<>();
+    private final AtomicReference<RuntimeException> unexpectedValidationFailure =
+        new AtomicReference<>();
+    private final AtomicReference<PaymentValidationException> validationFailure =
+        new AtomicReference<>();
 
     @Override
     public String scheme() {
@@ -243,14 +371,22 @@ class PaygateSecurityFilterTest {
 
     @Override
     public boolean canHandle(String authorizationHeader) {
-      return false;
+      return unexpectedValidationFailure.get() != null || validationFailure.get() != null;
     }
 
     @Override
     public PaymentCredential parseCredential(String authorizationHeader)
         throws PaymentValidationException {
+      RuntimeException failure = unexpectedValidationFailure.get();
+      if (failure != null) {
+        throw failure;
+      }
+      if (validationFailure.get() != null) {
+        return new PaymentCredential(
+            new byte[32], new byte[32], "test-token", "Payment", null, new ProtocolMetadata() {});
+      }
       throw new PaymentValidationException(
-          PaymentValidationException.ErrorCode.MALFORMED_CREDENTIAL,
+          PaymentValidationException.ErrorCode.MALFORMED,
           "Payment credentials are not parsed in this boundary test",
           (String) null);
     }
@@ -270,15 +406,67 @@ class PaygateSecurityFilterTest {
     @Override
     public void validate(PaymentCredential credential, Map<String, String> requestContext)
         throws PaymentValidationException {
-      // Not used because canHandle returns false.
+      PaymentValidationException failure = validationFailure.get();
+      if (failure != null) {
+        throw failure;
+      }
     }
 
     void reset() {
       lastChallengeContext.set(null);
+      unexpectedValidationFailure.set(null);
+      validationFailure.set(null);
+    }
+
+    void throwUnexpectedValidationFailure(String credentialMarker) {
+      unexpectedValidationFailure.set(new IllegalStateException(credentialMarker));
+    }
+
+    void throwValidationFailure(PaymentValidationException failure) {
+      validationFailure.set(failure);
     }
 
     ChallengeContext lastChallengeContext() {
       return lastChallengeContext.get();
+    }
+  }
+
+  private static final class LogCapture extends Handler implements AutoCloseable {
+    private final Logger logger;
+    private final List<LogRecord> records = new java.util.ArrayList<>();
+
+    private LogCapture(Logger logger) {
+      this.logger = logger;
+    }
+
+    static LogCapture attach(String loggerName) {
+      Logger logger = Logger.getLogger(loggerName);
+      var capture = new LogCapture(logger);
+      logger.addHandler(capture);
+      return capture;
+    }
+
+    @Override
+    public void publish(LogRecord record) {
+      records.add(record);
+    }
+
+    @Override
+    public void flush() {}
+
+    @Override
+    public void close() {
+      logger.removeHandler(this);
+    }
+
+    String contents() {
+      return records.stream()
+          .map(
+              record ->
+                  record.getMessage()
+                      + java.util.Arrays.toString(record.getParameters())
+                      + record.getThrown())
+          .collect(java.util.stream.Collectors.joining("\n"));
     }
   }
 
@@ -347,6 +535,105 @@ class PaygateSecurityFilterTest {
   }
 
   @Nested
+  @DisplayName("HEAD policy inheritance")
+  class HeadPolicyInheritance {
+
+    @BeforeEach
+    void setUp() {
+      ((StubLightningBackend) lightningBackend).setHealthy(true);
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
+      capturingPaymentProtocol.reset();
+      testController.resetInvocations();
+    }
+
+    @Test
+    @DisplayName("challenges unpaid HEAD using GET policy before invoking the handler")
+    void challengesUnpaidHeadUsingGetPolicyBeforeHandler() throws Exception {
+      mockMvc
+          .perform(request(HttpMethod.HEAD, PROTECTED_PATH))
+          .andExpect(status().isPaymentRequired());
+
+      ChallengeContext challenge = capturingPaymentProtocol.lastChallengeContext();
+      assertThat(challenge).isNotNull();
+      assertThat(challenge.priceSats()).isEqualTo(PRICE_SATS);
+      assertThat(challenge.routePattern()).isEqualTo(PROTECTED_PATH);
+      assertThat(challenge.requestMethod()).isEqualTo("HEAD");
+      assertThat(testController.protectedInvocations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("challenges prefixed unpaid HEAD using the canonical application route")
+    void challengesUnpaidHeadUnderDeploymentPrefixBeforeHandler() throws Exception {
+      mockMvc
+          .perform(request(HttpMethod.HEAD, "/gateway" + PROTECTED_PATH).contextPath("/gateway"))
+          .andExpect(status().isPaymentRequired());
+
+      ChallengeContext challenge = capturingPaymentProtocol.lastChallengeContext();
+      assertThat(challenge).isNotNull();
+      assertThat(challenge.routePattern()).isEqualTo(PROTECTED_PATH);
+      assertThat(challenge.requestMethod()).isEqualTo("HEAD");
+      assertThat(testController.protectedInvocations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("accepts a credential bound to the actual HEAD request")
+    void acceptsCorrectlyHeadBoundCredential() throws Exception {
+      String credential = mintCredentialWithCaveats(requestBoundaryCaveats(PROTECTED_PATH, "HEAD"));
+
+      mockMvc
+          .perform(request(HttpMethod.HEAD, PROTECTED_PATH).header("Authorization", credential))
+          .andExpect(status().isOk())
+          .andExpect(header().doesNotExist("WWW-Authenticate"));
+
+      assertThat(testController.protectedInvocations).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("rejects a GET-bound credential on HEAD before invoking the handler")
+    void rejectsGetBoundCredentialOnHeadBeforeHandler() throws Exception {
+      String credential = mintCredentialWithCaveats(requestBoundaryCaveats(PROTECTED_PATH, "GET"));
+
+      mockMvc
+          .perform(request(HttpMethod.HEAD, PROTECTED_PATH).header("Authorization", credential))
+          .andExpect(status().isPaymentRequired());
+
+      assertThat(testController.protectedInvocations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("prefers an explicit HEAD policy over the GET policy")
+    void prefersExplicitHeadPolicyOverGetPolicy() throws Exception {
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(25));
+
+      mockMvc
+          .perform(request(HttpMethod.HEAD, EXPLICIT_HEAD_PATH))
+          .andExpect(status().isPaymentRequired());
+
+      ChallengeContext challenge = capturingPaymentProtocol.lastChallengeContext();
+      assertThat(challenge).isNotNull();
+      assertThat(challenge.priceSats()).isEqualTo(25);
+      assertThat(challenge.description()).isEqualTo("HEAD policy");
+      assertThat(challenge.timeoutSeconds()).isEqualTo(120);
+      assertThat(challenge.capability()).isEqualTo("head");
+      assertThat(challenge.routePattern()).isEqualTo(EXPLICIT_HEAD_PATH);
+      assertThat(challenge.requestMethod()).isEqualTo("HEAD");
+      assertThat(testController.explicitHeadInvocations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("does not apply GET payment policy to OPTIONS")
+    void doesNotApplyGetPaymentPolicyToOptions() throws Exception {
+      mockMvc
+          .perform(request(HttpMethod.OPTIONS, PROTECTED_PATH))
+          .andExpect(status().isOk())
+          .andExpect(header().doesNotExist("WWW-Authenticate"));
+
+      assertThat(capturingPaymentProtocol.lastChallengeContext()).isNull();
+      assertThat(testController.protectedInvocations).hasValue(0);
+    }
+  }
+
+  @Nested
   @DisplayName("malformed auth header on protected endpoint")
   class MalformedAuthHeader {
 
@@ -354,14 +641,19 @@ class PaygateSecurityFilterTest {
     void setUp() {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
       ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
+      testController.resetInvocations();
     }
 
     @Test
-    @DisplayName("returns 402 when Authorization header is not L402 scheme")
-    void nonL402SchemeReturns402() throws Exception {
+    @DisplayName("rejects an unsupported Authorization scheme without issuing a challenge")
+    void unsupportedAuthorizationSchemeDoesNotCreateChallengeOrInvokeHandler() throws Exception {
+      long invoicesBefore = earningsTracker.getTotalInvoicesCreated();
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", "Bearer some-token"))
           .andExpect(status().isPaymentRequired());
+
+      assertThat(earningsTracker.getTotalInvoicesCreated()).isEqualTo(invoicesBefore);
+      assertThat(testController.protectedInvocations).hasValue(0);
     }
 
     @Test
@@ -411,10 +703,13 @@ class PaygateSecurityFilterTest {
       List<Caveat> caveats =
           List.of(
               new Caveat("services", SERVICE_NAME + ":0"),
+              new Caveat("route", PROTECTED_PATH),
+              new Caveat("method", "GET"),
+              new Caveat(SERVICE_NAME + "_capabilities", "~"),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntilEpoch)));
 
       // Mint a real macaroon using the known root key
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
 
       // Serialize the macaroon to V2 binary and base64 encode
@@ -444,36 +739,31 @@ class PaygateSecurityFilterTest {
 
     @Test
     @DisplayName("falls back to default timeout when no valid_until caveat present")
-    void fallsBackToDefaultTimeoutWhenNoValidUntilCaveat() throws Exception {
-      ((StubLightningBackend) lightningBackend).setHealthy(true);
-
+    void fallsBackToDefaultTimeoutWhenNoValidUntilCaveat() {
       byte[] preimage = new byte[32];
       new SecureRandom().nextBytes(preimage);
       byte[] paymentHash = sha256(preimage);
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      // Caveats without valid_until — only services caveat
       List<Caveat> caveats = List.of(new Caveat("services", SERVICE_NAME + ":0"));
-
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
-      byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
-      String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
-      String preimageHex = HEX.formatHex(preimage);
-      String authHeader = "L402 " + macaroonBase64 + ":" + preimageHex;
+      PaymentCredential credential =
+          new PaymentCredential(
+              paymentHash,
+              preimage,
+              HEX.formatHex(tokenId),
+              "L402",
+              null,
+              new L402Metadata(macaroon, List.of(), "L402 dummy"));
+      PaygateEndpointConfig config =
+          new PaygateEndpointConfig("GET", PROTECTED_PATH, PRICE_SATS, TIMEOUT_SECONDS, "", "", "");
 
       Instant before = Instant.now().plusSeconds(TIMEOUT_SECONDS);
-      var result =
-          mockMvc
-              .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
-              .andExpect(status().isOk())
-              .andExpect(header().exists("X-L402-Credential-Expires"))
-              .andReturn();
+      Instant expiresInstant = paygateSecurityFilter.resolveCredentialExpiry(credential, config);
       Instant after = Instant.now().plusSeconds(TIMEOUT_SECONDS);
 
-      String expiresHeader = result.getResponse().getHeader("X-L402-Credential-Expires");
-      Instant expiresInstant = Instant.parse(expiresHeader);
       // Fallback should be approximately now + timeoutSeconds
       assertThat(expiresInstant).isBetween(before.minusSeconds(2), after.plusSeconds(2));
     }
@@ -495,10 +785,13 @@ class PaygateSecurityFilterTest {
       List<Caveat> caveats =
           List.of(
               new Caveat("services", SERVICE_NAME + ":0"),
+              new Caveat("route", PROTECTED_PATH),
+              new Caveat("method", "GET"),
+              new Caveat(SERVICE_NAME + "_capabilities", "~"),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(laterEpoch)),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(earlierEpoch)));
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -531,7 +824,7 @@ class PaygateSecurityFilterTest {
               new Caveat("services", SERVICE_NAME + ":0"),
               new Caveat(SERVICE_NAME + "_valid_until", "not-a-number"));
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
       PaymentCredential credential =
           new PaymentCredential(
@@ -568,7 +861,7 @@ class PaygateSecurityFilterTest {
               new Caveat(SERVICE_NAME + "_valid_until", "garbage"),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validEpoch)));
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
       PaymentCredential credential =
           new PaymentCredential(
@@ -645,7 +938,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, validCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -702,7 +995,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, validCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -742,17 +1035,21 @@ class PaygateSecurityFilterTest {
       byte[] macaroonBytes = Base64.getDecoder().decode(macaroonB64);
       Macaroon macaroon = MacaroonSerializer.deserializeV2(macaroonBytes);
 
-      assertThat(macaroon.caveats()).hasSize(2);
+      assertThat(macaroon.caveats()).hasSize(5);
       assertThat(macaroon.caveats().get(0).key()).isEqualTo("services");
       assertThat(macaroon.caveats().get(0).value()).isEqualTo(SERVICE_NAME + ":0");
-      assertThat(macaroon.caveats().get(1).key()).isEqualTo(SERVICE_NAME + "_valid_until");
+      assertThat(macaroon.caveats().get(1)).isEqualTo(new Caveat("route", PROTECTED_PATH));
+      assertThat(macaroon.caveats().get(2)).isEqualTo(new Caveat("method", "GET"));
+      assertThat(macaroon.caveats().get(3))
+          .isEqualTo(new Caveat(SERVICE_NAME + "_capabilities", "~"));
+      assertThat(macaroon.caveats().get(4).key()).isEqualTo(SERVICE_NAME + "_valid_until");
       // valid_until should be a numeric epoch seconds value in the future
-      long epochSeconds = Long.parseLong(macaroon.caveats().get(1).value());
+      long epochSeconds = Long.parseLong(macaroon.caveats().get(4).value());
       assertThat(Instant.ofEpochSecond(epochSeconds)).isAfter(Instant.now());
     }
 
     @Test
-    @DisplayName("expired valid_until caveat is rejected as EXPIRED_CREDENTIAL")
+    @DisplayName("expired valid_until caveat is rejected as INVALID")
     void expiredCredentialIsRejected() throws Exception {
       byte[] preimage = new byte[32];
       new SecureRandom().nextBytes(preimage);
@@ -760,7 +1057,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, expiredCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -770,11 +1067,12 @@ class PaygateSecurityFilterTest {
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("EXPIRED_CREDENTIAL")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
 
     @Test
-    @DisplayName("wrong service name in caveat is rejected as INVALID_SERVICE")
+    @DisplayName("wrong service name in caveat is rejected as INVALID")
     void wrongServiceIsRejected() throws Exception {
       byte[] preimage = new byte[32];
       new SecureRandom().nextBytes(preimage);
@@ -782,7 +1080,7 @@ class PaygateSecurityFilterTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, wrongServiceCaveats());
       byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
       String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);
@@ -792,7 +1090,8 @@ class PaygateSecurityFilterTest {
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
   }
 
@@ -964,19 +1263,21 @@ class PaygateSecurityFilterTest {
       mockMvc
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
 
     @Test
     @DisplayName(
         "credential without capabilities caveat is rejected on capability-protected endpoint")
     void credentialWithoutCapabilitiesCaveatRejectedOnCapabilityEndpoint() throws Exception {
-      String authHeader = mintCredentialWithCaveats(validCaveats());
+      String authHeader = mintCredentialWithCaveats(caveatsWithoutCapabilityCeiling());
 
       mockMvc
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
-          .andExpect(jsonPath("$.title", is("INVALID_CHALLENGE_BINDING")));
+          .andExpect(jsonPath("$.title", is("INVALID")))
+          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
     }
 
     @Test
@@ -1000,6 +1301,28 @@ class PaygateSecurityFilterTest {
     Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
     return List.of(
         new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", PROTECTED_PATH),
+        new Caveat("method", "GET"),
+        new Caveat(SERVICE_NAME + "_capabilities", "~"),
+        new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
+  }
+
+  private static List<Caveat> requestBoundaryCaveats(String route, String method) {
+    Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
+    return List.of(
+        new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", route),
+        new Caveat("method", method),
+        new Caveat(SERVICE_NAME + "_capabilities", "~"),
+        new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
+  }
+
+  private static List<Caveat> caveatsWithoutCapabilityCeiling() {
+    Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
+    return List.of(
+        new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", PROTECTED_PATH),
+        new Caveat("method", "GET"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
 
@@ -1007,6 +1330,9 @@ class PaygateSecurityFilterTest {
     Instant expired = Instant.now().minusSeconds(60);
     return List.of(
         new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", PROTECTED_PATH),
+        new Caveat("method", "GET"),
+        new Caveat(SERVICE_NAME + "_capabilities", "~"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(expired.getEpochSecond())));
   }
 
@@ -1014,6 +1340,9 @@ class PaygateSecurityFilterTest {
     Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
     return List.of(
         new Caveat("services", "wrong-service:0"),
+        new Caveat("route", PROTECTED_PATH),
+        new Caveat("method", "GET"),
+        new Caveat(SERVICE_NAME + "_capabilities", "~"),
         new Caveat("wrong-service_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
 
@@ -1021,6 +1350,8 @@ class PaygateSecurityFilterTest {
     Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
     return List.of(
         new Caveat("services", SERVICE_NAME + ":0"),
+        new Caveat("route", CAPABILITY_PROTECTED_PATH),
+        new Caveat("method", "GET"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())),
         new Caveat(SERVICE_NAME + "_capabilities", capabilities));
   }
@@ -1032,7 +1363,7 @@ class PaygateSecurityFilterTest {
     byte[] tokenId = new byte[32];
     new SecureRandom().nextBytes(tokenId);
 
-    MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+    MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
     Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);
     byte[] serialized = MacaroonSerializer.serializeV2(macaroon);
     String macaroonBase64 = Base64.getEncoder().encodeToString(serialized);

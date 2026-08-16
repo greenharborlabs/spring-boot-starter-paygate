@@ -32,7 +32,7 @@ class PaygateLightningHealthIndicatorTest {
       Health health = indicator.health();
 
       assertThat(health.getStatus()).isEqualTo(Status.UP);
-      assertThat(health.getDetails()).containsEntry("backend", "reachable");
+      assertThat(health.getDetails()).isEmpty();
     }
 
     @Test
@@ -43,11 +43,11 @@ class PaygateLightningHealthIndicatorTest {
       Health health = indicator.health();
 
       assertThat(health.getStatus()).isEqualTo(Status.DOWN);
-      assertThat(health.getDetails()).containsEntry("backend", "unreachable");
+      assertThat(health.getDetails()).isEmpty();
     }
 
     @Test
-    @DisplayName("returns DOWN with exception detail when backend throws")
+    @DisplayName("returns DOWN without exception detail when backend throws")
     void returnsDownOnException() {
       var backend =
           new ControllableBackend(true) {
@@ -61,7 +61,7 @@ class PaygateLightningHealthIndicatorTest {
       Health health = indicator.health();
 
       assertThat(health.getStatus()).isEqualTo(Status.DOWN);
-      assertThat(health.getDetails()).containsEntry("backend", "error");
+      assertThat(health.getDetails()).isEmpty();
     }
   }
 

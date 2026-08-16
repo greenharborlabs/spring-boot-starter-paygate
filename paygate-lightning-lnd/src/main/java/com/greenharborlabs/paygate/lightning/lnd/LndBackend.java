@@ -4,11 +4,13 @@ import com.google.protobuf.ByteString;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.concurrent.TimeUnit;
 import lnrpc.LightningGrpc;
 import lnrpc.Lnrpc;
@@ -72,13 +74,15 @@ public class LndBackend implements LightningBackend, AutoCloseable {
 
       Lnrpc.AddInvoiceResponse addResponse =
           stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).addInvoice(request);
+      byte[] paymentHash = addResponse.getRHash().toByteArray();
+      requireHashLength(paymentHash, "create invoice response hash");
 
       Instant createdAt = Instant.now();
       Instant expiresAt = createdAt.plusSeconds(DEFAULT_EXPIRY_SECONDS);
 
       var invoice =
           new Invoice(
-              addResponse.getRHash().toByteArray(),
+              paymentHash,
               addResponse.getPaymentRequest(),
               amountSats,
               memo,
@@ -87,10 +91,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
               createdAt,
               expiresAt);
 
-      log.log(
-          System.Logger.Level.DEBUG,
-          "LND createInvoice succeeded: paymentHash={0}",
-          HexFormat.of().formatHex(addResponse.getRHash().toByteArray()));
+      log.log(System.Logger.Level.DEBUG, "LND createInvoice succeeded");
 
       return invoice;
     } catch (StatusRuntimeException e) {
@@ -122,7 +123,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
 
       Lnrpc.Invoice lndInvoice =
           stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).lookupInvoice(request);
-      return mapInvoice(lndInvoice);
+      return mapInvoice(lndInvoice, paymentHash);
     } catch (StatusRuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
@@ -163,24 +164,55 @@ public class LndBackend implements LightningBackend, AutoCloseable {
     }
   }
 
-  private static Invoice mapInvoice(Lnrpc.Invoice lndInvoice) {
+  private static Invoice mapInvoice(Lnrpc.Invoice lndInvoice, byte[] requestedPaymentHash) {
     Instant createdAt = Instant.ofEpochSecond(lndInvoice.getCreationDate());
     Instant expiresAt = createdAt.plusSeconds(lndInvoice.getExpiry());
+
+    byte[] responsePaymentHash = lndInvoice.getRHash().toByteArray();
+    requireHashLength(responsePaymentHash, "lookup invoice response hash");
+    if (!MacaroonCrypto.constantTimeEquals(requestedPaymentHash, responsePaymentHash)) {
+      throw new LndException("LND lookup response hash does not match requested invoice");
+    }
 
     byte[] preimage = null;
     if (!lndInvoice.getRPreimage().isEmpty()) {
       preimage = lndInvoice.getRPreimage().toByteArray();
+      requireHashLength(preimage, "lookup invoice response preimage");
+    }
+
+    InvoiceStatus status = mapStatus(lndInvoice.getState());
+    if (status == InvoiceStatus.SETTLED) {
+      if (preimage == null) {
+        throw new LndException("LND returned a settled invoice without a preimage");
+      }
+      if (!MacaroonCrypto.constantTimeEquals(sha256(preimage), responsePaymentHash)) {
+        throw new LndException("LND settled invoice preimage does not match its payment hash");
+      }
     }
 
     return new Invoice(
-        lndInvoice.getRHash().toByteArray(),
+        responsePaymentHash,
         lndInvoice.getPaymentRequest(),
         lndInvoice.getValue(),
         lndInvoice.getMemo(),
-        mapStatus(lndInvoice.getState()),
+        status,
         preimage,
         createdAt,
         expiresAt);
+  }
+
+  private static void requireHashLength(byte[] value, String field) {
+    if (value.length != 32) {
+      throw new LndException("LND returned an invalid " + field + " length");
+    }
+  }
+
+  private static byte[] sha256(byte[] value) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(value);
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 must be available", e);
+    }
   }
 
   private static InvoiceStatus mapStatus(Lnrpc.Invoice.InvoiceState state) {

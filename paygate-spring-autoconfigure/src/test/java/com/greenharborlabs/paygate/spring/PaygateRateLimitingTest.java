@@ -72,6 +72,15 @@ class PaygateRateLimitingTest {
     new SecureRandom().nextBytes(ROOT_KEY);
   }
 
+  private static List<CaveatVerifier> caveatVerifiersForTest() {
+    return List.of(
+        new ServicesCaveatVerifier(50),
+        new com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier(50),
+        new com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier(50),
+        new com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier(SERVICE_NAME, 50),
+        new ValidUntilCaveatVerifier(SERVICE_NAME));
+  }
+
   // -----------------------------------------------------------------------
   // Test: unauthenticated requests beyond rate limit return 429
   // -----------------------------------------------------------------------
@@ -200,7 +209,7 @@ class PaygateRateLimitingTest {
   }
 
   // -----------------------------------------------------------------------
-  // Test: generic RuntimeException path consumes rate limiter penalty
+  // Test: generic RuntimeException path does not consume a rate limiter penalty
   // Uses a custom "bomb" protocol that throws RuntimeException on validate
   // -----------------------------------------------------------------------
 
@@ -222,20 +231,23 @@ class PaygateRateLimitingTest {
     }
 
     @Test
-    @DisplayName("generic RuntimeException path consumes rate limiter penalty")
-    void genericRuntimeExceptionConsumesRateLimiter() throws Exception {
+    @DisplayName("generic RuntimeException path does not consume a rate limiter penalty")
+    void genericRuntimeExceptionDoesNotConsumeRateLimiterPenalty() throws Exception {
       // Use LARGE_BUCKET_TOKENS - 2 unauthenticated requests to leave exactly 2 tokens
       for (int i = 0; i < LARGE_BUCKET_TOKENS - 2; i++) {
         mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isPaymentRequired());
       }
 
       // Send a request with "Bomb" auth scheme that triggers RuntimeException
-      // Pre-check consumes 1 token, penalty consumes another = 2 tokens total
+      // Pre-check consumes 1 token. Unexpected 503 errors must not consume a penalty.
       mockMvc
           .perform(get(PROTECTED_PATH).header("Authorization", "Bomb trigger-explosion"))
           .andExpect(status().is(503));
 
-      // Bucket should now be empty — next request gets 429
+      // One token remains, so the next challenge proceeds rather than being rate limited.
+      mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().isPaymentRequired());
+
+      // That challenge used the last token.
       mockMvc.perform(get(PROTECTED_PATH)).andExpect(status().is(429));
     }
   }
@@ -384,7 +396,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -471,7 +483,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -559,7 +571,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -642,7 +654,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -730,7 +742,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -825,7 +837,7 @@ class PaygateRateLimitingTest {
 
     @Bean
     List<CaveatVerifier> caveatVerifiers() {
-      return List.of(new ServicesCaveatVerifier(50), new ValidUntilCaveatVerifier(SERVICE_NAME));
+      return caveatVerifiersForTest();
     }
 
     @Bean
@@ -949,11 +961,14 @@ class PaygateRateLimitingTest {
       byte[] tokenId = new byte[32];
       new SecureRandom().nextBytes(tokenId);
 
-      MacaroonIdentifier identifier = new MacaroonIdentifier(0, paymentHash, tokenId);
+      MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
       Instant validUntil = Instant.now().plusSeconds(TIMEOUT_SECONDS);
       List<Caveat> caveats =
           List.of(
               new Caveat("services", SERVICE_NAME + ":0"),
+              new Caveat("route", PROTECTED_PATH),
+              new Caveat("method", "GET"),
+              new Caveat(SERVICE_NAME + "_capabilities", "~"),
               new Caveat(
                   SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
       Macaroon macaroon = MacaroonMinter.mint(ROOT_KEY, identifier, null, caveats);

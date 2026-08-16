@@ -126,31 +126,31 @@ class ClientIpCaveatVerifierTest {
     }
 
     @Test
-    @DisplayName("IPv6 short form matches long form via normalization")
-    void ipv6ShortFormMatchesLongForm() {
+    @DisplayName("IPv6 short form rejects equivalent long form because matching is literal")
+    void ipv6ShortFormRejectsLongForm() {
       Caveat caveat = new Caveat("client_ip", "::1");
       L402VerificationContext context = contextWithClientIp("0:0:0:0:0:0:0:1");
 
-      assertThatCode(() -> verifier.verify(caveat, context)).doesNotThrowAnyException();
+      assertCaveatNotMet(caveat, context);
     }
 
     @Test
-    @DisplayName("IPv6 long form matches short form via normalization")
-    void ipv6LongFormMatchesShortForm() {
+    @DisplayName("IPv6 long form rejects equivalent short form because matching is literal")
+    void ipv6LongFormRejectsShortForm() {
       Caveat caveat = new Caveat("client_ip", "0:0:0:0:0:0:0:1");
       L402VerificationContext context = contextWithClientIp("::1");
 
-      assertThatCode(() -> verifier.verify(caveat, context)).doesNotThrowAnyException();
+      assertCaveatNotMet(caveat, context);
     }
 
     @Test
-    @DisplayName("different IPv6 representations match via normalization")
-    void differentIpv6RepresentationsMatch() {
+    @DisplayName("different IPv6 representations reject because matching is literal")
+    void differentIpv6RepresentationsReject() {
       Caveat caveat = new Caveat("client_ip", "2001:db8::1");
       L402VerificationContext context =
           contextWithClientIp("2001:0db8:0000:0000:0000:0000:0000:0001");
 
-      assertThatCode(() -> verifier.verify(caveat, context)).doesNotThrowAnyException();
+      assertCaveatNotMet(caveat, context);
     }
 
     @Test
@@ -262,6 +262,15 @@ class ClientIpCaveatVerifierTest {
           .extracting(e -> ((MacaroonVerificationException) e).getReason())
           .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
     }
+
+    @Test
+    @DisplayName("CIDR notation is not interpreted as a network range")
+    void cidrNotationRejectsAddressWithinItsApparentRange() {
+      Caveat caveat = new Caveat("client_ip", "10.0.0.0/8");
+      L402VerificationContext context = contextWithClientIp("10.1.2.3");
+
+      assertCaveatNotMet(caveat, context);
+    }
   }
 
   // ---------------------------------------------------------------
@@ -344,12 +353,12 @@ class ClientIpCaveatVerifierTest {
     }
 
     @Test
-    @DisplayName("IPv6 normalization in isMoreRestrictive: ::1 subset of 0:0:0:0:0:0:0:1,2.2.2.2")
-    void ipv6NormalizationInIsMoreRestrictive() {
+    @DisplayName("different IPv6 spellings are not equal during literal restriction checks")
+    void differentIpv6SpellingsAreNotMoreRestrictive() {
       Caveat previous = new Caveat("client_ip", "0:0:0:0:0:0:0:1,2.2.2.2");
       Caveat current = new Caveat("client_ip", "::1");
 
-      assertThat(verifier.isMoreRestrictive(previous, current)).isTrue();
+      assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
     }
 
     @Test
@@ -374,5 +383,12 @@ class ClientIpCaveatVerifierTest {
     return L402VerificationContext.builder()
         .requestMetadata(Map.of(VerificationContextKeys.REQUEST_CLIENT_IP, ip))
         .build();
+  }
+
+  private void assertCaveatNotMet(Caveat caveat, L402VerificationContext context) {
+    assertThatThrownBy(() -> verifier.verify(caveat, context))
+        .isInstanceOf(MacaroonVerificationException.class)
+        .extracting(e -> ((MacaroonVerificationException) e).getReason())
+        .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
   }
 }

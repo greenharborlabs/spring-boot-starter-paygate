@@ -1,16 +1,33 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Generic HMAC-chain and configured-caveat verification utilities.
+ *
+ * <p>This class does not verify payment preimages, require an identifier version, or apply
+ * credential-cache policy. When callers register the complete first-party L402 verifier profile, it
+ * requires the issuer's service, route, method, capability, and expiry boundaries. Direct
+ * first-party L402 integrations must use {@link L402Validator}. Intentional generic-verifier users
+ * may register their own schema; unregistered caveat keys are skipped for delegation compatibility.
+ */
 public final class MacaroonVerifier {
+
+  private static final String SERVICES_CAVEAT_KEY = "services";
+  private static final String ROUTE_CAVEAT_KEY = "route";
+  private static final String METHOD_CAVEAT_KEY = "method";
 
   private MacaroonVerifier() {}
 
   /**
    * Verifies a macaroon's HMAC chain signature and evaluates registered caveat verifiers.
+   *
+   * <p>This is generic macaroon verification, not complete first-party L402 credential validation.
+   * See the class documentation for the policy checks intentionally outside this method.
    *
    * <p>Unknown caveats are skipped per the L402 macaroons.md spec to support cross-application
    * delegation. Only caveats with a registered verifier are evaluated. The HMAC chain always
@@ -32,6 +49,7 @@ public final class MacaroonVerifier {
       byte[] rootKey,
       List<CaveatVerifier> caveatVerifiers,
       L402VerificationContext context) {
+    requireSupportedCaveatCount(macaroon.caveats());
     byte[] derivedKey = MacaroonCrypto.deriveKey(rootKey);
     byte[] sig = null;
     try {
@@ -70,9 +88,9 @@ public final class MacaroonVerifier {
    * @param context verification context (service name, current time, etc.)
    * @throws MacaroonVerificationException if a caveat escalation is detected or a verifier rejects
    */
-  public static void verifyCaveats(
+  public static Map<String, String> verifyCaveats(
       List<Caveat> caveats, List<CaveatVerifier> caveatVerifiers, L402VerificationContext context) {
-    verifyCaveats(caveats, buildVerifierMap(caveatVerifiers), context);
+    return verifyCaveats(caveats, buildVerifierMap(caveatVerifiers), context);
   }
 
   /**
@@ -88,11 +106,16 @@ public final class MacaroonVerifier {
    * @param context verification context (service name, current time, etc.)
    * @throws MacaroonVerificationException if a caveat escalation is detected or a verifier rejects
    */
-  public static void verifyCaveats(
+  public static Map<String, String> verifyCaveats(
       List<Caveat> caveats,
       Map<String, CaveatVerifier> verifiersByKey,
       L402VerificationContext context) {
+    requireSupportedCaveatCount(caveats);
+    requireMandatoryL402Boundaries(caveats, verifiersByKey, context);
+
     Map<String, Caveat> lastSeenByKey = new HashMap<>();
+    Map<String, Caveat> finalEvaluationByKey = new HashMap<>();
+    Map<String, String> acceptedValues = new HashMap<>();
     for (Caveat caveat : caveats) {
       CaveatVerifier verifier = verifiersByKey.get(caveat.key());
       if (verifier == null) {
@@ -108,7 +131,20 @@ public final class MacaroonVerifier {
       }
       lastSeenByKey.put(caveat.key(), caveat);
 
-      verifier.verify(caveat, context);
+      // Capability satisfaction is meaningful only for the final, monotonically narrowed value.
+      // isMoreRestrictive validates the grammar and bounds of every repeated occurrence.
+      if (verifier instanceof CapabilitiesCaveatVerifier) {
+        finalEvaluationByKey.put(caveat.key(), caveat);
+      } else {
+        verifier.verify(caveat, context);
+        acceptedValues.put(caveat.key(), caveat.value());
+      }
+    }
+
+    for (Map.Entry<String, Caveat> entry : finalEvaluationByKey.entrySet()) {
+      Caveat caveat = entry.getValue();
+      verifiersByKey.get(entry.getKey()).verify(caveat, context);
+      acceptedValues.put(entry.getKey(), caveat.value());
     }
 
     // Post-loop enforcement: if a capability is required, the macaroon MUST contain
@@ -126,6 +162,68 @@ public final class MacaroonVerifier {
                 + "'");
       }
     }
+
+    return Map.copyOf(acceptedValues);
+  }
+
+  private static void requireSupportedCaveatCount(List<Caveat> caveats) {
+    if (caveats.size() > MacaroonSerializer.MAX_CAVEATS) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET, "Credential contains too many caveats");
+    }
+  }
+
+  /**
+   * Requires every issuer boundary when the caller has configured the complete first-party L402
+   * verifier profile. Generic macaroon consumers remain free to register only their own caveat
+   * schema, while L402 callers cannot turn an omitted caveat into an unconstrained grant.
+   */
+  private static void requireMandatoryL402Boundaries(
+      List<Caveat> caveats,
+      Map<String, CaveatVerifier> verifiersByKey,
+      L402VerificationContext context) {
+    String serviceName = context.getServiceName();
+    if (serviceName == null || serviceName.isBlank()) {
+      return;
+    }
+
+    String capabilitiesKey = serviceName + "_capabilities";
+    String validUntilKey = serviceName + "_valid_until";
+    if (!hasCompleteFirstPartyL402Profile(verifiersByKey, capabilitiesKey, validUntilKey)) {
+      return;
+    }
+
+    boolean hasServices = false;
+    boolean hasRoute = false;
+    boolean hasMethod = false;
+    boolean hasCapabilities = false;
+    boolean hasValidUntil = false;
+    for (Caveat caveat : caveats) {
+      hasServices |= SERVICES_CAVEAT_KEY.equals(caveat.key());
+      hasRoute |= ROUTE_CAVEAT_KEY.equals(caveat.key());
+      hasMethod |= METHOD_CAVEAT_KEY.equals(caveat.key());
+      hasCapabilities |= capabilitiesKey.equals(caveat.key());
+      hasValidUntil |= validUntilKey.equals(caveat.key());
+    }
+
+    if (!hasServices || !hasRoute || !hasMethod || !hasCapabilities || !hasValidUntil) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_NOT_MET,
+          "Credential is missing a required issuer boundary caveat");
+    }
+  }
+
+  private static boolean hasCompleteFirstPartyL402Profile(
+      Map<String, CaveatVerifier> verifiersByKey, String capabilitiesKey, String validUntilKey) {
+    return verifiersByKey
+        .keySet()
+        .containsAll(
+            List.of(
+                SERVICES_CAVEAT_KEY,
+                ROUTE_CAVEAT_KEY,
+                METHOD_CAVEAT_KEY,
+                capabilitiesKey,
+                validUntilKey));
   }
 
   /**
@@ -139,7 +237,13 @@ public final class MacaroonVerifier {
   public static Map<String, CaveatVerifier> buildVerifierMap(List<CaveatVerifier> caveatVerifiers) {
     Map<String, CaveatVerifier> map = new HashMap<>(caveatVerifiers.size());
     for (CaveatVerifier cv : caveatVerifiers) {
-      map.put(cv.getKey(), cv);
+      String key = cv.getKey();
+      if (key == null || key.isBlank()) {
+        throw new IllegalArgumentException("Caveat verifier key must not be blank");
+      }
+      if (map.putIfAbsent(key, cv) != null) {
+        throw new IllegalArgumentException("Duplicate caveat verifier key: " + key);
+      }
     }
     return Map.copyOf(map);
   }

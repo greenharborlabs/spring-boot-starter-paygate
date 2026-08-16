@@ -21,6 +21,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # Dependabot updates SHA-pinned `uses:` references in place; workflow refs stay immutable.
+    commit-message:
+      prefix: "chore(actions)"
+      include: scope
     target-branch: main
     open-pull-requests-limit: 3
     groups:

@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentCredential;
+import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
@@ -45,11 +46,12 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
   // --- Protocol-agnostic unauthenticated field ---
   private final String authorizationHeader;
 
-  // --- L402-only authenticated field (preserved for backward compatibility) ---
-  private final L402Credential credential;
-
-  // --- Protocol-agnostic authenticated fields ---
-  private final PaymentCredential paymentCredential;
+  // Authenticated tokens deliberately retain no credential object. A credential can expose a
+  // macaroon, preimage, or another usable payment secret transitively.
+  // A receipt is response-only data. It is deliberately transient so a serialized SecurityContext
+  // cannot retain it beyond the current request.
+  private final transient PaymentReceipt receipt;
+  private final ReceiptRequest receiptRequest;
   private final String protocolScheme;
 
   // --- Common fields ---
@@ -77,8 +79,8 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     super(Collections.emptyList());
     this.components = Objects.requireNonNull(components, "components must not be null");
     this.authorizationHeader = null;
-    this.credential = null;
-    this.paymentCredential = null;
+    this.receipt = null;
+    this.receiptRequest = null;
     this.protocolScheme = null;
     this.tokenId = null;
     this.serviceName = null;
@@ -103,7 +105,19 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     return new PaygateAuthenticationToken(
         Objects.requireNonNull(authorizationHeader, "authorizationHeader must not be null"),
         Objects.requireNonNull(requestMetadata, "requestMetadata must not be null"),
+        null,
         null);
+  }
+
+  static PaygateAuthenticationToken unauthenticated(
+      String authorizationHeader,
+      Map<String, String> requestMetadata,
+      ReceiptRequest receiptRequest) {
+    return new PaygateAuthenticationToken(
+        Objects.requireNonNull(authorizationHeader, "authorizationHeader must not be null"),
+        Objects.requireNonNull(requestMetadata, "requestMetadata must not be null"),
+        null,
+        receiptRequest);
   }
 
   /**
@@ -111,12 +125,15 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
    * disambiguates from L402 constructors.
    */
   private PaygateAuthenticationToken(
-      String authorizationHeader, Map<String, String> requestMetadata, Void marker) {
+      String authorizationHeader,
+      Map<String, String> requestMetadata,
+      Void marker,
+      ReceiptRequest receiptRequest) {
     super(Collections.emptyList());
     this.components = null;
     this.authorizationHeader = authorizationHeader;
-    this.credential = null;
-    this.paymentCredential = null;
+    this.receipt = null;
+    this.receiptRequest = receiptRequest;
     this.protocolScheme = null;
     this.tokenId = null;
     this.serviceName = null;
@@ -125,43 +142,23 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     setAuthenticated(false);
   }
 
-  // ========== L402-Only Authenticated Constructor (preserved) ==========
+  // ========== Authenticated Constructor ==========
 
-  /** Private constructor for L402 authenticated tokens. */
+  /** Private constructor for credential-free authenticated tokens. */
   private PaygateAuthenticationToken(
-      L402Credential credential,
+      String tokenId,
       String serviceName,
+      String protocolScheme,
       Collection<? extends GrantedAuthority> authorities,
-      Map<String, String> attributes) {
+      Map<String, String> attributes,
+      PaymentReceipt receipt) {
     super(List.copyOf(authorities));
     this.components = null;
     this.authorizationHeader = null;
-    this.credential = Objects.requireNonNull(credential, "credential must not be null");
-    this.paymentCredential = null;
-    this.protocolScheme = "L402";
-    this.tokenId = credential.tokenId();
-    this.serviceName = serviceName;
-    this.attributes = Map.copyOf(attributes);
-    this.requestMetadata = Collections.emptyMap();
-    super.setAuthenticated(true);
-  }
-
-  // ========== Protocol-Agnostic Authenticated Constructor ==========
-
-  /** Private constructor for protocol-agnostic authenticated tokens. */
-  private PaygateAuthenticationToken(
-      PaymentCredential paymentCredential,
-      String serviceName,
-      Collection<? extends GrantedAuthority> authorities,
-      Map<String, String> attributes) {
-    super(List.copyOf(authorities));
-    this.components = null;
-    this.authorizationHeader = null;
-    this.credential = null;
-    this.paymentCredential =
-        Objects.requireNonNull(paymentCredential, "paymentCredential must not be null");
-    this.protocolScheme = paymentCredential.sourceProtocolScheme();
-    this.tokenId = paymentCredential.tokenId();
+    this.receipt = receipt;
+    this.receiptRequest = null;
+    this.protocolScheme = Objects.requireNonNull(protocolScheme, "protocolScheme must not be null");
+    this.tokenId = Objects.requireNonNull(tokenId, "tokenId must not be null");
     this.serviceName = serviceName;
     this.attributes = Map.copyOf(attributes);
     this.requestMetadata = Collections.emptyMap();
@@ -215,7 +212,7 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
       }
     }
 
-    return new PaygateAuthenticationToken(credential, serviceName, authorities, attrs);
+    return authenticated(credential.tokenId(), serviceName, "L402", attrs, authorities);
   }
 
   /**
@@ -272,7 +269,65 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
       }
     }
 
-    return new PaygateAuthenticationToken(paymentCredential, serviceName, authorities, attrs);
+    return authenticated(
+        paymentCredential.tokenId(),
+        serviceName,
+        paymentCredential.sourceProtocolScheme(),
+        attrs,
+        authorities);
+  }
+
+  /**
+   * Creates a credential-free authenticated token from facts approved by the authentication
+   * provider. This is the preferred factory for providers: callers must pass only values whose
+   * provenance has been verified, never parsed credential data.
+   *
+   * @param tokenId verified opaque token identifier
+   * @param serviceName verified service name, may be null
+   * @param protocolScheme verified protocol scheme
+   * @param trustedAttributes approved, non-secret authentication facts
+   * @param authorities granted authorities
+   * @return a credential-free authenticated token
+   */
+  public static PaygateAuthenticationToken authenticated(
+      String tokenId,
+      String serviceName,
+      String protocolScheme,
+      Map<String, String> trustedAttributes,
+      Collection<? extends GrantedAuthority> authorities) {
+    return authenticated(
+        tokenId, serviceName, protocolScheme, trustedAttributes, authorities, null);
+  }
+
+  /**
+   * Creates a credential-free token with a response-only receipt for the current request.
+   *
+   * <p>This package-private handoff lets the provider avoid retaining a {@link PaymentCredential}
+   * solely for response writing. The receipt is transient and never becomes SecurityContext state.
+   */
+  static PaygateAuthenticationToken authenticated(
+      String tokenId,
+      String serviceName,
+      String protocolScheme,
+      Map<String, String> trustedAttributes,
+      Collection<? extends GrantedAuthority> authorities,
+      PaymentReceipt receipt) {
+    Objects.requireNonNull(trustedAttributes, "trustedAttributes must not be null");
+    Objects.requireNonNull(authorities, "authorities must not be null");
+
+    Map<String, String> attributes = new HashMap<>(trustedAttributes);
+    // Identity facts belong to the authentication result, not caller-provided attributes.
+    attributes.put("tokenId", Objects.requireNonNull(tokenId, "tokenId must not be null"));
+    attributes.put(
+        "protocolScheme",
+        Objects.requireNonNull(protocolScheme, "protocolScheme must not be null"));
+    if (serviceName != null) {
+      attributes.put("serviceName", serviceName);
+    } else {
+      attributes.remove("serviceName");
+    }
+    return new PaygateAuthenticationToken(
+        tokenId, serviceName, protocolScheme, authorities, attributes, receipt);
   }
 
   // ========== AbstractAuthenticationToken overrides ==========
@@ -293,12 +348,6 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
 
   @Override
   public Object getCredentials() {
-    if (credential != null) {
-      return credential;
-    }
-    if (paymentCredential != null) {
-      return paymentCredential;
-    }
     return "[REDACTED]";
   }
 
@@ -321,12 +370,24 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
   }
 
   public L402Credential getL402Credential() {
-    return credential;
+    return null;
   }
 
   public PaymentCredential getPaymentCredential() {
-    return paymentCredential;
+    return null;
   }
+
+  /** Returns the current-request receipt, if the provider produced one. */
+  PaymentReceipt getReceipt() {
+    return receipt;
+  }
+
+  ReceiptRequest getReceiptRequest() {
+    return receiptRequest;
+  }
+
+  record ReceiptRequest(
+      long priceSats, long timeoutSeconds, String description, String capability) {}
 
   public String getProtocolScheme() {
     return protocolScheme;
