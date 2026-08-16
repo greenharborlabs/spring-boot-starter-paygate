@@ -53,7 +53,8 @@ new_workspace() {
 validate_release_workflow() {
   local workflow="$1"
   local line reference
-  local has_sbom=0 has_manifest=0 has_manifest_check=0 has_attestation=0 has_environment=0
+  local has_sbom=0 has_sbom_output_path=0 has_manifest=0 has_manifest_check=0
+  local has_attestation=0 has_environment=0
   local has_dispatch=0 has_version_input=0 has_security_suite=0 has_staging=0 has_draft=0
   local has_central_bundle_upload=0 has_attestation_verify=0
 
@@ -62,6 +63,7 @@ validate_release_workflow() {
     if [[ "$line" == *cyclonedxBom* || "$line" == *"sbom"* || "$line" == *"SBOM"* ]]; then
       has_sbom=1
     fi
+    [[ "$line" == *'*/build/reports/cyclonedx/bom.json'* ]] && has_sbom_output_path=1
     if [[ "$line" == *sha256sum* || "$line" == *'shasum -a 256'* ]]; then
       has_manifest=1
     fi
@@ -96,6 +98,8 @@ validate_release_workflow() {
   done < "$workflow"
 
   ((has_sbom)) || { printf 'missing SBOM\n' >&2; return 1; }
+  ((has_sbom_output_path)) \
+    || { printf 'missing current CycloneDX SBOM output path\n' >&2; return 1; }
   ((has_manifest)) || { printf 'missing SHA-256 manifest\n' >&2; return 1; }
   ((has_manifest_check)) || { printf 'missing SHA-256 manifest verification\n' >&2; return 1; }
   ((has_attestation)) || { printf 'missing artifact attestation\n' >&2; return 1; }
@@ -154,6 +158,12 @@ main() {
   sed -i.bak '/[Ss][Bb][Oo][Mm]/d; /cyclonedxBom/d' "$workflow"
   rm -f -- "$workflow.bak"
   expect_rejection "$workflow" "$marker" 'missing SBOM'
+
+  workflow="$WORKSPACE/stale-sbom-output-path.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak 's|/build/reports/cyclonedx/bom.json|/build/reports/bom.json|g' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing current CycloneDX SBOM output path'
 
   workflow="$WORKSPACE/missing-manifest.yml"
   prepare_safe_copy "$workflow"
