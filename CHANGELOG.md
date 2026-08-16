@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-16
+
 ### Security
 
 - **DeepSeek L1 — credential lifecycle**: `PaymentCredential` now owns defensive hash/preimage copies, is explicitly closeable and destroyable, and rejects sensitive access after idempotent cleanup. MPP parsing, servlet enforcement, Spring Security enforcement, and both credential stores now release their owned material at their lifecycle boundaries.
@@ -201,6 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WWW-Authenticate` header format corrected to `L402 version="0", token=`
 - `MacaroonSerializer` validation for field types and lengths
 
+[0.1.5]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.1...v0.1.2
