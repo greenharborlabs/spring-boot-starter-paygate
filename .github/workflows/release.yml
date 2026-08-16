@@ -7,6 +7,10 @@ on:
         description: Exact non-snapshot version from gradle.properties
         required: true
         type: string
+      repair_run_id:
+        description: Failed release run to resume after Maven Central published
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -20,6 +24,7 @@ jobs:
     name: Verify protected main and release request
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       checks: read
       security-events: read
@@ -27,6 +32,9 @@ jobs:
       sha: ${{ steps.request.outputs.sha }}
       tag: ${{ steps.request.outputs.tag }}
       version: ${{ steps.request.outputs.version }}
+      repair: ${{ steps.request.outputs.repair }}
+      repair-run-id: ${{ steps.request.outputs.repair-run-id }}
+      release-id: ${{ steps.request.outputs.release-id }}
 
     steps:
       - name: Checkout requested commit
@@ -40,6 +48,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSION: ${{ inputs.version }}
+          REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
         run: |
           if [ "$GITHUB_REF" != refs/heads/main ]; then
             echo "::error::Releases must be dispatched from main"
@@ -47,13 +56,37 @@ jobs:
           fi
 
           git fetch --no-tags origin main
-          verified_sha=$(git rev-parse origin/main)
-          if [ "$GITHUB_SHA" != "$verified_sha" ]; then
+          current_main_sha=$(git rev-parse origin/main)
+          if [ "$GITHUB_SHA" != "$current_main_sha" ]; then
             echo "::error::The dispatched SHA is not the exact current origin/main SHA"
             exit 1
           fi
 
-          gradle_version=$(sed -n 's/^version=//p' gradle.properties)
+          repair=false
+          verified_sha=$current_main_sha
+          release_id=
+          if [ -n "$REPAIR_RUN_ID" ]; then
+            if [[ ! "$REPAIR_RUN_ID" =~ ^[1-9][0-9]*$ ]] || [ "$REPAIR_RUN_ID" = "$GITHUB_RUN_ID" ]; then
+              echo "::error::repair_run_id must identify a prior workflow run"
+              exit 1
+            fi
+            repair_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REPAIR_RUN_ID")
+            if ! jq -e --arg repository "$GITHUB_REPOSITORY" \
+              '.event == "workflow_dispatch"
+                and .status == "completed"
+                and .conclusion == "failure"
+                and .path == ".github/workflows/release.yml"
+                and .head_repository.full_name == $repository' \
+              <<<"$repair_run" >/dev/null; then
+              echo "::error::repair_run_id is not a failed release workflow from this repository"
+              exit 1
+            fi
+            verified_sha=$(jq -r .head_sha <<<"$repair_run")
+            git fetch --no-tags origin "$verified_sha"
+            repair=true
+          fi
+
+          gradle_version=$(git show "$verified_sha:gradle.properties" | sed -n 's/^version=//p')
           if [ -z "$gradle_version" ] || [ "$REQUESTED_VERSION" != "$gradle_version" ]; then
             echo "::error::Requested version does not exactly match gradle.properties"
             exit 1
@@ -71,6 +104,28 @@ jobs:
               echo "::error::Existing tag $tag points to a different commit"
               exit 1
             fi
+          elif [ "$repair" = true ]; then
+            echo "::error::Repair requires the original release tag"
+            exit 1
+          fi
+
+          if [ "$repair" = true ]; then
+            release_pages=$(gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+            matching_releases=$(jq -c \
+              --arg tag "$tag" \
+              --arg sha "$verified_sha" \
+              '[.[][] | select(
+                .tag_name == $tag
+                and .draft == true
+                and .target_commitish == $sha
+                and (.assets | any(.name == "central-deployment-id.txt"))
+              )]' <<<"$release_pages")
+            if [ "$(jq 'length' <<<"$matching_releases")" -ne 1 ]; then
+              echo "::error::Repair requires the matching draft release and retained Central deployment marker"
+              exit 1
+            fi
+            release_id=$(jq -r '.[0].id' <<<"$matching_releases")
           fi
 
           check_runs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits/$verified_sha/check-runs" -f per_page=100)
@@ -85,6 +140,9 @@ jobs:
             printf 'sha=%s\n' "$verified_sha"
             printf 'tag=%s\n' "$tag"
             printf 'version=%s\n' "$gradle_version"
+            printf 'repair=%s\n' "$repair"
+            printf 'repair-run-id=%s\n' "$REPAIR_RUN_ID"
+            printf 'release-id=%s\n' "$release_id"
           } >> "$GITHUB_OUTPUT"
 
   deterministic-security:
@@ -100,25 +158,59 @@ jobs:
     needs: [verify-request, deterministic-security]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
 
     steps:
+      - name: Download retained release evidence for repair
+        if: needs.verify-request.outputs.repair == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.verify-request.outputs.sha }}
+          REPAIR_RUN_ID: ${{ needs.verify-request.outputs.repair-run-id }}
+        run: |
+          mkdir -p build/release-evidence
+          gh run download "$REPAIR_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "release-evidence-$RELEASE_SHA" \
+            --dir build/release-evidence
+
+      - name: Verify retained repair evidence identity
+        if: needs.verify-request.outputs.repair == 'true'
+        env:
+          RELEASE_SHA: ${{ needs.verify-request.outputs.sha }}
+          RELEASE_VERSION: ${{ needs.verify-request.outputs.version }}
+          REPAIR_RUN_ID: ${{ needs.verify-request.outputs.repair-run-id }}
+        run: |
+          cd build/release-evidence
+          sha256sum --check SHA256SUMS
+          jq -e \
+            --arg sha "$RELEASE_SHA" \
+            --arg version "$RELEASE_VERSION" \
+            --arg run_id "$REPAIR_RUN_ID" \
+            '.commitSha == $sha and .version == $version and .workflowRunId == $run_id' \
+            build-metadata.json >/dev/null
+
       - name: Checkout verified main SHA
+        if: needs.verify-request.outputs.repair != 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.verify-request.outputs.sha }}
           persist-credentials: false
 
       - name: Validate Gradle wrapper
+        if: needs.verify-request.outputs.repair != 'true'
         uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: Setup Java 25
+        if: needs.verify-request.outputs.repair != 'true'
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '25'
 
       - name: Cache Gradle
+        if: needs.verify-request.outputs.repair != 'true'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
@@ -129,9 +221,11 @@ jobs:
             release-gradle-${{ runner.os }}-
 
       - name: Run release readiness gate
+        if: needs.verify-request.outputs.repair != 'true'
         run: ./gradlew releaseReadiness -Pintegration
 
       - name: Stage complete Maven publications without credentials
+        if: needs.verify-request.outputs.repair != 'true'
         run: |
           staging="$PWD/build/release-evidence/staging-repository"
           mkdir -p "$staging"
@@ -145,6 +239,7 @@ jobs:
           find "$staging" -type d -empty -delete
 
       - name: Collect SBOMs and checksum all unsigned evidence
+        if: needs.verify-request.outputs.repair != 'true'
         env:
           RELEASE_SHA: ${{ needs.verify-request.outputs.sha }}
           RELEASE_VERSION: ${{ needs.verify-request.outputs.version }}
@@ -211,11 +306,13 @@ jobs:
           sha256sum --check SHA256SUMS
 
       - name: Attest Maven artifacts and metadata
+        if: needs.verify-request.outputs.repair != 'true'
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: build/release-evidence/staging-repository/**
 
       - name: Attest SBOM and release manifests
+        if: needs.verify-request.outputs.repair != 'true'
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: |
@@ -233,10 +330,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout verified main SHA
+      - name: Checkout protected workflow definition
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ needs.verify-request.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Download attested release evidence
@@ -273,9 +370,14 @@ jobs:
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
+          REPAIR: ${{ needs.verify-request.outputs.repair }}
         run: |
           missing=()
-          for name in SONATYPE_USERNAME SONATYPE_PASSWORD GPG_SIGNING_KEY GPG_SIGNING_PASSWORD; do
+          required=(SONATYPE_USERNAME SONATYPE_PASSWORD)
+          if [ "$REPAIR" != true ]; then
+            required+=(GPG_SIGNING_KEY GPG_SIGNING_PASSWORD)
+          fi
+          for name in "${required[@]}"; do
             if [ -z "${!name}" ]; then
               missing+=("$name")
             fi
@@ -291,6 +393,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ needs.verify-request.outputs.sha }}
           RELEASE_TAG: ${{ needs.verify-request.outputs.tag }}
+          REPAIR: ${{ needs.verify-request.outputs.repair }}
+          REPAIR_RELEASE_ID: ${{ needs.verify-request.outputs.release-id }}
         run: |
           resolve_tag_sha() {
             local object_sha object_type
@@ -324,23 +428,50 @@ jobs:
             fi
           fi
 
-          if release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null); then
-            if [ "$(jq -r .draft <<<"$release_json")" != true ]; then
-              echo "already-published=true" >> "$GITHUB_OUTPUT"
-              exit 0
+          if [ "$REPAIR" = true ]; then
+            release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/$REPAIR_RELEASE_ID")
+            if [ "$(jq -r .draft <<<"$release_json")" != true ] \
+              || [ "$(jq -r .tag_name <<<"$release_json")" != "$RELEASE_TAG" ] \
+              || [ "$(jq -r .target_commitish <<<"$release_json")" != "$RELEASE_SHA" ]; then
+              echo "::error::The retained repair draft changed after request verification"
+              exit 1
             fi
+            release_id=$REPAIR_RELEASE_ID
+          elif release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null); then
+            echo "already-published=true" >> "$GITHUB_OUTPUT"
+            echo "release-id=$(jq -r .id <<<"$release_json")" >> "$GITHUB_OUTPUT"
+            exit 0
           else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            release_pages=$(gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+            matching_drafts=$(jq -c --arg tag "$RELEASE_TAG" \
+              '[.[][] | select(.tag_name == $tag and .draft == true)]' \
+              <<<"$release_pages")
+            draft_count=$(jq 'length' <<<"$matching_drafts")
+            if [ "$draft_count" -gt 1 ]; then
+              echo "::error::Multiple draft releases already use the requested tag"
+              exit 1
+            elif [ "$draft_count" -eq 1 ]; then
+              release_json=$(jq -c '.[0]' <<<"$matching_drafts")
+              if [ "$(jq -r .target_commitish <<<"$release_json")" != "$RELEASE_SHA" ]; then
+                echo "::error::Existing draft release targets a different commit"
+                exit 1
+              fi
+              release_id=$(jq -r .id <<<"$release_json")
+            else
+              release_id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$RELEASE_TAG" \
               -f target_commitish="$RELEASE_SHA" \
               -f name="$RELEASE_TAG" \
               -F draft=true \
-              -F generate_release_notes=true >/dev/null
+              -F generate_release_notes=true --jq .id)
+            fi
           fi
           echo "already-published=false" >> "$GITHUB_OUTPUT"
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
 
       - name: Sign exact staged files and assemble Central bundle
-        if: steps.release.outputs.already-published != 'true'
+        if: steps.release.outputs.already-published != 'true' && needs.verify-request.outputs.repair != 'true'
         env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
@@ -374,15 +505,32 @@ jobs:
         if: steps.release.outputs.already-published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release-id }}
           RELEASE_TAG: ${{ needs.verify-request.outputs.tag }}
           RELEASE_VERSION: ${{ needs.verify-request.outputs.version }}
+          REPAIR: ${{ needs.verify-request.outputs.repair }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
         run: |
           evidence=build/release-evidence
-          if gh release download "$RELEASE_TAG" --pattern central-deployment-id.txt --dir "$RUNNER_TEMP" >/dev/null 2>&1; then
+          marker_assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq '[.assets[] | select(.name == "central-deployment-id.txt")]')
+          marker_count=$(jq 'length' <<<"$marker_assets")
+          if [ "$marker_count" -gt 1 ]; then
+            echo "::error::Release contains duplicate Central deployment markers"
+            exit 1
+          elif [ "$marker_count" -eq 1 ]; then
+            marker_asset_id=$(jq -r '.[0].id' <<<"$marker_assets")
+            gh api \
+              -H 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$marker_asset_id" \
+              > "$RUNNER_TEMP/central-deployment-id.txt"
             deployment_id=$(tr -d '[:space:]' < "$RUNNER_TEMP/central-deployment-id.txt")
           else
+            if [ "$REPAIR" = true ]; then
+              echo "::error::Repair mode cannot upload a new Maven Central deployment"
+              exit 1
+            fi
             token=$(printf '%s:%s' "$SONATYPE_USERNAME" "$SONATYPE_PASSWORD" | base64 | tr -d '\n')
             echo "::add-mask::$token"
             deployment_id=$(curl --fail-with-body --silent --show-error \
@@ -391,7 +539,11 @@ jobs:
               --form "bundle=@$evidence/central-bundle.zip;type=application/octet-stream" \
               "https://central.sonatype.com/api/v1/publisher/upload?name=$RELEASE_TAG&publishingType=USER_MANAGED")
             printf '%s\n' "$deployment_id" > "$evidence/central-deployment-id.txt"
-            gh release upload "$RELEASE_TAG" "$evidence/central-deployment-id.txt"
+            gh api --hostname uploads.github.com --method POST \
+              -H 'Content-Type: text/plain' \
+              --input "$evidence/central-deployment-id.txt" \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=central-deployment-id.txt" \
+              >/dev/null
           fi
 
           token=$(printf '%s:%s' "$SONATYPE_USERNAME" "$SONATYPE_PASSWORD" | base64 | tr -d '\n')
@@ -405,12 +557,13 @@ jobs:
             state=$(jq -r .deploymentState <<<"$status")
             case "$state" in
               PUBLISHED)
-                if ! jq -e --arg version "$RELEASE_VERSION" \
-                  '(.purls | length > 0) and all(.purls[]; endswith("@" + $version))' \
-                  <<<"$status" >/dev/null; then
-                  echo "::error::Published deployment does not contain only the requested version"
-                  exit 1
-                fi
+                status_file="$RUNNER_TEMP/central-status.json"
+                printf '%s' "$status" > "$status_file"
+                python3 scripts/verify-central-publication.py \
+                  --status-json "$status_file" \
+                  --evidence-dir "$evidence" \
+                  --version "$RELEASE_VERSION"
+                rm -f -- "$status_file"
                 exit 0
                 ;;
               FAILED)
@@ -440,11 +593,34 @@ jobs:
         if: steps.release.outputs.already-published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.verify-request.outputs.tag }}
+          RELEASE_ID: ${{ steps.release.outputs.release-id }}
         run: |
-          gh release upload "$RELEASE_TAG" \
-            build/release-evidence/SHA256SUMS \
-            build/release-evidence/build-metadata.json \
-            build/release-evidence/sbom/*-sbom.json \
-            --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --latest
+          upload_asset() {
+            local file=$1 name existing_ids existing_count encoded_name
+            name=$(basename -- "$file")
+            existing_ids=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              | jq -c --arg name "$name" '[.assets[] | select(.name == $name) | .id]')
+            existing_count=$(jq 'length' <<<"$existing_ids")
+            if [ "$existing_count" -gt 1 ]; then
+              echo "::error::Release contains duplicate asset name $name"
+              exit 1
+            elif [ "$existing_count" -eq 1 ]; then
+              gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$(jq -r '.[0]' <<<"$existing_ids")"
+            fi
+            encoded_name=$(jq -rn --arg name "$name" '$name | @uri')
+            gh api --hostname uploads.github.com --method POST \
+              -H 'Content-Type: application/octet-stream' \
+              --input "$file" \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$encoded_name" \
+              >/dev/null
+          }
+
+          upload_asset build/release-evidence/SHA256SUMS
+          upload_asset build/release-evidence/build-metadata.json
+          for sbom in build/release-evidence/sbom/*-sbom.json; do
+            upload_asset "$sbom"
+          done
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            -f make_latest=true >/dev/null
