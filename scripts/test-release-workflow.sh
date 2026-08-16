@@ -62,6 +62,7 @@ validate_release_workflow() {
   local actions_read_count=0
   local has_exact_repair_draft=0 has_exact_release_publish=0
   local contents_write_count=0
+  local upload_host_count=0
 
   [[ -f "$workflow" && ! -L "$workflow" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -100,6 +101,11 @@ validate_release_workflow() {
       && has_exact_release_publish=1
     [[ "$line" =~ ^[[:space:]]+contents:[[:space:]]+write([[:space:]]*#.*)?$ ]] \
       && ((contents_write_count += 1))
+    [[ "$line" == *'https://uploads.github.com/'* ]] && ((upload_host_count += 1))
+    if [[ "$line" == *'--hostname uploads.github.com'* ]]; then
+      printf 'invalid GitHub upload hostname construction\n' >&2
+      return 1
+    fi
     if [[ "$line" == *'gh release upload'* || "$line" == *'gh release edit'* \
       || "$line" == *'gh release download'* ]]; then
       printf 'ambiguous tag-based draft release operation present\n' >&2
@@ -144,6 +150,8 @@ validate_release_workflow() {
     || { printf 'missing exact release-ID publication\n' >&2; return 1; }
   ((contents_write_count >= 2)) \
     || { printf 'missing push-capable draft release visibility\n' >&2; return 1; }
+  ((upload_host_count >= 2)) \
+    || { printf 'missing absolute GitHub upload endpoint\n' >&2; return 1; }
 }
 
 expect_rejection() {
@@ -264,6 +272,12 @@ main() {
   sed -i.bak '/^[[:space:]]*contents:[[:space:]]*write/d' "$workflow"
   rm -f -- "$workflow.bak"
   expect_rejection "$workflow" "$marker" 'missing push-capable draft release visibility'
+
+  workflow="$WORKSPACE/invalid-upload-host.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak 's|https://uploads.github.com/|--hostname uploads.github.com |g' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'invalid GitHub upload hostname construction'
 
   local central_repo="$WORKSPACE/central"
   local evidence="$WORKSPACE/evidence"

@@ -540,10 +540,10 @@ jobs:
               --form "bundle=@$evidence/central-bundle.zip;type=application/octet-stream" \
               "https://central.sonatype.com/api/v1/publisher/upload?name=$RELEASE_TAG&publishingType=USER_MANAGED")
             printf '%s\n' "$deployment_id" > "$evidence/central-deployment-id.txt"
-            gh api --hostname uploads.github.com --method POST \
+            gh api --method POST \
               -H 'Content-Type: text/plain' \
               --input "$evidence/central-deployment-id.txt" \
-              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=central-deployment-id.txt" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=central-deployment-id.txt" \
               >/dev/null
           fi
 
@@ -610,10 +610,10 @@ jobs:
                 "repos/$GITHUB_REPOSITORY/releases/assets/$(jq -r '.[0]' <<<"$existing_ids")"
             fi
             encoded_name=$(jq -rn --arg name "$name" '$name | @uri')
-            gh api --hostname uploads.github.com --method POST \
+            gh api --method POST \
               -H 'Content-Type: application/octet-stream' \
               --input "$file" \
-              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$encoded_name" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$encoded_name" \
               >/dev/null
           }
 
