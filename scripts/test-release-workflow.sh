@@ -61,6 +61,7 @@ validate_release_workflow() {
   local has_repair_input=0 has_repair_upload_guard=0 has_central_byte_verification=0
   local actions_read_count=0
   local has_exact_repair_draft=0 has_exact_release_publish=0
+  local contents_write_count=0
 
   [[ -f "$workflow" && ! -L "$workflow" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -97,6 +98,8 @@ validate_release_workflow() {
       && has_exact_repair_draft=1
     [[ "$line" == *'--method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"'* ]] \
       && has_exact_release_publish=1
+    [[ "$line" =~ ^[[:space:]]+contents:[[:space:]]+write([[:space:]]*#.*)?$ ]] \
+      && ((contents_write_count += 1))
     if [[ "$line" == *'gh release upload'* || "$line" == *'gh release edit'* \
       || "$line" == *'gh release download'* ]]; then
       printf 'ambiguous tag-based draft release operation present\n' >&2
@@ -139,6 +142,8 @@ validate_release_workflow() {
     || { printf 'missing exact repair draft lookup\n' >&2; return 1; }
   ((has_exact_release_publish)) \
     || { printf 'missing exact release-ID publication\n' >&2; return 1; }
+  ((contents_write_count >= 2)) \
+    || { printf 'missing push-capable draft release visibility\n' >&2; return 1; }
 }
 
 expect_rejection() {
@@ -253,6 +258,12 @@ main() {
   sed -i.bak '/repos\/$GITHUB_REPOSITORY\/releases\/$REPAIR_RELEASE_ID/d' "$workflow"
   rm -f -- "$workflow.bak"
   expect_rejection "$workflow" "$marker" 'missing exact repair draft lookup'
+
+  workflow="$WORKSPACE/missing-draft-visibility.yml"
+  prepare_safe_copy "$workflow"
+  sed -i.bak '/^[[:space:]]*contents:[[:space:]]*write/d' "$workflow"
+  rm -f -- "$workflow.bak"
+  expect_rejection "$workflow" "$marker" 'missing push-capable draft release visibility'
 
   local central_repo="$WORKSPACE/central"
   local evidence="$WORKSPACE/evidence"
