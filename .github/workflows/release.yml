@@ -153,9 +153,9 @@ jobs:
           mkdir -p "$evidence/sbom"
           while IFS= read -r -d '' bom; do
             module=${bom#./}
-            module=${module%/build/reports/bom.json}
+            module=${module%/build/reports/cyclonedx/bom.json}
             cp "$bom" "$evidence/sbom/${module}-sbom.json"
-          done < <(find . -path '*/build/reports/bom.json' -print0)
+          done < <(find . -path '*/build/reports/cyclonedx/bom.json' -print0)
 
           find "$evidence/staging-repository" -type f -print -quit | grep -q .
           find "$evidence/sbom" -type f -name '*-sbom.json' -print -quit | grep -q .
