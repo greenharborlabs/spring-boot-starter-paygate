@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -76,6 +77,12 @@ class SecurityExampleAppIntegrationTest {
           .andExpect(status().isOk())
           .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
           .andExpect(jsonPath("$.status", is("ok")));
+    }
+
+    @Test
+    @DisplayName("rejects state-changing requests without a CSRF token")
+    void rejectsStateChangingRequestsWithoutCsrfToken() throws Exception {
+      mockMvc.perform(post("/api/v1/health")).andExpect(status().isForbidden());
     }
   }
 
