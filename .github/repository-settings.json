@@ -1,14 +1,21 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "repository": "greenharborlabs/spring-boot-starter-paygate",
+  "capabilityConstraints": {
+    "organizationPlan": "free",
+    "unavailableSecurityAndAnalysis": [
+      "secretScanningNonProviderPatterns",
+      "secretScanningValidityChecks"
+    ]
+  },
   "defaultBranch": "main",
   "securityAndAnalysis": {
     "vulnerabilityAlerts": true,
     "dependabotSecurityUpdates": true,
     "secretScanning": true,
     "secretScanningPushProtection": true,
-    "secretScanningValidityChecks": true,
-    "secretScanningNonProviderPatterns": true,
+    "secretScanningValidityChecks": false,
+    "secretScanningNonProviderPatterns": false,
     "immutableReleases": true
   },
   "actions": {

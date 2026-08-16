@@ -14,15 +14,21 @@ fail() {
 
 validate_expected_configuration() {
   jq -e '
-    .schemaVersion == 1
+    . as $expected
+    | .schemaVersion == 2
     and (.repository | type == "string" and length > 0)
+    and (.capabilityConstraints.organizationPlan | type == "string" and length > 0)
+    and (.capabilityConstraints.unavailableSecurityAndAnalysis | type == "array")
+    and (.capabilityConstraints.unavailableSecurityAndAnalysis | unique | length)
+      == (.capabilityConstraints.unavailableSecurityAndAnalysis | length)
+    and all(.securityAndAnalysis[]; type == "boolean")
+    and ([.securityAndAnalysis | to_entries[] | select(.value == false) | .key] | sort)
+      == (.capabilityConstraints.unavailableSecurityAndAnalysis | sort)
     and .defaultBranch == "main"
     and .securityAndAnalysis.vulnerabilityAlerts == true
     and .securityAndAnalysis.dependabotSecurityUpdates == true
     and .securityAndAnalysis.secretScanning == true
     and .securityAndAnalysis.secretScanningPushProtection == true
-    and .securityAndAnalysis.secretScanningValidityChecks == true
-    and .securityAndAnalysis.secretScanningNonProviderPatterns == true
     and .securityAndAnalysis.immutableReleases == true
     and .actions.allowedActions == "selected"
     and .actions.shaPinningRequired == true
@@ -58,10 +64,19 @@ main() {
   [[ $# -eq 0 ]] || fail 'usage: audit-github-settings.sh [--config-only]'
   command -v gh >/dev/null || fail 'gh is required for live audit'
 
-  local repository repository_json actions_json selected_actions_json immutable_json
+  local repository owner organization_json expected_plan actual_plan
+  local repository_json actions_json selected_actions_json immutable_json
+  local actual_path expected_key label expected_enabled expected_status actual_status
   local ruleset_name ruleset_id ruleset_json environment environment_json branch_policies
   repository="$(jq -r .repository "$EXPECTED")"
+  owner="${repository%%/*}"
   DRIFT_COUNT=0
+
+  organization_json="$(gh api "orgs/$owner")" || fail 'cannot read organization settings'
+  expected_plan="$(jq -r .capabilityConstraints.organizationPlan "$EXPECTED")"
+  actual_plan="$(jq -r .plan.name <<<"$organization_json")"
+  [[ "$actual_plan" == "$expected_plan" ]] \
+    || record_drift "organization plan is $actual_plan; expected $expected_plan"
 
   repository_json="$(gh api "repos/$repository")" || fail 'cannot read repository settings'
   [[ "$(jq -r .default_branch <<<"$repository_json")" == "$(jq -r .defaultBranch "$EXPECTED")" ]] \
@@ -71,15 +86,22 @@ main() {
     record_drift 'Dependabot vulnerability alerts are disabled'
   fi
 
-  while IFS=$'\t' read -r actual_path label; do
-    [[ "$(jq -r "$actual_path // \"disabled\"" <<<"$repository_json")" == enabled ]] \
-      || record_drift "$label is disabled"
+  while IFS=$'\t' read -r actual_path expected_key label; do
+    expected_enabled="$(jq -r --arg key "$expected_key" '.securityAndAnalysis[$key]' "$EXPECTED")"
+    if [[ "$expected_enabled" == true ]]; then
+      expected_status=enabled
+    else
+      expected_status=disabled
+    fi
+    actual_status="$(jq -r "$actual_path // \"disabled\"" <<<"$repository_json")"
+    [[ "$actual_status" == "$expected_status" ]] \
+      || record_drift "$label is $actual_status; expected $expected_status"
   done <<'SETTINGS'
-.security_and_analysis.dependabot_security_updates.status	Dependabot security updates
-.security_and_analysis.secret_scanning.status	secret scanning
-.security_and_analysis.secret_scanning_push_protection.status	secret scanning push protection
-.security_and_analysis.secret_scanning_validity_checks.status	secret scanning validity checks
-.security_and_analysis.secret_scanning_non_provider_patterns.status	secret scanning non-provider patterns
+.security_and_analysis.dependabot_security_updates.status	dependabotSecurityUpdates	Dependabot security updates
+.security_and_analysis.secret_scanning.status	secretScanning	secret scanning
+.security_and_analysis.secret_scanning_push_protection.status	secretScanningPushProtection	secret scanning push protection
+.security_and_analysis.secret_scanning_validity_checks.status	secretScanningValidityChecks	secret scanning validity checks
+.security_and_analysis.secret_scanning_non_provider_patterns.status	secretScanningNonProviderPatterns	secret scanning non-provider patterns
 SETTINGS
 
   immutable_json="$(gh api "repos/$repository/immutable-releases")" || fail 'cannot read immutable release setting'
