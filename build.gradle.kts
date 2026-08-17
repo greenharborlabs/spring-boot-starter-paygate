@@ -1,20 +1,20 @@
 plugins {
-    id("org.springframework.boot") version "4.0.7" apply false
+    id("org.springframework.boot") version "4.1.0" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
-    id("org.cyclonedx.bom") version "3.2.2" apply false
+    id("org.cyclonedx.bom") version "3.4.1" apply false
     id("com.diffplug.spotless") version "7.2.1" apply false
     id("org.owasp.dependencycheck") version "13.0.0"
 }
 
-val springBootVersion = "4.0.7"
+val springBootVersion = "4.1.0"
 val log4jVersion = "2.25.5"
 val tomcatVersion = "11.0.24"
-val caffeineVersion = "3.2.3"
-val grpcVersion = "1.80.0"
-val protobufVersion = "4.29.3"
-val assertjVersion = "3.27.3"
+val caffeineVersion = "3.2.4"
+val grpcVersion = "1.83.0"
+val protobufVersion = "4.35.1"
+val assertjVersion = "3.27.7"
 val mockWebServerVersion = "4.12.0"
 
 allprojects {
@@ -138,8 +138,8 @@ subprojects {
                 entry("tomcat-embed-el")
                 entry("tomcat-embed-websocket")
             }
-            dependency("net.bytebuddy:byte-buddy:1.18.8")
-            dependency("net.bytebuddy:byte-buddy-agent:1.18.8")
+            dependency("net.bytebuddy:byte-buddy:1.18.11")
+            dependency("net.bytebuddy:byte-buddy-agent:1.18.11")
         }
     }
 
