@@ -3,7 +3,7 @@
 ## CVE-2025-32013 — LNbits server
 
 - Disposition: False positive for the Paygate LNbits Java client adapter.
-- Scope: `com.greenharborlabs:paygate-lightning-lnbits:0.1.5-SNAPSHOT` only.
+- Scope: `com.greenharborlabs:paygate-lightning-lnbits:0.1.6-SNAPSHOT` only.
 - Rationale: The advisory applies to server-side LNURL authentication handling in the Python
   LNbits server. The scoped artifact is Paygate's Java HTTP client adapter and does not contain or
   embed the LNbits server.
