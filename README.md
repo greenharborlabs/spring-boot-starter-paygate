@@ -1062,6 +1062,18 @@ The L402 `protocol-specification.md` recommends expressing prices in milli-satos
 
 ---
 
+## Price integrity and dynamic pricing
+
+New L402 credentials include a signed `${serviceName}_price_sats` caveat containing the settled
+invoice amount. On every protected request, including a credential-cache hit, Paygate evaluates the
+trusted current price once and permits the credential only when its signed coverage is sufficient.
+
+`REQUEST_DEPENDENT` is the default stability declaration and requires signed price evidence.
+Select `ROUTE_STABLE` only for a route-and-method whose price never depends on request input; it
+enables bounded compatibility lookup for a legacy credential that lacks signed evidence. Insufficient
+evidence produces a fresh 402 for the current price. Missing, invalid, unavailable, or ambiguous
+evidence produces 503 without executing protected behavior.
+
 ## Contributing
 
 Contributions are welcome. Please follow these guidelines:

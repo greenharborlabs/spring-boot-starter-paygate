@@ -758,6 +758,16 @@ void premiumEndpointAccessibleWithL402() throws Exception {
 
 ---
 
+## Price integrity
+
+The Spring Security filter resolves the trusted request price before authentication and adds it to
+the L402 validation context. Price strategies run once per request. Insufficient signed evidence is
+challengeable with a fresh 402; unavailable or ambiguous evidence fails closed with 503. Declare
+`ROUTE_STABLE` only for genuinely fixed route-and-method pricing; undeclared routes are request
+dependent.
+
+---
+
 ## License
 
 This project is licensed under the [MIT License](../LICENSE).

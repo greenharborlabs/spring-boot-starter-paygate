@@ -10,6 +10,7 @@ import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import com.greenharborlabs.paygate.protocol.l402.L402Metadata;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -460,6 +461,25 @@ public class PaygateSecurityFilter implements Filter {
         && e instanceof UnsupportedPaymentMethodException) {
       PaygateResponseWriter.writeMethodUnsupported(httpResponse, "Unsupported payment method");
       recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
+      return;
+    }
+
+    // Only the core's typed paid-price outcomes may allocate a replacement challenge for a
+    // presented credential. The trusted request price was resolved before validation and remains
+    // memoized on this request, so the replacement invoice cannot drift from the rejected price.
+    if ("L402".equals(protocol.scheme())
+        && e.getErrorCode() == PaymentValidationException.ErrorCode.INSUFFICIENT
+        && e.getCause() instanceof PriceValidationException priceFailure
+        && priceFailure.isChallengeable()) {
+      try {
+        challengeService.acquireChallengeRateLimit(httpRequest);
+      } catch (PaygateRateLimitedException _) {
+        PaygateResponseWriter.writeRateLimited(httpResponse);
+        recordRateLimitRejection(resolvedEndpoint.routePattern());
+        return;
+      }
+      issuePaymentChallenge(
+          httpRequest, httpResponse, httpRequest.getMethod(), "<unavailable>", resolvedEndpoint);
       return;
     }
 

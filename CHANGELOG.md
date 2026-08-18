@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- L402 challenges now bind the settled invoice amount in a signed service-scoped paid-price caveat;
+  protected requests re-evaluate their trusted current price on every validation, including cache hits.
+- Dynamic price evaluation is bounded and request-memoized; unavailable pricing and ambiguous legacy
+  evidence fail closed, while authenticated underpayment receives a fresh full-price challenge.
+
 - **M-1 — trusted Spring Security attributes**: Deprecated credential-only L402 authentication
   factories now expose protected system metadata and explicit capabilities only; they no longer
   copy raw caveats. Use the new `L402Validator.ValidationResult` factory to carry

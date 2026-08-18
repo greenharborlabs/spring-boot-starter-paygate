@@ -453,6 +453,13 @@ This module depends on:
 
 ## License
 
+## Signed price evidence
+
+`L402Protocol` mints exactly one `${serviceName}_price_sats` first-party caveat using the settled
+invoice amount. Because the caveat is part of the macaroon signature, clients cannot raise its
+coverage after issuance. Integrations should treat an `INSUFFICIENT` result as a request for a
+fresh current-price challenge and an `UNAVAILABLE` result as a 503 fail-closed outcome.
+
 This project is licensed under the [MIT License](../LICENSE).
 
 Copyright (c) 2026 Green Harbor Labs

@@ -79,6 +79,7 @@ public class PaygateActuatorEndpoint {
     map.put("path", config.pathPattern());
     map.put("priceSats", config.priceSats());
     map.put("timeoutSeconds", config.timeoutSeconds());
+    map.put("pricingStability", config.pricingStability().name());
     map.put("description", config.description());
     map.put(
         "pricingStrategy",

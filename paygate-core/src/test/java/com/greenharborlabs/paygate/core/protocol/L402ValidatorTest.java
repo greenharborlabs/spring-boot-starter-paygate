@@ -2017,6 +2017,92 @@ class L402ValidatorTest {
     return boundaryContext(REQUEST_ROUTE, REQUEST_METHOD);
   }
 
+  @Nested
+  @DisplayName("signed paid-price enforcement")
+  class SignedPaidPriceEnforcement {
+
+    @Test
+    void rechecksSignedCoverageOnFreshAndCachedPaths() {
+      String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      L402VerificationContext covered = pricedContext("10", "REQUEST_DEPENDENT");
+
+      L402Validator.ValidationResult fresh = validator.validate(header, covered);
+      try {
+        assertThat(fresh.freshValidation()).isTrue();
+        assertThat(fresh.paidPriceEvidence().coveredAmountSats()).hasValue(10);
+      } finally {
+        fresh.credential().destroy();
+      }
+      L402Validator.ValidationResult cached = validator.validate(header, covered);
+      try {
+        assertThat(cached.freshValidation()).isFalse();
+        assertThat(cached.paidPriceEvidence().currentAmountSats()).hasValue(10);
+      } finally {
+        cached.credential().destroy();
+      }
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("11", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.INSUFFICIENT_PRICE));
+    }
+
+    @Test
+    void rejectsPriceLessCredentialOnRequestDependentRoutes() {
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              boundaryVerifiers(),
+              SERVICE_NAME,
+              unavailableLightningBackend());
+
+      assertThatThrownBy(
+              () -> validator.validate(validAuthHeader, pricedContext("10", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.MISSING_PRICE_EVIDENCE));
+    }
+  }
+
+  private L402VerificationContext pricedContext(String amountSats, String stability) {
+    Map<String, String> metadata = new HashMap<>(boundaryMetadata());
+    metadata.put(VerificationContextKeys.CURRENT_PRICE_SATS, amountSats);
+    metadata.put(VerificationContextKeys.PRICING_STABILITY, stability);
+    return L402VerificationContext.builder()
+        .serviceName(SERVICE_NAME)
+        .currentTime(Instant.now())
+        .requestMetadata(metadata)
+        .build();
+  }
+
+  private static com.greenharborlabs.paygate.core.lightning.LightningBackend
+      unavailableLightningBackend() {
+    return new com.greenharborlabs.paygate.core.lightning.LightningBackend() {
+      @Override
+      public com.greenharborlabs.paygate.core.lightning.Invoice createInvoice(
+          long amountSats, String memo) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public com.greenharborlabs.paygate.core.lightning.Invoice lookupInvoice(byte[] paymentHash) {
+        return null;
+      }
+
+      @Override
+      public boolean isHealthy() {
+        return false;
+      }
+    };
+  }
+
   private L402VerificationContext boundaryContext(String route, String method) {
     return L402VerificationContext.builder()
         .serviceName(SERVICE_NAME)

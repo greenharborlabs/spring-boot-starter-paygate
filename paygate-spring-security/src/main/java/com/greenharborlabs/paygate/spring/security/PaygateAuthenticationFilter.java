@@ -1,8 +1,10 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.LogSanitizer;
@@ -230,6 +232,20 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, resolvedEndpoint.handlerMethod());
     } catch (AuthenticationException e) {
       SecurityContextHolder.clearContext();
+      PaymentValidationException priceFailure = findPaymentValidationFailure(e);
+      if (priceFailure != null
+          && priceFailure.getErrorCode() == PaymentValidationException.ErrorCode.INSUFFICIENT
+          && priceFailure.getCause() instanceof PriceValidationException typedFailure
+          && typedFailure.isChallengeable()
+          && authenticationEntryPoint != null) {
+        authenticationEntryPoint.commenceReplacement(request, response, resolvedEndpoint);
+        return;
+      }
+      if (priceFailure != null
+          && priceFailure.getErrorCode() == PaymentValidationException.ErrorCode.UNAVAILABLE) {
+        PaygateResponseWriter.writeLightningUnavailable(response);
+        return;
+      }
       PaygateResponseWriter.writeAuthenticationFailed(response);
       return;
     } catch (RuntimeException e) {
@@ -244,6 +260,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     writeReceipt(authenticated, response);
 
     filterChain.doFilter(authRequest, response);
+  }
+
+  private static PaymentValidationException findPaymentValidationFailure(Throwable failure) {
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current instanceof PaymentValidationException paymentFailure) {
+        return paymentFailure;
+      }
+    }
+    return null;
   }
 
   private PaygateAuthenticationToken createAuthToken(

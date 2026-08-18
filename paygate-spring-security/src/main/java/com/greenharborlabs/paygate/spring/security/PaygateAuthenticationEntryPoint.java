@@ -114,6 +114,28 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       PaygateResponseWriter.writeMethodUnsupported(response, "Unsupported payment credential");
       return;
     }
+    issueChallenge(request, response, resolvedEndpoint);
+  }
+
+  /**
+   * Issues a replacement challenge after a typed L402 paid-price failure.
+   *
+   * <p>The caller may use this only after core validation classified the presented credential as
+   * insufficient. It deliberately shares the request-memoized trusted price with the original
+   * validation and preserves unavailable failures as 503 at the caller.
+   */
+  public void commenceReplacement(
+      HttpServletRequest request, HttpServletResponse response, ResolvedEndpoint resolvedEndpoint)
+      throws IOException {
+    Objects.requireNonNull(request, "request must not be null");
+    Objects.requireNonNull(response, "response must not be null");
+    Objects.requireNonNull(resolvedEndpoint, "resolvedEndpoint must not be null");
+    issueChallenge(request, response, resolvedEndpoint);
+  }
+
+  private void issueChallenge(
+      HttpServletRequest request, HttpServletResponse response, ResolvedEndpoint resolvedEndpoint)
+      throws IOException {
     try {
       HttpServletRequest challengeRequest = request;
       challengeService.acquireChallengeRateLimit(request);

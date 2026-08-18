@@ -18,6 +18,7 @@ import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -204,6 +205,14 @@ public class L402Protocol implements PaymentProtocol {
    * PaymentValidationException.ErrorCode}.
    */
   private static PaymentValidationException mapL402Exception(L402Exception e) {
+    if (e instanceof PriceValidationException priceFailure) {
+      PaymentValidationException.ErrorCode priceCode =
+          priceFailure.isChallengeable()
+              ? PaymentValidationException.ErrorCode.INSUFFICIENT
+              : PaymentValidationException.ErrorCode.UNAVAILABLE;
+      return new PaymentValidationException(
+          priceCode, "L402 paid-price validation failed", e.getTokenId(), priceFailure);
+    }
     PaymentValidationException.ErrorCode mapped =
         switch (e.getErrorCode()) {
           case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED;

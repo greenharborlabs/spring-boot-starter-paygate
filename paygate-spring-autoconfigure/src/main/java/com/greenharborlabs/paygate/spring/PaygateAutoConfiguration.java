@@ -229,12 +229,14 @@ public class PaygateAutoConfiguration {
       RootKeyStore rootKeyStore,
       CredentialStore credentialStore,
       List<CaveatVerifier> caveatVerifiers,
+      LightningBackend lightningBackend,
       PaygateProperties properties) {
     String serviceName = properties.getServiceName();
     if (serviceName == null || serviceName.isBlank()) {
       serviceName = "default";
     }
-    return new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, serviceName);
+    return new L402Validator(
+        rootKeyStore, credentialStore, caveatVerifiers, serviceName, lightningBackend);
   }
 
   @Configuration(proxyBeanMethods = false)
@@ -561,6 +563,15 @@ public class PaygateAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
+  public PaygateRequestPricingService paygateRequestPricingService(
+      ApplicationContext applicationContext, PaygateProperties properties) {
+    var pricing = properties.getPricing();
+    return new PaygateRequestPricingService(
+        applicationContext, pricing.getEvaluationTimeout(), pricing.getMaxConcurrentEvaluations());
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
   public PaygateChallengeService paygateChallengeService(
       RootKeyStore rootKeyStore,
       LightningBackend lightningBackend,
@@ -570,6 +581,7 @@ public class PaygateAutoConfiguration {
       @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
       @Autowired(required = false) CapabilityCache capabilityCache,
+      PaygateRequestPricingService paygateRequestPricingService,
       org.springframework.beans.factory.ObjectProvider<DevelopmentSafetyPolicy.ValidatedTestMode>
           validatedTestMode) {
     return new PaygateChallengeService(
@@ -581,7 +593,8 @@ public class PaygateAutoConfiguration {
         paygateRateLimiter,
         clientIpResolver,
         capabilityCache,
-        validatedTestMode.getIfAvailable() != null);
+        validatedTestMode.getIfAvailable() != null,
+        paygateRequestPricingService);
   }
 
   @Bean

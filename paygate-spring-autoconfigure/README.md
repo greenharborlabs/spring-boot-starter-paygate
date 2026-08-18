@@ -915,8 +915,16 @@ Tests use Spring Boot's `WebApplicationContextRunner` to spin up the auto-config
 | `PaygateActuatorEndpointTest` | Actuator response structure with endpoint list, credentials, and earnings |
 | `PaygateMetricsTest` | Micrometer counter and gauge registration and increment |
 | `LsatChallengeSchemeTest` | Backward compatibility with `LSAT` prefix in Authorization header |
-| `DynamicPricingTest` | Pricing strategy bean lookup and fallback to static price |
-| `PricingFallbackTest` | Fallback behavior when pricing strategy bean is missing |
+| `DynamicPricingTest` | Bounded, memoized dynamic pricing |
+| `PricingFallbackTest` | Fail-closed behavior when pricing strategy resolution fails |
+
+### Price integrity
+
+Every protected request resolves a `TrustedRequestPrice` once and reuses it for validation and any
+replacement challenge. Set `PricingStability.ROUTE_STABLE` only for a route-and-method whose price
+cannot depend on request data; the safe default is `REQUEST_DEPENDENT`. Missing strategies,
+timeouts, saturation, invalid amounts, and ambiguous legacy payment evidence return 503. A signed
+credential that covers too little receives a fresh 402 at the memoized current price.
 
 ---
 

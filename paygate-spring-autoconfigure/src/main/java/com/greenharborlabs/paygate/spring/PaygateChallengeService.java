@@ -35,6 +35,7 @@ public class PaygateChallengeService {
   private final RootKeyStore rootKeyStore;
   private final LightningBackend lightningBackend;
   private final ApplicationContext applicationContext;
+  private final PaygateRequestPricingService requestPricingService;
   private final String serviceName;
 
   private final PaygateEarningsTracker earningsTracker;
@@ -63,7 +64,8 @@ public class PaygateChallengeService {
         rateLimiter,
         clientIpResolver,
         capabilityCache,
-        false);
+        false,
+        null);
   }
 
   PaygateChallengeService(
@@ -76,10 +78,35 @@ public class PaygateChallengeService {
       @Nullable ClientIpResolver clientIpResolver,
       @Nullable CapabilityCache capabilityCache,
       boolean validatedTestMode) {
+    this(
+        rootKeyStore,
+        lightningBackend,
+        properties,
+        applicationContext,
+        earningsTracker,
+        rateLimiter,
+        clientIpResolver,
+        capabilityCache,
+        validatedTestMode,
+        null);
+  }
+
+  PaygateChallengeService(
+      RootKeyStore rootKeyStore,
+      LightningBackend lightningBackend,
+      @Nullable PaygateProperties properties,
+      @Nullable ApplicationContext applicationContext,
+      @Nullable PaygateEarningsTracker earningsTracker,
+      @Nullable PaygateRateLimiter rateLimiter,
+      @Nullable ClientIpResolver clientIpResolver,
+      @Nullable CapabilityCache capabilityCache,
+      boolean validatedTestMode,
+      @Nullable PaygateRequestPricingService requestPricingService) {
     this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
     this.lightningBackend =
         Objects.requireNonNull(lightningBackend, "lightningBackend must not be null");
     this.applicationContext = applicationContext;
+    this.requestPricingService = requestPricingService;
     String svcName = (properties != null) ? properties.getServiceName() : null;
     this.serviceName = (svcName == null || svcName.isBlank()) ? "default" : svcName;
     this.earningsTracker = earningsTracker;
@@ -448,6 +475,9 @@ public class PaygateChallengeService {
    */
   public TrustedRequestPrice resolveTrustedPrice(
       HttpServletRequest request, PaygateEndpointConfig config) {
+    if (requestPricingService != null) {
+      return requestPricingService.resolve(request, config);
+    }
     Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
     if (memoized instanceof TrustedRequestPrice trustedRequestPrice) {
       return trustedRequestPrice;

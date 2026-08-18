@@ -29,6 +29,20 @@ class PaidPriceCaveatVerifierTest {
     }
 
     @Test
+    void rejectsZeroMaximumPlusOneOverflowAndMalformedDecimalForms() {
+      String maximumPlusOne = Long.toString(SecurityBounds.MAX_PRICE_SATS + 1);
+      for (String value :
+          new String[] {"0", maximumPlusOne, "9223372036854775808", "", " 1", "1 ", "1e2"}) {
+        assertThatThrownBy(() -> PaidPriceCaveatVerifier.parse(value))
+            .isInstanceOf(MacaroonVerificationException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((MacaroonVerificationException) failure).getReason())
+                        .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET));
+      }
+    }
+
+    @Test
     void rejectsNonCanonicalAndOutOfRangeValues() {
       for (String value :
           new String[] {
@@ -61,6 +75,19 @@ class PaidPriceCaveatVerifierTest {
               verifier.isMoreRestrictive(
                   new Caveat("catalog_price_sats", "99"), new Caveat("catalog_price_sats", "100")))
           .isFalse();
+    }
+
+    @Test
+    void acceptsCanonicalCaveatOutputOnlyForTheServiceScopedKey() {
+      Caveat caveat = new Caveat("catalog_price_sats", "21");
+
+      verifier.verify(caveat, new L402VerificationContext());
+
+      assertThatThrownBy(
+              () ->
+                  verifier.verify(
+                      new Caveat("other_price_sats", "21"), new L402VerificationContext()))
+          .isInstanceOf(MacaroonVerificationException.class);
     }
   }
 }

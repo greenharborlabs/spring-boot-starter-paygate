@@ -6,7 +6,9 @@
 .specify
 **/build/
 **/out/
+**/target/
 **/*.class
+*.jar
 *.log*
 .env*
 coverage/

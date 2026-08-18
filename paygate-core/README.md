@@ -897,6 +897,14 @@ Most modules depend on `paygate-core` for:
 
 ## License
 
+## Paid-price validation
+
+L402 validators re-evaluate the trusted current request price on every use, including cache hits.
+New credentials carry a signed `${serviceName}_price_sats` caveat. A credential is insufficient when
+its authenticated covered amount is below the current price; malformed or unavailable evidence
+fails closed. Legacy credentials without this caveat require an explicitly route-stable policy and
+an authoritative, settled invoice lookup.
+
 This project is licensed under the [MIT License](../LICENSE).
 
 Copyright (c) 2026 Green Harbor Labs
