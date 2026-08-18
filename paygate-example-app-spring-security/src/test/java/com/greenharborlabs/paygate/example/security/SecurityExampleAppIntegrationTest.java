@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.example.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -201,6 +202,43 @@ class SecurityExampleAppIntegrationTest {
     }
   }
 
+  @Nested
+  @DisplayName("analyze endpoint request-size pricing")
+  class AnalyzeEndpoint {
+
+    @Test
+    @DisplayName("uses observed bytes despite misleading declared lengths")
+    void usesObservedBytesDespiteMisleadingDeclaredLengths() throws Exception {
+      String body = "{\"content\":\"" + "x".repeat(1_100) + "\"}";
+
+      for (String declaredLength : List.of("0", "1", "999999")) {
+        mockMvc
+            .perform(
+                post("/api/v1/analyze")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .with(csrf())
+                    .header("Content-Length", declaredLength)
+                    .content(body))
+            .andExpect(status().isPaymentRequired())
+            .andExpect(jsonPath("$.price_sats", is(61)));
+      }
+    }
+
+    @Test
+    @DisplayName("rejects compressed analysis bodies before issuing a challenge")
+    void rejectsCompressedAnalysisBodies() throws Exception {
+      mockMvc
+          .perform(
+              post("/api/v1/analyze")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .with(csrf())
+                  .header("Content-Encoding", "gzip")
+                  .content("{\"content\":\"compressed\"}"))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.error", is("UNSUPPORTED_CONTENT_ENCODING")));
+    }
+  }
+
   // -------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------
@@ -225,6 +263,7 @@ class SecurityExampleAppIntegrationTest {
                 new Caveat("route", route),
                 new Caveat("method", "GET"),
                 new Caveat("example-api_capabilities", "~"),
+                new Caveat("example-api_price_sats", "10"),
                 new Caveat(
                     "example-api_valid_until",
                     String.valueOf(Instant.now().plusSeconds(3600).getEpochSecond()))));

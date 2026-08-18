@@ -165,11 +165,28 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
 
+    HttpServletRequest protectedRequest = httpRequest;
+    if (hasNamedPricingStrategy(resolvedEndpoint.config())) {
+      try {
+        protectedRequest = BoundedRequestBody.capture(httpRequest, requestBodyMaxBytes);
+      } catch (RequestBodyTooLargeException e) {
+        PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
+        return;
+      } catch (IOException e) {
+        log.log(System.Logger.Level.WARNING, "Request body observation failed; failing closed");
+        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+        return;
+      }
+    }
+
     // Resolve exactly once before either credential validation or challenge creation. The result
     // is request-scoped and therefore cannot drift between an insufficient-price response and its
     // replacement invoice.
     try {
-      challengeService.resolveTrustedPrice(httpRequest, resolvedEndpoint.config());
+      challengeService.resolveTrustedPrice(protectedRequest, resolvedEndpoint.config());
+    } catch (UnsupportedRequestEncodingException e) {
+      PaygateResponseWriter.writeUnsupportedRequestEncoding(httpResponse);
+      return;
     } catch (RuntimeException e) {
       log.log(System.Logger.Level.WARNING, "Trusted price evaluation failed; failing closed");
       PaygateResponseWriter.writeLightningUnavailable(httpResponse);
@@ -178,22 +195,22 @@ public class PaygateSecurityFilter implements Filter {
 
     // 2. Check Authorization header — validate credentials before checking Lightning health,
     //    so requests with valid cached credentials skip the health-check cost entirely.
-    String authHeader = httpRequest.getHeader(AUTHORIZATION_HEADER);
+    String authHeader = protectedRequest.getHeader(AUTHORIZATION_HEADER);
     CredentialState credentialState =
         authHeader == null ? CredentialState.NO_CREDENTIAL : CredentialState.PRESENTED;
     if (credentialState == CredentialState.PRESENTED) {
       for (PaymentProtocol protocol : protocols) {
         if (protocol.canHandle(authHeader)) {
-          if (!tryAcquireRateLimit(httpRequest)) {
+          if (!tryAcquireRateLimit(protectedRequest)) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
             recordRateLimitRejection(resolvedEndpoint.routePattern());
             return;
           }
-          HttpServletRequest protocolRequest = httpRequest;
+          HttpServletRequest protocolRequest = protectedRequest;
           if (RequestDigestSupport.isMppProtocol(protocol)) {
             try {
               protocolRequest =
-                  RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
+                  RequestDigestSupport.wrapForDigest(protectedRequest, requestBodyMaxBytes);
             } catch (RequestBodyTooLargeException e) {
               PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
               recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
@@ -218,7 +235,7 @@ public class PaygateSecurityFilter implements Filter {
       // A presented credential that no enabled protocol accepts is not a request for a new
       // credential. Bound its cost with the normal validation limiter and fail closed without
       // consulting Lightning or minting replacement state.
-      if (!tryAcquireRateLimit(httpRequest)) {
+      if (!tryAcquireRateLimit(protectedRequest)) {
         PaygateResponseWriter.writeRateLimited(httpResponse);
         recordRateLimitRejection(resolvedEndpoint.routePattern());
         return;
@@ -230,9 +247,9 @@ public class PaygateSecurityFilter implements Filter {
 
     // 3. Only NO_CREDENTIAL reaches ChallengeService for health check,
     //    rate limiting, invoice creation, and macaroon minting.
-    HttpServletRequest challengeRequest = httpRequest;
+    HttpServletRequest challengeRequest = protectedRequest;
     try {
-      challengeService.acquireChallengeRateLimit(httpRequest);
+      challengeService.acquireChallengeRateLimit(protectedRequest);
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
       recordRateLimitRejection(resolvedEndpoint.routePattern());
@@ -240,7 +257,8 @@ public class PaygateSecurityFilter implements Filter {
     }
     if (mppEnabled) {
       try {
-        challengeRequest = RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
+        challengeRequest =
+            RequestDigestSupport.wrapForDigest(protectedRequest, requestBodyMaxBytes);
         RequestDigestSupport.ensureDigestAttribute(challengeRequest, path, requestBodyMaxBytes);
       } catch (RequestBodyTooLargeException e) {
         PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
@@ -249,6 +267,10 @@ public class PaygateSecurityFilter implements Filter {
       }
     }
     issuePaymentChallenge(challengeRequest, httpResponse, method, safePath, resolvedEndpoint);
+  }
+
+  private static boolean hasNamedPricingStrategy(PaygateEndpointConfig endpoint) {
+    return endpoint.pricingStrategy() != null && !endpoint.pricingStrategy().isBlank();
   }
 
   /**

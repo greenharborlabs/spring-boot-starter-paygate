@@ -124,6 +124,18 @@ public final class PaygateResponseWriter {
                 {"code": 400, "error": "REQUEST_BODY_TOO_LARGE", "message": "Request body exceeds 8192 bytes for digest binding"}""");
   }
 
+  /** Writes a stable 400 response for an unsupported content encoding on a size-priced route. */
+  public static void writeUnsupportedRequestEncoding(HttpServletResponse response)
+      throws IOException {
+    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    setSafeErrorHeaders(response, "application/json");
+    response
+        .getWriter()
+        .write(
+            """
+                {"code": 400, "error": "UNSUPPORTED_CONTENT_ENCODING", "message": "Content encoding is not supported for this request"}""");
+  }
+
   /** Writes a 401 Unauthorized response requiring a valid L402 credential. */
   public static void writeUnauthorized(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

@@ -562,7 +562,8 @@ public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
 }
 ```
 
-If the named pricing strategy bean is not found at runtime, the filter falls back to the static `priceSats` value.
+If a named pricing strategy is unavailable or cannot safely evaluate the bounded request, the request
+fails closed rather than falling back to the static `priceSats` value.
 
 ---
 
@@ -1073,6 +1074,16 @@ Select `ROUTE_STABLE` only for a route-and-method whose price never depends on r
 enables bounded compatibility lookup for a legacy credential that lacks signed evidence. Insufficient
 evidence produces a fresh 402 for the current price. Missing, invalid, unavailable, or ambiguous
 evidence produces 503 without executing protected behavior.
+
+### Request-size pricing
+
+For a named pricing strategy, Paygate eagerly captures a bounded request body and passes a replayable
+view to both pricing and the eventual handler. Strategies must use server-observed bytes rather than
+`Content-Length`, transfer metadata, or other client declarations. The published size-priced example
+routes accept only identity encoding; a non-identity `Content-Encoding` is rejected before challenge
+creation or protected work, and emits one sanitized `COMPRESSED_BODY_REJECTED` security decision.
+Set `paygate.request-body.max-bytes` for the largest accepted paid request; an over-bound or unreadable
+body fails closed and is never silently priced at the base amount.
 
 ## Contributing
 

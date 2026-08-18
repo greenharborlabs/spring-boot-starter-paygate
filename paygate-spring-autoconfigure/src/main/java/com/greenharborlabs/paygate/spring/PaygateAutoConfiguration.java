@@ -564,10 +564,16 @@ public class PaygateAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean
   public PaygateRequestPricingService paygateRequestPricingService(
-      ApplicationContext applicationContext, PaygateProperties properties) {
+      ApplicationContext applicationContext,
+      PaygateProperties properties,
+      @Autowired(required = false)
+          com.greenharborlabs.paygate.api.SecurityDecisionObserver securityDecisionObserver) {
     var pricing = properties.getPricing();
     return new PaygateRequestPricingService(
-        applicationContext, pricing.getEvaluationTimeout(), pricing.getMaxConcurrentEvaluations());
+        applicationContext,
+        pricing.getEvaluationTimeout(),
+        pricing.getMaxConcurrentEvaluations(),
+        securityDecisionObserver);
   }
 
   @Bean

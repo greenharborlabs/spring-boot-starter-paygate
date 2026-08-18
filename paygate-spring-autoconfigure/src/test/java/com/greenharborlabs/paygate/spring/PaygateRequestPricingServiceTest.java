@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.greenharborlabs.paygate.api.SecurityDecisionObserver;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -98,6 +100,28 @@ class PaygateRequestPricingServiceTest {
         .hasMessageContaining("failed");
     assertThat(service.resolve(new MockHttpServletRequest(), dynamicConfig).amountSats())
         .isEqualTo(25);
+  }
+
+  @Test
+  void rejectsCompressedObservedBodiesAndReportsTheFixedDecisionOnce() throws Exception {
+    var decisions = new AtomicInteger();
+    SecurityDecisionObserver observer =
+        decision -> {
+          assertThat(decision.reason()).isEqualTo(SecurityDecisionReason.COMPRESSED_BODY_REJECTED);
+          decisions.incrementAndGet();
+        };
+    ApplicationContext context = mock(ApplicationContext.class);
+    when(context.getBean("dynamic", PaygatePricingStrategy.class))
+        .thenReturn((request, price) -> price);
+    var service = new PaygateRequestPricingService(context, Duration.ofSeconds(1), 1, observer);
+    var request = new MockHttpServletRequest("POST", "/api/analyze");
+    request.addHeader("Content-Encoding", "gzip");
+    request.setContent("compressed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+    assertThatThrownBy(
+            () -> service.resolve(BoundedRequestBody.capture(request, 8_192), dynamicConfig))
+        .isInstanceOf(UnsupportedRequestEncodingException.class);
+    assertThat(decisions).hasValue(1);
   }
 
   private static PaygateRequestPricingService service(

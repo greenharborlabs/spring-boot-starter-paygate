@@ -175,6 +175,7 @@ class ExampleAppIntegrationTest {
                   new Caveat("route", "/api/v1/data"),
                   new Caveat("method", "GET"),
                   new Caveat("example-api_capabilities", "~"),
+                  new Caveat("example-api_price_sats", "10"),
                   new Caveat(
                       "example-api_valid_until",
                       String.valueOf(Instant.now().plusSeconds(3600).getEpochSecond()))));
@@ -217,6 +218,36 @@ class ExampleAppIntegrationTest {
           .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
           .andExpect(jsonPath("$.code", is(402)))
           .andExpect(jsonPath("$.price_sats", greaterThanOrEqualTo(50)));
+    }
+
+    @Test
+    @DisplayName("uses observed bytes despite misleading declared lengths")
+    void usesObservedBytesDespiteMisleadingDeclaredLengths() throws Exception {
+      String body = "{\"content\":\"" + "x".repeat(1_100) + "\"}";
+
+      for (String declaredLength : List.of("0", "1", "999999")) {
+        mockMvc
+            .perform(
+                post("/api/v1/analyze")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("Content-Length", declaredLength)
+                    .content(body))
+            .andExpect(status().isPaymentRequired())
+            .andExpect(jsonPath("$.price_sats", is(61)));
+      }
+    }
+
+    @Test
+    @DisplayName("rejects compressed analysis bodies before issuing a challenge")
+    void rejectsCompressedAnalysisBodies() throws Exception {
+      mockMvc
+          .perform(
+              post("/api/v1/analyze")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .header("Content-Encoding", "gzip")
+                  .content("{\"content\":\"compressed\"}"))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.error", is("UNSUPPORTED_CONTENT_ENCODING")));
     }
   }
 

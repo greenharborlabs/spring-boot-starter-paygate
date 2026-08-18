@@ -75,14 +75,16 @@ public class PaygateSecurityAutoConfiguration {
       PaygateEndpointRegistry paygateEndpointRegistry,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
       @Value("${paygate.service-name:default}") String serviceName,
-      PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint) {
+      PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint,
+      @Value("${paygate.request-body.max-bytes:8192}") int requestBodyMaxBytes) {
     return new PaygateAuthenticationFilter(
         authenticationManager,
         protocols,
         paygateEndpointRegistry,
         clientIpResolver,
         serviceName,
-        paygateAuthenticationEntryPoint);
+        paygateAuthenticationEntryPoint,
+        requestBodyMaxBytes);
   }
 
   /**

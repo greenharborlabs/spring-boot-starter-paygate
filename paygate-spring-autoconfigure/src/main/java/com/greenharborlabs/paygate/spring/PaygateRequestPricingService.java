@@ -1,5 +1,9 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
+import com.greenharborlabs.paygate.api.SecurityDecisionObserver;
+import com.greenharborlabs.paygate.api.SecurityDecisionProtocol;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import java.util.Objects;
@@ -29,6 +33,7 @@ public final class PaygateRequestPricingService implements AutoCloseable {
   private final Duration timeout;
   private final Semaphore admissions;
   private final ExecutorService executor;
+  private final SecurityDecisionObserver decisionObserver;
 
   /**
    * Creates the service using bounded pricing settings.
@@ -39,6 +44,22 @@ public final class PaygateRequestPricingService implements AutoCloseable {
    */
   public PaygateRequestPricingService(
       ApplicationContext applicationContext, Duration timeout, int maxConcurrentEvaluations) {
+    this(applicationContext, timeout, maxConcurrentEvaluations, SecurityDecisionObserver.NOOP);
+  }
+
+  /**
+   * Creates the service using bounded pricing settings and a best-effort decision observer.
+   *
+   * @param applicationContext application context used to resolve named strategy beans
+   * @param timeout maximum duration for one named strategy evaluation
+   * @param maxConcurrentEvaluations maximum concurrently admitted evaluations
+   * @param decisionObserver optional observer for sanitized security decisions
+   */
+  public PaygateRequestPricingService(
+      ApplicationContext applicationContext,
+      Duration timeout,
+      int maxConcurrentEvaluations,
+      SecurityDecisionObserver decisionObserver) {
     this.applicationContext = Objects.requireNonNull(applicationContext, "applicationContext");
     this.timeout = Objects.requireNonNull(timeout, "timeout");
     if (timeout.isZero() || timeout.isNegative()) {
@@ -49,6 +70,8 @@ public final class PaygateRequestPricingService implements AutoCloseable {
     }
     this.admissions = new Semaphore(maxConcurrentEvaluations);
     this.executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+    this.decisionObserver =
+        decisionObserver != null ? decisionObserver : SecurityDecisionObserver.NOOP;
   }
 
   /**
@@ -76,6 +99,16 @@ public final class PaygateRequestPricingService implements AutoCloseable {
 
   private TrustedRequestPrice evaluateNamedStrategy(
       HttpServletRequest request, PaygateEndpointConfig endpoint) {
+    if (request instanceof BoundedRequestBody body && !body.hasIdentityContentEncoding()) {
+      SecurityDecisionObserver.notifySafely(
+          decisionObserver,
+          new SecurityDecision(
+              SecurityDecisionReason.COMPRESSED_BODY_REJECTED,
+              SecurityDecisionProtocol.UNKNOWN,
+              request.getMethod().toUpperCase(java.util.Locale.ROOT),
+              endpoint.pathPattern()));
+      throw new UnsupportedRequestEncodingException();
+    }
     final PaygatePricingStrategy strategy;
     try {
       strategy =

@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected requests re-evaluate their trusted current price on every validation, including cache hits.
 - Dynamic price evaluation is bounded and request-memoized; unavailable pricing and ambiguous legacy
   evidence fail closed, while authenticated underpayment receives a fresh full-price challenge.
+- **M-3 — trustworthy request-size pricing**: Named pricing strategies now receive a bounded,
+  replayable server-observed body. The two `/api/v1/analyze` examples no longer use `Content-Length`
+  as price evidence; non-identity content encodings are rejected before challenge or handler work and
+  emit one sanitized `COMPRESSED_BODY_REJECTED` decision.
 
 - **M-1 — trusted Spring Security attributes**: Deprecated credential-only L402 authentication
   factories now expose protected system metadata and explicit capabilities only; they no longer
