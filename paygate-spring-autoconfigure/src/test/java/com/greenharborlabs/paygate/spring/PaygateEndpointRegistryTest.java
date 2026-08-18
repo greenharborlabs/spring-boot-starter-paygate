@@ -87,6 +87,28 @@ class PaygateEndpointRegistryTest {
   }
 
   @Test
+  @DisplayName("programmatic endpoint stability is preserved while old constructors stay safe")
+  void pricingStabilityIsPreserved() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(
+        new PaygateEndpointConfig(
+            "GET",
+            "/api/stable",
+            10,
+            600,
+            "stable endpoint",
+            "",
+            "",
+            PricingStability.ROUTE_STABLE));
+    registry.register(new PaygateEndpointConfig("GET", "/api/default", 10, 600, "", "", ""));
+
+    assertThat(registry.findConfig("GET", "/api/stable").pricingStability())
+        .isEqualTo(PricingStability.ROUTE_STABLE);
+    assertThat(registry.findConfig("GET", "/api/default").pricingStability())
+        .isEqualTo(PricingStability.REQUEST_DEPENDENT);
+  }
+
+  @Test
   @DisplayName("null capability is normalized to no capability")
   void nullCapabilityIsNormalized() {
     var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
@@ -545,6 +567,11 @@ class PaygateEndpointRegistryTest {
       @Override
       public String capability() {
         return capability;
+      }
+
+      @Override
+      public PricingStability pricingStability() {
+        return PricingStability.REQUEST_DEPENDENT;
       }
     };
   }

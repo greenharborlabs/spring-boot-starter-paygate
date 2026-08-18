@@ -140,6 +140,11 @@ class RouteMatchingParityTest {
       public String capability() {
         return "read";
       }
+
+      @Override
+      public PricingStability pricingStability() {
+        return PricingStability.REQUEST_DEPENDENT;
+      }
     };
   }
 }

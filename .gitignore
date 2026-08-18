@@ -1,6 +1,9 @@
 # Ignore Gradle build artifacts and cache
 .gradle/
 build/
+target/
+*.class
+*.jar
 
 # Keep planning and specification artifacts local-only.
 plans/

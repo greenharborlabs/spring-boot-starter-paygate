@@ -101,6 +101,18 @@
       "defaultValue": 8192
     },
     {
+      "name": "paygate.pricing.evaluation-timeout",
+      "type": "java.time.Duration",
+      "description": "Maximum time allowed for one named request-pricing strategy evaluation. Must be positive and no more than 60 seconds.",
+      "defaultValue": "1s"
+    },
+    {
+      "name": "paygate.pricing.max-concurrent-evaluations",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of named request-pricing strategy evaluations admitted concurrently. Must be between 1 and 1024; excess work is rejected instead of queued.",
+      "defaultValue": 64
+    },
+    {
       "name": "paygate.lightning.timeout-seconds",
       "type": "java.lang.Integer",
       "description": "Global timeout in seconds for Lightning backend RPC/HTTP calls. Used as the default for both LND and LNbits backends. Backend-specific properties (paygate.lnd.rpc-deadline-seconds, paygate.lnbits.request-timeout-seconds) override this value when set.",

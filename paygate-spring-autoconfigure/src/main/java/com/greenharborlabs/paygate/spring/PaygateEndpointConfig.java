@@ -13,6 +13,7 @@ import com.greenharborlabs.paygate.api.SecurityBounds;
  * @param pricingStrategy name of the pricing strategy bean, or empty for fixed price
  * @param capability any-of (OR) capability requirement; for example, {@code "search,analyze"}
  *     accepts either name, while a null or wholly blank value means no named capability
+ * @param pricingStability whether this route price may depend on request data
  */
 public record PaygateEndpointConfig(
     String httpMethod,
@@ -21,7 +22,30 @@ public record PaygateEndpointConfig(
     long timeoutSeconds,
     String description,
     String pricingStrategy,
-    String capability) {
+    String capability,
+    PricingStability pricingStability) {
+
+  /**
+   * Preserves the original public constructor while selecting the safe request-dependent policy.
+   */
+  public PaygateEndpointConfig(
+      String httpMethod,
+      String pathPattern,
+      long priceSats,
+      long timeoutSeconds,
+      String description,
+      String pricingStrategy,
+      String capability) {
+    this(
+        httpMethod,
+        pathPattern,
+        priceSats,
+        timeoutSeconds,
+        description,
+        pricingStrategy,
+        capability,
+        PricingStability.REQUEST_DEPENDENT);
+  }
 
   /**
    * Rejects invalid configured prices while endpoints are being registered.
@@ -30,6 +54,9 @@ public record PaygateEndpointConfig(
    * pricing is validated again by {@link PaygateChallengeService} after the strategy runs.
    */
   public PaygateEndpointConfig {
+    if (pricingStability == null) {
+      throw new IllegalArgumentException("pricingStability must not be null");
+    }
     if (!SecurityBounds.isValidPrice(priceSats)) {
       throw new IllegalArgumentException(
           "priceSats must be between "

@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import com.greenharborlabs.paygate.api.SecurityBounds;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -48,6 +49,8 @@ public class PaygateProperties {
 
   private RequestBody requestBody = new RequestBody();
 
+  private Pricing pricing = new Pricing();
+
   private RateLimit rateLimit = new RateLimit();
 
   private HealthCache healthCache = new HealthCache();
@@ -94,6 +97,14 @@ public class PaygateProperties {
 
   public void setRequestBody(RequestBody requestBody) {
     this.requestBody = requestBody;
+  }
+
+  public Pricing getPricing() {
+    return pricing;
+  }
+
+  public void setPricing(Pricing pricing) {
+    this.pricing = pricing;
   }
 
   public HealthCache getHealthCache() {
@@ -274,6 +285,45 @@ public class PaygateProperties {
                 + maxBytes);
       }
       this.maxBytes = maxBytes;
+    }
+  }
+
+  /** Pricing-strategy evaluation limits bound from {@code paygate.pricing.*}. */
+  public static class Pricing {
+
+    private static final Duration MAX_EVALUATION_TIMEOUT = Duration.ofSeconds(60);
+
+    private Duration evaluationTimeout = Duration.ofSeconds(1);
+
+    private int maxConcurrentEvaluations = 64;
+
+    public Duration getEvaluationTimeout() {
+      return evaluationTimeout;
+    }
+
+    public void setEvaluationTimeout(Duration evaluationTimeout) {
+      if (evaluationTimeout == null
+          || evaluationTimeout.isZero()
+          || evaluationTimeout.isNegative()
+          || evaluationTimeout.compareTo(MAX_EVALUATION_TIMEOUT) > 0) {
+        throw new IllegalArgumentException(
+            "paygate.pricing.evaluation-timeout must be positive and at most 60 seconds, got: "
+                + evaluationTimeout);
+      }
+      this.evaluationTimeout = evaluationTimeout;
+    }
+
+    public int getMaxConcurrentEvaluations() {
+      return maxConcurrentEvaluations;
+    }
+
+    public void setMaxConcurrentEvaluations(int maxConcurrentEvaluations) {
+      if (maxConcurrentEvaluations < 1 || maxConcurrentEvaluations > 1024) {
+        throw new IllegalArgumentException(
+            "paygate.pricing.max-concurrent-evaluations must be between 1 and 1024, got: "
+                + maxConcurrentEvaluations);
+      }
+      this.maxConcurrentEvaluations = maxConcurrentEvaluations;
     }
   }
 

@@ -123,7 +123,8 @@ public class PaygateEndpointRegistry {
         config.timeoutSeconds(),
         config.description(),
         config.pricingStrategy(),
-        normalized);
+        normalized,
+        config.pricingStability());
   }
 
   /**
@@ -442,7 +443,8 @@ public class PaygateEndpointRegistry {
         timeout,
         annotation.description(),
         annotation.pricingStrategy(),
-        annotation.capability());
+        annotation.capability(),
+        annotation.pricingStability());
   }
 
   private static String normalizeMethod(String method) {
