@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
+import com.greenharborlabs.paygate.core.macaroon.CaveatKey;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
@@ -689,7 +690,7 @@ public class PaygateSecurityFilter implements Filter {
       String caveatKey = serviceName + "_valid_until";
       OptionalLong earliest =
           l402Meta.macaroon().caveats().stream()
-              .filter(c -> caveatKey.equals(c.key()))
+              .filter(c -> caveatKey.equals(CaveatKey.canonicalize(c.key())))
               .flatMapToLong(
                   c -> {
                     try {

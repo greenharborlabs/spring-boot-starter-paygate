@@ -1976,6 +1976,75 @@ class L402ValidatorTest {
     };
   }
 
+  @Test
+  @DisplayName(
+      "accepts signed padded boundary keys and returns canonical attributes on fresh and cache paths")
+  void acceptsPaddedBoundaryKeysOnFreshAndCachePaths() {
+    List<Caveat> paddedBoundaries =
+        boundaryCaveats().stream()
+            .map(caveat -> new Caveat("\t" + caveat.key() + " ", caveat.value()))
+            .toList();
+    Macaroon padded =
+        MacaroonMinter.mint(rootKey, identifier, "https://example.com", paddedBoundaries);
+    var decisions = new AtomicLong();
+    L402Validator validator =
+        new L402Validator(
+            rootKeyStore,
+            credentialStore,
+            boundaryVerifiers(),
+            SERVICE_NAME,
+            null,
+            ignored -> decisions.incrementAndGet());
+    String header = authHeaderFor(padded);
+
+    var fresh = validator.validate(header, boundaryContext(REQUEST_ROUTE, REQUEST_METHOD));
+    try {
+      assertThat(fresh.verifiedAttributes())
+          .containsKeys("services", "route", "method", SERVICE_NAME + "_valid_until")
+          .doesNotContainKey("\tservices ");
+      assertThat(fresh.freshValidation()).isTrue();
+    } finally {
+      fresh.credential().destroy();
+    }
+    var cached = validator.validate(header, boundaryContext(REQUEST_ROUTE, REQUEST_METHOD));
+    try {
+      assertThat(cached.freshValidation()).isFalse();
+      assertThat(cached.verifiedAttributes()).containsKey("services");
+    } finally {
+      cached.credential().destroy();
+    }
+    assertThat(decisions).hasValue(10);
+  }
+
+  @Test
+  @DisplayName("isolates observer failures while normalizing authenticated padded keys")
+  void isolatesObserverFailureForAuthenticatedPaddedKeys() {
+    List<Caveat> paddedBoundaries =
+        boundaryCaveats().stream()
+            .map(caveat -> new Caveat(" " + caveat.key() + "\t", caveat.value()))
+            .toList();
+    Macaroon padded =
+        MacaroonMinter.mint(rootKey, identifier, "https://example.com", paddedBoundaries);
+    L402Validator validator =
+        new L402Validator(
+            rootKeyStore,
+            credentialStore,
+            boundaryVerifiers(),
+            SERVICE_NAME,
+            null,
+            ignored -> {
+              throw new IllegalStateException("observer unavailable");
+            });
+
+    var result =
+        validator.validate(authHeaderFor(padded), boundaryContext(REQUEST_ROUTE, REQUEST_METHOD));
+    try {
+      assertThat(result.verifiedAttributes()).containsKey(SERVICE_NAME + "_valid_until");
+    } finally {
+      result.credential().destroy();
+    }
+  }
+
   private List<CaveatVerifier> boundaryVerifiers(CaveatVerifier... additionalVerifiers) {
     List<CaveatVerifier> verifiers = new ArrayList<>(5 + additionalVerifiers.length);
     verifiers.add(new ServicesCaveatVerifier(10));

@@ -685,7 +685,7 @@ class PaygateSecurityFilterTest {
   class ValidCredential {
 
     @Test
-    @DisplayName("returns 200 with X-L402-Credential-Expires matching valid_until caveat")
+    @DisplayName("returns canonical expiry metadata for a signed padded valid_until key")
     void validCredentialReturns200WithHeaders() throws Exception {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
 
@@ -706,7 +706,7 @@ class PaygateSecurityFilterTest {
               new Caveat("route", PROTECTED_PATH),
               new Caveat("method", "GET"),
               new Caveat(SERVICE_NAME + "_capabilities", "~"),
-              new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntilEpoch)));
+              new Caveat("\t" + SERVICE_NAME + "_valid_until\t", String.valueOf(validUntilEpoch)));
 
       // Mint a real macaroon using the known root key
       MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);

@@ -230,13 +230,20 @@ public class PaygateAutoConfiguration {
       CredentialStore credentialStore,
       List<CaveatVerifier> caveatVerifiers,
       LightningBackend lightningBackend,
-      PaygateProperties properties) {
+      PaygateProperties properties,
+      @Autowired(required = false)
+          com.greenharborlabs.paygate.api.SecurityDecisionObserver securityDecisionObserver) {
     String serviceName = properties.getServiceName();
     if (serviceName == null || serviceName.isBlank()) {
       serviceName = "default";
     }
     return new L402Validator(
-        rootKeyStore, credentialStore, caveatVerifiers, serviceName, lightningBackend);
+        rootKeyStore,
+        credentialStore,
+        caveatVerifiers,
+        serviceName,
+        lightningBackend,
+        securityDecisionObserver);
   }
 
   @Configuration(proxyBeanMethods = false)

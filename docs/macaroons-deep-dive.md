@@ -518,10 +518,11 @@ function verifyMacaroon(macaroon, rootKey, requestContext):
 
     // === Phase 2: Configured Caveat Satisfaction ===
     for each caveat in macaroon.caveats:
-        verifier = configuredVerifierFor(caveat.key)
+        canonicalKey = trimEdgeAsciiSpaceAndTab(caveat.key)
+        verifier = configuredVerifierFor(canonicalKey)
         if verifier is absent:
             continue  // delegation-oriented pass-through
-        verifier.verify(caveat, requestContext)
+        verifier.verify(Caveat(canonicalKey, caveat.value), requestContext)
 
     return ACCEPT
 ```
@@ -531,6 +532,13 @@ integration must use `L402Validator`, which also verifies the payment preimage,
 requires identifier v1 and the mandatory boundary caveats, and applies the
 credential-cache policy. Generic-verifier callers must separately enforce their
 issuer schema and all required caveats.
+
+The ordering is security-sensitive: the HMAC loop always uses the original, exact
+`key=value` bytes. Key canonicalization happens only after a successful signature
+comparison and removes only leading/trailing ASCII space and horizontal tabs.
+It does not change values, internal whitespace, Unicode whitespace, or newlines.
+Consequently, padded spellings of a registered key are evaluated as that key,
+whereas a padded unknown key remains an unknown delegated caveat.
 
 ### Walkthrough with Concrete Values
 

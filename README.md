@@ -930,6 +930,7 @@ This library handles payment credentials and cryptographic tokens. The following
 - **Constant-time comparison** for all secret material (root keys, signatures, preimages, HMAC bindings) using XOR accumulation -- never `Arrays.equals`
 - **Key derivation** follows the macaroon specification: `HMAC-SHA256(key="macaroons-key-generator", data=rootKey)`
 - **SecureRandom** for all random byte generation (token IDs, root keys)
+- **Canonical caveat lookup after authentication** -- the exact raw `key=value` bytes remain HMAC-authenticated; only edge ASCII space/tab padding on a key is removed for registered-verifier lookup after a valid signature.
 
 ### Operational Security
 

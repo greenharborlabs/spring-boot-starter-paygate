@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replayable server-observed body. The two `/api/v1/analyze` examples no longer use `Content-Length`
   as price evidence; non-identity content encodings are rejected before challenge or handler work and
   emit one sanitized `COMPRESSED_BODY_REJECTED` decision.
+- **M-4 — authenticated caveat-key compatibility**: Macaroon signatures continue to cover exact
+  raw caveat bytes. After a successful signature check, ASCII space/tab edge padding on a known
+  caveat key is canonicalized for verifier lookup and L402 boundary enforcement; padded
+  registrations are rejected and padded unknown keys retain delegation semantics.
 
 - **M-1 — trusted Spring Security attributes**: Deprecated credential-only L402 authentication
   factories now expose protected system metadata and explicit capabilities only; they no longer

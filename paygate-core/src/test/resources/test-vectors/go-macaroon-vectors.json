@@ -3,6 +3,18 @@
   "description": "Test vectors for Macaroon V2 binary format, compatible with Go go-macaroon library. Key derivation uses HMAC-SHA256(key=\"macaroons-key-generator\", data=rootKey). Identifier layout: [version:2 bytes BE][paymentHash:32][tokenId:32] = 66 bytes. V2 binary format: version byte 0x02, then field packets (fieldType varint, length varint, data), with 0x00 as EOS markers.",
   "vectors": [
     {
+      "description": "Go-minted macaroon with padded known key",
+      "rootKey": "0505050505050505050505050505050505050505050505050505050505050505",
+      "identifier": "0001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "location": null,
+      "caveats": [
+        { "key": "\tservices\t", "value": "my_api:0" }
+      ],
+      "expectedSignature": "189dd7a984f2e828c34db5e7edf5aa7fd820bf7e095bd279dd7150b9baf4dd48",
+      "expectedSerializedV2": "0202420001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb000213097365727669636573093d6d795f6170693a3000000620189dd7a984f2e828c34db5e7edf5aa7fd820bf7e095bd279dd7150b9baf4dd48",
+      "expectedBase64": "AgJCAAGqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqru7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7AAITCXNlcnZpY2VzCT1teV9hcGk6MAAABiAYndephPLoKMNNteft9ap/2CC/fglb0nndcVC5uvTdSA=="
+    },
+    {
       "description": "Simple macaroon - no caveats, no location",
       "rootKey": "0101010101010101010101010101010101010101010101010101010101010101",
       "identifier": "0000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

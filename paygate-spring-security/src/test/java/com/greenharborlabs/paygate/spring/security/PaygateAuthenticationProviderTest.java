@@ -119,6 +119,27 @@ class PaygateAuthenticationProviderTest {
   }
 
   @Test
+  void retainsCanonicalExpiryAttributeFromValidatedL402Credential() {
+    String macaroonB64 = "dGVzdG1hY2Fyb29u";
+    String preimageHex = "a".repeat(64);
+    L402Credential credential = createTestCredential(List.of());
+    String expiryKey = SERVICE_NAME + "_valid_until";
+    when(l402Validator.validate(
+            any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+        .thenReturn(
+            new L402Validator.ValidationResult(
+                credential, true, Set.of(), Map.of(expiryKey, "1900000000")));
+
+    var result =
+        (PaygateAuthenticationToken)
+            provider.authenticate(
+                new PaygateAuthenticationToken(
+                    new L402HeaderComponents("L402", macaroonB64, preimageHex)));
+
+    assertThat(result.getAttributes()).containsEntry(expiryKey, "1900000000");
+  }
+
+  @Test
   void throwsBadCredentialsOnValidationFailure() {
     String macaroonB64 = "badmac";
     String preimageHex = "b".repeat(64);

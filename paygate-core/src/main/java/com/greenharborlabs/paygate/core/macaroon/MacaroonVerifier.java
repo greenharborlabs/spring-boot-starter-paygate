@@ -1,5 +1,9 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
+import com.greenharborlabs.paygate.api.SecurityDecisionObserver;
+import com.greenharborlabs.paygate.api.SecurityDecisionProtocol;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -49,6 +53,19 @@ public final class MacaroonVerifier {
       byte[] rootKey,
       List<CaveatVerifier> caveatVerifiers,
       L402VerificationContext context) {
+    verify(macaroon, rootKey, caveatVerifiers, context, SecurityDecisionObserver.NOOP);
+  }
+
+  /**
+   * Verifies a macaroon and, after successful signature verification, reports registered padded
+   * keys through the supplied best-effort observer.
+   */
+  public static void verify(
+      Macaroon macaroon,
+      byte[] rootKey,
+      List<CaveatVerifier> caveatVerifiers,
+      L402VerificationContext context,
+      SecurityDecisionObserver decisionObserver) {
     requireSupportedCaveatCount(macaroon.caveats());
     byte[] derivedKey = MacaroonCrypto.deriveKey(rootKey);
     byte[] sig = null;
@@ -66,6 +83,13 @@ public final class MacaroonVerifier {
       }
 
       Map<String, CaveatVerifier> verifiersByKey = buildVerifierMap(caveatVerifiers);
+      notifyPaddedKnownCaveats(
+          macaroon.caveats(),
+          verifiersByKey,
+          decisionObserver,
+          SecurityDecisionProtocol.UNKNOWN,
+          "_unknown",
+          "_unknown");
       verifyCaveats(macaroon.caveats(), verifiersByKey, context);
     } finally {
       KeyMaterial.zeroize(derivedKey, sig);
@@ -117,27 +141,30 @@ public final class MacaroonVerifier {
     Map<String, Caveat> finalEvaluationByKey = new HashMap<>();
     Map<String, String> acceptedValues = new HashMap<>();
     for (Caveat caveat : caveats) {
-      CaveatVerifier verifier = verifiersByKey.get(caveat.key());
+      String canonicalKey = CaveatKey.canonicalize(caveat.key());
+      CaveatVerifier verifier = verifiersByKey.get(canonicalKey);
       if (verifier == null) {
         // Unknown caveats are skipped per the L402 spec
         continue;
       }
 
-      Caveat previous = lastSeenByKey.get(caveat.key());
-      if (previous != null && !verifier.isMoreRestrictive(previous, caveat)) {
+      Caveat evaluationCaveat =
+          canonicalKey.equals(caveat.key()) ? caveat : new Caveat(canonicalKey, caveat.value());
+      Caveat previous = lastSeenByKey.get(canonicalKey);
+      if (previous != null && !verifier.isMoreRestrictive(previous, evaluationCaveat)) {
         throw new MacaroonVerificationException(
             VerificationFailureReason.CAVEAT_ESCALATION,
-            "caveat escalation detected for key: " + caveat.key());
+            "caveat escalation detected for key: " + canonicalKey);
       }
-      lastSeenByKey.put(caveat.key(), caveat);
+      lastSeenByKey.put(canonicalKey, evaluationCaveat);
 
       // Capability satisfaction is meaningful only for the final, monotonically narrowed value.
       // isMoreRestrictive validates the grammar and bounds of every repeated occurrence.
       if (verifier instanceof CapabilitiesCaveatVerifier) {
-        finalEvaluationByKey.put(caveat.key(), caveat);
+        finalEvaluationByKey.put(canonicalKey, evaluationCaveat);
       } else {
-        verifier.verify(caveat, context);
-        acceptedValues.put(caveat.key(), caveat.value());
+        verifier.verify(evaluationCaveat, context);
+        acceptedValues.put(canonicalKey, caveat.value());
       }
     }
 
@@ -199,11 +226,12 @@ public final class MacaroonVerifier {
     boolean hasCapabilities = false;
     boolean hasValidUntil = false;
     for (Caveat caveat : caveats) {
-      hasServices |= SERVICES_CAVEAT_KEY.equals(caveat.key());
-      hasRoute |= ROUTE_CAVEAT_KEY.equals(caveat.key());
-      hasMethod |= METHOD_CAVEAT_KEY.equals(caveat.key());
-      hasCapabilities |= capabilitiesKey.equals(caveat.key());
-      hasValidUntil |= validUntilKey.equals(caveat.key());
+      String canonicalKey = CaveatKey.canonicalize(caveat.key());
+      hasServices |= SERVICES_CAVEAT_KEY.equals(canonicalKey);
+      hasRoute |= ROUTE_CAVEAT_KEY.equals(canonicalKey);
+      hasMethod |= METHOD_CAVEAT_KEY.equals(canonicalKey);
+      hasCapabilities |= capabilitiesKey.equals(canonicalKey);
+      hasValidUntil |= validUntilKey.equals(canonicalKey);
     }
 
     if (!hasServices || !hasRoute || !hasMethod || !hasCapabilities || !hasValidUntil) {
@@ -241,10 +269,40 @@ public final class MacaroonVerifier {
       if (key == null || key.isBlank()) {
         throw new IllegalArgumentException("Caveat verifier key must not be blank");
       }
+      if (!key.equals(CaveatKey.canonicalize(key))) {
+        throw new IllegalArgumentException("Caveat verifier key must not have edge space or tab");
+      }
       if (map.putIfAbsent(key, cv) != null) {
         throw new IllegalArgumentException("Duplicate caveat verifier key: " + key);
       }
     }
     return Map.copyOf(map);
+  }
+
+  /**
+   * Emits one fixed decision for every padded caveat key that resolves to a registered verifier.
+   *
+   * <p>Call this only after authenticating the macaroon's original caveat bytes. Unknown padded
+   * keys intentionally produce no signal and observer failures are isolated.
+   */
+  public static void notifyPaddedKnownCaveats(
+      List<Caveat> caveats,
+      Map<String, CaveatVerifier> verifiersByKey,
+      SecurityDecisionObserver observer,
+      SecurityDecisionProtocol protocol,
+      String method,
+      String endpoint) {
+    for (Caveat caveat : caveats) {
+      String canonicalKey = CaveatKey.canonicalize(caveat.key());
+      if (!canonicalKey.equals(caveat.key()) && verifiersByKey.containsKey(canonicalKey)) {
+        SecurityDecisionObserver.notifySafely(
+            observer,
+            new SecurityDecision(
+                SecurityDecisionReason.PADDED_CAVEAT_KEY_NORMALIZED,
+                protocol,
+                method == null || method.isBlank() ? "_unknown" : method,
+                endpoint == null || endpoint.isBlank() ? "_unknown" : endpoint));
+      }
+    }
   }
 }

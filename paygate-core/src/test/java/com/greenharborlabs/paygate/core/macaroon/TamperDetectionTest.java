@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.core.macaroon;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.security.SecureRandom;
 import java.util.List;
@@ -241,6 +242,33 @@ class TamperDetectionTest {
    * deserialization and verification. Each tampered version must be rejected — either
    * deserialization throws (malformed data) or verification throws (signature mismatch).
    */
+  @Test
+  @DisplayName("padding edits fail before canonicalization observation")
+  void paddingEditFailsBeforeCanonicalizationObservation() {
+    MacaroonIdentifier id = randomIdentifier(new SecureRandom());
+    Macaroon original =
+        MacaroonMinter.mint(rootKey, id, null, List.of(new Caveat(" services", "test-service")));
+    Macaroon tampered =
+        new Macaroon(
+            original.identifier(),
+            original.location(),
+            List.of(new Caveat("services", "test-service")),
+            original.signature());
+    var observations = new java.util.concurrent.atomic.AtomicInteger();
+
+    assertThatThrownBy(
+            () ->
+                MacaroonVerifier.verify(
+                    tampered,
+                    rootKey,
+                    List.of(acceptingVerifier("services")),
+                    context,
+                    ignored -> observations.incrementAndGet()))
+        .isInstanceOf(MacaroonVerificationException.class)
+        .hasMessageContaining("signature verification failed");
+    assertThat(observations).hasValue(0);
+  }
+
   private void assertAllPositionsTamperDetected(byte[] serialized, List<CaveatVerifier> verifiers) {
     int rejectedCount = 0;
 
