@@ -216,8 +216,6 @@ public class PaygateChallengeService {
     // 3. Generate root key, create invoice, build context
     try {
       return buildChallengeContext(request, config, routePattern, request.getMethod());
-    } catch (PaygateLightningUnavailableException e) {
-      throw e;
     } catch (RuntimeException e) {
       throw new PaygateLightningUnavailableException(
           "Failed to create challenge: " + e.getMessage(), e);
@@ -409,6 +407,10 @@ public class PaygateChallengeService {
    * ApplicationContext is unavailable, or the bean does not exist.
    */
   long resolvePrice(HttpServletRequest request, PaygateEndpointConfig config) {
+    Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+    if (memoized instanceof TrustedRequestPrice(long amountSats)) {
+      return amountSats;
+    }
     String strategyName = config.pricingStrategy();
     if (strategyName == null || strategyName.isBlank() || applicationContext == null) {
       return config.priceSats();
@@ -435,6 +437,24 @@ public class PaygateChallengeService {
       // invalid price calculation and let the outer fail-closed path return 503 before minting.
       throw new IllegalArgumentException("Dynamic price calculation failed", e);
     }
+  }
+
+  /**
+   * Resolves and stores a trusted price for this request before credential validation.
+   *
+   * <p>This compatibility implementation uses the challenge service's established strategy lookup.
+   * It memoizes the outcome so validation and any replacement challenge consume the same amount.
+   * Auto-configuration supplies the bounded runner for production request paths.
+   */
+  public TrustedRequestPrice resolveTrustedPrice(
+      HttpServletRequest request, PaygateEndpointConfig config) {
+    Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+    if (memoized instanceof TrustedRequestPrice trustedRequestPrice) {
+      return trustedRequestPrice;
+    }
+    TrustedRequestPrice resolved = new TrustedRequestPrice(resolvePrice(request, config));
+    request.setAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE, resolved);
+    return resolved;
   }
 
   private static void validatePrice(long priceSats) {

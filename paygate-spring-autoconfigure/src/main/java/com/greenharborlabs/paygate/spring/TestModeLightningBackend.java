@@ -34,11 +34,11 @@ public final class TestModeLightningBackend implements LightningBackend {
   private static final int MAX_PREIMAGE_ENTRIES = 10_000;
 
   private final SecureRandom random;
-  private final Map<ByteBuffer, byte[]> preimagesByHash =
+  private final Map<ByteBuffer, Settlement> settlementsByHash =
       Collections.synchronizedMap(
           new LinkedHashMap<>(16, 0.75f, false) {
             @Override
-            protected boolean removeEldestEntry(Map.Entry<ByteBuffer, byte[]> eldest) {
+            protected boolean removeEldestEntry(Map.Entry<ByteBuffer, Settlement> eldest) {
               return size() > MAX_PREIMAGE_ENTRIES;
             }
           });
@@ -54,7 +54,8 @@ public final class TestModeLightningBackend implements LightningBackend {
     random.nextBytes(preimage);
     var paymentHash = sha256(preimage);
 
-    preimagesByHash.put(ByteBuffer.wrap(paymentHash), preimage.clone());
+    settlementsByHash.put(
+        ByteBuffer.wrap(paymentHash), new Settlement(preimage.clone(), amountSats));
 
     var bolt11 = "lntb" + amountSats + "test" + HexFormat.of().formatHex(paymentHash, 0, 4);
 
@@ -72,14 +73,15 @@ public final class TestModeLightningBackend implements LightningBackend {
 
   @Override
   public Invoice lookupInvoice(byte[] paymentHash) {
-    var preimage = preimagesByHash.get(ByteBuffer.wrap(paymentHash));
+    var settlement = settlementsByHash.get(ByteBuffer.wrap(paymentHash));
+    var preimage = settlement != null ? settlement.preimage() : null;
 
     var now = Instant.now();
     var status = preimage != null ? InvoiceStatus.SETTLED : InvoiceStatus.PENDING;
     return new Invoice(
         paymentHash,
         "lntb0test" + HexFormat.of().formatHex(paymentHash, 0, 4),
-        1,
+        settlement != null ? settlement.amountSats() : 1,
         null,
         status,
         preimage,
@@ -99,4 +101,6 @@ public final class TestModeLightningBackend implements LightningBackend {
       throw new AssertionError("SHA-256 not available", e);
     }
   }
+
+  private record Settlement(byte[] preimage, long amountSats) {}
 }

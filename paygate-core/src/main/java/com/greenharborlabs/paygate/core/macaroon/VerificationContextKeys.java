@@ -19,6 +19,12 @@ public final class VerificationContextKeys {
   public static final String REQUEST_CLIENT_IP = "request.client_ip";
   public static final String REQUESTED_CAPABILITY = "request.capability";
 
+  /** Trusted current endpoint price, in canonical decimal satoshis. */
+  public static final String CURRENT_PRICE_SATS = "request.current_price_sats";
+
+  /** Pricing stability declaration: {@code REQUEST_DEPENDENT} or {@code ROUTE_STABLE}. */
+  public static final String PRICING_STABILITY = "request.pricing_stability";
+
   private VerificationContextKeys() {
     // utility class
   }

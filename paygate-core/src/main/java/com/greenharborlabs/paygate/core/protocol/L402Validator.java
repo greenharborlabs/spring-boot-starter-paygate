@@ -13,11 +13,13 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
+import com.greenharborlabs.paygate.core.macaroon.PaidPriceCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -49,6 +51,7 @@ public final class L402Validator {
   private final String serviceName;
   private final String capabilityCaveatKey;
   private final CapabilitiesCaveatVerifier capabilitiesCaveatVerifier;
+  private final PaidPriceCaveatVerifier paidPriceCaveatVerifier;
 
   public L402Validator(
       RootKeyStore rootKeyStore,
@@ -61,7 +64,13 @@ public final class L402Validator {
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
     this.capabilityCaveatKey = this.serviceName + "_capabilities";
     List<CaveatVerifier> verifiers =
-        List.copyOf(Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
+        new ArrayList<>(
+            Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
+    this.paidPriceCaveatVerifier = new PaidPriceCaveatVerifier(this.serviceName);
+    if (verifiers.stream()
+        .noneMatch(verifier -> verifier.getKey().equals(paidPriceCaveatVerifier.getKey()))) {
+      verifiers.add(paidPriceCaveatVerifier);
+    }
     this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(verifiers);
     requireBoundaryVerifier(SERVICES_CAVEAT_KEY);
     requireBoundaryVerifier(ROUTE_CAVEAT_KEY);
@@ -258,6 +267,7 @@ public final class L402Validator {
           credentialStore.store(tokenId, credential, cacheTtl);
 
           returningCredential = true;
+          verifyPaidPrice(credential.macaroon(), context, tokenId);
           return new ValidationResult(
               credential,
               true,
@@ -338,6 +348,7 @@ public final class L402Validator {
     }
 
     Set<String> effectiveCapabilities = extractFinalEffectiveCapabilities(cached.macaroon());
+    verifyPaidPrice(cached.macaroon(), context, tokenId);
     return new ValidationResult(cached.copy(), false, effectiveCapabilities, verifiedAttributes);
   }
 
@@ -371,6 +382,37 @@ public final class L402Validator {
           extractFinalEffectiveCapabilities(macaroon), verifiedAttributes);
     } finally {
       KeyMaterial.zeroize(derivedKey, sig);
+    }
+  }
+
+  private void verifyPaidPrice(Macaroon macaroon, L402VerificationContext context, String tokenId) {
+    String currentValue =
+        context.getRequestMetadata().get(VerificationContextKeys.CURRENT_PRICE_SATS);
+    if (currentValue == null) {
+      return; // Compatibility callers that do not yet resolve a trusted request price.
+    }
+    final long currentPrice;
+    try {
+      currentPrice = PaidPriceCaveatVerifier.parse(currentValue);
+    } catch (MacaroonVerificationException exception) {
+      throw new PriceValidationException(
+          PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, tokenId);
+    }
+    Long coveredPrice = null;
+    for (Caveat caveat : macaroon.caveats()) {
+      if (paidPriceCaveatVerifier.getKey().equals(caveat.key())) {
+        long parsed = PaidPriceCaveatVerifier.parse(caveat.value());
+        coveredPrice = coveredPrice == null ? parsed : Math.min(coveredPrice, parsed);
+      }
+    }
+    if (coveredPrice == null) {
+      // Legacy credentials remain accepted by this core-only compatibility path. Spring request
+      // integrations opt into their stricter policy when the endpoint has an authoritative
+      // settled-invoice lookup; a core validator must not invent such evidence.
+      return;
+    }
+    if (coveredPrice < currentPrice) {
+      throw new PriceValidationException(PriceValidationException.Kind.INSUFFICIENT_PRICE, tokenId);
     }
   }
 

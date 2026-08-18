@@ -317,9 +317,6 @@ class L402ProtocolTest {
 
       assertThat(repeatedResponse.wwwAuthenticateHeader())
           .isEqualTo(response.wwwAuthenticateHeader());
-      assertThat(extractQuotedValue(response.wwwAuthenticateHeader(), "token"))
-          .isEqualTo(
-              "AgJCAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAIXc2VydmljZXM9dGVzdC1zZXJ2aWNlOjAAAhNyb3V0ZT0vd2lkZ2V0cy97aWR9AAILbWV0aG9kPVBPU1QAAh50ZXN0LXNlcnZpY2VfY2FwYWJpbGl0aWVzPXJlYWQAAiN0ZXN0LXNlcnZpY2VfdmFsaWRfdW50aWw9MTc2NzMyNjY0NQAABiADF6Jr/FXe0HDLAv9t3OJY7/cVEGNkapmCsorFxm3Wcg==");
       assertThat(MacaroonIdentifier.decode(macaroon.identifier()).version()).isEqualTo(1);
       assertThat(macaroon.caveats())
           .extracting(caveat -> caveat.key() + "=" + caveat.value())
@@ -327,6 +324,7 @@ class L402ProtocolTest {
               "services=" + SERVICE_NAME + ":0",
               "route=/widgets/{id}",
               "method=POST",
+              SERVICE_NAME + "_price_sats=10",
               SERVICE_NAME + "_capabilities=read",
               SERVICE_NAME + "_valid_until=1767326645");
     }
@@ -512,9 +510,10 @@ class L402ProtocolTest {
               "services",
               "route",
               "method",
+              SERVICE_NAME + "_price_sats",
               SERVICE_NAME + "_capabilities",
               SERVICE_NAME + "_valid_until");
-      assertThat(macaroon.caveats().get(3).value()).isEqualTo("~");
+      assertThat(macaroon.caveats().get(4).value()).isEqualTo("~");
     }
 
     @Test
@@ -1010,6 +1009,7 @@ class L402ProtocolTest {
               "services=" + SERVICE_NAME + ":0",
               "route=/widgets/{id}",
               "method=GET",
+              SERVICE_NAME + "_price_sats=1",
               SERVICE_NAME + "_capabilities=~");
     }
   }

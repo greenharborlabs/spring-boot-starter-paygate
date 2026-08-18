@@ -113,6 +113,9 @@ public class L402Protocol implements PaymentProtocol {
     caveats.add(new Caveat("services", serviceName + ":0"));
     caveats.add(new Caveat("route", routePattern));
     caveats.add(new Caveat("method", requestMethod));
+    // The invoice amount is authenticated by the macaroon HMAC, preventing a lower-priced
+    // credential from being reused after a trusted route price increases.
+    caveats.add(new Caveat(serviceName + "_price_sats", Long.toString(context.priceSats())));
     String capability = context.capability();
     String capabilityCeiling = capability == null || capability.isBlank() ? "~" : capability;
     caveats.add(new Caveat(serviceName + "_capabilities", capabilityCeiling));

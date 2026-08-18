@@ -164,6 +164,17 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
 
+    // Resolve exactly once before either credential validation or challenge creation. The result
+    // is request-scoped and therefore cannot drift between an insufficient-price response and its
+    // replacement invoice.
+    try {
+      challengeService.resolveTrustedPrice(httpRequest, resolvedEndpoint.config());
+    } catch (RuntimeException e) {
+      log.log(System.Logger.Level.WARNING, "Trusted price evaluation failed; failing closed");
+      PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+      return;
+    }
+
     // 2. Check Authorization header — validate credentials before checking Lightning health,
     //    so requests with valid cached credentials skip the health-check cost entirely.
     String authHeader = httpRequest.getHeader(AUTHORIZATION_HEADER);
@@ -269,6 +280,17 @@ public class PaygateSecurityFilter implements Filter {
     if (capability != null && !capability.isEmpty()) {
       context.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
+    TrustedRequestPrice trustedPrice =
+        (TrustedRequestPrice)
+            httpRequest.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+    if (trustedPrice == null) {
+      // Some container and unit-test request implementations do not retain attributes. The
+      // endpoint's configured price is still trusted for fixed-price policies.
+      trustedPrice = new TrustedRequestPrice(config.priceSats());
+    }
+    context.put(
+        VerificationContextKeys.CURRENT_PRICE_SATS, Long.toString(trustedPrice.amountSats()));
+    context.put(VerificationContextKeys.PRICING_STABILITY, config.pricingStability().name());
     return Map.copyOf(context);
   }
 

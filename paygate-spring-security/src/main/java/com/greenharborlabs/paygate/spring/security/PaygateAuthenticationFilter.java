@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
+import com.greenharborlabs.paygate.spring.TrustedRequestPrice;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -162,6 +163,20 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       return;
     }
 
+    try {
+      if (authenticationEntryPoint != null) {
+        authenticationEntryPoint.resolveTrustedPrice(request, resolvedEndpoint);
+      } else {
+        request.setAttribute(
+            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE",
+            new TrustedRequestPrice(resolvedEndpoint.config().priceSats()));
+      }
+    } catch (RuntimeException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeLightningUnavailable(response);
+      return;
+    }
+
     if (authHeader == null) {
       SecurityContextHolder.clearContext();
       if (authenticationEntryPoint == null) {
@@ -193,7 +208,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
               normalizedPath,
               resolvedEndpoint.routePattern(),
               capability,
-              includeDigest);
+              includeDigest,
+              endpointConfig);
     } catch (RequestBodyTooLargeException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
@@ -265,7 +281,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       String normalizedPath,
       String canonicalRoute,
       String capability,
-      boolean includeDigest)
+      boolean includeDigest,
+      PaygateEndpointConfig endpointConfig)
       throws IOException {
     Map<String, String> metadata = new HashMap<>(5);
     metadata.put(VerificationContextKeys.REQUEST_PATH, normalizedPath);
@@ -282,6 +299,17 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     if (capability != null && !capability.isBlank()) {
       metadata.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
+    Object resolvedPrice =
+        request.getAttribute(
+            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE");
+    TrustedRequestPrice trustedPrice =
+        resolvedPrice instanceof TrustedRequestPrice candidate
+            ? candidate
+            : new TrustedRequestPrice(endpointConfig.priceSats());
+    metadata.put(
+        VerificationContextKeys.CURRENT_PRICE_SATS, Long.toString(trustedPrice.amountSats()));
+    metadata.put(
+        VerificationContextKeys.PRICING_STABILITY, endpointConfig.pricingStability().name());
     return metadata;
   }
 

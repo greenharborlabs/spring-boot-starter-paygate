@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
+import com.greenharborlabs.paygate.spring.TrustedRequestPrice;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -87,6 +88,12 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
     }
 
     commence(request, response, resolvedEndpoint);
+  }
+
+  /** Resolves the request price once for the Security filter and this entry point. */
+  public TrustedRequestPrice resolveTrustedPrice(
+      HttpServletRequest request, ResolvedEndpoint resolvedEndpoint) {
+    return challengeService.resolveTrustedPrice(request, resolvedEndpoint.config());
   }
 
   /**

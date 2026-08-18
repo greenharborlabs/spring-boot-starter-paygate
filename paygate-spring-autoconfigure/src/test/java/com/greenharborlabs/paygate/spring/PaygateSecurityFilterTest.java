@@ -1035,16 +1035,18 @@ class PaygateSecurityFilterTest {
       byte[] macaroonBytes = Base64.getDecoder().decode(macaroonB64);
       Macaroon macaroon = MacaroonSerializer.deserializeV2(macaroonBytes);
 
-      assertThat(macaroon.caveats()).hasSize(5);
+      assertThat(macaroon.caveats()).hasSize(6);
       assertThat(macaroon.caveats().get(0).key()).isEqualTo("services");
       assertThat(macaroon.caveats().get(0).value()).isEqualTo(SERVICE_NAME + ":0");
       assertThat(macaroon.caveats().get(1)).isEqualTo(new Caveat("route", PROTECTED_PATH));
       assertThat(macaroon.caveats().get(2)).isEqualTo(new Caveat("method", "GET"));
       assertThat(macaroon.caveats().get(3))
+          .isEqualTo(new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)));
+      assertThat(macaroon.caveats().get(4))
           .isEqualTo(new Caveat(SERVICE_NAME + "_capabilities", "~"));
-      assertThat(macaroon.caveats().get(4).key()).isEqualTo(SERVICE_NAME + "_valid_until");
+      assertThat(macaroon.caveats().get(5).key()).isEqualTo(SERVICE_NAME + "_valid_until");
       // valid_until should be a numeric epoch seconds value in the future
-      long epochSeconds = Long.parseLong(macaroon.caveats().get(4).value());
+      long epochSeconds = Long.parseLong(macaroon.caveats().get(5).value());
       assertThat(Instant.ofEpochSecond(epochSeconds)).isAfter(Instant.now());
     }
 
