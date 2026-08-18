@@ -952,6 +952,15 @@ First-party L402 macaroons are bound to the canonical registered route, the actu
 - Credentials issued before these boundaries were required are intentionally rejected when they omit `route`, `method`, or the capability ceiling. This deliberate compatibility break cannot be configured away; clients recover by obtaining a new challenge.
 - Diagnostics redact bearer material. Do not log full macaroons, payment preimages, `Authorization` headers, root keys, or detailed validation reasons; safe summaries expose only structural counts or lengths and non-secret identifiers.
 
+### Trusted Spring Security Attributes
+
+Spring Security authentication exposes protected token metadata and only caveat attributes returned
+by successful registered verifiers. Holder-appended or otherwise merely parsed caveats never become
+attributes or authorities. The legacy credential-only L402 token factories remain callable but are
+deprecated: they expose system metadata and explicit capabilities only. Integrations needing
+caveat-derived facts must use the `L402Validator.ValidationResult` factory path so provenance is
+preserved.
+
 ### Supported Parsing and Delegation Limits
 
 - Macaroon V2 inputs must use canonical bounded encodings and strictly valid UTF-8 caveat text. Third-party caveats and additional/discharge macaroons are unsupported and rejected; Paygate does not partially trust parsed authorization material.
@@ -980,6 +989,10 @@ Before upgrading, inventory outstanding L402 and MPP credentials, proxy settings
 The upgrade intentionally rejects identifier-v0 or boundary-incomplete L402 credentials, noncanonical macaroon/MPP encodings, MPP credentials without authenticated expiry, MPP requests whose exact raw-query presence/value differs, third-party caveats, and additional macaroons. Drain or allow old credentials to expire before rollout where possible; otherwise clients must obtain and pay a new challenge. Treat a rollback carefully: credentials issued under the hardened exact-request contract may not restore compatibility with legacy clients, and rolling back re-enables acceptance behavior that this release deliberately removed. Keep root keys and both current/previous MPP binding secrets available only for the planned migration window; never copy secrets into logs or release evidence.
 
 Roll out first to a canary with the production routing and Spring Security topology. Verify fixed 400/402 client failures, 429 throttling, fail-closed 503 outages, zero replacement artifacts for presented invalid credentials, redispatch behavior, bounded metrics, and secret-free health/log output before expanding traffic.
+
+Custom integrations that call `PaygateAuthenticationToken.authenticated(L402Credential, ...)`
+must migrate to the `L402Validator.ValidationResult` overload if they need verified caveat
+attributes. The retained credential-only overloads intentionally no longer expose raw caveats.
 
 ---
 

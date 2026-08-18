@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **M-1 — trusted Spring Security attributes**: Deprecated credential-only L402 authentication
+  factories now expose protected system metadata and explicit capabilities only; they no longer
+  copy raw caveats. Use the new `L402Validator.ValidationResult` factory to carry
+  verifier-approved attributes into authentication state.
+
 ## [0.1.5] - 2026-08-16
 
 ### Security

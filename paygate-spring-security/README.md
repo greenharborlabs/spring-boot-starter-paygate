@@ -200,20 +200,28 @@ The token has two states:
 
 | Property | Value |
 |----------|-------|
-| `credential` | Validated `L402Credential` object |
+| `credential` | Not retained after authentication |
 | `tokenId` | Hex-encoded 32-byte token identifier |
 | `serviceName` | Service name from configuration (`paygate.service-name`) |
 | `authenticated` | `true` |
 | `authorities` | `[ROLE_PAYMENT, ROLE_L402]` + `[L402_CAPABILITY_*]` and `[PAYGATE_CAPABILITY_*]` for each capability in the final verified effective set |
 | `principal` | token ID string |
 | `credentials` | `[REDACTED]`; no raw authorization header, parsed credential components, preimage, `L402Credential`, or `PaymentCredential` is retained |
-| `attributes` | Immutable map of verifier-approved values plus `tokenId` and `serviceName` |
+| `attributes` | Immutable map of verifier-approved values plus protected `tokenId`, `serviceName`, and `protocolScheme` metadata |
 
 Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
-#### Security: Attribute Overwrite Protection
+#### Security: Verified Attribute Provenance and Migration
 
-Built-in attributes (`tokenId`, `serviceName`) are inserted into the attributes map after caveat-derived entries. This ensures that attacker-controlled caveat keys cannot overwrite trusted values. A macaroon with a caveat `tokenId=attacker-value` will have that entry replaced by the real token ID.
+Only `L402Validator.ValidationResult.verifiedAttributes()` can supply caveat-derived attributes to
+an authenticated L402 token. Protected metadata (`tokenId`, `serviceName`, and `protocolScheme`)
+always takes precedence over a colliding value.
+
+The retained `authenticated(L402Credential, String)` and capability overload are deprecated for
+binary compatibility. A credential alone does not establish caveat-verifier provenance, so these
+methods now return protected system metadata and explicit capability authorities only; they never
+copy raw caveats. Migrate integrations that need caveat facts to
+`authenticated(L402Validator.ValidationResult, String)` using the result returned by validation.
 
 ### PaygateAuthenticationFilter
 
@@ -401,7 +409,7 @@ public class PremiumController {
         return Map.of(
             "tokenId", l402Token.getTokenId(),
             "service", l402Token.getServiceName(),
-            "tier", l402Token.getAttribute("tier"),  // from macaroon caveats
+            "tier", l402Token.getAttribute("tier"),  // only when a verifier approved it
             "data", "premium content"
         );
     }
@@ -515,6 +523,11 @@ Existing `hasRole('L402')` rules remain usable, but credential compatibility is 
 `MacaroonVerifier` accepts attribute provenance only from non-blank, uniquely registered, case-sensitive verifier keys. Each accepted value is captured immutably and is carried by `L402Validator.ValidationResult.verifiedAttributes()` for both fresh and cached validation. Spring Security maps attributes and capability authorities only from that verified result; it does not treat arbitrary caveats as claims.
 
 Payment roles are issued by the server: validated credentials receive `ROLE_PAYMENT`, and L402 credentials also receive `ROLE_L402`. A holder cannot mint Spring Security roles or authorities by adding caveats such as `role=ADMIN`. Capability authorities likewise come only from the verified effective capability ceiling.
+
+For binary compatibility, credential-only L402 factories remain callable but are deprecated. They
+expose protected metadata and explicit capability authorities only, because parsed caveats are not
+trusted facts. Use `authenticated(L402Validator.ValidationResult, String)` after validation when
+an integration needs verifier-approved attributes.
 
 ### Capability Non-Portability
 
@@ -715,7 +728,9 @@ void premiumEndpointReturnsDataForL402User() {
         new Caveat("tier", "premium")
     ));
 
-    var token = PaygateAuthenticationToken.authenticated(credential, "my-api");
+    var result = new L402Validator.ValidationResult(
+        credential, true, Set.of(), Map.of("tier", "premium")); // verifier-approved only
+    var token = PaygateAuthenticationToken.authenticated(result, "my-api");
     SecurityContextHolder.getContext().setAuthentication(token);
 
     // Call your controller or use MockMvc with .with(authentication(token))
@@ -733,7 +748,7 @@ void premiumEndpointRequiresL402() throws Exception {
 
 @Test
 void premiumEndpointAccessibleWithL402() throws Exception {
-    var token = PaygateAuthenticationToken.authenticated(credential, "my-api");
+    var token = PaygateAuthenticationToken.authenticated(validationResult, "my-api");
 
     mockMvc.perform(get("/api/premium/data")
             .with(authentication(token)))

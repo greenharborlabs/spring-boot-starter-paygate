@@ -341,6 +341,39 @@ class PaygateAuthenticationProviderTest {
       assertThat(authenticated.getAttributes())
           .doesNotContainKeys("role", SERVICE_NAME + "_capabilities");
     }
+
+    @Test
+    void snapshotsImmutableVerifiedDetailsAndAuthoritiesFromValidationResult() {
+      L402Credential credential = createTestCredential(List.of(new Caveat("role", "admin")));
+      var verifiedAttributes = new java.util.HashMap<String, String>();
+      verifiedAttributes.put("tenant", "verified-tenant");
+      when(l402Validator.validate(
+              any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+          .thenReturn(
+              new L402Validator.ValidationResult(
+                  credential, true, Set.of("read"), verifiedAttributes));
+      verifiedAttributes.put("tenant", "mutated-after-validation");
+
+      var authenticated =
+          (PaygateAuthenticationToken)
+              provider.authenticate(
+                  new PaygateAuthenticationToken(
+                      new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64))));
+
+      assertThat(authenticated.getAttributes())
+          .containsEntry("tenant", "verified-tenant")
+          .doesNotContainKey("role");
+      assertThatThrownBy(() -> authenticated.getAttributes().put("tenant", "mutated"))
+          .isInstanceOf(UnsupportedOperationException.class);
+      assertThatThrownBy(
+              () ->
+                  authenticated
+                      .getAuthorities()
+                      .add(
+                          new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                              "ROLE_ADMIN")))
+          .isInstanceOf(UnsupportedOperationException.class);
+    }
   }
 
   // ========== CapabilityResolver integration tests ==========

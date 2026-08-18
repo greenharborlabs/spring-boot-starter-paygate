@@ -97,12 +97,7 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       L402Validator.ValidationResult result = l402Validator.validate(components, context);
       L402Credential credential = result.credential();
       try {
-        return PaygateAuthenticationToken.authenticated(
-            credential.tokenId(),
-            serviceName,
-            "L402",
-            result.verifiedAttributes(),
-            l402Authorities(result.effectiveCapabilities()));
+        return PaygateAuthenticationToken.authenticated(result, serviceName);
       } finally {
         credential.destroy();
       }
@@ -154,19 +149,6 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
           e);
       return Set.of();
     }
-  }
-
-  private static Set<GrantedAuthority> l402Authorities(Set<String> capabilities) {
-    Set<GrantedAuthority> authorities = new LinkedHashSet<>();
-    authorities.add(new SimpleGrantedAuthority("ROLE_PAYMENT"));
-    authorities.add(new SimpleGrantedAuthority("ROLE_L402"));
-    for (String capability : capabilities) {
-      if (capability != null) {
-        authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + capability));
-        authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + capability));
-      }
-    }
-    return Set.copyOf(authorities);
   }
 
   private static Set<GrantedAuthority> paymentAuthorities(Set<String> capabilities) {

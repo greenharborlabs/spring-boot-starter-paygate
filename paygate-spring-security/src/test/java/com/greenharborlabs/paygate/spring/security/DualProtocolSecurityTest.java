@@ -262,17 +262,17 @@ class DualProtocolSecurityTest {
     }
 
     @Test
-    void l402AuthenticatedTokenAttributesContainCaveatDerivedValues() {
+    void deprecatedL402CredentialFactoryExposesOnlySystemMetadata() {
       L402Credential credential =
           createTestL402Credential(
               List.of(new Caveat("service", "api"), new Caveat("tier", "premium")));
       var token = PaygateAuthenticationToken.authenticated(credential, SERVICE_NAME);
 
       assertThat(token.getAttributes())
-          .containsEntry("service", "api")
-          .containsEntry("tier", "premium")
           .containsEntry("tokenId", credential.tokenId())
-          .containsEntry("serviceName", SERVICE_NAME);
+          .containsEntry("serviceName", SERVICE_NAME)
+          .containsEntry("protocolScheme", "L402")
+          .doesNotContainKeys("service", "tier");
     }
   }
 
