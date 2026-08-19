@@ -766,6 +766,13 @@ challengeable with a fresh 402; unavailable or ambiguous evidence fails closed w
 `ROUTE_STABLE` only for genuinely fixed route-and-method pricing; undeclared routes are request
 dependent.
 
+### Security decision telemetry and evidence
+
+Spring Security preserves the same fixed, sanitized decision taxonomy as servlet enforcement.
+Observer or metric-sink failure cannot change authentication, rejection, rechallenge, or status
+mapping. M-1 through M-4 implementation and review evidence is tracked in
+`docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md`.
+
 ---
 
 ## License

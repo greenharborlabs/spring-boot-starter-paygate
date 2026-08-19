@@ -74,6 +74,62 @@ class PublicSecurityContractTest {
         });
   }
 
+  @Test
+  @DisplayName("keeps every Kimi Medium finding tied to public compatibility and failure evidence")
+  void keepsKimiMediumFindingEvidenceTraceable() throws IOException {
+    var workspace = workspaceRoot();
+    var ledger = documentation(workspace, "docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md");
+    var vector =
+        documentation(
+            workspace,
+            "paygate-protocol-l402/src/test/resources/test-vectors/l402-paid-price-vectors.json");
+    var validatorTests =
+        documentation(
+            workspace,
+            "paygate-core/src/test/java/com/greenharborlabs/paygate/core/protocol/L402ValidatorTest.java");
+    var macaroonVerifierTests =
+        documentation(
+            workspace,
+            "paygate-core/src/test/java/com/greenharborlabs/paygate/core/macaroon/MacaroonVerifierTest.java");
+    var core = documentation(workspace, "paygate-core/README.md");
+    var root = documentation(workspace, "README.md");
+
+    SoftAssertions.assertSoftly(
+        assertions -> {
+          assertions
+              .assertThat(ledger)
+              .contains("m-1")
+              .contains("m-2")
+              .contains("m-3")
+              .contains("m-4")
+              .contains("implemented")
+              .contains("approval status");
+          assertions
+              .assertThat(vector)
+              .contains("rootkeyhex")
+              .contains("paymentpreimagehex")
+              .contains("coveredamountsats")
+              .contains("price_sats")
+              .contains("signaturehex");
+          assertions
+              .assertThat(validatorTests)
+              .contains("wrong preimage")
+              .contains("tampered")
+              .contains("signed paid-price enforcement");
+          assertions.assertThat(macaroonVerifierTests).contains("wrong root");
+          assertions
+              .assertThat(core)
+              .contains("ascii space")
+              .contains("horizontal-tab")
+              .contains("price_sats");
+          assertions
+              .assertThat(root)
+              .contains("request_dependent")
+              .contains("route_stable")
+              .contains("observed");
+        });
+  }
+
   private static String documentation(Path workspace, String relativePath) throws IOException {
     return Files.readString(workspace.resolve(relativePath)).toLowerCase().replaceAll("\\s+", " ");
   }

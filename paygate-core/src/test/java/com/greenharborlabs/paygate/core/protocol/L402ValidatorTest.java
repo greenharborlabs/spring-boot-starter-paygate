@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
@@ -2137,6 +2139,31 @@ class L402ValidatorTest {
               failure ->
                   assertThat(((PriceValidationException) failure).kind())
                       .isEqualTo(PriceValidationException.Kind.MISSING_PRICE_EVIDENCE));
+    }
+
+    @Test
+    void reportsOneTypedDecisionForInsufficientSignedPrice() {
+      var decisions = new ArrayList<SecurityDecision>();
+      String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              boundaryVerifiers(),
+              SERVICE_NAME,
+              unavailableLightningBackend(),
+              decisions::add);
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("11", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class);
+
+      assertThat(decisions)
+          .containsExactly(
+              new SecurityDecision(
+                  SecurityDecisionReason.INSUFFICIENT_PRICE,
+                  com.greenharborlabs.paygate.api.SecurityDecisionProtocol.L402,
+                  REQUEST_METHOD,
+                  REQUEST_ROUTE));
     }
   }
 

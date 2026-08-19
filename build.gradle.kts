@@ -356,6 +356,7 @@ val supplyChainNegativeControlTasks = mapOf(
     "verifyReleaseHygieneNegativeControls" to "scripts/test-release-hygiene.sh",
     "verifyReleaseWorkflowNegativeControls" to "scripts/test-release-workflow.sh",
     "verifyAddressSecurityFindingNegativeControls" to "scripts/test-address-security-finding-dispositions.sh",
+    "verifyMediumSecurityFindingNegativeControls" to "scripts/test-validate-medium-security-finding-dispositions.sh",
     "verifyExampleArtifactSafetyNegativeControls" to "scripts/test-example-artifact-safety.sh",
     "verifyDependencyCheckRiskNegativeControls" to "scripts/test-dependency-check-risk-dispositions.sh",
 ).map { (taskName, scriptPath) ->
@@ -394,6 +395,14 @@ val validateAddressSecurityFindingDispositions = tasks.register<Exec>("validateA
     outputs.upToDateWhen { false }
 }
 
+val validateMediumSecurityFindingDispositions = tasks.register<Exec>("validateMediumSecurityFindingDispositions") {
+    group = "verification"
+    description = "Validates the four-finding Kimi Medium security disposition ledger."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-medium-security-finding-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
 val validateDependencyCheckRiskDispositions = tasks.register<Exec>("validateDependencyCheckRiskDispositions") {
     group = "verification"
     description = "Rejects dependency suppressions without a scoped, approved, current risk record."
@@ -417,6 +426,14 @@ val verifyModuleCoverage = tasks.register("verifyModuleCoverage") {
     dependsOn(subprojects.map { it.tasks.named("jacocoTestCoverageVerification") })
 }
 
+tasks.register("check") {
+    group = "verification"
+    description = "Runs module checks and Kimi Medium finding disposition validation."
+    dependsOn(subprojects.map { "${it.path}:check" })
+    dependsOn(validateMediumSecurityFindingDispositions)
+    dependsOn("verifyMediumSecurityFindingNegativeControls")
+}
+
 tasks.register("releaseReadiness") {
     group = "verification"
     description = "Runs the full local release gate: build, dependency health, integration tests, and aggregate Javadoc."
@@ -430,6 +447,7 @@ tasks.register("releaseReadiness") {
     dependsOn(verifySupplyChainNegativeControls)
     dependsOn(validateFindingDispositions)
     dependsOn(validateAddressSecurityFindingDispositions)
+    dependsOn(validateMediumSecurityFindingDispositions)
     dependsOn(validateDependencyCheckRiskDispositions)
     dependsOn(verifyExampleArtifactSafety)
     dependsOn("dependencyCheckAggregate")

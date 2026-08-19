@@ -1,7 +1,9 @@
 package com.greenharborlabs.paygate.core.protocol;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
 import com.greenharborlabs.paygate.api.SecurityDecisionObserver;
 import com.greenharborlabs.paygate.api.SecurityDecisionProtocol;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
@@ -496,35 +498,65 @@ public final class L402Validator {
 
   private PaidPriceEvidence verifyPaidPrice(
       Macaroon macaroon, L402VerificationContext context, String tokenId) {
-    String currentValue =
-        context.getRequestMetadata().get(VerificationContextKeys.CURRENT_PRICE_SATS);
-    if (currentValue == null) {
-      return PaidPriceEvidence.absent();
-    }
-    final long currentPrice;
     try {
-      currentPrice = PaidPriceCaveatVerifier.parse(currentValue);
-    } catch (MacaroonVerificationException exception) {
-      throw new PriceValidationException(
-          PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, tokenId);
-    }
-    Long coveredPrice = null;
-    for (Caveat caveat : macaroon.caveats()) {
-      if (paidPriceCaveatVerifier.getKey().equals(CaveatKey.canonicalize(caveat.key()))) {
-        long parsed = PaidPriceCaveatVerifier.parse(caveat.value());
-        coveredPrice = coveredPrice == null ? parsed : Math.min(coveredPrice, parsed);
+      String currentValue =
+          context.getRequestMetadata().get(VerificationContextKeys.CURRENT_PRICE_SATS);
+      if (currentValue == null) {
+        return PaidPriceEvidence.absent();
       }
+      final long currentPrice;
+      try {
+        currentPrice = PaidPriceCaveatVerifier.parse(currentValue);
+      } catch (MacaroonVerificationException exception) {
+        throw new PriceValidationException(
+            PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, tokenId);
+      }
+      Long coveredPrice = null;
+      for (Caveat caveat : macaroon.caveats()) {
+        if (paidPriceCaveatVerifier.getKey().equals(CaveatKey.canonicalize(caveat.key()))) {
+          long parsed = PaidPriceCaveatVerifier.parse(caveat.value());
+          coveredPrice = coveredPrice == null ? parsed : Math.min(coveredPrice, parsed);
+        }
+      }
+      if (coveredPrice == null) {
+        return verifyLegacyPaidPrice(macaroon, currentPrice, context, tokenId);
+      }
+      if (coveredPrice < currentPrice) {
+        throw new PriceValidationException(
+            PriceValidationException.Kind.INSUFFICIENT_PRICE, tokenId);
+      }
+      return new PaidPriceEvidence(
+          java.util.OptionalLong.of(coveredPrice),
+          java.util.OptionalLong.of(currentPrice),
+          pricingStability(context));
+    } catch (PriceValidationException failure) {
+      reportPriceDecision(failure, context);
+      throw failure;
     }
-    if (coveredPrice == null) {
-      return verifyLegacyPaidPrice(macaroon, currentPrice, context, tokenId);
+  }
+
+  private void reportPriceDecision(
+      PriceValidationException failure, L402VerificationContext context) {
+    SecurityDecisionReason reason =
+        switch (failure.kind()) {
+          case INSUFFICIENT_PRICE -> SecurityDecisionReason.INSUFFICIENT_PRICE;
+          case MISSING_PRICE_EVIDENCE -> SecurityDecisionReason.MISSING_PRICE_EVIDENCE;
+          case ROUTE_STABLE_PRICE_INCREASE -> SecurityDecisionReason.ROUTE_STABLE_PRICE_INCREASE;
+          default -> null;
+        };
+    if (reason == null) {
+      return;
     }
-    if (coveredPrice < currentPrice) {
-      throw new PriceValidationException(PriceValidationException.Kind.INSUFFICIENT_PRICE, tokenId);
-    }
-    return new PaidPriceEvidence(
-        java.util.OptionalLong.of(coveredPrice),
-        java.util.OptionalLong.of(currentPrice),
-        pricingStability(context));
+    Map<String, String> metadata = context.getRequestMetadata();
+    String method = metadata.get(VerificationContextKeys.REQUEST_METHOD);
+    String endpoint = metadata.get(VerificationContextKeys.REQUEST_ROUTE);
+    SecurityDecisionObserver.notifySafely(
+        decisionObserver,
+        new SecurityDecision(
+            reason,
+            SecurityDecisionProtocol.L402,
+            method == null || method.isBlank() ? "_unknown" : method,
+            endpoint == null || endpoint.isBlank() ? "_unknown" : endpoint));
   }
 
   private PaidPriceEvidence verifyLegacyPaidPrice(

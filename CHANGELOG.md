@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factories now expose protected system metadata and explicit capabilities only; they no longer
   copy raw caveats. Use the new `L402Validator.ValidationResult` factory to carry
   verifier-approved attributes into authentication state.
+- **M-1–M-4 — auditable remediation evidence**: Added the tracked Kimi Medium finding ledger,
+  strict disposition validator, isolated negative controls, and build/release gates. Rows remain
+  implemented with approval pending until successful current-implementation evidence and named
+  security or release review are recorded.
 
 ## [0.1.5] - 2026-08-16
 

@@ -1083,6 +1083,10 @@ view to both pricing and the eventual handler. Strategies must use server-observ
 `Content-Length`, transfer metadata, or other client declarations. The published size-priced example
 routes accept only identity encoding; a non-identity `Content-Encoding` is rejected before challenge
 creation or protected work, and emits one sanitized `COMPRESSED_BODY_REJECTED` security decision.
+
+The Kimi M-1 through M-4 remediation ledger in
+[`docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md`](docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md)
+links these controls to tests, migration guidance, residual risk, and release-review evidence.
 Set `paygate.request-body.max-bytes` for the largest accepted paid request; an over-bound or unreadable
 body fails closed and is never silently priced at the base amount.
 

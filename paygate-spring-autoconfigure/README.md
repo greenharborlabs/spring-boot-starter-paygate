@@ -926,6 +926,13 @@ cannot depend on request data; the safe default is `REQUEST_DEPENDENT`. Missing 
 timeouts, saturation, invalid amounts, and ambiguous legacy payment evidence return 503. A signed
 credential that covers too little receives a fresh 402 at the memoized current price.
 
+### Security decision telemetry and evidence
+
+The optional observer emits fixed reason/protocol/method/endpoint dimensions only. Metrics and
+structured events are best effort, cardinality-capped, and never include credentials, payment
+proofs, caveats, headers, bodies, or exception messages. The Kimi M-1 through M-4 disposition
+ledger links these controls to tests, migration guidance, residual risk, and release review.
+
 ---
 
 ## License
