@@ -42,6 +42,8 @@ import java.util.Set;
  * macaroon signature on all paths. This prevents oracle attacks where an adversary without
  * proof-of-payment can probe macaroon validity through differential error responses.
  */
+@SuppressWarnings(
+    "PMD.CyclomaticComplexity") // Security-critical validation order must remain explicit
 public final class L402Validator {
 
   private static final System.Logger log = System.getLogger(L402Validator.class.getName());

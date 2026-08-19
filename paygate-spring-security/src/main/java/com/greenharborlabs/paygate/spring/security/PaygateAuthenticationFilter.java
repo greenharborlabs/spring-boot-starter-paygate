@@ -49,6 +49,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * missing or unrelated credential is rejected before downstream authorization can apply a {@code
  * permitAll} rule.
  */
+@SuppressWarnings("PMD.CyclomaticComplexity") // Security response classification must stay explicit
 public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
   private static final System.Logger log =
