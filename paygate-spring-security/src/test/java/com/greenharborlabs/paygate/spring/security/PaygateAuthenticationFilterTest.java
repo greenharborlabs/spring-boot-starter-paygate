@@ -14,8 +14,10 @@ import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
@@ -429,6 +431,57 @@ class PaygateAuthenticationFilterTest {
             "{\"code\": 401, \"error\": \"AUTHENTICATION_FAILED\", \"message\": \"L402 authentication failed\"}");
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(filterChain, never()).doFilter(request, response);
+  }
+
+  @Test
+  void createsReplacementChallengeForChallengeablePaidPriceFailure()
+      throws ServletException, IOException {
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    var priceFailure =
+        new PriceValidationException(
+            PriceValidationException.Kind.INSUFFICIENT_PRICE, "token-1234");
+    when(authenticationManager.authenticate(any()))
+        .thenThrow(
+            new BadCredentialsException(
+                "L402 authentication failed",
+                new PaymentValidationException(
+                    PaymentValidationException.ErrorCode.INSUFFICIENT,
+                    "L402 paid-price validation failed",
+                    "token-1234",
+                    priceFailure)));
+
+    filter.doFilter(request, response, filterChain);
+
+    verify(authenticationEntryPoint)
+        .commenceReplacement(
+            org.mockito.ArgumentMatchers.same(request),
+            org.mockito.ArgumentMatchers.same(response),
+            any(ResolvedEndpoint.class));
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void returns503WithoutReplacementWhenPaidPriceEvidenceIsUnavailable()
+      throws ServletException, IOException {
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    var priceFailure =
+        new PriceValidationException(
+            PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, "token-1234");
+    when(authenticationManager.authenticate(any()))
+        .thenThrow(
+            new BadCredentialsException(
+                "L402 authentication failed",
+                new PaymentValidationException(
+                    PaymentValidationException.ErrorCode.UNAVAILABLE,
+                    "L402 paid-price validation failed",
+                    "token-1234",
+                    priceFailure)));
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(503);
+    verify(authenticationEntryPoint, never()).commenceReplacement(any(), any(), any());
+    verify(filterChain, never()).doFilter(any(), any());
   }
 
   @Test

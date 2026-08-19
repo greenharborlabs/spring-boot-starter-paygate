@@ -8,6 +8,9 @@ import com.greenharborlabs.paygate.api.SecurityDecision;
 import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
+import com.greenharborlabs.paygate.core.lightning.Invoice;
+import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
+import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
@@ -2123,6 +2126,42 @@ class L402ValidatorTest {
     }
 
     @Test
+    void usesTheMostRestrictiveRepeatedSignedPriceOnFreshAndCachedPaths() {
+      String header =
+          buildAuthHeader(
+              List.of(
+                  new Caveat(SERVICE_NAME + "_price_sats", "10"),
+                  new Caveat(SERVICE_NAME + "_price_sats", "9")));
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      L402Validator.ValidationResult fresh =
+          validator.validate(header, pricedContext("9", "REQUEST_DEPENDENT"));
+      try {
+        assertThat(fresh.freshValidation()).isTrue();
+        assertThat(fresh.paidPriceEvidence().coveredAmountSats()).hasValue(9);
+      } finally {
+        fresh.credential().destroy();
+      }
+
+      L402Validator.ValidationResult cached =
+          validator.validate(header, pricedContext("9", "REQUEST_DEPENDENT"));
+      try {
+        assertThat(cached.freshValidation()).isFalse();
+        assertThat(cached.paidPriceEvidence().coveredAmountSats()).hasValue(9);
+      } finally {
+        cached.credential().destroy();
+      }
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("10", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.INSUFFICIENT_PRICE));
+    }
+
+    @Test
     void rejectsPriceLessCredentialOnRequestDependentRoutes() {
       L402Validator validator =
           new L402Validator(
@@ -2165,6 +2204,152 @@ class L402ValidatorTest {
                   REQUEST_METHOD,
                   REQUEST_ROUTE));
     }
+
+    @Test
+    void rejectsPostSigningPaidPriceEditsBeforePriceEvaluation() {
+      Macaroon signed =
+          MacaroonMinter.mint(
+              rootKey,
+              identifier,
+              "https://example.com",
+              boundaryCaveats(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      List<Caveat> editedCaveats = new ArrayList<>(signed.caveats());
+      editedCaveats.set(3, new Caveat(SERVICE_NAME + "_price_sats", "11"));
+      Macaroon edited =
+          new Macaroon(signed.identifier(), signed.location(), editedCaveats, signed.signature());
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(
+              () -> validator.validate(authHeaderFor(edited), pricedContext("11", "ROUTE_STABLE")))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              failure ->
+                  assertThat(((L402Exception) failure).getErrorCode())
+                      .isEqualTo(ErrorCode.INVALID_MACAROON));
+    }
+
+    @Test
+    void rejectsSignedPriceWithWrongRootKey() {
+      String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      byte[] wrongRootKey = rootKey.clone();
+      wrongRootKey[0] ^= 1;
+      rootKeyMap.put(tokenIdHex, wrongRootKey);
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("10", "ROUTE_STABLE")))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              failure ->
+                  assertThat(((L402Exception) failure).getErrorCode())
+                      .isEqualTo(ErrorCode.INVALID_MACAROON));
+    }
+
+    @Test
+    void allowsRouteStableLegacyCredentialAtItsExactSettledIssuancePrice() {
+      AtomicLong lookups = new AtomicLong();
+      LightningBackend settledBackend =
+          new LightningBackend() {
+            @Override
+            public Invoice createInvoice(long amountSats, String memo) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Invoice lookupInvoice(byte[] hash) {
+              lookups.incrementAndGet();
+              return new Invoice(
+                  hash,
+                  "lnbc10test",
+                  10,
+                  "legacy",
+                  InvoiceStatus.SETTLED,
+                  preimageBytes,
+                  Instant.now(),
+                  Instant.now().plusSeconds(60));
+            }
+
+            @Override
+            public boolean isHealthy() {
+              return true;
+            }
+          };
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME, settledBackend);
+
+      L402Validator.ValidationResult result =
+          validator.validate(validAuthHeader, pricedContext("10", "ROUTE_STABLE"));
+      try {
+        assertThat(result.paidPriceEvidence().coveredAmountSats()).hasValue(10);
+        assertThat(lookups).hasValue(1);
+      } finally {
+        result.credential().destroy();
+      }
+    }
+
+    @Test
+    void rejectsRouteStableLegacyCredentialAfterConfiguredPriceIncrease() {
+      LightningBackend settledBackend = settledLegacyBackend(10);
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME, settledBackend);
+
+      assertThatThrownBy(
+              () -> validator.validate(validAuthHeader, pricedContext("11", "ROUTE_STABLE")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.ROUTE_STABLE_PRICE_INCREASE));
+    }
+
+    @Test
+    void failsClosedWhenRouteStableLegacyInvoiceLookupIsUnavailable() {
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              boundaryVerifiers(),
+              SERVICE_NAME,
+              unavailableLightningBackend());
+
+      assertThatThrownBy(
+              () -> validator.validate(validAuthHeader, pricedContext("10", "ROUTE_STABLE")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.EVIDENCE_UNAVAILABLE));
+    }
+  }
+
+  private LightningBackend settledLegacyBackend(long amountSats) {
+    return new LightningBackend() {
+      @Override
+      public Invoice createInvoice(long amount, String memo) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public Invoice lookupInvoice(byte[] hash) {
+        return new Invoice(
+            hash,
+            "lnbc" + amountSats + "test",
+            amountSats,
+            "legacy",
+            InvoiceStatus.SETTLED,
+            preimageBytes,
+            Instant.now(),
+            Instant.now().plusSeconds(60));
+      }
+
+      @Override
+      public boolean isHealthy() {
+        return true;
+      }
+    };
   }
 
   private L402VerificationContext pricedContext(String amountSats, String stability) {

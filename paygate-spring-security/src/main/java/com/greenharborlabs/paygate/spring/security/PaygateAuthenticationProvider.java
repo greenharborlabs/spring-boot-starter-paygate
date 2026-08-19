@@ -10,6 +10,7 @@ import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -101,6 +102,15 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       } finally {
         credential.destroy();
       }
+    } catch (PriceValidationException e) {
+      PaymentValidationException.ErrorCode errorCode =
+          e.isChallengeable()
+              ? PaymentValidationException.ErrorCode.INSUFFICIENT
+              : PaymentValidationException.ErrorCode.UNAVAILABLE;
+      throw new BadCredentialsException(
+          "L402 authentication failed",
+          new PaymentValidationException(
+              errorCode, "L402 paid-price validation failed", e.getTokenId(), e));
     } catch (L402Exception e) {
       throw new BadCredentialsException("L402 authentication failed", e);
     }

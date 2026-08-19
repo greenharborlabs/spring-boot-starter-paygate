@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
@@ -30,6 +31,7 @@ import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
@@ -156,6 +158,52 @@ class PaygateAuthenticationProviderTest {
         .hasMessageContaining("L402 authentication failed")
         .hasMessageNotContaining("bad sig")
         .hasCauseInstanceOf(L402Exception.class);
+  }
+
+  @Test
+  void preservesChallengeablePriceFailureForTheSecurityFilter() {
+    when(l402Validator.validate(
+            any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+        .thenThrow(
+            new PriceValidationException(
+                PriceValidationException.Kind.INSUFFICIENT_PRICE, "token-1234"));
+
+    assertThatThrownBy(
+            () ->
+                provider.authenticate(
+                    new PaygateAuthenticationToken(
+                        new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64)))))
+        .isInstanceOf(BadCredentialsException.class)
+        .hasCauseInstanceOf(PaymentValidationException.class)
+        .satisfies(
+            exception -> {
+              PaymentValidationException failure =
+                  (PaymentValidationException) exception.getCause();
+              assertThat(failure.getErrorCode())
+                  .isEqualTo(PaymentValidationException.ErrorCode.INSUFFICIENT);
+              assertThat(failure.getCause()).isInstanceOf(PriceValidationException.class);
+            });
+  }
+
+  @Test
+  void preservesUnavailablePriceEvidenceAsServiceUnavailable() {
+    when(l402Validator.validate(
+            any(L402HeaderComponents.class), any(L402VerificationContext.class)))
+        .thenThrow(
+            new PriceValidationException(
+                PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, "token-1234"));
+
+    assertThatThrownBy(
+            () ->
+                provider.authenticate(
+                    new PaygateAuthenticationToken(
+                        new L402HeaderComponents("L402", "dGVzdA==", "a".repeat(64)))))
+        .isInstanceOf(BadCredentialsException.class)
+        .hasCauseInstanceOf(PaymentValidationException.class)
+        .satisfies(
+            exception ->
+                assertThat(((PaymentValidationException) exception.getCause()).getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.UNAVAILABLE));
   }
 
   @Test

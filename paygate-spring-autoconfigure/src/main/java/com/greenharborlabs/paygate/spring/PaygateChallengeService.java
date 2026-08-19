@@ -330,6 +330,10 @@ public class PaygateChallengeService {
       throw new PaygateLightningUnavailableException(
           "Failed to create invoice: " + e.getMessage(), e);
     }
+    if (invoice == null || invoice.amountSats() != effectivePrice) {
+      throw new PaygateLightningUnavailableException(
+          "Lightning backend returned an invoice with an unexpected amount");
+    }
 
     final String safeBolt11;
     try {
@@ -430,8 +434,8 @@ public class PaygateChallengeService {
 
   /**
    * Resolves the effective price for an endpoint by looking up the pricing strategy bean from the
-   * ApplicationContext. Falls back to the static annotation price if no strategy is configured, the
-   * ApplicationContext is unavailable, or the bean does not exist.
+   * ApplicationContext. A blank strategy deliberately uses the static annotation price; a named
+   * strategy that cannot be resolved fails closed rather than silently undercharging.
    */
   long resolvePrice(HttpServletRequest request, PaygateEndpointConfig config) {
     Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
@@ -439,8 +443,11 @@ public class PaygateChallengeService {
       return amountSats;
     }
     String strategyName = config.pricingStrategy();
-    if (strategyName == null || strategyName.isBlank() || applicationContext == null) {
+    if (strategyName == null || strategyName.isBlank()) {
       return config.priceSats();
+    }
+    if (applicationContext == null) {
+      throw new IllegalStateException("Named pricing strategy resolution is unavailable");
     }
     // Check cache first; failed lookups are NOT cached so they retry on each request.
     PaygatePricingStrategy strategy = pricingStrategyCache.get(strategyName);
@@ -451,10 +458,9 @@ public class PaygateChallengeService {
       } catch (Exception e) {
         log.log(
             System.Logger.Level.WARNING,
-            "Pricing strategy bean ''{0}'' not found or failed; falling back to static price {1} sats",
-            strategyName,
-            config.priceSats());
-        return config.priceSats();
+            "Pricing strategy bean ''{0}'' could not be resolved; failing closed",
+            strategyName);
+        throw new IllegalStateException("Named pricing strategy could not be resolved", e);
       }
     }
     try {

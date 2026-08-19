@@ -12,6 +12,13 @@ dependencies {
 
 // JMH configuration — run with: ./gradlew :paygate-core:jmh
 jmh {
+    includes.set(listOf(providers.gradleProperty("jmhInclude").getOrElse(".*L402PriceValidationBenchmark.*")))
+    resultFormat.set("JSON")
+    resultsFile.set(
+        layout.projectDirectory.file(
+            providers.gradleProperty("jmhResultFile").getOrElse("build/reports/jmh/l402-price.json")
+        )
+    )
     warmupIterations.set(2)
     iterations.set(3)
     fork.set(1)
