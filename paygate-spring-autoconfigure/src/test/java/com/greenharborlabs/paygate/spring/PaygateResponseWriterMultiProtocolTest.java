@@ -192,7 +192,7 @@ class PaygateResponseWriterMultiProtocolTest {
     assertThat(body).contains("\"type\": \"https://paymentauth.org/problems/invalid\"");
     assertThat(body).contains("\"title\": \"INVALID\"");
     assertThat(body).contains("\"status\": 402");
-    assertThat(body).contains("\"detail\": \"Payment validation failed: INVALID\"");
+    assertThat(body).contains("\"detail\": \"Payment credential is invalid\"");
     assertThat(body).doesNotContain("Only lightning is supported");
   }
 
@@ -229,9 +229,9 @@ class PaygateResponseWriterMultiProtocolTest {
     assertThat(body).contains("\"type\": \"https://paymentauth.org/problems/invalid\"");
     assertThat(body).contains("\"title\": \"INVALID\"");
     assertThat(body).contains("\"status\": 402");
-    assertThat(body).contains("\"detail\": \"Payment validation failed: INVALID\"");
+    assertThat(body).contains("\"detail\": \"Payment credential is invalid\"");
     assertThat(body).doesNotContain("Preimage does not match payment hash");
-    assertThat(body).contains("\"token_id\": \"token-abc\"");
+    assertThat(body).doesNotContain("token-abc", "token_id");
   }
 
   @Test

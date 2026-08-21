@@ -530,7 +530,7 @@ class ChallengeContextTest {
   }
 
   @Test
-  void equalsReturnsFalseWhenRootKeyBytesDiffers() {
+  void equalityAndHashCodeDoNotDependOnRootKeyBytes() {
     var a = validContext();
     byte[] differentKey = VALID_ROOT_KEY.clone();
     differentKey[0] = (byte) 0xFF;
@@ -548,7 +548,30 @@ class ChallengeContextTest {
             Map.of("key", "value"),
             VALID_DIGEST);
 
-    assertThat(a).isNotEqualTo(b);
+    assertThat(a).isEqualTo(b);
+    assertThat(a.hashCode()).isEqualTo(b.hashCode());
+  }
+
+  @Test
+  void closeZeroizesOwnedRootKeyAndIsIdempotent() {
+    var context = validContext();
+
+    context.close();
+    context.close();
+
+    assertThat(context.rootKeyBytes()).containsOnly((byte) 0);
+  }
+
+  @Test
+  void concurrentVirtualThreadCloseZeroizesOwnedRootKey() throws Exception {
+    var context = validContext();
+    var first = Thread.ofVirtual().start(context::close);
+    var second = Thread.ofVirtual().start(context::close);
+
+    first.join();
+    second.join();
+
+    assertThat(context.rootKeyBytes()).containsOnly((byte) 0);
   }
 
   @Test

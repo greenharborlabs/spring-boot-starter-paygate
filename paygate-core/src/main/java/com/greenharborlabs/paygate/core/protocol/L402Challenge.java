@@ -27,7 +27,7 @@ public record L402Challenge(
 
   @Override
   public String toString() {
-    return "L402Challenge[priceSats=" + priceSats + ", description=" + description + "]";
+    return "L402Challenge[priceSats=" + priceSats + "]";
   }
 
   /**
@@ -68,7 +68,7 @@ public record L402Challenge(
     }
     for (int i = 0; i < bolt11.length(); i++) {
       char c = bolt11.charAt(i);
-      if (c <= 0x1F || c == 0x7F || c == '"') {
+      if (c < 0x20 || c > 0x7E || c == '"') {
         throw new IllegalArgumentException(
             "bolt11 invoice contains illegal character at index "
                 + i

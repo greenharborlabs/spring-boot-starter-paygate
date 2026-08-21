@@ -288,6 +288,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         PaygateResponseWriter.writeLightningUnavailable(response);
         return;
       }
+      if (priceFailure != null) {
+        PaygateResponseWriter.writeMppError(response, priceFailure, List.of());
+        return;
+      }
       PaygateResponseWriter.writeAuthenticationFailed(response);
       return;
     } catch (RuntimeException e) {

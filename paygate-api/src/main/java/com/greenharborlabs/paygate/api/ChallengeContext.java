@@ -1,7 +1,6 @@
 package com.greenharborlabs.paygate.api;
 
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 
@@ -33,7 +32,8 @@ public record ChallengeContext(
     String routePattern,
     String requestMethod,
     String rawQuery,
-    boolean queryPresent) {
+    boolean queryPresent)
+    implements AutoCloseable {
 
   public ChallengeContext {
     Objects.requireNonNull(paymentHash, "paymentHash must not be null");
@@ -147,10 +147,6 @@ public record ChallengeContext(
         && Objects.equals(description, that.description)
         && Objects.equals(serviceName, that.serviceName)
         && Objects.equals(capability, that.capability)
-        && ((rootKeyBytes == null && that.rootKeyBytes == null)
-            || (rootKeyBytes != null
-                && that.rootKeyBytes != null
-                && CryptoUtils.constantTimeEquals(rootKeyBytes, that.rootKeyBytes)))
         && Objects.equals(opaque, that.opaque)
         && Objects.equals(digest, that.digest)
         && Objects.equals(routePattern, that.routePattern)
@@ -176,9 +172,14 @@ public record ChallengeContext(
             requestMethod,
             rawQuery,
             queryPresent);
-    result = 31 * result + Arrays.hashCode(paymentHash);
-    result = 31 * result + Arrays.hashCode(rootKeyBytes);
+    result = 31 * result + java.util.Arrays.hashCode(paymentHash);
     return result;
+  }
+
+  /** Zeroizes this context's owned root-key copy. This operation is idempotent and thread-safe. */
+  @Override
+  public synchronized void close() {
+    CryptoUtils.zeroize(rootKeyBytes);
   }
 
   @Override

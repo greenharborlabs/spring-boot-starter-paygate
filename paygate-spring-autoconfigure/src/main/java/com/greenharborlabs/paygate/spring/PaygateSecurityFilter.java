@@ -336,14 +336,18 @@ public class PaygateSecurityFilter implements Filter {
               httpRequest,
               resolvedEndpoint,
               PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
-      List<ChallengeResponse> challenges = buildChallenges(challengeContext);
-      if (challenges.isEmpty()) {
-        challengeService.discardChallenge(challengeContext);
-        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
-        return;
+      try {
+        List<ChallengeResponse> challenges = buildChallenges(challengeContext);
+        if (challenges.isEmpty()) {
+          challengeService.discardChallenge(challengeContext);
+          PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+          return;
+        }
+        PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
+        recordChallenge(resolvedEndpoint.routePattern());
+      } finally {
+        challengeContext.close();
       }
-      PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
-      recordChallenge(resolvedEndpoint.routePattern());
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
       recordRateLimitRejection(resolvedEndpoint.routePattern());

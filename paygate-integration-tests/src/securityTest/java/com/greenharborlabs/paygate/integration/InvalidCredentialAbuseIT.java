@@ -55,7 +55,7 @@ class InvalidCredentialAbuseIT {
   private static final String INVALID_AUTHORIZATION = "Abuse invalid-credential";
   private static final String SAFE_RESPONSE_BODY =
       "{\"type\": \"https://paymentauth.org/problems/invalid\", \"title\": \"INVALID\", "
-          + "\"status\": 402, \"detail\": \"Payment validation failed: INVALID\"}";
+          + "\"status\": 402, \"detail\": \"Payment credential is invalid\"}";
 
   private MockMvc mockMvc;
 

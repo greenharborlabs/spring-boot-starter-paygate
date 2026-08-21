@@ -157,7 +157,11 @@ class PaygateAuthenticationProviderTest {
         .isInstanceOf(BadCredentialsException.class)
         .hasMessageContaining("L402 authentication failed")
         .hasMessageNotContaining("bad sig")
-        .hasCauseInstanceOf(L402Exception.class);
+        .hasCauseInstanceOf(PaymentValidationException.class)
+        .satisfies(
+            exception ->
+                assertThat(((PaymentValidationException) exception.getCause()).getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID));
   }
 
   @Test
@@ -221,11 +225,11 @@ class PaygateAuthenticationProviderTest {
     assertThatThrownBy(() -> providerWithRealValidator.authenticate(unauthenticatedToken))
         .isInstanceOf(BadCredentialsException.class)
         .hasMessage("L402 authentication failed")
-        .hasCauseInstanceOf(L402Exception.class)
+        .hasCauseInstanceOf(PaymentValidationException.class)
         .satisfies(
             exception ->
-                assertThat(((L402Exception) exception.getCause()).getErrorCode())
-                    .isEqualTo(ErrorCode.MALFORMED_HEADER));
+                assertThat(((PaymentValidationException) exception.getCause()).getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.MALFORMED));
     verifyNoInteractions(rootKeyStore, credentialStore);
   }
 
@@ -330,7 +334,11 @@ class PaygateAuthenticationProviderTest {
     assertThatThrownBy(() -> provider.authenticate(unauthToken))
         .isInstanceOf(BadCredentialsException.class)
         .hasMessageContaining("L402 authentication failed")
-        .hasCauseInstanceOf(L402Exception.class);
+        .hasCauseInstanceOf(PaymentValidationException.class)
+        .satisfies(
+            exception ->
+                assertThat(((PaymentValidationException) exception.getCause()).getErrorCode())
+                    .isEqualTo(PaymentValidationException.ErrorCode.INVALID));
   }
 
   // ========== Trusted attribute and authority derivation tests ==========

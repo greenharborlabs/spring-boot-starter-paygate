@@ -150,26 +150,30 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
               challengeRequest,
               resolvedEndpoint,
               PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
-      List<ChallengeResponse> challenges = new ArrayList<>();
-      for (PaymentProtocol protocol : protocols) {
-        try {
-          ChallengeResponse challenge = protocol.formatChallenge(challengeContext);
-          if (challenge != null) {
-            challenges.add(challenge);
+      try {
+        List<ChallengeResponse> challenges = new ArrayList<>();
+        for (PaymentProtocol protocol : protocols) {
+          try {
+            ChallengeResponse challenge = protocol.formatChallenge(challengeContext);
+            if (challenge != null) {
+              challenges.add(challenge);
+            }
+          } catch (RuntimeException e) {
+            // Do not expose formatter details; another protocol may still issue a usable challenge.
+            log.log(
+                System.Logger.Level.WARNING,
+                "Payment challenge formatter failed; attempting remaining enabled protocols");
           }
-        } catch (RuntimeException e) {
-          // Do not expose formatter details; another protocol may still issue a usable challenge.
-          log.log(
-              System.Logger.Level.WARNING,
-              "Payment challenge formatter failed; attempting remaining enabled protocols");
         }
+        if (challenges.isEmpty()) {
+          challengeService.discardChallenge(challengeContext);
+          PaygateResponseWriter.writeLightningUnavailable(response);
+          return;
+        }
+        PaygateResponseWriter.writePaymentRequired(response, challengeContext, challenges);
+      } finally {
+        challengeContext.close();
       }
-      if (challenges.isEmpty()) {
-        challengeService.discardChallenge(challengeContext);
-        PaygateResponseWriter.writeLightningUnavailable(response);
-        return;
-      }
-      PaygateResponseWriter.writePaymentRequired(response, challengeContext, challenges);
 
     } catch (RequestBodyTooLargeException e) {
       log.log(System.Logger.Level.WARNING, "Rejected request: {0}", e.getMessage());

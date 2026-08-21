@@ -406,9 +406,9 @@ public class PaygateChallengeService {
               } catch (RuntimeException e) {
                 log.log(
                     System.Logger.Level.WARNING,
-                    "Failed to store capability in cache for token {0}: {1}",
-                    tokenIdHex,
-                    e.getMessage());
+                    "Failed to store capability in cache for token correlation {0}: {1}",
+                    LogSanitizer.sanitizeTokenId(tokenIdHex),
+                    e.getClass().getSimpleName());
               }
             }
 
@@ -512,11 +512,15 @@ public class PaygateChallengeService {
    */
   public void discardChallenge(ChallengeContext challengeContext) {
     Objects.requireNonNull(challengeContext, "challengeContext must not be null");
-    byte[] tokenId = HexFormat.of().parseHex(challengeContext.tokenId());
     try {
-      revokeGeneratedRootKey(tokenId);
+      byte[] tokenId = HexFormat.of().parseHex(challengeContext.tokenId());
+      try {
+        revokeGeneratedRootKey(tokenId);
+      } finally {
+        KeyMaterial.zeroize(tokenId);
+      }
     } finally {
-      KeyMaterial.zeroize(tokenId);
+      challengeContext.close();
     }
   }
 

@@ -112,8 +112,25 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
           new PaymentValidationException(
               errorCode, "L402 paid-price validation failed", e.getTokenId(), e));
     } catch (L402Exception e) {
-      throw new BadCredentialsException("L402 authentication failed", e);
+      throw new BadCredentialsException("L402 authentication failed", mapL402Failure(e));
     }
+  }
+
+  private static PaymentValidationException mapL402Failure(L402Exception failure) {
+    PaymentValidationException.ErrorCode category =
+        switch (failure.getErrorCode()) {
+          case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED;
+          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.UNAVAILABLE;
+          case INVALID_MACAROON,
+              INVALID_PREIMAGE,
+              EXPIRED_CREDENTIAL,
+              INVALID_SERVICE,
+              MISSING_REQUEST_CONTEXT,
+              REVOKED_CREDENTIAL ->
+              PaymentValidationException.ErrorCode.INVALID;
+        };
+    return new PaymentValidationException(
+        category, "L402 credential validation failed", failure.getTokenId(), failure);
   }
 
   private Authentication authenticateProtocol(

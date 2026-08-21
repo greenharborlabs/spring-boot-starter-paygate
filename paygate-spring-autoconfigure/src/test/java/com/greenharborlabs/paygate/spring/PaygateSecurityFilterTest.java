@@ -178,7 +178,7 @@ class PaygateSecurityFilterTest {
         .perform(get(PROTECTED_PATH).header("Authorization", "Payment method=unsupported"))
         .andExpect(status().isPaymentRequired())
         .andExpect(jsonPath("$.title", is("INVALID")))
-        .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")))
+        .andExpect(jsonPath("$.detail", is("Payment credential is invalid")))
         .andExpect(header().doesNotExist("WWW-Authenticate"))
         .andExpect(content().string(org.hamcrest.Matchers.not(containsString(tokenMarker))));
 
@@ -1070,7 +1070,7 @@ class PaygateSecurityFilterTest {
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
 
     @Test
@@ -1093,7 +1093,7 @@ class PaygateSecurityFilterTest {
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
   }
 
@@ -1266,7 +1266,7 @@ class PaygateSecurityFilterTest {
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
 
     @Test
@@ -1279,7 +1279,7 @@ class PaygateSecurityFilterTest {
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
 
     @Test
