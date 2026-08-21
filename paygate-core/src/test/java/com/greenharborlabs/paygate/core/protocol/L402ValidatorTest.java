@@ -1447,6 +1447,22 @@ class L402ValidatorTest {
   class ExpiredCaveat {
 
     @Test
+    @DisplayName("maps malformed or out-of-range expiry caveats to invalid macaroon")
+    void malformedExpiryReturnsInvalidMacaroon() {
+      for (String expiry :
+          List.of("not-a-number", String.valueOf(Long.MIN_VALUE), String.valueOf(Long.MAX_VALUE))) {
+        String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_valid_until", expiry)));
+        L402Validator validator =
+            new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+        assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .extracting(error -> ((L402Exception) error).getErrorCode())
+            .isEqualTo(ErrorCode.INVALID_MACAROON);
+      }
+    }
+
+    @Test
     @DisplayName("throws EXPIRED_CREDENTIAL when valid_until caveat is in the past")
     void expiredCaveatReturnsExpiredCredential() throws NoSuchAlgorithmException {
       String caveatDetailMarker = "CAVEAT-DETAIL-SECRET-a6677b41";

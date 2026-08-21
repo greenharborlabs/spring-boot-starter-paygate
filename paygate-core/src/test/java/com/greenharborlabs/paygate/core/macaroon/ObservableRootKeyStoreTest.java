@@ -30,6 +30,16 @@ class ObservableRootKeyStoreTest {
   class Delegation {
 
     @Test
+    @DisplayName("null IDs fail before delegate activity or listener notification")
+    void nullIdsFailBeforeDelegateActivity() {
+      assertThatThrownBy(() -> store.getRootKey(null)).isInstanceOf(NullPointerException.class);
+      assertThatThrownBy(() -> store.revokeRootKey(null)).isInstanceOf(NullPointerException.class);
+
+      assertThat(delegate.getKeyIdReceived).isNull();
+      assertThat(delegate.revokeKeyIdReceived).isNull();
+    }
+
+    @Test
     @DisplayName("generateRootKey delegates to wrapped store")
     void generateDelegates() {
       RootKeyStore.GenerationResult result = store.generateRootKey();

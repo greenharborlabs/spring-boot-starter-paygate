@@ -13,6 +13,13 @@ public final class CaveatKey {
 
   private CaveatKey() {}
 
+  /** Rejects ambiguous or blank keys when creating a new caveat. */
+  public static void requireValidConstructedKey(String key) {
+    if (key == null || key.isBlank() || key.indexOf('=') >= 0) {
+      throw new IllegalArgumentException("key must not be null, blank, or contain '='");
+    }
+  }
+
   /**
    * Returns the verifier-lookup form of a parsed caveat key.
    *

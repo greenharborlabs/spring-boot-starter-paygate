@@ -451,6 +451,7 @@ public final class L402Validator {
       verifiedAttributes = verifyCanonicalCaveats(cached.macaroon().caveats(), context);
     } catch (MacaroonVerificationException e) {
       if (e.getReason() == VerificationFailureReason.CREDENTIAL_EXPIRED
+          || e.getReason() == VerificationFailureReason.CAVEAT_INVALID
           || e.getReason() == VerificationFailureReason.CAVEAT_ESCALATION) {
         applyCacheInvalidity(tokenId, EvictionReason.Invalidity.PERMANENT);
       }
@@ -707,7 +708,7 @@ public final class L402Validator {
     return switch (reason) {
       case CAVEAT_NOT_MET -> ErrorCode.INVALID_SERVICE;
       case CREDENTIAL_EXPIRED -> ErrorCode.EXPIRED_CREDENTIAL;
-      case SIGNATURE_INVALID, CAVEAT_ESCALATION -> ErrorCode.INVALID_MACAROON;
+      case SIGNATURE_INVALID, CAVEAT_INVALID, CAVEAT_ESCALATION -> ErrorCode.INVALID_MACAROON;
     };
   }
 
@@ -719,6 +720,7 @@ public final class L402Validator {
       case CAVEAT_NOT_MET -> "Credential constraints were not satisfied";
       case CREDENTIAL_EXPIRED -> "Credential has expired";
       case SIGNATURE_INVALID -> "Credential signature verification failed";
+      case CAVEAT_INVALID -> "Credential caveat is invalid";
       case CAVEAT_ESCALATION -> "Credential attenuation is invalid";
     };
   }

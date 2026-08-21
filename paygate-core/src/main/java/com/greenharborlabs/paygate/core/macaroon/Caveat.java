@@ -11,9 +11,7 @@ package com.greenharborlabs.paygate.core.macaroon;
 public record Caveat(String key, String value) {
 
   public Caveat {
-    if (key == null || key.isBlank()) {
-      throw new IllegalArgumentException("key must not be null, empty, or blank");
-    }
+    CaveatKey.requireValidConstructedKey(key);
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException("value must not be null, empty, or blank");
     }

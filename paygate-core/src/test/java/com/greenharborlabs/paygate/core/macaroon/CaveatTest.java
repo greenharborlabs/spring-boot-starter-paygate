@@ -58,6 +58,13 @@ class CaveatTest {
     }
 
     @Test
+    @DisplayName("rejects a key containing the serialization separator")
+    void keyContainingSeparator() {
+      assertThatThrownBy(() -> new Caveat("service=other", "value"))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("rejects null value")
     void nullValue() {
       assertThatThrownBy(() -> new Caveat("key", null))

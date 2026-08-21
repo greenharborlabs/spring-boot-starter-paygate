@@ -5,6 +5,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.Objects;
 
 /**
  * In-memory implementation of {@link RootKeyStore} backed by a {@link HashMap}. Keys are lost when
@@ -42,6 +43,7 @@ public final class InMemoryRootKeyStore implements RootKeyStore {
 
   @Override
   public SensitiveBytes getRootKey(byte[] keyId) {
+    Objects.requireNonNull(keyId, "keyId must not be null");
     synchronized (this) {
       ensureOpen();
       String hexKeyId = HEX.formatHex(keyId);
@@ -52,6 +54,7 @@ public final class InMemoryRootKeyStore implements RootKeyStore {
 
   @Override
   public void revokeRootKey(byte[] keyId) {
+    Objects.requireNonNull(keyId, "keyId must not be null");
     synchronized (this) {
       ensureOpen();
       String hexKeyId = HEX.formatHex(keyId);

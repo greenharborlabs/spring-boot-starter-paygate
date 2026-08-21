@@ -18,6 +18,7 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -100,6 +101,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
 
   @Override
   public SensitiveBytes getRootKey(byte[] keyId) {
+    Objects.requireNonNull(keyId, "keyId must not be null");
     ensureOpen();
     if (keyId.length == 0) {
       return null;
@@ -151,6 +153,7 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
 
   @Override
   public void revokeRootKey(byte[] keyId) {
+    Objects.requireNonNull(keyId, "keyId must not be null");
     ensureOpen();
     if (keyId.length == 0) {
       return;

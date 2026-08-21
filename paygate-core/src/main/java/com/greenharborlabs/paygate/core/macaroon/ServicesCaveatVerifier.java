@@ -1,6 +1,5 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
-import java.util.HashSet;
 import java.util.Set;
 
 public class ServicesCaveatVerifier implements CaveatVerifier {
@@ -27,13 +26,8 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
           VerificationFailureReason.CAVEAT_NOT_MET, "Service name is null in verification context");
     }
 
-    String[] serviceEntries =
-        CaveatValues.splitBounded(caveat.value(), maxValuesPerCaveat, getKey());
-    for (String entry : serviceEntries) {
-      String name = entry.split(":")[0].trim();
-      if (name.equals(serviceName)) {
-        return;
-      }
+    if (parseGrants(caveat.value()).contains(serviceName)) {
+      return;
     }
 
     throw new MacaroonVerificationException(
@@ -47,23 +41,28 @@ public class ServicesCaveatVerifier implements CaveatVerifier {
    */
   @Override
   public boolean isMoreRestrictive(Caveat previous, Caveat current) {
-    if (!CaveatValues.withinBounds(previous.value(), maxValuesPerCaveat)
-        || !CaveatValues.withinBounds(current.value(), maxValuesPerCaveat)) {
+    try {
+      return parseGrants(previous.value()).containsAll(parseGrants(current.value()));
+    } catch (MacaroonVerificationException _) {
       return false;
     }
-    Set<String> previousNames = extractServiceNames(previous.value());
-    Set<String> currentNames = extractServiceNames(current.value());
-    return previousNames.containsAll(currentNames);
   }
 
-  private static Set<String> extractServiceNames(String serviceList) {
-    Set<String> names = new HashSet<>();
-    for (String entry : serviceList.split(",", -1)) {
-      String name = entry.split(":")[0].trim();
-      if (!name.isEmpty()) {
-        names.add(name);
+  private Set<String> parseGrants(String serviceList) {
+    String[] entries = CaveatValues.splitBounded(serviceList, maxValuesPerCaveat, getKey());
+    Set<String> grants = new java.util.HashSet<>(entries.length);
+    for (String entry : entries) {
+      int separator = entry.indexOf(':');
+      String serviceName = separator < 0 ? entry : entry.substring(0, separator);
+      String tier = separator < 0 ? null : entry.substring(separator + 1);
+      if (serviceName.isEmpty()
+          || serviceName.isBlank()
+          || separator >= 0 && (entry.indexOf(':', separator + 1) >= 0 || !"0".equals(tier))) {
+        throw new MacaroonVerificationException(
+            VerificationFailureReason.CAVEAT_INVALID, "Invalid services caveat grant");
       }
+      grants.add(serviceName);
     }
-    return names;
+    return Set.copyOf(grants);
   }
 }

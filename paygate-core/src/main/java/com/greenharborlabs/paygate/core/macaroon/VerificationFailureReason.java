@@ -17,6 +17,9 @@ public enum VerificationFailureReason {
   /** The credential has expired (e.g., valid-until caveat in the past). */
   CREDENTIAL_EXPIRED,
 
+  /** A recognized caveat has malformed or unsupported signed data. */
+  CAVEAT_INVALID,
+
   /** A presented caveat attempts to widen permissions beyond the original grant. */
   CAVEAT_ESCALATION
 }

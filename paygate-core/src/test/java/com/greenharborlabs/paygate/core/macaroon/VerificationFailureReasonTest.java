@@ -7,12 +7,13 @@ import org.junit.jupiter.api.Test;
 class VerificationFailureReasonTest {
 
   @Test
-  void valuesContainsExactlyFourReasons() {
+  void valuesContainsExactlyFiveReasons() {
     assertThat(VerificationFailureReason.values())
         .containsExactly(
             VerificationFailureReason.SIGNATURE_INVALID,
             VerificationFailureReason.CAVEAT_NOT_MET,
             VerificationFailureReason.CREDENTIAL_EXPIRED,
+            VerificationFailureReason.CAVEAT_INVALID,
             VerificationFailureReason.CAVEAT_ESCALATION);
   }
 }

@@ -44,7 +44,7 @@ class ServicesCaveatVerifierTest {
     @Test
     @DisplayName("passes when caveat contains multiple services including the requested one")
     void passesWithMultipleServicesIncludingRequested() {
-      Caveat caveat = new Caveat("services", "other-api:0,my-api:1,another:2");
+      Caveat caveat = new Caveat("services", "other-api:0,my-api:0,another");
       L402VerificationContext context =
           L402VerificationContext.builder().serviceName("my-api").build();
 
@@ -55,6 +55,31 @@ class ServicesCaveatVerifierTest {
   @Nested
   @DisplayName("verify with invalid service")
   class InvalidService {
+
+    @Test
+    @DisplayName("rejects noncanonical or nonzero service tiers before matching")
+    void rejectsInvalidTiersBeforeMatching() {
+      var context = L402VerificationContext.builder().serviceName("my-api").build();
+
+      for (String value :
+          java.util.List.of("my-api:1", "my-api:00", "my-api:-1", "my-api:+0", "my-api:0:0")) {
+        assertThatThrownBy(() -> verifier.verify(new Caveat("services", value), context))
+            .isInstanceOf(MacaroonVerificationException.class)
+            .extracting(e -> ((MacaroonVerificationException) e).getReason())
+            .isEqualTo(VerificationFailureReason.CAVEAT_INVALID);
+      }
+    }
+
+    @Test
+    @DisplayName("rejects malformed unrelated grants before matching the requested service")
+    void rejectsMalformedUnrelatedGrantBeforeMatching() {
+      var context = L402VerificationContext.builder().serviceName("my-api").build();
+
+      assertThatThrownBy(() -> verifier.verify(new Caveat("services", "my-api:0,other:1"), context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .extracting(e -> ((MacaroonVerificationException) e).getReason())
+          .isEqualTo(VerificationFailureReason.CAVEAT_INVALID);
+    }
 
     @Test
     @DisplayName(
@@ -145,6 +170,15 @@ class ServicesCaveatVerifierTest {
     void disjointServiceIsNotMoreRestrictive() {
       Caveat previous = new Caveat("services", "a:0,b:0");
       Caveat current = new Caveat("services", "a:0,c:0");
+
+      assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
+    }
+
+    @Test
+    @DisplayName("compares complete canonical grants so a tier change cannot attenuate")
+    void invalidTierCannotAttenuate() {
+      Caveat previous = new Caveat("services", "a:0");
+      Caveat current = new Caveat("services", "a:1");
 
       assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
     }
