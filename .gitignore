@@ -7,7 +7,7 @@ target/
 
 # Keep planning and specification artifacts local-only.
 plans/
-specs/
+/specs/
 # Ignore the entire specify directory and all its contents
 .specify/
 # Ignore generated local agent integrations
