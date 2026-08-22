@@ -75,7 +75,8 @@ docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 # Provision through host loopback and write a disposable API key to ignored .env
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 
-# Now start the example app (picks up LNBITS_API_KEY from .env)
+# Enable MPP with an ephemeral secret, then start the app (which also picks up LNBITS_API_KEY from .env)
+export PAYGATE_MPP_SECRET="$(openssl rand -hex 32)"
 docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
 
 # Verify

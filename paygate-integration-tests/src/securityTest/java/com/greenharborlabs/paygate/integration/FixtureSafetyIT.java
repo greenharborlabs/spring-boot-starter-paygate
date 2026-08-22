@@ -62,7 +62,11 @@ class FixtureSafetyIT {
       throws IOException, InterruptedException {
     var process =
         new ProcessBuilder(
-                "docker", "compose", "-f", workspaceRoot().resolve(composeFile).toString(), "config")
+                "docker",
+                "compose",
+                "-f",
+                workspaceRoot().resolve(composeFile).toString(),
+                "config")
             .directory(workspaceRoot().toFile())
             .redirectErrorStream(true)
             .start();

@@ -32,7 +32,6 @@ public class PaygateEndpointRegistry {
   private static final PathPatternParser PATTERN_PARSER = new PathPatternParser();
   private static final long DEFAULT_TIMEOUT_SECONDS_FALLBACK = 3600;
   private static final int DEFAULT_MAX_VALUES_PER_CAVEAT = 50;
-  private static final String NO_CAPABILITY_SENTINEL = "~";
 
   private final long defaultTimeoutSeconds;
   private final int maxValuesPerCaveat;
@@ -97,49 +96,7 @@ public class PaygateEndpointRegistry {
   }
 
   private PaygateEndpointConfig normalizeCapabilities(PaygateEndpointConfig config) {
-    String declaration = config.capability();
-    String normalized;
-    if (declaration == null || declaration.isBlank()) {
-      normalized = "";
-    } else {
-      int splitLimit =
-          maxValuesPerCaveat == Integer.MAX_VALUE ? Integer.MAX_VALUE : maxValuesPerCaveat + 1;
-      String[] segments = declaration.split(",", splitLimit);
-      if (segments.length > maxValuesPerCaveat) {
-        throw new IllegalArgumentException(
-            "Capability declaration has "
-                + segments.length
-                + " values, maximum allowed is "
-                + maxValuesPerCaveat);
-      }
-
-      var capabilities = new LinkedHashSet<String>();
-      for (String segment : segments) {
-        String capability = segment.trim();
-        if (capability.isEmpty()) {
-          throw new IllegalArgumentException("Capability declaration contains a blank segment");
-        }
-        if (NO_CAPABILITY_SENTINEL.equals(capability)) {
-          throw new IllegalArgumentException(
-              "Capability '~' is reserved for the internal no-capability state");
-        }
-        capabilities.add(capability);
-      }
-      normalized = String.join(",", capabilities);
-    }
-
-    if (normalized.equals(declaration)) {
-      return config;
-    }
-    return new PaygateEndpointConfig(
-        config.httpMethod(),
-        config.pathPattern(),
-        config.priceSats(),
-        config.timeoutSeconds(),
-        config.description(),
-        config.pricingStrategy(),
-        normalized,
-        config.pricingStability());
+    return CapabilityDeclarationNormalizer.normalize(config, maxValuesPerCaveat);
   }
 
   /**

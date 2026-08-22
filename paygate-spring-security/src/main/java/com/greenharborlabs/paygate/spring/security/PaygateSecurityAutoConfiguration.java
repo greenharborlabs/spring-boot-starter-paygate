@@ -17,6 +17,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
@@ -47,6 +48,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 @ConditionalOnClass({EnableWebSecurity.class, L402Validator.class})
 @ConditionalOnBean(L402Validator.class)
 @Conditional(PaygateSpringSecurityModeCondition.class)
+@EnableConfigurationProperties(PaygateProperties.class)
 public class PaygateSecurityAutoConfiguration {
 
   @Bean

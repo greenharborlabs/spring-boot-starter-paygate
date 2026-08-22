@@ -12,3 +12,4 @@ services:
       PAYGATE_TEST_MODE: "true"
       PAYGATE_SERVICE_NAME: "example-api"
       PAYGATE_ROOT_KEY_STORE: "memory"
+      PAYGATE_MPP_SECRET: "${PAYGATE_MPP_SECRET:-}"

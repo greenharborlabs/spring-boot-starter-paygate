@@ -49,7 +49,8 @@ class LightningBoundaryIT {
       server.start();
       var backend =
           new LnbitsBackend(
-              new LnbitsConfig("http://localhost:" + server.getAddress().getPort(), "key", 5, 5, true),
+              new LnbitsConfig(
+                  "http://localhost:" + server.getAddress().getPort(), "key", 5, 5, true),
               JsonMapper.builder().build(),
               HttpClient.newHttpClient());
 

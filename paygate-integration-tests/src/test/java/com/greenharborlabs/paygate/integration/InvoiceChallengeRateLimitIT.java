@@ -47,8 +47,10 @@ class InvoiceChallengeRateLimitIT {
               .GET()
               .build();
 
-      assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(402);
-      assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(429);
+      assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode())
+          .isEqualTo(402);
+      assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode())
+          .isEqualTo(429);
     }
   }
 
@@ -66,7 +68,8 @@ class InvoiceChallengeRateLimitIT {
                       "{\"content\":\"this body exceeds sixteen bytes\"}"))
               .build();
 
-      assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(400);
+      assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode())
+          .isEqualTo(400);
     }
   }
 }

@@ -264,6 +264,10 @@ public class PaygateProperties {
   /** Spring Security integration configuration bound from {@code paygate.spring-security.*}. */
   public static class SpringSecurity {
 
+    /**
+     * Retained configuration acknowledgement for compatibility with existing deployments. Minimum
+     * authentication, rate-limit, ordering, and dispatcher protections cannot be waived.
+     */
     private boolean customFilterChainAcknowledged = false;
 
     public boolean isCustomFilterChainAcknowledged() {
@@ -278,6 +282,7 @@ public class PaygateProperties {
   /** Request-body configuration bound from {@code paygate.request-body.*}. */
   public static class RequestBody {
 
+    /** Maximum protected-request body size; defaults to 8192 bytes and accepts 1 through 16 MiB. */
     private int maxBytes = 8_192;
 
     public int getMaxBytes() {
@@ -399,7 +404,11 @@ public class PaygateProperties {
       this.aggregate = aggregate;
     }
 
-    /** Aggregate invoice-challenge limit bound from {@code paygate.rate-limit.aggregate.*}. */
+    /**
+     * Aggregate invoice-challenge limit bound from {@code paygate.rate-limit.aggregate.*}. Defaults
+     * to 100 requests per second with a burst of 200; valid maxima are 100,000 requests per second
+     * and 1,000,000 burst tokens.
+     */
     public static class Aggregate {
 
       private static final double MAX_REQUESTS_PER_SECOND = 100_000.0d;
@@ -444,6 +453,7 @@ public class PaygateProperties {
   /** Startup policy for paid/manual route overlap findings. */
   public static class Routing {
 
+    /** Warns by default when a manual paid route may overlap an unprotected MVC route. */
     private OverlapPolicy overlapPolicy = OverlapPolicy.WARN;
 
     public OverlapPolicy getOverlapPolicy() {
@@ -590,7 +600,10 @@ public class PaygateProperties {
 
     private boolean strictFilePermissions = false;
 
-    /** Whether LND credential and trust files must satisfy strict POSIX permission checks. */
+    /**
+     * Whether LND credential and trust files must satisfy strict POSIX permission checks; defaults
+     * to {@code false} for compatibility with non-POSIX and managed-secret environments.
+     */
     public boolean isStrictFilePermissions() {
       return strictFilePermissions;
     }
@@ -755,6 +768,7 @@ public class PaygateProperties {
 
       private boolean enabled = true;
 
+      /** Whether credentials bind to one canonical client address; defaults to {@code false}. */
       private boolean clientAddressBindingEnabled = false;
 
       public boolean isEnabled() {

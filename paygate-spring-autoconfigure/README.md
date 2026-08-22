@@ -127,8 +127,9 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.test-mode` | `boolean` | `false` | Enables test mode with an in-memory Lightning backend. Must not be used in production. See [Test Mode](#test-mode). |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Whether to read `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. See [Rate Limiting](#rate-limiting). |
 | `paygate.security-mode` | `string` | `"auto"` | Selects `auto`, `servlet`, or `spring-security` enforcement. |
-| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Advanced opt-out for the Spring Security filter-chain startup guard when enforcement is deliberately wired elsewhere. |
+| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Compatibility acknowledgement for custom wiring; it cannot waive authentication, authentication-failure rate limiting, filter ordering, or dispatcher coverage. |
 | `paygate.actuator.enabled` | `boolean` | `false` | Registers the sensitive `/actuator/paygate` endpoint when Actuator is present and the endpoint is exposed. |
+| `paygate.request-body.max-bytes` | `int` | `8192` | Protected-request body maximum. Valid range: 1–16,777,216 bytes. |
 
 ### Root Key Store Properties
 
@@ -149,9 +150,9 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 |----------|------|---------|-------------|
 | `paygate.rate-limit.requests-per-second` | `double` | `10.0` | Token refill rate per second per client IP. Controls the sustained rate of 402 challenge issuance. |
 | `paygate.rate-limit.burst-size` | `int` | `20` | Maximum burst capacity per client IP. Allows short bursts above the sustained rate before throttling. |
-| `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum number of tracked IP rate-limit buckets. Limits memory usage under high-cardinality traffic. |
-| `paygate.rate-limit.aggregate.requests-per-second` | `double` | `100.0` | Instance-wide invoice creation refill rate. Replace `AggregateInvoiceRateLimiter` with a shared implementation for a deployment-wide ceiling. |
-| `paygate.rate-limit.aggregate.burst-size` | `int` | `200` | Instance-wide invoice creation burst capacity. Exhaustion returns 429 before invoice or root-key work. |
+| `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum number of tracked IP rate-limit buckets; must be at least 1. |
+| `paygate.rate-limit.aggregate.requests-per-second` | `double` | `100.0` | Instance-wide invoice creation refill rate; must be finite, greater than 0, and at most 100,000. Replace `AggregateInvoiceRateLimiter` with a shared implementation for a deployment-wide ceiling. |
+| `paygate.rate-limit.aggregate.burst-size` | `int` | `200` | Instance-wide invoice creation burst capacity; valid range 1–1,000,000. Exhaustion returns 429 before invoice or root-key work. |
 | `paygate.routing.overlap-policy` | `WARN` or `FAIL` | `WARN` | Warn or fail startup when a manual paid route may overlap an unprotected MVC mapping. |
 
 ### Health Cache Properties
@@ -193,6 +194,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle connection timeout. |
 | `paygate.lnd.max-inbound-message-size` | `int` | `4194304` | No | Max inbound gRPC message size. |
 | `paygate.lnd.rpc-deadline-seconds` | `Integer` | -- | No | Per-call gRPC deadline. |
+| `paygate.lnd.strict-file-permissions` | `boolean` | `false` | No | Require readable regular non-symlink credential files with no other-user permissions and no group write/execute bits. Unavailable POSIX metadata fails closed when enabled. |
 
 ### Example application.yml
 

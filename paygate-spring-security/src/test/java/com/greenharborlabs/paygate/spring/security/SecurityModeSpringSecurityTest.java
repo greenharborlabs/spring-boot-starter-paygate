@@ -1,20 +1,27 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.spring.PaygateAutoConfiguration;
+import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateSecurityFilter;
+import jakarta.servlet.Filter;
+import jakarta.servlet.http.HttpServletRequest;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
+import org.springframework.security.web.FilterChainProxy;
+import org.springframework.security.web.SecurityFilterChain;
 
 /**
  * Verifies that {@code paygate.security-mode=spring-security} (explicit) enables Spring Security
@@ -23,7 +30,7 @@ import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 @DisplayName("SecurityMode: spring-security (explicit)")
 class SecurityModeSpringSecurityTest {
 
-  private final WebApplicationContextRunner contextRunner =
+  private final WebApplicationContextRunner unwiredContextRunner =
       new WebApplicationContextRunner()
           .withConfiguration(
               AutoConfigurations.of(
@@ -35,9 +42,12 @@ class SecurityModeSpringSecurityTest {
               "paygate.enabled=true",
               "paygate.backend=lnbits",
               "paygate.root-key-store=memory",
-              "paygate.security-mode=spring-security",
-              "paygate.spring-security.custom-filter-chain-acknowledged=true")
+              "paygate.security-mode=spring-security")
           .withBean(LightningBackend.class, StubLightningBackend::new);
+
+  private final WebApplicationContextRunner contextRunner =
+      unwiredContextRunner.withBean(
+          FilterChainProxy.class, () -> new FilterChainProxy(referenceSecurityChain()));
 
   @Test
   @DisplayName("servlet filter registration bean does NOT exist")
@@ -82,15 +92,35 @@ class SecurityModeSpringSecurityTest {
   @Test
   @DisplayName("guard still runs when PaygateAuthenticationFilter bean creation is skipped")
   void guardRunsWhenAuthenticationManagerMissing() {
-    contextRunner
-        .withPropertyValues("paygate.spring-security.custom-filter-chain-acknowledged=false")
-        .run(
-            context -> {
-              assertThat(context).hasFailed();
-              assertThat(context.getStartupFailure())
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("no PaygateAuthenticationFilter");
-            });
+    unwiredContextRunner.run(
+        context -> {
+          assertThat(context).hasFailed();
+          assertThat(context.getStartupFailure())
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("no PaygateAuthenticationFilter");
+        });
+  }
+
+  private static SecurityFilterChain referenceSecurityChain() {
+    PaygateAuthFailureRateLimitFilter rateLimitFilter =
+        mock(PaygateAuthFailureRateLimitFilter.class);
+    PaygateAuthenticationFilter paygateFilter =
+        new PaygateAuthenticationFilter(
+            authentication -> authentication, List.of(), mock(PaygateEndpointRegistry.class));
+    return new TestSecurityFilterChain(List.of(rateLimitFilter, paygateFilter));
+  }
+
+  private record TestSecurityFilterChain(List<Filter> filters) implements SecurityFilterChain {
+
+    @Override
+    public boolean matches(HttpServletRequest request) {
+      return true;
+    }
+
+    @Override
+    public List<Filter> getFilters() {
+      return filters;
+    }
   }
 
   @Test

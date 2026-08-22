@@ -575,7 +575,7 @@ The servlet filter and Spring Security paths are mutually exclusive. The `paygat
 
 Only one documented enforcement path is active per deployment. Servlet mode uses the container `PaygateSecurityFilter` and its final MVC interceptor; Spring Security mode uses `PaygateAuthenticationFilter` and the configured security chain. This prevents both paths from processing the same request.
 
-When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthenticationFilter` in your `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. If the filter is absent, startup fails closed unless `paygate.spring-security.custom-filter-chain-acknowledged=true` is set.
+When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthFailureRateLimitFilter` before `PaygateAuthenticationFilter` in every effective `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. Missing or misordered filters and incomplete dispatcher coverage fail startup; `paygate.spring-security.custom-filter-chain-acknowledged` cannot waive these minimum protections.
 
 `PaygateAuthenticationFilter` constructors without a `PaygateAuthenticationEntryPoint` are retained
 for source compatibility but deprecated. They fail closed (503) for an absent `Authorization`

@@ -790,6 +790,11 @@ class PaygateMetricsTest {
   @DisplayName("parameterized path cardinality")
   class ParameterizedPathCardinalityMetrics {
 
+    @BeforeEach
+    void useParameterizedEndpointPrice() {
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(10));
+    }
+
     @Test
     @DisplayName(
         "requests to /api/items/1 and /api/items/2 both tag with endpoint=/api/items/{id} and protocol=all")
@@ -880,6 +885,7 @@ class PaygateMetricsTest {
     @Test
     @DisplayName("existing exact-path tests still use endpoint=/api/paid with protocol=all")
     void exactPathStillWorks() throws Exception {
+      ((StubLightningBackend) lightningBackend).setNextInvoice(createStubInvoice(PRICE_SATS));
       double before =
           counterValue(
               "paygate.requests",

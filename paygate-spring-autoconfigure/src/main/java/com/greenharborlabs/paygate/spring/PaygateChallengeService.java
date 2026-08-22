@@ -347,25 +347,8 @@ public class PaygateChallengeService {
 
     // Create Lightning invoice before root key generation so invoice failures do not allocate
     // sensitive key material.
-    Invoice invoice;
-    try {
-      invoice = lightningBackend.createInvoice(effectivePrice, config.description());
-    } catch (RuntimeException e) {
-      throw new PaygateLightningUnavailableException(
-          "Failed to create invoice: " + e.getMessage(), e);
-    }
-    if (invoice == null || invoice.amountSats() != effectivePrice) {
-      throw new PaygateLightningUnavailableException(
-          "Lightning backend returned an invoice with an unexpected amount");
-    }
-
-    final String safeBolt11;
-    try {
-      safeBolt11 = L402Challenge.sanitizeBolt11ForHeader(invoice.bolt11());
-    } catch (IllegalArgumentException e) {
-      throw new PaygateLightningUnavailableException(
-          "Lightning backend returned an invalid invoice", e);
-    }
+    Invoice invoice = createValidatedInvoice(effectivePrice, config.description());
+    String safeBolt11 = sanitizeInvoice(invoice);
 
     // Generate root key and tokenId atomically after invoice creation; try-with-resources ensures
     // SensitiveBytes.destroy() is called if a later step fails.
@@ -375,27 +358,8 @@ public class PaygateChallengeService {
         byte[] tokenId = generationResult.tokenId();
         boolean contextCreated = false;
         try {
-          // Record invoice creation in earnings tracker
-          try {
-            if (earningsTracker != null) {
-              earningsTracker.recordInvoiceCreated();
-            }
-          } catch (Exception e) {
-            log.log(
-                System.Logger.Level.WARNING,
-                "Failed to record invoice creation in earnings tracker: {0}",
-                e.getMessage());
-          }
-
-          // Build opaque map for test preimage if present
-          Map<String, String> opaque = null;
-          byte[] invoicePreimage = invoice.preimage();
-          if (validatedTestMode
-              && lightningBackend.getClass() == TestModeLightningBackend.class
-              && invoicePreimage != null) {
-            opaque = new LinkedHashMap<>();
-            opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
-          }
+          recordInvoiceCreated();
+          Map<String, String> opaque = testModeOpaqueData(invoice);
 
           String tokenIdHex = HexFormat.of().formatHex(tokenId);
           String requestDigest = RequestDigestSupport.digestAttribute(request);
@@ -422,20 +386,7 @@ public class PaygateChallengeService {
                     request.getQueryString() != null,
                     trustedClientAddress);
 
-            // Populate capability cache after successful invoice creation
-            if (capabilityCache != null
-                && config.capability() != null
-                && !config.capability().isEmpty()) {
-              try {
-                capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
-              } catch (RuntimeException e) {
-                log.log(
-                    System.Logger.Level.WARNING,
-                    "Failed to store capability in cache for token correlation {0}: {1}",
-                    LogSanitizer.sanitizeTokenId(tokenIdHex),
-                    e.getClass().getSimpleName());
-              }
-            }
+            storeCapability(tokenIdHex, config);
 
             contextCreated = true;
             return challengeContext;
@@ -454,6 +405,73 @@ public class PaygateChallengeService {
     } catch (RuntimeException e) {
       throw new PaygateLightningUnavailableException(
           "Failed to generate root key: " + e.getMessage(), e);
+    }
+  }
+
+  private Invoice createValidatedInvoice(long effectivePrice, String description)
+      throws PaygateLightningUnavailableException {
+    final Invoice invoice;
+    try {
+      invoice = lightningBackend.createInvoice(effectivePrice, description);
+    } catch (RuntimeException e) {
+      throw new PaygateLightningUnavailableException(
+          "Failed to create invoice: " + e.getMessage(), e);
+    }
+    if (invoice == null || invoice.amountSats() != effectivePrice) {
+      throw new PaygateLightningUnavailableException(
+          "Lightning backend returned an invoice with an unexpected amount");
+    }
+    return invoice;
+  }
+
+  private static String sanitizeInvoice(Invoice invoice)
+      throws PaygateLightningUnavailableException {
+    try {
+      return L402Challenge.sanitizeBolt11ForHeader(invoice.bolt11());
+    } catch (IllegalArgumentException e) {
+      throw new PaygateLightningUnavailableException(
+          "Lightning backend returned an invalid invoice", e);
+    }
+  }
+
+  private void recordInvoiceCreated() {
+    if (earningsTracker == null) {
+      return;
+    }
+    try {
+      earningsTracker.recordInvoiceCreated();
+    } catch (Exception e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Failed to record invoice creation in earnings tracker: {0}",
+          e.getMessage());
+    }
+  }
+
+  private Map<String, String> testModeOpaqueData(Invoice invoice) {
+    byte[] invoicePreimage = invoice.preimage();
+    if (!validatedTestMode
+        || lightningBackend.getClass() != TestModeLightningBackend.class
+        || invoicePreimage == null) {
+      return null;
+    }
+    var opaque = new LinkedHashMap<String, String>();
+    opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
+    return opaque;
+  }
+
+  private void storeCapability(String tokenIdHex, PaygateEndpointConfig config) {
+    if (capabilityCache == null || config.capability() == null || config.capability().isEmpty()) {
+      return;
+    }
+    try {
+      capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Failed to store capability in cache for token correlation {0}: {1}",
+          LogSanitizer.sanitizeTokenId(tokenIdHex),
+          e.getClass().getSimpleName());
     }
   }
 

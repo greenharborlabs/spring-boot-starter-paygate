@@ -55,7 +55,7 @@
     {
       "name": "paygate.spring-security.custom-filter-chain-acknowledged",
       "type": "java.lang.Boolean",
-      "description": "Advanced-user acknowledgement that Paygate enforcement is intentionally wired outside the standard Spring Security FilterChainProxy. When false, Spring Security mode fails closed if no PaygateAuthenticationFilter is found in the effective filter chain.",
+      "description": "Compatibility acknowledgement for deployments that intentionally use custom Spring Security wiring. It cannot waive the required authentication filter, authentication-failure rate limiter, filter ordering, or dispatcher coverage checks.",
       "defaultValue": false
     },
     {
@@ -89,15 +89,21 @@
       "defaultValue": 20
     },
     {
+      "name": "paygate.rate-limit.max-buckets",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of client-identity token buckets retained by the local rate limiter. Must be at least 1.",
+      "defaultValue": 100000
+    },
+    {
       "name": "paygate.rate-limit.aggregate.requests-per-second",
       "type": "java.lang.Double",
-      "description": "Identity-independent invoice-challenge refill rate. The default per-instance limiter can be replaced with a shared AggregateInvoiceRateLimiter bean.",
+      "description": "Identity-independent invoice-challenge refill rate. Must be finite, greater than 0, and no more than 100000. The default per-instance limiter can be replaced with a shared AggregateInvoiceRateLimiter bean.",
       "defaultValue": 100.0
     },
     {
       "name": "paygate.rate-limit.aggregate.burst-size",
       "type": "java.lang.Integer",
-      "description": "Identity-independent invoice-challenge burst capacity. Aggregate limiting remains enabled whenever Paygate is enabled.",
+      "description": "Identity-independent invoice-challenge burst capacity. Must be between 1 and 1000000, inclusive; aggregate limiting remains enabled whenever Paygate is enabled.",
       "defaultValue": 200
     },
     {

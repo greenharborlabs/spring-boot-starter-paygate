@@ -7,6 +7,7 @@ WORKDIR /workspace
 COPY gradlew gradlew.bat ./
 COPY gradle/wrapper/ gradle/wrapper/
 COPY gradle/verification-metadata.xml gradle/verification-metadata.xml
+COPY gradle/verification-keyring.keys gradle/verification-keyring.keys
 COPY build.gradle.kts settings.gradle.kts gradle.properties ./
 
 # Copy all module build files (needed for dependency resolution)

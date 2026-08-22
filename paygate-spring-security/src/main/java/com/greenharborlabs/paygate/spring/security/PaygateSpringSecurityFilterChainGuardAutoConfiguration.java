@@ -26,8 +26,8 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 /**
- * Fails closed when Paygate is in Spring Security mode but the effective filter chain does not
- * contain {@link PaygateAuthenticationFilter}.
+ * Fails closed when a Spring Security chain omits or misorders Paygate authentication and
+ * authentication-failure rate limiting, or excludes required dispatcher types.
  */
 @AutoConfiguration(after = PaygateSecurityAutoConfiguration.class)
 @ConditionalOnProperty(name = "paygate.enabled", havingValue = "true")
