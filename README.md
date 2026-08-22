@@ -1098,6 +1098,11 @@ links these controls to tests, migration guidance, residual risk, and release-re
 Set `paygate.request-body.max-bytes` for the largest accepted paid request; an over-bound or unreadable
 body fails closed and is never silently priced at the base amount.
 
+The Kimi Low L-1 through L-28 ledger in
+[`docs/security/KIMI-LOW-FINDING-DISPOSITIONS.md`](docs/security/KIMI-LOW-FINDING-DISPOSITIONS.md)
+tracks the implemented boundary, fixture, and supply-chain controls. It remains `implemented` until
+the append-only current-revision evidence and a named security or release review are recorded.
+
 ## Contributing
 
 Contributions are welcome. Please follow these guidelines:

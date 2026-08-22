@@ -362,6 +362,7 @@ val supplyChainNegativeControlTasks = mapOf(
     "verifyDependencyProvenanceNegativeControls" to "scripts/test-dependency-provenance.sh",
     "verifyRepositorySecretIgnoreControls" to "scripts/test-repository-secret-ignore.sh",
     "verifyDependencyAdvisoryWorkflowControls" to "scripts/test-dependency-advisory-workflow.sh",
+    "verifyLowSecurityFindingNegativeControls" to "scripts/test-low-security-finding-dispositions.sh",
 ).map { (taskName, scriptPath) ->
     tasks.register<Exec>(taskName) {
         group = "verification"
@@ -403,6 +404,14 @@ val validateMediumSecurityFindingDispositions = tasks.register<Exec>("validateMe
     description = "Validates the four-finding Kimi Medium security disposition ledger."
     workingDir(layout.projectDirectory)
     commandLine("bash", layout.projectDirectory.file("scripts/validate-medium-security-finding-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val validateLowSecurityFindingDispositions = tasks.register<Exec>("validateLowSecurityFindingDispositions") {
+    group = "verification"
+    description = "Validates the 28-finding Kimi Low disposition and evidence ledgers."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-low-security-finding-dispositions.sh").asFile.absolutePath)
     outputs.upToDateWhen { false }
 }
 
@@ -474,8 +483,10 @@ tasks.register("check") {
     description = "Runs module checks and Kimi Medium finding disposition validation."
     dependsOn(subprojects.map { "${it.path}:check" })
     dependsOn(validateMediumSecurityFindingDispositions)
+    dependsOn(validateLowSecurityFindingDispositions)
     dependsOn(validateDependencyProvenance)
     dependsOn("verifyMediumSecurityFindingNegativeControls")
+    dependsOn("verifyLowSecurityFindingNegativeControls")
     dependsOn("verifyDependencyProvenanceNegativeControls")
     dependsOn("verifyRepositorySecretIgnoreControls")
     dependsOn("verifyDependencyAdvisoryWorkflowControls")
@@ -499,6 +510,7 @@ tasks.register("releaseReadiness") {
     dependsOn(validateFindingDispositions)
     dependsOn(validateAddressSecurityFindingDispositions)
     dependsOn(validateMediumSecurityFindingDispositions)
+    dependsOn(validateLowSecurityFindingDispositions)
     dependsOn(validateDependencyCheckRiskDispositions)
     dependsOn(validateDependencyProvenance)
     dependsOn(verifyExampleArtifactSafety)

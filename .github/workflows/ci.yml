@@ -159,7 +159,7 @@ jobs:
           java-version: '25'
 
       - name: Verify provenance, disposition, example, and dependency-health gates
-        run: ./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls validateAddressSecurityFindingDispositions validateDependencyCheckRiskDispositions verifyExampleArtifactSafety buildHealth
+        run: ./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls validateAddressSecurityFindingDispositions validateMediumSecurityFindingDispositions validateLowSecurityFindingDispositions verifyLowSecurityFindingNegativeControls validateDependencyCheckRiskDispositions verifyExampleArtifactSafety buildHealth
 
   integration-test:
     needs: [agents-md-validation, large-file-detection, formatting]

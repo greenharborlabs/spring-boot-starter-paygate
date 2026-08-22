@@ -129,13 +129,22 @@ For the defense-in-depth release, run the gates in this order so failures remain
 - [ ] Common credential names are ignored. Any non-secret fixture force-added for review has explicit reviewer confirmation.
 - [ ] The Dependency-Check workflow has a successful report less than seven days old; missing, cancelled, or failed reports do not support release approval.
 
+5b. Validate the Kimi Low finding accountability ledger and its isolated negative controls:
+
+```bash
+./gradlew validateLowSecurityFindingDispositions verifyLowSecurityFindingNegativeControls
+```
+
+- [ ] All 28 Low rows remain uniquely mapped to a concrete implementation and documentation path.
+- [ ] Promote a row only after current-revision redacted evidence exists; a named security or release reviewer must approve verified evidence before release approval.
+
 6. Run the composed final local gate last:
 
 ```bash
 ./gradlew releaseReadiness -Pintegration
 ```
 
-- [ ] The final gate passes with `-Pintegration`; it composes module builds, dependency health, aggregate Javadoc, integration/security suites, dependency scanning and risk validation, example-artifact safety, both disposition validators, negative controls, and module coverage.
+- [ ] The final gate passes with `-Pintegration`; it composes module builds, dependency health, aggregate Javadoc, integration/security suites, dependency scanning and risk validation, example-artifact safety, all disposition validators, negative controls, and module coverage.
 - [ ] No local command is described as provenance, attestation, protected-environment approval, or proof of the bytes later published by GitHub Actions.
 
 Optional consumer-resolution check after the required gates:

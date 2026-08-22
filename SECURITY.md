@@ -74,6 +74,10 @@ Paygate's controls are deliberately scoped. Deployments must account for these b
   tracked in `docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md`. It records only implemented
   controls until successful current-implementation validation and named security or release review
   can promote a row; operational decision signals remain sanitized and best effort.
+- **Low-finding evidence remains auditable.** The Kimi L-1 through L-28 ledger is tracked in
+  `docs/security/KIMI-LOW-FINDING-DISPOSITIONS.md`; its companion evidence ledger records only
+  redacted successful commands at a reviewed revision. A row cannot become verified or approved
+  from a planned, stale, failed, or locally asserted result.
 - **Parsing and delegation support are deliberately strict.** Noncanonical/bounded macaroon, MPP JSON, UTF-8, and base64url inputs fail closed. Third-party caveats and additional/discharge macaroons are unsupported and rejected, not exposed as partially verified metadata.
 - **Provider trust stops at verified payment data.** LND and LNbits boundaries reject wrong-length hashes/preimages and a paid response whose preimage does not match the queried payment hash. Plaintext opt-ins are local-only, and ambiguous numeric loopback forms are evaluated by canonical address bytes rather than trusted by spelling.
 - **Filesystem secrets rely on host controls.** File-backed root-key storage requires protections equivalent to `0700` directories and `0600` files and refuses unsafe or symlinked root-key paths. LND secret/certificate symlink mounts are supported only as a documented trusted-orchestrator case. Protect ownership, parent directories, and mounts at the host layer.

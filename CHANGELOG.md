@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Kimi L-1–L-28 — accountable Low-finding hardening**: Added a canonical implemented-control
+  ledger, append-only evidence schema, mutation-tested validator, and CI/release gates. The ledger
+  deliberately withholds verified and approved status until successful current-revision evidence
+  and named security or release review are recorded.
+
 - L402 challenges now bind the settled invoice amount in a signed service-scoped paid-price caveat;
   protected requests re-evaluate their trusted current price on every validation, including cache hits.
 - Dynamic price evaluation is bounded and request-memoized; unavailable pricing and ambiguous legacy
