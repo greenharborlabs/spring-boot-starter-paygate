@@ -205,6 +205,10 @@ public class L402Protocol implements PaymentProtocol {
       }
     } catch (L402Exception e) {
       throw mapL402Exception(e);
+    } catch (PaymentValidationException e) {
+      // Locally classified policy failures, such as a legacy credential lacking a required
+      // client-address caveat, are already safe public validation outcomes.
+      throw e;
     } catch (RuntimeException e) {
       // Validator implementation failures cannot be attributed safely to the credential. Treat
       // them as transient service failures and keep both the cause and header out of the response.
@@ -224,9 +228,7 @@ public class L402Protocol implements PaymentProtocol {
   }
 
   private static long clientAddressCaveatCount(Macaroon macaroon) {
-    return macaroon.caveats().stream()
-        .filter(caveat -> "client_ip".equals(caveat.key().toString()))
-        .count();
+    return macaroon.caveats().stream().filter(caveat -> "client_ip".equals(caveat.key())).count();
   }
 
   /**

@@ -374,6 +374,19 @@ class L402ProtocolTest {
     }
 
     @Test
+    void defaultAddressBindingLeavesTheEstablishedBearerCaveatsUnchanged() {
+      ChallengeResponse response =
+          protocol.formatChallenge(challengeContext("/widgets/{id}", "POST", "read"));
+      byte[] serialized =
+          Base64.getDecoder().decode(extractQuotedValue(response.wwwAuthenticateHeader(), "token"));
+      var macaroon = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(macaroon.caveats())
+          .filteredOn(caveat -> caveat.key().equals("client_ip"))
+          .isEmpty();
+    }
+
+    @Test
     void enabledAddressBindingRejectsContextWithoutTrustedAddress() {
       protocol = new L402Protocol(validator, SERVICE_NAME, Clock.systemUTC(), true);
 
@@ -841,6 +854,27 @@ class L402ProtocolTest {
       assertThatThrownBy(() -> protocol.validate(credential, null))
           .isInstanceOf(NullPointerException.class)
           .hasMessageContaining("requestContext");
+    }
+
+    @Test
+    void enabledAddressBindingRejectsAStillLiveLegacyCredentialWithoutClientIpCaveat() {
+      protocol = new L402Protocol(validator, SERVICE_NAME, Clock.systemUTC(), true);
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      L402Credential resultCredential = L402Credential.parse(authHeader);
+      when(validator.validate(eq(authHeader), any()))
+          .thenReturn(new L402Validator.ValidationResult(resultCredential, true));
+
+      assertThatThrownBy(
+              () ->
+                  protocol.validate(
+                      credential,
+                      Map.of(VerificationContextKeys.REQUEST_CLIENT_IP, "198.51.100.7")))
+          .isInstanceOf(PaymentValidationException.class)
+          .extracting(error -> ((PaymentValidationException) error).getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.INVALID);
+
+      assertThat(resultCredential.preimage().isDestroyed()).isTrue();
     }
 
     @Test
