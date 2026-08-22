@@ -128,6 +128,13 @@ The API key is a secret credential. Do not commit it to source control. Recommen
 
 The `LnbitsConfig` record redacts the API key in its `toString()` output (`apiKey=***REDACTED***`), so it will not leak into logs when the configuration object is printed.
 
+### Backend response validation
+
+LNbits lookup amounts are treated as untrusted provider data. They must be positive integral JSON
+millisatoshi values, exactly divisible by 1,000, and within Paygate's supported satoshi range.
+Malformed values, hashes, and provider failures produce fixed diagnostics without a payment hash,
+provider response body, or provider exception text.
+
 ---
 
 ## Architecture

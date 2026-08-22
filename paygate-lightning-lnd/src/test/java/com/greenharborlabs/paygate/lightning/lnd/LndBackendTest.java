@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningException;
@@ -69,9 +70,7 @@ class LndBackendTest {
     assertThatThrownBy(() -> backend.createInvoice(100, "test"))
         .isInstanceOf(LndException.class)
         .isInstanceOf(LightningException.class)
-        .hasMessageContaining("Failed to create invoice via LND")
-        .hasMessageContaining("UNAVAILABLE")
-        .hasMessageContaining("LND node unreachable")
+        .hasMessage("LND request failed")
         .hasCauseInstanceOf(StatusRuntimeException.class);
   }
 
@@ -93,9 +92,7 @@ class LndBackendTest {
     assertThatThrownBy(() -> backend.lookupInvoice(paymentHash))
         .isInstanceOf(LndException.class)
         .isInstanceOf(LightningException.class)
-        .hasMessageContaining("Failed to lookup invoice via LND")
-        .hasMessageContaining("NOT_FOUND")
-        .hasMessageContaining("invoice not found")
+        .hasMessage("LND request failed")
         .hasCauseInstanceOf(StatusRuntimeException.class);
   }
 
@@ -219,6 +216,53 @@ class LndBackendTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("amountSats");
     assertThat(addInvoiceCalls).hasValue(0);
+  }
+
+  @Test
+  void createInvoice_rejectsAboveMaximumBeforeRpc() throws Exception {
+    var addInvoiceCalls = new AtomicInteger();
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void addInvoice(
+                  Lnrpc.Invoice request,
+                  StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
+                addInvoiceCalls.incrementAndGet();
+              }
+            });
+
+    assertThatThrownBy(() -> backend.createInvoice(SecurityBounds.MAX_PRICE_SATS + 1, "memo"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("supported invoice range");
+    assertThat(addInvoiceCalls).hasValue(0);
+  }
+
+  @Test
+  void lookupInvoice_rejectsInvalidProviderAmountBeforeInvoiceConstruction() throws Exception {
+    byte[] paymentHash = new byte[32];
+    var backend =
+        startBackendWith(
+            new LightningGrpc.LightningImplBase() {
+              @Override
+              public void lookupInvoice(
+                  Lnrpc.PaymentHash request, StreamObserver<Lnrpc.Invoice> responseObserver) {
+                responseObserver.onNext(
+                    Lnrpc.Invoice.newBuilder()
+                        .setRHash(ByteString.copyFrom(paymentHash))
+                        .setPaymentRequest("lnbc1test")
+                        .setValue(SecurityBounds.MAX_PRICE_SATS + 1)
+                        .setState(Lnrpc.Invoice.InvoiceState.OPEN)
+                        .setCreationDate(Instant.now().getEpochSecond())
+                        .setExpiry(3600)
+                        .build());
+                responseObserver.onCompleted();
+              }
+            });
+
+    assertThatThrownBy(() -> backend.lookupInvoice(paymentHash))
+        .isInstanceOf(LndException.class)
+        .hasMessage("LND returned invalid backend data");
   }
 
   @Test
@@ -526,7 +570,7 @@ class LndBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100, "test"))
         .isInstanceOf(LndException.class)
-        .hasMessageContaining("INTERNAL")
+        .hasMessage("LND request failed")
         .message()
         .doesNotContain("null");
   }

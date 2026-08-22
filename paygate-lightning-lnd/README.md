@@ -151,6 +151,7 @@ paygate.lnd.macaroon-path=/path/to/invoice.macaroon
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle gRPC connection timeout. |
 | `paygate.lnd.max-inbound-message-size` | `int` | `4194304` | No | Maximum inbound gRPC message size in bytes (4 MB). |
 | `paygate.lnd.rpc-deadline-seconds` | `Integer` | -- | No | Per-call gRPC deadline. Overrides `paygate.lightning.timeout-seconds`. |
+| `paygate.lnd.strict-file-permissions` | `boolean` | `false` | No | When enabled, TLS certificate and macaroon files must be readable regular non-symlink files with no other-user permissions and no group write/execute permissions. Unavailable POSIX metadata fails closed. The compatibility default logs a path-free warning when this cannot be verified. |
 
 *If `tls-cert-path` is not set and `allow-plaintext` is `false` (the default), the application will fail to start with an `IllegalStateException`.
 
@@ -165,8 +166,8 @@ The TLS certificate and macaroon file are sensitive credentials. Recommended app
 The macaroon file is read once at startup and held in memory as zeroizable bytes. The interceptor
 precomputes one canonical lower-case metadata encoding for its lifecycle rather than allocating a
 new full encoding per RPC. Factory-created channels clear mutable credential bytes, release that
-encoding, and reject later interceptor starts when the channel is shut down. The file path itself
-may appear in logs, but the macaroon value is never logged.
+encoding, and reject later interceptor starts when the channel is shut down. File-validation
+diagnostics are path-free and never include macaroon values.
 
 ### Credential Lifecycle and Memory Limits
 

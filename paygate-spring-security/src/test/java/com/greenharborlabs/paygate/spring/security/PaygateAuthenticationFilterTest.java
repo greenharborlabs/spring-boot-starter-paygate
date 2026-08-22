@@ -36,6 +36,8 @@ import java.util.logging.Logger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -117,6 +119,35 @@ class PaygateAuthenticationFilterTest {
   void constructorAcceptsNullProtocols() {
     var f = new PaygateAuthenticationFilter(authenticationManager, null, endpointRegistry);
     assertThat(f).isNotNull();
+  }
+
+  @ParameterizedTest(name = "dynamic-price body of {0} bytes honors the configured bound")
+  @ValueSource(ints = {0, 8191, 8192, 8193})
+  void dynamicPriceBodyUsesConfiguredBound(int bodyLength) throws ServletException, IOException {
+    var config = new PaygateEndpointConfig("POST", "/body-bound", 10, 60, "body", "dynamic", null);
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod()));
+    var boundedFilter =
+        new PaygateAuthenticationFilter(
+            authenticationManager,
+            List.of(),
+            endpointRegistry,
+            null,
+            null,
+            authenticationEntryPoint,
+            8_192);
+    request.setMethod("POST");
+    request.setRequestURI("/body-bound");
+    request.addHeader("Authorization", "Unsupported credential");
+    request.setContent(new byte[bodyLength]);
+
+    boundedFilter.doFilter(request, response, filterChain);
+
+    if (bodyLength > 8_192) {
+      assertThat(response.getStatus()).isEqualTo(400);
+    } else {
+      assertThat(response.getStatus()).isNotEqualTo(400);
+    }
   }
 
   @Test

@@ -36,6 +36,8 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletMapping;
@@ -129,6 +131,56 @@ class PaygateAuthenticationEntryPointTest {
     assertThatThrownBy(() -> new PaygateAuthenticationEntryPoint(challengeService, null, List.of()))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("endpointRegistry");
+  }
+
+  @ParameterizedTest(name = "absent-credential MPP body of {0} bytes honors the configured bound")
+  @ValueSource(ints = {0, 8191, 8192, 8193})
+  void absentCredentialMppChallengeUsesConfiguredBound(int bodyLength) throws Exception {
+    when(protocol.scheme()).thenReturn("Payment");
+    var boundedEntryPoint =
+        new PaygateAuthenticationEntryPoint(
+            challengeService, endpointRegistry, List.of(protocol), 8_192);
+    var config = new PaygateEndpointConfig("POST", "/body-bound", 1, 60, "body", "", null);
+    var resolved = new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+    request.setMethod("POST");
+    request.setRequestURI("/body-bound");
+    request.setContent(new byte[bodyLength]);
+    org.mockito.Mockito.lenient()
+        .when(
+            challengeService.createChallenge(
+                any(HttpServletRequest.class),
+                eq(resolved),
+                any(PaygateChallengeService.ChallengeOptions.class)))
+        .thenReturn(TEST_CONTEXT);
+
+    boundedEntryPoint.commence(request, response, resolved);
+
+    assertThat(response.getStatus()).isEqualTo(bodyLength > 8_192 ? 400 : 402);
+  }
+
+  @ParameterizedTest(name = "replacement MPP body of {0} bytes honors the configured bound")
+  @ValueSource(ints = {0, 8191, 8192, 8193})
+  void replacementMppChallengeUsesConfiguredBound(int bodyLength) throws Exception {
+    when(protocol.scheme()).thenReturn("Payment");
+    var boundedEntryPoint =
+        new PaygateAuthenticationEntryPoint(
+            challengeService, endpointRegistry, List.of(protocol), 8_192);
+    var config = new PaygateEndpointConfig("POST", "/replacement-bound", 1, 60, "body", "", null);
+    var resolved = new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+    request.setMethod("POST");
+    request.setRequestURI("/replacement-bound");
+    request.setContent(new byte[bodyLength]);
+    org.mockito.Mockito.lenient()
+        .when(
+            challengeService.createChallenge(
+                any(HttpServletRequest.class),
+                eq(resolved),
+                any(PaygateChallengeService.ChallengeOptions.class)))
+        .thenReturn(TEST_CONTEXT);
+
+    boundedEntryPoint.commenceReplacement(request, response, resolved);
+
+    assertThat(response.getStatus()).isEqualTo(bodyLength > 8_192 ? 400 : 402);
   }
 
   @Test

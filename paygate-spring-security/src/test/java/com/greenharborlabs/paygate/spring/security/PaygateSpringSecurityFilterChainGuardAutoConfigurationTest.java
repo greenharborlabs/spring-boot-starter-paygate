@@ -24,6 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
@@ -189,6 +191,19 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   }
 
   @Test
+  @DisplayName("failure-rate limiter must run before the Paygate authentication filter")
+  void rateLimitFilterMustPrecedePaygateFilter() {
+    var proxy = filterChainProxy(paygateFilter(), rateLimitFilter());
+
+    assertThatThrownBy(
+            () ->
+                guard(filterChainProxyProvider(proxy), new PaygateProperties())
+                    .afterSingletonsInstantiated())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("PaygateAuthFailureRateLimitFilter");
+  }
+
+  @Test
   @DisplayName("a Paygate filter that excludes ERROR dispatches fails closed at startup")
   void errorDispatcherExclusionFailsClosed() {
     var paygateFilter = paygateFilter();
@@ -206,6 +221,26 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     assertThatCode(() -> proxy.doFilter(errorRequest, mock(HttpServletResponse.class), mock()))
         .doesNotThrowAnyException();
     assertThat(paygateChainReached).isFalse();
+
+    assertThatThrownBy(
+            () ->
+                guard(filterChainProxyProvider(proxy), new PaygateProperties())
+                    .afterSingletonsInstantiated())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("dispatcher");
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = DispatcherType.class,
+      names = {"REQUEST", "ASYNC", "FORWARD", "ERROR"})
+  @DisplayName("each supported dispatcher type is required")
+  void everySupportedDispatcherMustMatch(DispatcherType excluded) {
+    var proxy =
+        new FilterChainProxy(
+            new TestSecurityFilterChain(
+                request -> request.getDispatcherType() != excluded,
+                List.of(rateLimitFilter(), paygateFilter())));
 
     assertThatThrownBy(
             () ->

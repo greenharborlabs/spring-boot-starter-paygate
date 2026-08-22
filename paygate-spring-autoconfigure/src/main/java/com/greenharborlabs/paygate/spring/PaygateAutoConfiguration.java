@@ -802,7 +802,8 @@ public class PaygateAutoConfiguration {
           lnd.getKeepAliveTimeoutSeconds(),
           lnd.getIdleTimeoutMinutes(),
           lnd.getMaxInboundMessageSize(),
-          rpcDeadline);
+          rpcDeadline,
+          lnd.isStrictFilePermissions());
     }
 
     @Bean(destroyMethod = "shutdown")

@@ -13,6 +13,7 @@ package com.greenharborlabs.paygate.lightning.lnd;
  * @param idleTimeoutMinutes close the channel after this many idle minutes
  * @param maxInboundMessageSize maximum inbound gRPC message size in bytes
  * @param rpcDeadlineSeconds deadline for individual gRPC calls in seconds
+ * @param strictFilePermissions whether credential and trust files must meet strict POSIX checks
  */
 public record LndConfig(
     String host,
@@ -24,13 +25,40 @@ public record LndConfig(
     int keepAliveTimeoutSeconds,
     int idleTimeoutMinutes,
     int maxInboundMessageSize,
-    int rpcDeadlineSeconds) {
+    int rpcDeadlineSeconds,
+    boolean strictFilePermissions) {
 
   private static final int DEFAULT_KEEP_ALIVE_TIME_SECONDS = 60;
   private static final int DEFAULT_KEEP_ALIVE_TIMEOUT_SECONDS = 20;
   private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 5;
   private static final int DEFAULT_MAX_INBOUND_MESSAGE_SIZE = 4_194_304; // 4 MB
   static final int DEFAULT_RPC_DEADLINE_SECONDS = 5;
+
+  /** Compatibility constructor that leaves strict permission enforcement disabled. */
+  public LndConfig(
+      String host,
+      int port,
+      String tlsCertPath,
+      String macaroonPath,
+      boolean allowPlaintext,
+      int keepAliveTimeSeconds,
+      int keepAliveTimeoutSeconds,
+      int idleTimeoutMinutes,
+      int maxInboundMessageSize,
+      int rpcDeadlineSeconds) {
+    this(
+        host,
+        port,
+        tlsCertPath,
+        macaroonPath,
+        allowPlaintext,
+        keepAliveTimeSeconds,
+        keepAliveTimeoutSeconds,
+        idleTimeoutMinutes,
+        maxInboundMessageSize,
+        rpcDeadlineSeconds,
+        false);
+  }
 
   public LndConfig {
     if (host == null || host.isBlank()) {
@@ -81,7 +109,8 @@ public record LndConfig(
         DEFAULT_KEEP_ALIVE_TIMEOUT_SECONDS,
         DEFAULT_IDLE_TIMEOUT_MINUTES,
         DEFAULT_MAX_INBOUND_MESSAGE_SIZE,
-        DEFAULT_RPC_DEADLINE_SECONDS);
+        DEFAULT_RPC_DEADLINE_SECONDS,
+        false);
   }
 
   /** Creates a plaintext config suitable for testing (no TLS, no macaroon). */
@@ -96,7 +125,8 @@ public record LndConfig(
         DEFAULT_KEEP_ALIVE_TIMEOUT_SECONDS,
         DEFAULT_IDLE_TIMEOUT_MINUTES,
         DEFAULT_MAX_INBOUND_MESSAGE_SIZE,
-        DEFAULT_RPC_DEADLINE_SECONDS);
+        DEFAULT_RPC_DEADLINE_SECONDS,
+        false);
   }
 
   /** Validates this configuration's plaintext target when plaintext transport is enabled. */

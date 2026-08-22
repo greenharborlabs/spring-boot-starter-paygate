@@ -3,6 +3,7 @@ package com.greenharborlabs.paygate.lightning.lnbits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -295,7 +296,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("HTTP 401")
+        .hasMessage("LNbits request failed")
         .message()
         .doesNotContain("Unauthorized");
   }
@@ -306,7 +307,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("HTTP 500")
+        .hasMessage("LNbits request failed")
         .message()
         .doesNotContain("Internal Server Error");
   }
@@ -317,7 +318,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("HTTP 404")
+        .hasMessage("LNbits request failed")
         .message()
         .doesNotContain("Not Found");
   }
@@ -328,9 +329,55 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("HTTP 502")
+        .hasMessage("LNbits request failed")
         .message()
         .doesNotContain("Bad Gateway");
+  }
+
+  @Test
+  void lookupInvoice_rejectsNonIntegralAndOutOfRangeMillisatoshis() {
+    for (String amount :
+        new String[] {
+          "\"1000\"",
+          "1000.0",
+          "true",
+          "null",
+          "0",
+          "-1000",
+          "1001",
+          "9223372036854775808",
+          Long.toString((SecurityBounds.MAX_PRICE_SATS + 1) * 1000)
+        }) {
+      server.enqueue(
+          new MockResponse()
+              .setResponseCode(200)
+              .setHeader("Content-Type", "application/json")
+              .setBody(
+                  """
+                  {"paid":false,"details":{"payment_hash":"%s","bolt11":"%s","amount":%s}}
+                  """
+                      .formatted(PAYMENT_HASH_HEX, BOLT11, amount)));
+
+      assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+          .isInstanceOf(LnbitsException.class)
+          .hasMessage("LNbits returned invalid backend data");
+    }
+  }
+
+  @Test
+  void lookupInvoice_acceptsMaximumExactlyConvertibleMillisatoshis() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(200)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                {"paid":false,"details":{"payment_hash":"%s","bolt11":"%s","amount":%d}}
+                """
+                    .formatted(PAYMENT_HASH_HEX, BOLT11, SecurityBounds.MAX_PRICE_SATS * 1000)));
+
+    assertThat(backend.lookupInvoice(PAYMENT_HASH).amountSats())
+        .isEqualTo(SecurityBounds.MAX_PRICE_SATS);
   }
 
   // Verify the backend implements the LightningBackend interface
@@ -432,7 +479,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("Missing 'payment_hash'");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   @Test
@@ -449,7 +496,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("Missing 'payment_request'");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   @Test
@@ -466,7 +513,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("payment_hash");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   @Test
@@ -483,7 +530,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("Missing 'paid'");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   @Test
@@ -499,7 +546,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("Missing 'details'");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   @Test
@@ -516,7 +563,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("Missing 'details.bolt11'");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   @Test
@@ -533,7 +580,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("Missing 'details.amount'");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   // --- Provider proof validation tests ---
@@ -587,7 +634,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("preimage");
+        .hasMessage("LNbits returned invalid backend data");
   }
 
   @Test
@@ -731,7 +778,7 @@ class LnbitsBackendTest {
     assertThatThrownBy(() -> shortTimeoutBackend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
         .isNotInstanceOf(LnbitsTimeoutException.class)
-        .hasMessageContaining("HTTP 500")
+        .hasMessage("LNbits request failed")
         .message()
         .doesNotContain("Internal Server Error");
   }
@@ -743,7 +790,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("HTTP 500")
+        .hasMessage("LNbits request failed")
         .message()
         .doesNotContain(secretBody)
         .doesNotContain("x-api-key-abc123-super-secret");
@@ -755,7 +802,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("HTTP 502");
+        .hasMessage("LNbits request failed");
   }
 
   @Test
@@ -796,7 +843,7 @@ class LnbitsBackendTest {
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
-        .hasMessageContaining("Failed to create invoice");
+        .hasMessage("LNbits request failed");
   }
 
   @Test

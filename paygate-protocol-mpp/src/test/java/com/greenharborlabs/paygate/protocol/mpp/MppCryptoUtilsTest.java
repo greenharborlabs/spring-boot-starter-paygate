@@ -15,6 +15,26 @@ class MppCryptoUtilsTest {
   class ConstantTimeEquals {
 
     @Test
+    void utf8StringsPreserveExactFramingAndUnicode() {
+      assertThat(MppCryptoUtils.constantTimeEqualsUtf8("sha-256=:AQI=:", "sha-256=:AQI=:"))
+          .isTrue();
+      assertThat(MppCryptoUtils.constantTimeEqualsUtf8("sha-256=:AQI=:", "AQI=")).isFalse();
+      assertThat(MppCryptoUtils.constantTimeEqualsUtf8("digest-é", "digest-e")).isFalse();
+    }
+
+    @Test
+    void utf8StringsRejectEveryMismatchPositionAndLength() {
+      String expected = "sha-256=:aGVsbG8=:";
+      for (int index = 0; index < expected.length(); index++) {
+        char replacement = expected.charAt(index) == 'x' ? 'y' : 'x';
+        String candidate =
+            expected.substring(0, index) + replacement + expected.substring(index + 1);
+        assertThat(MppCryptoUtils.constantTimeEqualsUtf8(expected, candidate)).isFalse();
+      }
+      assertThat(MppCryptoUtils.constantTimeEqualsUtf8(expected, expected + "x")).isFalse();
+    }
+
+    @Test
     void equalArraysReturnTrue() {
       byte[] a = {0x01, 0x02, 0x03, 0x04};
       byte[] b = {0x01, 0x02, 0x03, 0x04};

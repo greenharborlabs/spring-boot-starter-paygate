@@ -111,6 +111,67 @@ class PaygateSecurityFilterRateLimitTest {
   }
 
   @Test
+  @DisplayName("identity churn keeps validation limiting independent for each resolved address")
+  void identityChurnUsesEachResolvedAddressIndependently() throws Exception {
+    when(rateLimiter.tryAcquire(any())).thenReturn(true);
+    var filter =
+        new PaygateSecurityFilter(
+            registry,
+            List.of(stubProtocol),
+            challengeService,
+            "test-service",
+            null,
+            null,
+            null,
+            rateLimiter);
+
+    for (String identity : List.of("10.0.0.1", "10.0.0.2", "2001:db8::7")) {
+      var churnRequest = new MockHttpServletRequest("GET", PROTECTED_PATH);
+      churnRequest.setRequestURI(PROTECTED_PATH);
+      churnRequest.setRemoteAddr(identity);
+      churnRequest.addHeader("Authorization", "L402 test-token");
+      filter.doFilter(churnRequest, new MockHttpServletResponse(), filterChain);
+    }
+
+    verify(rateLimiter).tryAcquire("10.0.0.1");
+    verify(rateLimiter).tryAcquire("10.0.0.2");
+    verify(rateLimiter).tryAcquire("2001:db8::7");
+    verify(challengeService, never())
+        .createChallenge(
+            any(jakarta.servlet.http.HttpServletRequest.class),
+            any(PaygateEndpointConfig.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
+  @Test
+  @DisplayName("an initial challenge limit denial does not create challenge state")
+  void initialChallengeLimitDenialDoesNotCreateChallengeState() throws Exception {
+    request.removeHeader("Authorization");
+    org.mockito.Mockito.doThrow(new PaygateRateLimitedException("limited"))
+        .when(challengeService)
+        .acquireChallengeRateLimit(any());
+    var filter =
+        new PaygateSecurityFilter(
+            registry,
+            List.of(stubProtocol),
+            challengeService,
+            "test-service",
+            null,
+            null,
+            null,
+            rateLimiter);
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(429);
+    verify(challengeService, never())
+        .createChallenge(
+            any(jakarta.servlet.http.HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
+  @Test
   @DisplayName("null rate limiter allows request through")
   void nullRateLimiter_allowsRequest() throws ServletException, IOException {
     var filter =

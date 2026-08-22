@@ -159,6 +159,12 @@
       "description": "Deadline in seconds for individual LND gRPC calls. Overrides paygate.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."
     },
     {
+      "name": "paygate.lnd.strict-file-permissions",
+      "type": "java.lang.Boolean",
+      "description": "Require LND TLS certificate and macaroon files to be readable regular non-symlink files with strict POSIX permissions. Disabled by default for non-POSIX and managed-secret compatibility.",
+      "defaultValue": false
+    },
+    {
       "name": "paygate.lnbits.url",
       "type": "java.lang.String",
       "description": "Base URL of the LNbits instance (e.g., https://lnbits.example.com). Required when paygate.backend=lnbits."

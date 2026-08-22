@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.lightning.lnd;
 
 import com.google.protobuf.ByteString;
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -61,8 +62,8 @@ public class LndBackend implements LightningBackend, AutoCloseable {
 
   @Override
   public Invoice createInvoice(long amountSats, String memo) {
-    if (amountSats <= 0) {
-      throw new IllegalArgumentException("amountSats must be > 0, got: " + amountSats);
+    if (!SecurityBounds.isValidPrice(amountSats)) {
+      throw new IllegalArgumentException("amountSats must be within the supported invoice range");
     }
     try {
       var request =
@@ -96,15 +97,12 @@ public class LndBackend implements LightningBackend, AutoCloseable {
       return invoice;
     } catch (StatusRuntimeException e) {
       log.log(
-          System.Logger.Level.WARNING,
-          "LND createInvoice failed: {0} - {1}",
-          e.getStatus().getCode(),
-          e.getStatus().getDescription());
+          System.Logger.Level.WARNING, "LND createInvoice failed: {0}", e.getStatus().getCode());
       if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
         throw new LndTimeoutException(
             "LND createInvoice timed out after " + rpcDeadlineSeconds + "s", e);
       }
-      throw new LndException("Failed to create invoice via LND: " + formatStatus(e.getStatus()), e);
+      throw LndException.requestFailed(e);
     }
   }
 
@@ -126,23 +124,13 @@ public class LndBackend implements LightningBackend, AutoCloseable {
       return mapInvoice(lndInvoice, paymentHash);
     } catch (StatusRuntimeException e) {
       log.log(
-          System.Logger.Level.WARNING,
-          "LND lookupInvoice failed: {0} - {1}",
-          e.getStatus().getCode(),
-          e.getStatus().getDescription());
+          System.Logger.Level.WARNING, "LND lookupInvoice failed: {0}", e.getStatus().getCode());
       if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
         throw new LndTimeoutException(
             "LND lookupInvoice timed out after " + rpcDeadlineSeconds + "s", e);
       }
-      throw new LndException("Failed to lookup invoice via LND: " + formatStatus(e.getStatus()), e);
+      throw LndException.requestFailed(e);
     }
-  }
-
-  private static String formatStatus(Status status) {
-    String description = status.getDescription();
-    return description != null
-        ? status.getCode() + ": " + description
-        : String.valueOf(status.getCode());
   }
 
   @Override
@@ -155,11 +143,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
       log.log(System.Logger.Level.DEBUG, "LND health check: syncedToChain={0}", synced);
       return synced;
     } catch (StatusRuntimeException e) {
-      log.log(
-          System.Logger.Level.WARNING,
-          "LND health check failed: {0} - {1}",
-          e.getStatus().getCode(),
-          e.getStatus().getDescription());
+      log.log(System.Logger.Level.WARNING, "LND health check failed: {0}", e.getStatus().getCode());
       return false;
     }
   }
@@ -171,7 +155,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
     byte[] responsePaymentHash = lndInvoice.getRHash().toByteArray();
     requireHashLength(responsePaymentHash, "lookup invoice response hash");
     if (!MacaroonCrypto.constantTimeEquals(requestedPaymentHash, responsePaymentHash)) {
-      throw new LndException("LND lookup response hash does not match requested invoice");
+      throw LndException.invalidBackendData();
     }
 
     byte[] preimage = null;
@@ -183,11 +167,15 @@ public class LndBackend implements LightningBackend, AutoCloseable {
     InvoiceStatus status = mapStatus(lndInvoice.getState());
     if (status == InvoiceStatus.SETTLED) {
       if (preimage == null) {
-        throw new LndException("LND returned a settled invoice without a preimage");
+        throw LndException.invalidBackendData();
       }
       if (!MacaroonCrypto.constantTimeEquals(sha256(preimage), responsePaymentHash)) {
-        throw new LndException("LND settled invoice preimage does not match its payment hash");
+        throw LndException.invalidBackendData();
       }
+    }
+
+    if (!SecurityBounds.isValidPrice(lndInvoice.getValue())) {
+      throw LndException.invalidBackendData();
     }
 
     return new Invoice(
@@ -203,7 +191,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
 
   private static void requireHashLength(byte[] value, String field) {
     if (value.length != 32) {
-      throw new LndException("LND returned an invalid " + field + " length");
+      throw LndException.invalidBackendData();
     }
   }
 

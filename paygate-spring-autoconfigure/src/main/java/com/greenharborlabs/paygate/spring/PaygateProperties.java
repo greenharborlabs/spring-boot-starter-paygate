@@ -588,6 +588,17 @@ public class PaygateProperties {
 
     private Integer rpcDeadlineSeconds;
 
+    private boolean strictFilePermissions = false;
+
+    /** Whether LND credential and trust files must satisfy strict POSIX permission checks. */
+    public boolean isStrictFilePermissions() {
+      return strictFilePermissions;
+    }
+
+    public void setStrictFilePermissions(boolean strictFilePermissions) {
+      this.strictFilePermissions = strictFilePermissions;
+    }
+
     public boolean isAllowPlaintext() {
       return allowPlaintext;
     }

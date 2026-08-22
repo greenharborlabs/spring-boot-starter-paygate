@@ -332,6 +332,60 @@ class PaygateChallengeServiceTest {
       assertThat(ctx).isNotNull();
       verify(rateLimiter, never()).tryAcquire(anyString());
     }
+
+    @Test
+    @DisplayName("aggregate exhaustion creates neither an invoice nor a root key")
+    void aggregateExhaustionHasNoInvoiceOrRootKeySideEffect() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      var rootKeyStore = createTrackingRootKeyStore();
+      AggregateInvoiceRateLimiter aggregateLimiter = mock(AggregateInvoiceRateLimiter.class);
+      when(aggregateLimiter.tryAcquire()).thenReturn(false);
+      var service =
+          new PaygateChallengeService(
+              rootKeyStore,
+              lightningBackend,
+              properties,
+              applicationContext,
+              null,
+              null,
+              aggregateLimiter,
+              null,
+              null,
+              false);
+
+      assertThatThrownBy(() -> service.createChallenge(request, config))
+          .isInstanceOf(PaygateRateLimitedException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(rootKeyStore.generateRootKeyInvocations).isZero();
+    }
+
+    @Test
+    @DisplayName("aggregate limiter failures fail closed before invoice creation")
+    void aggregateLimiterFailureIsUnavailableBeforeInvoiceCreation() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      var rootKeyStore = createTrackingRootKeyStore();
+      AggregateInvoiceRateLimiter aggregateLimiter = mock(AggregateInvoiceRateLimiter.class);
+      when(aggregateLimiter.tryAcquire()).thenThrow(new IllegalStateException("offline"));
+      var service =
+          new PaygateChallengeService(
+              rootKeyStore,
+              lightningBackend,
+              properties,
+              applicationContext,
+              null,
+              null,
+              aggregateLimiter,
+              null,
+              null,
+              false);
+
+      assertThatThrownBy(() -> service.createChallenge(request, config))
+          .isInstanceOf(PaygateLightningUnavailableException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(rootKeyStore.generateRootKeyInvocations).isZero();
+    }
   }
 
   // -----------------------------------------------------------------------

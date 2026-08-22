@@ -356,7 +356,7 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
           throw new PaymentValidationException(
               ErrorCode.INVALID, "Request context is missing digest binding", credential.tokenId());
         }
-        if (!requestDigest.equals(digest)) {
+        if (!MppCryptoUtils.constantTimeEqualsUtf8(requestDigest, digest)) {
           throw new PaymentValidationException(
               ErrorCode.INVALID, "Request digest mismatch", credential.tokenId());
         }

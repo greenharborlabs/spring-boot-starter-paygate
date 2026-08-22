@@ -530,6 +530,58 @@ class PaygateEndpointRegistryTest {
     }
   }
 
+  @Test
+  @DisplayName("possible manual-paid and unprotected MVC overlap warns by default")
+  void possibleManualPaidAndUnprotectedMvcOverlapWarnsByDefault() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("GET", "/orders/{id}", 10, 600, "", "", ""));
+
+    registry.scanAnnotatedEndpoints(unprotectedMapping("/orders/*", RequestMethod.GET));
+
+    // WARN is intentionally observable as a successful startup check. Logging is a side effect,
+    // while an exception would turn the configured warning policy into a fail-start policy.
+    registry.validateManualRouteOverlaps();
+  }
+
+  @Test
+  @DisplayName("possible manual-paid and unprotected MVC overlap fails when configured")
+  void possibleManualPaidAndUnprotectedMvcOverlapFailsWhenConfigured() {
+    var registry =
+        new PaygateEndpointRegistry(
+            CUSTOM_DEFAULT_TIMEOUT, 50, PaygateProperties.OverlapPolicy.FAIL);
+    registry.register(new PaygateEndpointConfig("GET", "/orders/{id}", 10, 600, "", "", ""));
+
+    registry.scanAnnotatedEndpoints(unprotectedMapping("/orders/{orderId}", RequestMethod.GET));
+
+    assertThatThrownBy(registry::validateManualRouteOverlaps)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Possible paid/unprotected route overlap")
+        .hasMessageContaining("GET")
+        .hasMessageContaining("/orders/{id}")
+        .hasMessageContaining("/orders/{orderId}");
+  }
+
+  @Test
+  @DisplayName("exact manual-paid and unprotected MVC route identities fail during registration")
+  void exactManualPaidAndUnprotectedMvcRouteIdentityFailsDuringRegistration() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    registry.register(new PaygateEndpointConfig("GET", "/orders", 10, 600, "", "", ""));
+
+    assertThatThrownBy(
+            () -> registry.scanAnnotatedEndpoints(unprotectedMapping("/orders", RequestMethod.GET)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Duplicate endpoint registration");
+  }
+
+  private static RequestMappingHandlerMapping unprotectedMapping(
+      String path, RequestMethod method) {
+    var handlerMapping = mock(RequestMappingHandlerMapping.class);
+    var mappings = new LinkedHashMap<RequestMappingInfo, HandlerMethod>();
+    mappings.put(RequestMappingInfo.paths(path).methods(method).build(), mock(HandlerMethod.class));
+    when(handlerMapping.getHandlerMethods()).thenReturn(mappings);
+    return handlerMapping;
+  }
+
   private static HandlerMethod paidHandler(String capability) {
     var handler = mock(HandlerMethod.class);
     when(handler.getMethodAnnotation(PaymentRequired.class))

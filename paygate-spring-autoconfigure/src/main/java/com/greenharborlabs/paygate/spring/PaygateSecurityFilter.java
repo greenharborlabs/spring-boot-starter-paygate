@@ -533,8 +533,26 @@ public class PaygateSecurityFilter implements Filter {
         recordRateLimitRejection(resolvedEndpoint.routePattern());
         return;
       }
+      HttpServletRequest replacementRequest = httpRequest;
+      if (mppEnabled) {
+        try {
+          replacementRequest = RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
+          RequestDigestSupport.ensureDigestAttribute(
+              replacementRequest,
+              ApplicationRelativeRequestResolver.resolve(replacementRequest),
+              requestBodyMaxBytes);
+        } catch (RequestBodyTooLargeException bodyTooLarge) {
+          PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
+          recordRejected(resolvedEndpoint.routePattern(), "Payment");
+          return;
+        }
+      }
       issuePaymentChallenge(
-          httpRequest, httpResponse, httpRequest.getMethod(), "<unavailable>", resolvedEndpoint);
+          replacementRequest,
+          httpResponse,
+          replacementRequest.getMethod(),
+          "<unavailable>",
+          resolvedEndpoint);
       return;
     }
 
