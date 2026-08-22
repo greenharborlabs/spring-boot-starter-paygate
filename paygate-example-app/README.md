@@ -524,7 +524,7 @@ services:
       context: .
       dockerfile: paygate-example-app/Dockerfile
     ports:
-      - "8080:8080"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8080}:8080"
     environment:
       PAYGATE_ENABLED: "true"
       PAYGATE_TEST_MODE: "true"
@@ -537,6 +537,9 @@ Key details:
 - The build context is the **project root** (not `paygate-example-app/`) because the multi-module build needs access to all submodules.
 - Environment variables use Spring Boot's relaxed binding (e.g., `PAYGATE_TEST_MODE` maps to `paygate.test-mode`).
 - `PAYGATE_ROOT_KEY_STORE=memory` is used because file-based key storage would require a persistent volume. For production, mount a volume and use `file` instead.
+- The default host bind is loopback-only. `APP_BIND_ADDRESS=0.0.0.0` is an explicit local
+  development override; do not expose this test-mode image without production TLS,
+  authentication, firewalling, real backend credentials, and an appropriate trusted-proxy policy.
 
 ### Building the Docker image manually
 

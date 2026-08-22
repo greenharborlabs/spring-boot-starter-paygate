@@ -25,6 +25,8 @@ cd "$PROJECT_DIR"
 require_docker_daemon
 
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-180}"
+REGTEST_GID="${REGTEST_GID:-10001}"
+[[ "$REGTEST_GID" =~ ^[0-9]+$ ]] || { echo "ERROR: REGTEST_GID must be numeric." >&2; exit 1; }
 
 if ! command -v jq > /dev/null 2>&1; then
   echo "ERROR: jq is required by setup-lnd-channel.sh."
@@ -237,10 +239,12 @@ echo ""
 echo "==> Payee channel balance:"
 compose_exec "$PAYEE_LND_SERVICE" lncli --network=regtest channelbalance
 echo ""
-echo "==> Making payee LND TLS cert and admin macaroon readable by the example app..."
-compose_exec "$PAYEE_LND_SERVICE" sh -c '
-  chmod o+rx /root/.lnd /root/.lnd/data /root/.lnd/data/chain /root/.lnd/data/chain/bitcoin /root/.lnd/data/chain/bitcoin/regtest
-  chmod o+r /root/.lnd/tls.cert /root/.lnd/data/chain/bitcoin/regtest/admin.macaroon
-'
+echo "==> Granting the fixed regtest group least-privilege access to payee LND credentials..."
+compose_exec "$PAYEE_LND_SERVICE" sh -c "
+  chgrp ${REGTEST_GID} /root /root/.lnd /root/.lnd/data /root/.lnd/data/chain /root/.lnd/data/chain/bitcoin /root/.lnd/data/chain/bitcoin/regtest
+  chmod 0750 /root /root/.lnd /root/.lnd/data /root/.lnd/data/chain /root/.lnd/data/chain/bitcoin /root/.lnd/data/chain/bitcoin/regtest
+  chgrp ${REGTEST_GID} /root/.lnd/tls.cert /root/.lnd/data/chain/bitcoin/regtest/admin.macaroon
+  chmod 0640 /root/.lnd/tls.cert /root/.lnd/data/chain/bitcoin/regtest/admin.macaroon
+"
 echo ""
 echo "==> Setup complete."

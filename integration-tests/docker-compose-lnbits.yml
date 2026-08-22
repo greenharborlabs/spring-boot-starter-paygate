@@ -1,3 +1,4 @@
+# REGTEST / LOCAL TEST ONLY — FakeWallet and its credentials are disposable and must never be reused in production.
 services:
 
   lnbits:
@@ -28,7 +29,7 @@ services:
       lnbits:
         condition: service_healthy
     ports:
-      - "${APP_PORT:-18080}:8080"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-18080}:8080"
     environment:
       SPRING_PROFILES_ACTIVE: "dev"
       PAYGATE_ENABLED: "true"
@@ -41,10 +42,11 @@ services:
       PAYGATE_RATE_LIMIT_BURST_SIZE: "${PAYGATE_RATE_LIMIT_BURST_SIZE:-20}"
       PAYGATE_RATE_LIMIT_MAX_BUCKETS: "${PAYGATE_RATE_LIMIT_MAX_BUCKETS:-100000}"
       PAYGATE_LNBITS_URL: "http://lnbits:5000"
+      # TEST ONLY: LNbits is an isolated local container; plaintext HTTP is unsafe outside this stack.
       PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP: "true"
       PAYGATE_LNBITS_API_KEY: "${LNBITS_API_KEY:-}"
       PAYGATE_EXAMPLE_LNBITS_AUTO_PROVISION: "false"
-      # Set LNBITS_API_KEY in .env or the shell before starting this service.
+      # Set LNBITS_API_KEY in the ignored .env file or shell before starting this local test service.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 10s

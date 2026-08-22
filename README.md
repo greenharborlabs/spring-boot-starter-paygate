@@ -938,6 +938,14 @@ This library handles payment credentials and cryptographic tokens. The following
 - **Never log full macaroon values** -- diagnostic correlation is restricted to sanitized, truncated identifiers. Logs, metrics, health output, and client errors must not contain authorization headers, preimages, root keys, backend credentials, or binding secrets.
 - **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`) and MPP challenge binding secrets, not plaintext in configuration files
 - **LNbits HTTPS by default** -- `http://` LNbits URLs require `paygate.lnbits.allow-plaintext-http=true` and are accepted only for local/test loopback targets
+- **Supplied Docker fixtures are local-only** -- every example application bind defaults to
+  `127.0.0.1`; setting `APP_BIND_ADDRESS` to a non-loopback value is a deliberate development
+  override, not a production deployment. Before exposing any service, use TLS, real credentials,
+  authentication, firewall rules, a trusted-proxy policy, and a real Lightning backend.
+- **Disposable fixture credentials stay private** -- the LNbits bootstrap generates one random,
+  owner-only secret per persisted local environment and the LND fixtures use a fixed test-only
+  supplemental group with `0750` directories and `0640` credential files. Those numeric IDs and
+  plaintext/regtest settings are intentionally unsuitable for production.
 - **Forwarded rate-limit inputs** -- enable forwarded headers only behind an explicitly configured trusted proxy. IP and IPv6-prefix buckets are spoofable abuse controls, not a user identity and not an authorization boundary.
 - **Test mode is profile-gated** -- every active profile must be one of `test`, `dev`, `local`, or `development`; any other or production-like profile fails startup
 - **Fail-closed responses** -- malformed presented credentials receive a stable safe 400; structurally valid but invalid, expired, or insufficient credentials receive 402; abuse throttling receives 429; backend outages and unexpected server failures receive 503. Presented invalid credentials do not mint a replacement invoice or root key, and backend failure never exposes protected content.

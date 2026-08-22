@@ -1,0 +1,8 @@
+# case	mutation
+safe	baseline
+missing-compose	remove a supplied compose file
+external-app-bind	remove the loopback default from an application binding
+missing-plaintext-warning	remove the adjacent plaintext warning
+stable-password	introduce the retired stable password
+world-readable-credential	introduce a world-readable credential mode
+missing-fixed-group	remove the fixed supplemental group

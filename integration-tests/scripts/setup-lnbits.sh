@@ -4,18 +4,21 @@
 #
 # Waits for LNbits to become ready, initializes first install when needed,
 # creates a wallet via the API, and writes the admin API key to .env so the
-# example app can pick it up on next restart.
+# example app can pick it up on next restart. The first-install password is a
+# generated, local-only secret and is never printed.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$PROJECT_DIR/.env"
+LNBITS_SETUP_SECRET_FILE="${LNBITS_SETUP_SECRET_FILE:-$PROJECT_DIR/.lnbits-setup-secret.json}"
 
 cd "$PROJECT_DIR"
 
 # shellcheck source=lib/docker.sh
 . "$SCRIPT_DIR/lib/docker.sh"
+. "$SCRIPT_DIR/lib/lnbits-setup-password.sh"
 require_docker_daemon
 
 if [ -f "$ENV_FILE" ]; then
@@ -32,7 +35,25 @@ LNBITS_PORT="${LNBITS_PORT:-15000}"
 # disposable key through .env; it never provisions through a Compose service hostname.
 LNBITS_URL="http://localhost:${LNBITS_PORT}"
 LNBITS_SETUP_USERNAME="${LNBITS_SETUP_USERNAME:-paygate-admin}"
-LNBITS_SETUP_PASSWORD="${LNBITS_SETUP_PASSWORD:-paygate-test-password}"
+resolve_lnbits_setup_password
+LNBITS_SETUP_PASSWORD="$LNBITS_RESOLVED_SETUP_PASSWORD"
+unset LNBITS_RESOLVED_SETUP_PASSWORD
+umask 077
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+json_request_body() {
+  LNBITS_REQUEST_USERNAME="$LNBITS_SETUP_USERNAME" LNBITS_REQUEST_PASSWORD="$LNBITS_SETUP_PASSWORD" \
+    python3 -c '
+import json
+import os
+print(json.dumps({
+    "username": os.environ["LNBITS_REQUEST_USERNAME"],
+    "password": os.environ["LNBITS_REQUEST_PASSWORD"],
+    "password_repeat": os.environ["LNBITS_REQUEST_PASSWORD"],
+}, separators=(",", ":")))
+'
+}
 
 echo "==> Ensuring LNbits service is started..."
 if docker compose up --help 2>/dev/null | grep -q -- "--wait"; then
@@ -61,7 +82,7 @@ echo "    LNbits is ready."
 echo "==> Checking LNbits first-install state..."
 FIRST_INSTALL_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${LNBITS_URL}/api/v1/auth/first_install" \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"${LNBITS_SETUP_USERNAME}\",\"password\":\"${LNBITS_SETUP_PASSWORD}\",\"password_repeat\":\"${LNBITS_SETUP_PASSWORD}\"}")
+  -d "$(json_request_body)")
 FIRST_INSTALL_HTTP_STATUS=$(printf '%s' "$FIRST_INSTALL_RESPONSE" | tail -1)
 FIRST_INSTALL_BODY=$(printf '%s' "$FIRST_INSTALL_RESPONSE" | sed '$d')
 
@@ -80,7 +101,7 @@ fi
 echo "==> Logging in to LNbits..."
 AUTH_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LNBITS_URL}/api/v1/auth" \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"${LNBITS_SETUP_USERNAME}\",\"password\":\"${LNBITS_SETUP_PASSWORD}\"}")
+  -d "$(json_request_body)")
 AUTH_HTTP_STATUS=$(printf '%s' "$AUTH_RESPONSE" | tail -1)
 AUTH_BODY=$(printf '%s' "$AUTH_RESPONSE" | sed '$d')
 ACCESS_TOKEN=$(printf '%s' "$AUTH_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
@@ -108,8 +129,10 @@ WALLET_BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 if [ "$WALLET_HTTP_STATUS" != "200" ] && [ "$WALLET_HTTP_STATUS" != "201" ]; then
   echo "ERROR: Failed to create wallet."
   echo "       HTTP $WALLET_HTTP_STATUS"
-  echo "       Check the LNbits admin UI at ${LNBITS_URL} to create a wallet manually."
-  echo "       Then set LNBITS_API_KEY in your .env file."
+  echo "       Check the local LNbits admin UI to create a wallet manually."
+  echo "       For an existing volume without .lnbits-setup-secret.json, reset the disposable stack"
+  echo "       or provide its existing password through LNBITS_SETUP_PASSWORD."
+  echo "       Then set LNBITS_API_KEY in your ignored .env file."
   exit 1
 fi
 
@@ -131,10 +154,10 @@ if grep -q "^LNBITS_API_KEY=" "$ENV_FILE" 2>/dev/null; then
   # macOS-compatible sed (no -i'' trick needed with explicit backup)
   sed -i.bak "s/^LNBITS_API_KEY=.*/LNBITS_API_KEY=${ADMIN_KEY}/" "$ENV_FILE"
   rm -f "${ENV_FILE}.bak"
-  echo "    Updated LNBITS_API_KEY in $ENV_FILE"
+  echo "    Updated LNBITS_API_KEY in ignored local state."
 else
   echo "LNBITS_API_KEY=${ADMIN_KEY}" >> "$ENV_FILE"
-  echo "    Wrote LNBITS_API_KEY to $ENV_FILE"
+  echo "    Wrote LNBITS_API_KEY to ignored local state."
 fi
 
 echo ""

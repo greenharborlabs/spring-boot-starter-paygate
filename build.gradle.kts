@@ -422,6 +422,38 @@ val validateDependencyProvenance = tasks.register<Exec>("validateDependencyProve
     outputs.upToDateWhen { false }
 }
 
+val validateLowSecurityFixtures = tasks.register<Exec>("validateLowSecurityFixtures") {
+    group = "verification"
+    description = "Validates local Docker fixture binds, warnings, generated secrets, and credential modes."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-low-security-fixtures.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyLowSecurityFixtureNegativeControls = tasks.register<Exec>("verifyLowSecurityFixtureNegativeControls") {
+    group = "verification"
+    description = "Runs isolated mutation controls for local Docker fixture safety."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/test-low-security-fixtures.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyLnbitsSetupSecretControls = tasks.register<Exec>("verifyLnbitsSetupSecretControls") {
+    group = "verification"
+    description = "Tests generated, persisted, private LNbits setup-secret handling."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("integration-tests/scripts/test-setup-lnbits-security.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyLndCredentialPermissionControls = tasks.register<Exec>("verifyLndCredentialPermissionControls") {
+    group = "verification"
+    description = "Tests the fixed-group, read-only LND credential mount policy."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("integration-tests/scripts/test-lnd-credential-permissions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
 val verifyExampleArtifactSafety = tasks.register<Exec>("verifyExampleArtifactSafety") {
     group = "verification"
     description = "Checks example source defaults and built boot JARs for secrets and management exposure."
@@ -447,6 +479,10 @@ tasks.register("check") {
     dependsOn("verifyDependencyProvenanceNegativeControls")
     dependsOn("verifyRepositorySecretIgnoreControls")
     dependsOn("verifyDependencyAdvisoryWorkflowControls")
+    dependsOn(validateLowSecurityFixtures)
+    dependsOn(verifyLowSecurityFixtureNegativeControls)
+    dependsOn(verifyLnbitsSetupSecretControls)
+    dependsOn(verifyLndCredentialPermissionControls)
 }
 
 tasks.register("releaseReadiness") {
@@ -466,6 +502,10 @@ tasks.register("releaseReadiness") {
     dependsOn(validateDependencyCheckRiskDispositions)
     dependsOn(validateDependencyProvenance)
     dependsOn(verifyExampleArtifactSafety)
+    dependsOn(validateLowSecurityFixtures)
+    dependsOn(verifyLowSecurityFixtureNegativeControls)
+    dependsOn(verifyLnbitsSetupSecretControls)
+    dependsOn(verifyLndCredentialPermissionControls)
     dependsOn("dependencyCheckAggregate")
     dependsOn(verifyModuleCoverage)
 

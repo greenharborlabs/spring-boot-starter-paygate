@@ -62,4 +62,5 @@ tls.cert
 /integration-tests/**/__pycache__/
 /integration-tests/.breez-spark-payer/
 /integration-tests/.l402-credential.env
+/integration-tests/.lnbits-setup-secret.json
 /reports/
