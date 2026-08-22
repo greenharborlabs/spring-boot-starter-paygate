@@ -45,6 +45,17 @@ Thumbs.db
 *.env
 !*.env.example
 
+# Private keys, keystores, macaroons, and TLS credentials. Non-secret fixtures are deliberately
+# force-added during review rather than maintained through broad ignore-rule exceptions.
+*.pem
+*.key
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.macaroon
+tls.cert
+
 # Local integration-test state (never release with production artifacts)
 /integration-tests/.venv/
 /integration-tests/.pytest_cache/

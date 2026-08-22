@@ -359,6 +359,9 @@ val supplyChainNegativeControlTasks = mapOf(
     "verifyMediumSecurityFindingNegativeControls" to "scripts/test-validate-medium-security-finding-dispositions.sh",
     "verifyExampleArtifactSafetyNegativeControls" to "scripts/test-example-artifact-safety.sh",
     "verifyDependencyCheckRiskNegativeControls" to "scripts/test-dependency-check-risk-dispositions.sh",
+    "verifyDependencyProvenanceNegativeControls" to "scripts/test-dependency-provenance.sh",
+    "verifyRepositorySecretIgnoreControls" to "scripts/test-repository-secret-ignore.sh",
+    "verifyDependencyAdvisoryWorkflowControls" to "scripts/test-dependency-advisory-workflow.sh",
 ).map { (taskName, scriptPath) ->
     tasks.register<Exec>(taskName) {
         group = "verification"
@@ -411,6 +414,14 @@ val validateDependencyCheckRiskDispositions = tasks.register<Exec>("validateDepe
     outputs.upToDateWhen { false }
 }
 
+val validateDependencyProvenance = tasks.register<Exec>("validateDependencyProvenance") {
+    group = "verification"
+    description = "Validates signature trust, checksums, and exact reviewed provenance exceptions."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-dependency-provenance.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
 val verifyExampleArtifactSafety = tasks.register<Exec>("verifyExampleArtifactSafety") {
     group = "verification"
     description = "Checks example source defaults and built boot JARs for secrets and management exposure."
@@ -431,7 +442,11 @@ tasks.register("check") {
     description = "Runs module checks and Kimi Medium finding disposition validation."
     dependsOn(subprojects.map { "${it.path}:check" })
     dependsOn(validateMediumSecurityFindingDispositions)
+    dependsOn(validateDependencyProvenance)
     dependsOn("verifyMediumSecurityFindingNegativeControls")
+    dependsOn("verifyDependencyProvenanceNegativeControls")
+    dependsOn("verifyRepositorySecretIgnoreControls")
+    dependsOn("verifyDependencyAdvisoryWorkflowControls")
 }
 
 tasks.register("releaseReadiness") {
@@ -449,6 +464,7 @@ tasks.register("releaseReadiness") {
     dependsOn(validateAddressSecurityFindingDispositions)
     dependsOn(validateMediumSecurityFindingDispositions)
     dependsOn(validateDependencyCheckRiskDispositions)
+    dependsOn(validateDependencyProvenance)
     dependsOn(verifyExampleArtifactSafety)
     dependsOn("dependencyCheckAggregate")
     dependsOn(verifyModuleCoverage)

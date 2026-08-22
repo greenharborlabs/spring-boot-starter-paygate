@@ -14,6 +14,24 @@ consent, a complete allowed profile set, local target validation, bounded direct
 in-memory key. A configuration String cannot be reliably zeroized, so this residual risk is
 limited to the opted-in disposable example lifecycle.
 
+## Dependency provenance and local credentials
+
+Gradle verifies both SHA-256 checksums and publisher signatures using the committed
+`gradle/verification-metadata.xml` and `gradle/verification-keyring.keys`. A dependency without
+usable publisher authentication requires one exact, independently reviewed row in
+`config/dependency-provenance-exceptions.tsv`; rows record the coordinate, artifact bytes,
+authoritative source, rationale, owner, review date, and renewal trigger. Never accept generated
+verification metadata or a key-server identity as approval by itself. Re-resolve from an isolated
+Gradle user home after any dependency, checksum, publisher key, or exception change.
+
+The repository ignores common private-key, keystore, macaroon, and TLS credential filenames by
+default. A reviewed non-secret fixture may be force-added deliberately; force-add is a review
+exception, never evidence that a secret is safe to commit.
+
+Dependency-Check runs daily at an off-minute and can be started manually. Its report is retained
+for seven days. A missing, cancelled, failed, or older report is stale release evidence and must be
+refreshed before approval.
+
 ## Supported Versions
 
 | Version | Supported |
