@@ -62,6 +62,7 @@ public class PaygateSecurityFilter implements Filter {
   private final PaygateChallengeService challengeService;
   private final String serviceName;
   private final ClientIpResolver clientIpResolver;
+  private final boolean clientAddressBindingEnabled;
   private final PaygateMetrics metrics;
   private final PaygateEarningsTracker earningsTracker;
   private final PaygateRateLimiter rateLimiter;
@@ -90,7 +91,8 @@ public class PaygateSecurityFilter implements Filter {
         metrics,
         earningsTracker,
         rateLimiter,
-        RequestDigestSupport.MAX_CACHED_BODY_BYTES);
+        RequestDigestSupport.MAX_CACHED_BODY_BYTES,
+        false);
   }
 
   /** Creates a filter with the configured protected request-body bound. */
@@ -104,6 +106,31 @@ public class PaygateSecurityFilter implements Filter {
       @Nullable PaygateEarningsTracker earningsTracker,
       @Nullable PaygateRateLimiter rateLimiter,
       int requestBodyMaxBytes) {
+    this(
+        registry,
+        protocols,
+        challengeService,
+        serviceName,
+        clientIpResolver,
+        metrics,
+        earningsTracker,
+        rateLimiter,
+        requestBodyMaxBytes,
+        false);
+  }
+
+  /** Creates a filter with the configured request-body and L402 address-binding settings. */
+  public PaygateSecurityFilter(
+      PaygateEndpointRegistry registry,
+      List<PaymentProtocol> protocols,
+      PaygateChallengeService challengeService,
+      String serviceName,
+      @Nullable ClientIpResolver clientIpResolver,
+      @Nullable PaygateMetrics metrics,
+      @Nullable PaygateEarningsTracker earningsTracker,
+      @Nullable PaygateRateLimiter rateLimiter,
+      int requestBodyMaxBytes,
+      boolean clientAddressBindingEnabled) {
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.challengeService =
@@ -115,6 +142,7 @@ public class PaygateSecurityFilter implements Filter {
     this.rateLimiter = rateLimiter;
     this.mppEnabled = this.protocols.stream().anyMatch(RequestDigestSupport::isMppProtocol);
     this.requestBodyMaxBytes = requestBodyMaxBytes;
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -558,7 +586,18 @@ public class PaygateSecurityFilter implements Filter {
    * available, falling back to {@code getRemoteAddr()}.
    */
   private String resolveClientIp(HttpServletRequest request) {
+    if (clientAddressBindingEnabled) {
+      return clientIpResolver != null
+          ? clientIpResolver
+              .resolveBindingAddress(request)
+              .orElseThrow(() -> new IllegalStateException("Trusted client address is unavailable"))
+          : throwBindingAddressUnavailable();
+    }
     return clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+  }
+
+  private static String throwBindingAddressUnavailable() {
+    throw new IllegalStateException("Trusted client address is unavailable");
   }
 
   /**

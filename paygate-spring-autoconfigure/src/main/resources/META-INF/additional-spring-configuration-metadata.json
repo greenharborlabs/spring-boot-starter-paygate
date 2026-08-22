@@ -239,6 +239,12 @@
       "defaultValue": true
     },
     {
+      "name": "paygate.protocols.l402.client-address-binding-enabled",
+      "type": "java.lang.Boolean",
+      "description": "When true, L402 credentials are bound to one canonical client address resolved from the transport peer or a fully trusted proxy chain. Existing unbound credentials become invalid; MPP is unchanged.",
+      "defaultValue": false
+    },
+    {
       "name": "paygate.protocols.mpp.enabled",
       "type": "java.lang.String",
       "description": "Whether the MPP (Modern Payment Protocol) is enabled. 'auto' enables MPP when challenge-binding-secret is configured, 'true' forces MPP on (fails fast if secret is missing), 'false' disables MPP entirely.",

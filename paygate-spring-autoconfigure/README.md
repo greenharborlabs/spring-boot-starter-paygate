@@ -93,6 +93,7 @@ Startup fails with `IllegalStateException` if any validation fails.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `paygate.protocols.l402.enabled` | `boolean` | `true` | Enable/disable the L402 protocol |
+| `paygate.protocols.l402.client-address-binding-enabled` | `boolean` | `false` | Opt in to one exact canonical `client_ip` caveat per L402 credential. |
 | `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present; `true` requires secret; `false` disables |
 | `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 UTF-8 bytes. |
 | `paygate.protocols.mpp.previous-challenge-binding-secret` | `string` | -- | Optional previous HMAC secret for key rotation. Minimum 32 UTF-8 bytes when set. New challenges are still signed with `challenge-binding-secret`. |
@@ -476,6 +477,16 @@ rate-limit identity; the default is `/64`. This grouping is an abuse-control buc
 identity or authorization boundary. Forwarded addresses are authoritative only when forwarding is
 enabled *and* the direct peer is configured in `paygate.trusted-proxy-addresses`; do not trust
 forwarded headers supplied by untrusted peers.
+
+### L402 Client-Address Binding
+
+Set `paygate.protocols.l402.client-address-binding-enabled=true` to bind newly issued L402
+credentials to the exact canonical IPv4 or IPv6 address of the request. It is intentionally off by
+default: mobile clients, NAT changes, and proxy reconfiguration invalidate bound credentials.
+When the direct peer is configured as a trusted forwarding proxy, issuance and validation require a
+complete unambiguous `X-Forwarded-For` chain; unavailable provenance fails with 503 before invoice
+or root-key creation. Existing unbound L402 credentials become invalid after enablement. This
+control reduces replay exposure but does not eliminate it, and it never changes MPP challenges.
 
 ### Overriding the Rate Limiter
 

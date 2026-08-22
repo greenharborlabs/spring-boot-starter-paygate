@@ -744,12 +744,22 @@ public class PaygateProperties {
 
       private boolean enabled = true;
 
+      private boolean clientAddressBindingEnabled = false;
+
       public boolean isEnabled() {
         return enabled;
       }
 
       public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+      }
+
+      public boolean isClientAddressBindingEnabled() {
+        return clientAddressBindingEnabled;
+      }
+
+      public void setClientAddressBindingEnabled(boolean clientAddressBindingEnabled) {
+        this.clientAddressBindingEnabled = clientAddressBindingEnabled;
       }
     }
 

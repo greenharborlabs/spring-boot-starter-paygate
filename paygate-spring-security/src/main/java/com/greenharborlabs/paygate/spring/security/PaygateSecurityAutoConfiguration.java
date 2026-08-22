@@ -62,9 +62,14 @@ public class PaygateSecurityAutoConfiguration {
       L402Validator l402Validator,
       List<PaymentProtocol> protocols,
       @Value("${paygate.service-name:default}") String serviceName,
-      CapabilityResolver capabilityResolver) {
+      CapabilityResolver capabilityResolver,
+      PaygateProperties properties) {
     return new PaygateAuthenticationProvider(
-        l402Validator, protocols, serviceName, capabilityResolver);
+        l402Validator,
+        protocols,
+        serviceName,
+        capabilityResolver,
+        properties.getProtocols().getL402().isClientAddressBindingEnabled());
   }
 
   @Bean
@@ -77,7 +82,8 @@ public class PaygateSecurityAutoConfiguration {
       @Autowired(required = false) ClientIpResolver clientIpResolver,
       @Value("${paygate.service-name:default}") String serviceName,
       PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint,
-      @Value("${paygate.request-body.max-bytes:8192}") int requestBodyMaxBytes) {
+      @Value("${paygate.request-body.max-bytes:8192}") int requestBodyMaxBytes,
+      PaygateProperties properties) {
     return new PaygateAuthenticationFilter(
         authenticationManager,
         protocols,
@@ -85,7 +91,8 @@ public class PaygateSecurityAutoConfiguration {
         clientIpResolver,
         serviceName,
         paygateAuthenticationEntryPoint,
-        requestBodyMaxBytes);
+        requestBodyMaxBytes,
+        properties.getProtocols().getL402().isClientAddressBindingEnabled());
   }
 
   /**

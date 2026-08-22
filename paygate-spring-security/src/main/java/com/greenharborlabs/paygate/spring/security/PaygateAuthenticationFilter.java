@@ -66,6 +66,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   private final String serviceName;
   private final PaygateAuthenticationEntryPoint authenticationEntryPoint;
   private final int requestBodyMaxBytes;
+  private final boolean clientAddressBindingEnabled;
 
   /**
    * @deprecated Use the constructor accepting {@link PaygateAuthenticationEntryPoint}. This
@@ -109,7 +110,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         clientIpResolver,
         serviceName,
         authenticationEntryPoint,
-        RequestDigestSupport.MAX_CACHED_BODY_BYTES);
+        RequestDigestSupport.MAX_CACHED_BODY_BYTES,
+        false);
   }
 
   /** Creates a filter with the configured protected request-body bound. */
@@ -121,6 +123,27 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       String serviceName,
       PaygateAuthenticationEntryPoint authenticationEntryPoint,
       int requestBodyMaxBytes) {
+    this(
+        authenticationManager,
+        protocols,
+        endpointRegistry,
+        clientIpResolver,
+        serviceName,
+        authenticationEntryPoint,
+        requestBodyMaxBytes,
+        false);
+  }
+
+  /** Creates a filter with the configured request-body and L402 address-binding settings. */
+  public PaygateAuthenticationFilter(
+      AuthenticationManager authenticationManager,
+      List<PaymentProtocol> protocols,
+      PaygateEndpointRegistry endpointRegistry,
+      ClientIpResolver clientIpResolver,
+      String serviceName,
+      PaygateAuthenticationEntryPoint authenticationEntryPoint,
+      int requestBodyMaxBytes,
+      boolean clientAddressBindingEnabled) {
     this.authenticationManager =
         Objects.requireNonNull(authenticationManager, "authenticationManager must not be null");
     this.protocols = protocols != null ? List.copyOf(protocols) : List.of();
@@ -130,6 +153,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     this.serviceName = serviceName;
     this.authenticationEntryPoint = authenticationEntryPoint;
     this.requestBodyMaxBytes = requestBodyMaxBytes;
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -258,6 +282,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
       return;
+    } catch (RuntimeException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeLightningUnavailable(response);
+      return;
     }
 
     PaygateAuthenticationToken unauthenticatedToken =
@@ -364,7 +392,11 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     metadata.put(VerificationContextKeys.REQUEST_ROUTE, canonicalRoute);
     metadata.put(VerificationContextKeys.REQUEST_METHOD, request.getMethod());
     String clientIp =
-        clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+        clientAddressBindingEnabled
+            ? resolveBindingAddress(request)
+            : clientIpResolver != null
+                ? clientIpResolver.resolve(request)
+                : request.getRemoteAddr();
     metadata.put(VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
     if (includeDigest) {
       metadata.put(
@@ -386,6 +418,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     metadata.put(
         VerificationContextKeys.PRICING_STABILITY, endpointConfig.pricingStability().name());
     return metadata;
+  }
+
+  private String resolveBindingAddress(HttpServletRequest request) {
+    if (clientIpResolver == null) {
+      throw new IllegalStateException("Trusted client address is unavailable");
+    }
+    return clientIpResolver
+        .resolveBindingAddress(request)
+        .orElseThrow(() -> new IllegalStateException("Trusted client address is unavailable"));
   }
 
   /**

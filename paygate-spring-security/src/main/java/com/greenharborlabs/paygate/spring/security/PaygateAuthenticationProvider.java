@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
+import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
@@ -45,14 +46,15 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
   private final List<PaymentProtocol> protocols;
   private final String serviceName;
   private final CapabilityResolver capabilityResolver;
+  private final boolean clientAddressBindingEnabled;
 
   public PaygateAuthenticationProvider(L402Validator l402Validator, String serviceName) {
-    this(l402Validator, List.of(), serviceName, NOOP_RESOLVER);
+    this(l402Validator, List.of(), serviceName, NOOP_RESOLVER, false);
   }
 
   public PaygateAuthenticationProvider(
       L402Validator l402Validator, List<PaymentProtocol> protocols, String serviceName) {
-    this(l402Validator, protocols, serviceName, NOOP_RESOLVER);
+    this(l402Validator, protocols, serviceName, NOOP_RESOLVER, false);
   }
 
   public PaygateAuthenticationProvider(
@@ -60,10 +62,24 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       List<PaymentProtocol> protocols,
       String serviceName,
       CapabilityResolver capabilityResolver) {
+    this(l402Validator, protocols, serviceName, capabilityResolver, false);
+  }
+
+  /**
+   * Creates a provider with optional enforcement that every L402 credential carries one client IP
+   * caveat.
+   */
+  public PaygateAuthenticationProvider(
+      L402Validator l402Validator,
+      List<PaymentProtocol> protocols,
+      String serviceName,
+      CapabilityResolver capabilityResolver,
+      boolean clientAddressBindingEnabled) {
     this.l402Validator = Objects.requireNonNull(l402Validator, "l402Validator must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.serviceName = serviceName;
     this.capabilityResolver = capabilityResolver != null ? capabilityResolver : NOOP_RESOLVER;
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -98,6 +114,12 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       L402Validator.ValidationResult result = l402Validator.validate(components, context);
       L402Credential credential = result.credential();
       try {
+        if (clientAddressBindingEnabled && clientAddressCaveatCount(credential.macaroon()) != 1) {
+          throw new L402Exception(
+              com.greenharborlabs.paygate.core.protocol.ErrorCode.INVALID_MACAROON,
+              "L402 credential validation failed",
+              credential.tokenId());
+        }
         return PaygateAuthenticationToken.authenticated(result, serviceName);
       } finally {
         credential.destroy();
@@ -114,6 +136,12 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
     } catch (L402Exception e) {
       throw new BadCredentialsException("L402 authentication failed", mapL402Failure(e));
     }
+  }
+
+  private static long clientAddressCaveatCount(Macaroon macaroon) {
+    return macaroon.caveats().stream()
+        .filter(caveat -> "client_ip".equals(caveat.key().toString()))
+        .count();
   }
 
   private static PaymentValidationException mapL402Failure(L402Exception failure) {

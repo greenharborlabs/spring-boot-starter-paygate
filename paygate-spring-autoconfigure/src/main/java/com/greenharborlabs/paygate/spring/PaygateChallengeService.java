@@ -42,6 +42,7 @@ public class PaygateChallengeService {
   private final PaygateRateLimiter rateLimiter;
   private final AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter;
   private final ClientIpResolver clientIpResolver;
+  private final boolean clientAddressBindingEnabled;
   private final CapabilityCache capabilityCache;
   private final boolean validatedTestMode;
   private final ConcurrentHashMap<String, PaygatePricingStrategy> pricingStrategyCache =
@@ -118,6 +119,8 @@ public class PaygateChallengeService {
     this.rateLimiter = rateLimiter;
     this.aggregateInvoiceRateLimiter = aggregateInvoiceRateLimiter;
     this.clientIpResolver = clientIpResolver;
+    this.clientAddressBindingEnabled =
+        properties != null && properties.getProtocols().getL402().isClientAddressBindingEnabled();
     this.capabilityCache = capabilityCache;
     this.validatedTestMode = validatedTestMode;
   }
@@ -236,6 +239,17 @@ public class PaygateChallengeService {
     Objects.requireNonNull(routePattern, "routePattern must not be null");
     Objects.requireNonNull(options, "options must not be null");
 
+    String trustedClientAddress = null;
+    if (clientAddressBindingEnabled) {
+      trustedClientAddress =
+          clientIpResolver != null
+              ? clientIpResolver.resolveBindingAddress(request).orElse(null)
+              : null;
+      if (trustedClientAddress == null) {
+        throw new PaygateLightningUnavailableException("Trusted client address is unavailable");
+      }
+    }
+
     // 1. Check Lightning backend health
     if (!lightningBackend.isHealthy()) {
       throw new PaygateLightningUnavailableException("Lightning backend health check failed");
@@ -248,7 +262,8 @@ public class PaygateChallengeService {
 
     // 3. Generate root key, create invoice, build context
     try {
-      return buildChallengeContext(request, config, routePattern, request.getMethod());
+      return buildChallengeContext(
+          request, config, routePattern, request.getMethod(), trustedClientAddress);
     } catch (RuntimeException e) {
       throw new PaygateLightningUnavailableException(
           "Failed to create challenge: " + e.getMessage(), e);
@@ -320,7 +335,8 @@ public class PaygateChallengeService {
       HttpServletRequest request,
       PaygateEndpointConfig config,
       String routePattern,
-      String requestMethod)
+      String requestMethod,
+      @Nullable String trustedClientAddress)
       throws PaygateLightningUnavailableException, PaygateRateLimitedException {
 
     // Resolve and validate the effective price before any persistent or network side effect.
@@ -403,7 +419,8 @@ public class PaygateChallengeService {
                     routePattern,
                     requestMethod,
                     request.getQueryString(),
-                    request.getQueryString() != null);
+                    request.getQueryString() != null,
+                    trustedClientAddress);
 
             // Populate capability cache after successful invoice creation
             if (capabilityCache != null

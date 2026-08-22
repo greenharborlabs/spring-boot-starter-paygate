@@ -40,15 +40,26 @@ public class L402Protocol implements PaymentProtocol {
   private final L402Validator validator;
   private final String serviceName;
   private final Clock clock;
+  private final boolean clientAddressBindingEnabled;
 
   public L402Protocol(L402Validator validator, String serviceName) {
-    this(validator, serviceName, Clock.systemUTC());
+    this(validator, serviceName, Clock.systemUTC(), false);
   }
 
   public L402Protocol(L402Validator validator, String serviceName, Clock clock) {
+    this(validator, serviceName, clock, false);
+  }
+
+  /** Creates an L402 adapter with optional exact client-address caveat enforcement. */
+  public L402Protocol(
+      L402Validator validator,
+      String serviceName,
+      Clock clock,
+      boolean clientAddressBindingEnabled) {
     this.validator = Objects.requireNonNull(validator, "validator must not be null");
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
     this.clock = Objects.requireNonNull(clock, "clock must not be null");
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -114,6 +125,11 @@ public class L402Protocol implements PaymentProtocol {
     caveats.add(new Caveat("services", serviceName + ":0"));
     caveats.add(new Caveat("route", routePattern));
     caveats.add(new Caveat("method", requestMethod));
+    if (clientAddressBindingEnabled) {
+      String clientAddress =
+          requireChallengeBoundary(context.trustedClientAddress(), "client address");
+      caveats.add(new Caveat("client_ip", clientAddress));
+    }
     // The invoice amount is authenticated by the macaroon HMAC, preventing a lower-priced
     // credential from being reused after a trusted route price increases.
     caveats.add(new Caveat(serviceName + "_price_sats", Long.toString(context.priceSats())));
@@ -180,6 +196,13 @@ public class L402Protocol implements PaymentProtocol {
     L402Validator.ValidationResult result = null;
     try {
       result = validator.validate(metadata.rawAuthorizationHeader(), context);
+      if (clientAddressBindingEnabled
+          && clientAddressCaveatCount(result.credential().macaroon()) != 1) {
+        throw new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INVALID,
+            "L402 credential validation failed",
+            credential.tokenId());
+      }
     } catch (L402Exception e) {
       throw mapL402Exception(e);
     } catch (RuntimeException e) {
@@ -198,6 +221,12 @@ public class L402Protocol implements PaymentProtocol {
       throw new IllegalArgumentException(boundaryName + " must not be blank");
     }
     return value;
+  }
+
+  private static long clientAddressCaveatCount(Macaroon macaroon) {
+    return macaroon.caveats().stream()
+        .filter(caveat -> "client_ip".equals(caveat.key().toString()))
+        .count();
   }
 
   /**

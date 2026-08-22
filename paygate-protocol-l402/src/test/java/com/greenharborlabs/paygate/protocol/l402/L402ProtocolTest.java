@@ -333,6 +333,57 @@ class L402ProtocolTest {
     }
 
     @Test
+    void enabledAddressBindingMintsExactlyOneCanonicalClientIpCaveat() {
+      protocol =
+          new L402Protocol(
+              validator,
+              SERVICE_NAME,
+              Clock.fixed(Instant.parse("2026-01-02T03:04:05Z"), ZoneOffset.UTC),
+              true);
+      byte[] rootKey = new byte[32];
+      byte[] paymentHash = new byte[32];
+      byte[] tokenId = new byte[32];
+      ChallengeContext context =
+          new ChallengeContext(
+              paymentHash,
+              HEX.formatHex(tokenId),
+              "lnbc1invoice",
+              10L,
+              "test description",
+              SERVICE_NAME,
+              3600L,
+              "read",
+              rootKey,
+              null,
+              null,
+              "/widgets/{id}",
+              "POST",
+              null,
+              false,
+              "2001:db8:0:0:0:0:0:7");
+
+      ChallengeResponse response = protocol.formatChallenge(context);
+      byte[] serialized =
+          Base64.getDecoder().decode(extractQuotedValue(response.wwwAuthenticateHeader(), "token"));
+      var macaroon = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(macaroon.caveats())
+          .filteredOn(caveat -> caveat.key().equals("client_ip"))
+          .extracting(caveat -> caveat.value())
+          .containsExactly("2001:db8:0:0:0:0:0:7");
+    }
+
+    @Test
+    void enabledAddressBindingRejectsContextWithoutTrustedAddress() {
+      protocol = new L402Protocol(validator, SERVICE_NAME, Clock.systemUTC(), true);
+
+      assertThatThrownBy(
+              () -> protocol.formatChallenge(challengeContext("/widgets/{id}", "GET", "read")))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("client address");
+    }
+
+    @Test
     void locallyMintedChallengeMatchesCommittedPaidPriceVector() throws IOException {
       String vector = readPaidPriceVector();
       String serviceName = vectorField(vector, "serviceName");

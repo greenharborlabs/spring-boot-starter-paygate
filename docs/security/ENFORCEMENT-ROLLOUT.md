@@ -53,3 +53,14 @@ rollout.
 
 - [Validity-check availability](https://docs.github.com/en/enterprise-cloud@latest/code-security/how-tos/secure-your-secrets/customize-leak-detection/enabling-validity-checks-for-your-repository)
 - [Non-provider-pattern availability](https://docs.github.com/en/code-security/secret-scanning/using-advanced-secret-scanning-and-push-protection-features/non-provider-patterns/enabling-secret-scanning-for-non-provider-patterns)
+# Enforcing Paid Endpoints
+
+## Optional L402 client-address binding
+
+Enable `paygate.protocols.l402.client-address-binding-enabled` only after confirming the direct
+peer and every forwarding proxy are represented in `paygate.trusted-proxy-addresses`. The setting
+adds one exact IPv4/IPv6 `client_ip` caveat to new L402 credentials and rejects legacy unbound
+credentials, address changes caused by NAT or mobility, malformed proxy chains, and unavailable
+address provenance. Roll it out during a short credential lifetime and expect 503 rather than
+invoice issuance when provenance is ambiguous. The address is visible to a holder who can inspect
+the macaroon; binding narrows replay risk but cannot eliminate it. MPP is unaffected.

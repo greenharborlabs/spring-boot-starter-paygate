@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.net.InetAddress;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -111,6 +112,48 @@ public class ClientIpResolver {
     }
   }
 
+  /**
+   * Resolves the exact canonical client address suitable for an L402 authorization caveat.
+   *
+   * <p>Unlike rate-limit identity resolution, this never masks IPv6 addresses or falls back from an
+   * incomplete trusted-proxy chain to the proxy peer. An empty result is deliberately an
+   * unavailable provenance state and callers must fail closed.
+   */
+  public Optional<String> resolveBindingAddress(HttpServletRequest request) {
+    Objects.requireNonNull(request, "request must not be null");
+    String remote = normalizeIpLiteral(request.getRemoteAddr());
+    if (remote == null) {
+      return Optional.empty();
+    }
+    if (!trustForwardedHeaders || !trustedProxyAddresses.contains(remote)) {
+      return Optional.of(remote);
+    }
+
+    String forwarded = request.getHeader(X_FORWARDED_FOR);
+    if (forwarded == null || forwarded.isBlank()) {
+      return Optional.empty();
+    }
+    String[] entries = forwarded.split(",", -1);
+    if (entries.length == 0) {
+      return Optional.empty();
+    }
+    String client = null;
+    for (int index = entries.length - 1; index >= 0; index--) {
+      String canonical = normalizeIpLiteral(entries[index].trim());
+      if (canonical == null) {
+        return Optional.empty();
+      }
+      if (trustedProxyAddresses.contains(canonical)) {
+        continue;
+      }
+      if (client != null || index != 0) {
+        return Optional.empty();
+      }
+      client = canonical;
+    }
+    return Optional.ofNullable(client);
+  }
+
   private static void applyIpv6PrefixMask(byte[] addressBytes, int prefixLength) {
     int fullBytes = prefixLength / Byte.SIZE;
     int remainingBits = prefixLength % Byte.SIZE;
@@ -134,6 +177,9 @@ public class ClientIpResolver {
   }
 
   private static InetAddress parseIpLiteral(String ip) {
+    if (ip == null || ip.isBlank() || ip.indexOf('%') >= 0) {
+      return null;
+    }
     try {
       return InetAddress.ofLiteral(ip);
     } catch (IllegalArgumentException _) {

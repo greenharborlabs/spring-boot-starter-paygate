@@ -32,7 +32,8 @@ public record ChallengeContext(
     String routePattern,
     String requestMethod,
     String rawQuery,
-    boolean queryPresent)
+    boolean queryPresent,
+    String trustedClientAddress)
     implements AutoCloseable {
 
   public ChallengeContext {
@@ -85,7 +86,49 @@ public record ChallengeContext(
         null,
         null,
         null,
-        false);
+        false,
+        null);
+  }
+
+  /**
+   * Creates a challenge with request-boundary metadata but without an address binding.
+   *
+   * <p>This preserves the public descriptor that existed before optional L402 client-address
+   * binding was introduced. MPP deliberately continues to ignore this field.
+   */
+  public ChallengeContext(
+      byte[] paymentHash,
+      String tokenId,
+      String bolt11Invoice,
+      long priceSats,
+      String description,
+      String serviceName,
+      long timeoutSeconds,
+      String capability,
+      byte[] rootKeyBytes,
+      Map<String, String> opaque,
+      String digest,
+      String routePattern,
+      String requestMethod,
+      String rawQuery,
+      boolean queryPresent) {
+    this(
+        paymentHash,
+        tokenId,
+        bolt11Invoice,
+        priceSats,
+        description,
+        serviceName,
+        timeoutSeconds,
+        capability,
+        rootKeyBytes,
+        opaque,
+        digest,
+        routePattern,
+        requestMethod,
+        rawQuery,
+        queryPresent,
+        null);
   }
 
   /**
@@ -122,7 +165,8 @@ public record ChallengeContext(
         routePattern,
         requestMethod,
         null,
-        false);
+        false,
+        null);
   }
 
   @Override
@@ -152,7 +196,8 @@ public record ChallengeContext(
         && Objects.equals(routePattern, that.routePattern)
         && Objects.equals(requestMethod, that.requestMethod)
         && Objects.equals(rawQuery, that.rawQuery)
-        && queryPresent == that.queryPresent;
+        && queryPresent == that.queryPresent
+        && Objects.equals(trustedClientAddress, that.trustedClientAddress);
   }
 
   @Override
@@ -171,7 +216,8 @@ public record ChallengeContext(
             routePattern,
             requestMethod,
             rawQuery,
-            queryPresent);
+            queryPresent,
+            trustedClientAddress);
     result = 31 * result + java.util.Arrays.hashCode(paymentHash);
     return result;
   }

@@ -262,7 +262,11 @@ public class PaygateAutoConfiguration {
       if (serviceName == null || serviceName.isBlank()) {
         serviceName = "default";
       }
-      return new L402Protocol(paygateValidator, serviceName);
+      return new L402Protocol(
+          paygateValidator,
+          serviceName,
+          java.time.Clock.systemUTC(),
+          properties.getProtocols().getL402().isClientAddressBindingEnabled());
     }
   }
 
@@ -643,7 +647,8 @@ public class PaygateAutoConfiguration {
         paygateMetrics,
         paygateEarningsTracker,
         paygateRateLimiter,
-        properties.getRequestBody().getMaxBytes());
+        properties.getRequestBody().getMaxBytes(),
+        properties.getProtocols().getL402().isClientAddressBindingEnabled());
   }
 
   @Bean
