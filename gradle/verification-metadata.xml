@@ -8,15 +8,31 @@
          <ignored-key id="07D3516820BCF6B1" reason="Exact checksum exceptions required"/>
          <ignored-key id="17A27CE7A60FF5F0" reason="Exact checksum exceptions required"/>
          <ignored-key id="2C7B12F2A511E325" reason="Exact checksum exceptions required"/>
+         <ignored-key id="340B090F727518D8" reason="Exact checksum exceptions EX-366 and EX-367 required"/>
+         <ignored-key id="38EE757D69184620" reason="Exact checksum exceptions required"/>
+         <ignored-key id="3A387D43964143E3" reason="Exact checksum exceptions required"/>
+         <ignored-key id="3D12CA2AC19F3181" reason="Exact checksum exceptions required"/>
          <ignored-key id="419A28E3A649A40B" reason="Exact checksum exceptions required"/>
          <ignored-key id="436902AF59EDF60E" reason="Exact checksum exceptions EX-364 and EX-365 required"/>
+         <ignored-key id="4871433C7653D10C" reason="Exact checksum exceptions required"/>
+         <ignored-key id="4D8159D6A1159B69" reason="Exact checksum exceptions EX-378 through EX-381 required"/>
+         <ignored-key id="4ECE492B63E38ACF" reason="Exact checksum exceptions required"/>
          <ignored-key id="530AA5F25C25011F" reason="Exact checksum exceptions required"/>
+         <ignored-key id="586654072EAD6677" reason="Exact checksum exception EX-368 required"/>
+         <ignored-key id="58BD11D32974088F" reason="Exact checksum exceptions required"/>
+         <ignored-key id="59A252FB1199D873" reason="Exact checksum exceptions required"/>
          <ignored-key id="5E975CB00C643DBF" reason="Exact checksum exceptions required"/>
          <ignored-key id="636D10E7975B6E6F" reason="Exact checksum exceptions EX-362 and EX-363 required"/>
+         <ignored-key id="6425559C47CC79C4" reason="Exact checksum exceptions required"/>
+         <ignored-key id="66B50994442D2D40" reason="Exact checksum exceptions EX-369 through EX-377 required"/>
          <ignored-key id="66D68DAA073BE985" reason="Exact checksum exceptions required"/>
          <ignored-key id="6CCC36CC6C69FC17" reason="Exact checksum exceptions required"/>
          <ignored-key id="6FD54E1F311B47E9" reason="Exact checksum exceptions required"/>
          <ignored-key id="700E4F39BC05364B" reason="Exact checksum exceptions required"/>
+         <ignored-key id="72385FF0AF338D52" reason="Exact checksum exceptions required"/>
+         <ignored-key id="77A1EB8565CF8103" reason="Exact checksum exceptions required"/>
+         <ignored-key id="793FD5751A0F0780" reason="Exact checksum exceptions EX-382 through EX-386 required"/>
+         <ignored-key id="7EB97D110DFADD60" reason="Exact checksum exceptions required"/>
          <ignored-key id="85911F425EC61B51" reason="Exact checksum exceptions required"/>
          <ignored-key id="928FBF39003C0425" reason="Exact checksum exceptions required"/>
          <ignored-key id="95962C5E716C39AA" reason="Exact checksum exceptions required"/>
