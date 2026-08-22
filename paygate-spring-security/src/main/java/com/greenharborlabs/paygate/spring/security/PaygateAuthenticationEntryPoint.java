@@ -39,17 +39,28 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
   private final PaygateEndpointRegistry endpointRegistry;
   private final List<PaymentProtocol> protocols;
   private final boolean mppEnabled;
+  private final int requestBodyMaxBytes;
 
   public PaygateAuthenticationEntryPoint(
       PaygateChallengeService challengeService,
       PaygateEndpointRegistry endpointRegistry,
       List<PaymentProtocol> protocols) {
+    this(challengeService, endpointRegistry, protocols, 8_192);
+  }
+
+  /** Creates an entry point using the configured request-body bound. */
+  public PaygateAuthenticationEntryPoint(
+      PaygateChallengeService challengeService,
+      PaygateEndpointRegistry endpointRegistry,
+      List<PaymentProtocol> protocols,
+      int requestBodyMaxBytes) {
     this.challengeService =
         Objects.requireNonNull(challengeService, "challengeService must not be null");
     this.endpointRegistry =
         Objects.requireNonNull(endpointRegistry, "endpointRegistry must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.mppEnabled = this.protocols.stream().anyMatch(RequestDigestSupport::isMppProtocol);
+    this.requestBodyMaxBytes = requestBodyMaxBytes;
   }
 
   @Override
@@ -141,8 +152,8 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       challengeService.acquireChallengeRateLimit(request);
       if (mppEnabled) {
         String path = ApplicationRelativeRequestResolver.resolve(request);
-        challengeRequest = RequestDigestSupport.wrapForDigest(request);
-        RequestDigestSupport.ensureDigestAttribute(challengeRequest, path);
+        challengeRequest = RequestDigestSupport.wrapForDigest(request, requestBodyMaxBytes);
+        RequestDigestSupport.ensureDigestAttribute(challengeRequest, path, requestBodyMaxBytes);
       }
 
       var challengeContext =

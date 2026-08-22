@@ -53,6 +53,8 @@ public class PaygateProperties {
 
   private RateLimit rateLimit = new RateLimit();
 
+  private Routing routing = new Routing();
+
   private HealthCache healthCache = new HealthCache();
 
   private Lnbits lnbits = new Lnbits();
@@ -89,6 +91,14 @@ public class PaygateProperties {
 
   public void setRateLimit(RateLimit rateLimit) {
     this.rateLimit = rateLimit;
+  }
+
+  public Routing getRouting() {
+    return routing;
+  }
+
+  public void setRouting(Routing routing) {
+    this.routing = routing;
   }
 
   public RequestBody getRequestBody() {
@@ -338,6 +348,8 @@ public class PaygateProperties {
 
     private int ipv6PrefixLength = 64;
 
+    private Aggregate aggregate = new Aggregate();
+
     public double getRequestsPerSecond() {
       return requestsPerSecond;
     }
@@ -378,6 +390,75 @@ public class PaygateProperties {
       }
       this.ipv6PrefixLength = ipv6PrefixLength;
     }
+
+    public Aggregate getAggregate() {
+      return aggregate;
+    }
+
+    public void setAggregate(Aggregate aggregate) {
+      this.aggregate = aggregate;
+    }
+
+    /** Aggregate invoice-challenge limit bound from {@code paygate.rate-limit.aggregate.*}. */
+    public static class Aggregate {
+
+      private static final double MAX_REQUESTS_PER_SECOND = 100_000.0d;
+      private static final int MAX_BURST_SIZE = 1_000_000;
+      private double requestsPerSecond = 100.0d;
+      private int burstSize = 200;
+
+      public double getRequestsPerSecond() {
+        return requestsPerSecond;
+      }
+
+      public void setRequestsPerSecond(double requestsPerSecond) {
+        if (!Double.isFinite(requestsPerSecond)
+            || requestsPerSecond <= 0.0d
+            || requestsPerSecond > MAX_REQUESTS_PER_SECOND) {
+          throw new IllegalArgumentException(
+              "paygate.rate-limit.aggregate.requests-per-second must be finite and between 0 and "
+                  + MAX_REQUESTS_PER_SECOND
+                  + ", got: "
+                  + requestsPerSecond);
+        }
+        this.requestsPerSecond = requestsPerSecond;
+      }
+
+      public int getBurstSize() {
+        return burstSize;
+      }
+
+      public void setBurstSize(int burstSize) {
+        if (burstSize < 1 || burstSize > MAX_BURST_SIZE) {
+          throw new IllegalArgumentException(
+              "paygate.rate-limit.aggregate.burst-size must be between 1 and "
+                  + MAX_BURST_SIZE
+                  + ", got: "
+                  + burstSize);
+        }
+        this.burstSize = burstSize;
+      }
+    }
+  }
+
+  /** Startup policy for paid/manual route overlap findings. */
+  public static class Routing {
+
+    private OverlapPolicy overlapPolicy = OverlapPolicy.WARN;
+
+    public OverlapPolicy getOverlapPolicy() {
+      return overlapPolicy;
+    }
+
+    public void setOverlapPolicy(OverlapPolicy overlapPolicy) {
+      this.overlapPolicy = overlapPolicy;
+    }
+  }
+
+  /** Route overlap disposition policy. */
+  public enum OverlapPolicy {
+    WARN,
+    FAIL
   }
 
   /** Health-check caching configuration bound from {@code paygate.health-cache.*}. */

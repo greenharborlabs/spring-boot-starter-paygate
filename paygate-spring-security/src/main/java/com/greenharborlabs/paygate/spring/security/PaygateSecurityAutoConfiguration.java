@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.spring.CapabilityCache;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.PaygateProperties;
 import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateSpringSecurityModeCondition;
 import java.util.List;
@@ -119,8 +120,12 @@ public class PaygateSecurityAutoConfiguration {
   public PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint(
       PaygateChallengeService paygateChallengeService,
       PaygateEndpointRegistry paygateEndpointRegistry,
-      List<PaymentProtocol> protocols) {
+      List<PaymentProtocol> protocols,
+      PaygateProperties properties) {
     return new PaygateAuthenticationEntryPoint(
-        paygateChallengeService, paygateEndpointRegistry, protocols);
+        paygateChallengeService,
+        paygateEndpointRegistry,
+        protocols,
+        properties.getRequestBody().getMaxBytes());
   }
 }

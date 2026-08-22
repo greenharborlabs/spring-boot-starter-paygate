@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.spring.PaygateAutoConfiguration;
@@ -54,12 +53,13 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
               "paygate.enabled=true",
               "paygate.backend=lnbits",
               "paygate.root-key-store=memory",
-              "paygate.security-mode=spring-security",
-              "paygate.spring-security.custom-filter-chain-acknowledged=true")
+              "paygate.security-mode=spring-security")
           .withBean(
               SecurityModeSpringSecurityTest.StubLightningBackend.class,
               SecurityModeSpringSecurityTest.StubLightningBackend::new)
-          .withBean(AuthenticationManager.class, () -> authentication -> authentication);
+          .withBean(AuthenticationManager.class, () -> authentication -> authentication)
+          .withBean(
+              FilterChainProxy.class, () -> filterChainProxy(rateLimitFilter(), paygateFilter()));
 
   @Test
   @DisplayName("auto-configuration creates guard bean")
@@ -74,15 +74,15 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   }
 
   @Test
-  @DisplayName("custom filter-chain acknowledgement skips proxy inspection")
-  void acknowledgementSkipsProxyInspection() {
+  @DisplayName("custom filter-chain acknowledgement cannot waive minimum filter controls")
+  void acknowledgementCannotSkipProxyInspection() {
     var provider = filterChainProxyProvider();
     var properties = new PaygateProperties();
     properties.getSpringSecurity().setCustomFilterChainAcknowledged(true);
 
-    guard(provider, properties).afterSingletonsInstantiated();
-
-    verifyNoInteractions(provider);
+    assertThatThrownBy(() -> guard(provider, properties).afterSingletonsInstantiated())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no PaygateAuthenticationFilter");
   }
 
   @Test
@@ -99,7 +99,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   @Test
   @DisplayName("direct PaygateAuthenticationFilter in proxy starts successfully")
   void directPaygateFilterStartsSuccessfully() {
-    var proxy = filterChainProxy(paygateFilter());
+    var proxy = filterChainProxy(rateLimitFilter(), paygateFilter());
 
     assertThatCode(
             () ->
@@ -112,7 +112,9 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   @DisplayName("every effective security chain must contain the Paygate filter")
   void multipleEffectiveChainsRequirePaygateFilterInEachChain() {
     var paidFilter = paygateFilter();
-    var paidChain = new TestSecurityFilterChain(requestMatcher("/paid"), List.of(paidFilter));
+    var paidChain =
+        new TestSecurityFilterChain(
+            requestMatcher("/paid"), List.of(rateLimitFilter(), paidFilter));
     var otherChain =
         new TestSecurityFilterChain(requestMatcher("/other"), List.of(new NoNestedFiltersFilter()));
     var proxy = new FilterChainProxy(List.of(paidChain, otherChain));
@@ -140,7 +142,9 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     var permitAllChain =
         new TestSecurityFilterChain(
             requestMatcher("/permit-all"), List.of(permitAllAuthorizationFilter));
-    var paidChain = new TestSecurityFilterChain(requestMatcher("/paid"), List.of(paidFilter));
+    var paidChain =
+        new TestSecurityFilterChain(
+            requestMatcher("/paid"), List.of(rateLimitFilter(), paidFilter));
     var proxy = new FilterChainProxy(List.of(permitAllChain, paidChain));
 
     assertThat(permitAllChain.matches(request("/permit-all"))).isTrue();
@@ -195,7 +199,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
         new FilterChainProxy(
             new TestSecurityFilterChain(
                 request -> request.getDispatcherType() != DispatcherType.ERROR,
-                List.of(paygateFilter, downstreamPaygateChainFilter)));
+                List.of(rateLimitFilter(), paygateFilter, downstreamPaygateChainFilter)));
     var errorRequest = request("/paid");
     errorRequest.setDispatcherType(DispatcherType.ERROR);
 
@@ -231,7 +235,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   @Test
   @DisplayName("nested FilterChainProxy containing PaygateAuthenticationFilter starts successfully")
   void nestedFilterChainProxyStartsSuccessfully() {
-    var nestedProxy = filterChainProxy(paygateFilter());
+    var nestedProxy = filterChainProxy(rateLimitFilter(), paygateFilter());
     var outerProxy = filterChainProxy(nestedProxy);
 
     assertThatCode(
@@ -245,7 +249,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   @DisplayName(
       "wrapper filter getFilters containing PaygateAuthenticationFilter starts successfully")
   void wrapperGetFiltersStartsSuccessfully() {
-    var proxy = filterChainProxy(new FilterWrapper(List.of(paygateFilter())));
+    var proxy = filterChainProxy(new FilterWrapper(List.of(rateLimitFilter(), paygateFilter())));
 
     assertThatCode(
             () ->
@@ -317,6 +321,11 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   private static PaygateAuthenticationFilter paygateFilter() {
     return new PaygateAuthenticationFilter(
         authentication -> authentication, List.of(), mock(PaygateEndpointRegistry.class));
+  }
+
+  private static PaygateAuthFailureRateLimitFilter rateLimitFilter() {
+    return new PaygateAuthFailureRateLimitFilter(
+        null, null, mock(PaygateEndpointRegistry.class), List.of());
   }
 
   @SuppressWarnings("unchecked")

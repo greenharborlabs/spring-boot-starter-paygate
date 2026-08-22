@@ -40,6 +40,7 @@ public class PaygateChallengeService {
 
   private final PaygateEarningsTracker earningsTracker;
   private final PaygateRateLimiter rateLimiter;
+  private final AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter;
   private final ClientIpResolver clientIpResolver;
   private final CapabilityCache capabilityCache;
   private final boolean validatedTestMode;
@@ -62,6 +63,7 @@ public class PaygateChallengeService {
         applicationContext,
         earningsTracker,
         rateLimiter,
+        null,
         clientIpResolver,
         capabilityCache,
         false,
@@ -75,6 +77,7 @@ public class PaygateChallengeService {
       @Nullable ApplicationContext applicationContext,
       @Nullable PaygateEarningsTracker earningsTracker,
       @Nullable PaygateRateLimiter rateLimiter,
+      @Nullable AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter,
       @Nullable ClientIpResolver clientIpResolver,
       @Nullable CapabilityCache capabilityCache,
       boolean validatedTestMode) {
@@ -85,6 +88,7 @@ public class PaygateChallengeService {
         applicationContext,
         earningsTracker,
         rateLimiter,
+        aggregateInvoiceRateLimiter,
         clientIpResolver,
         capabilityCache,
         validatedTestMode,
@@ -98,6 +102,7 @@ public class PaygateChallengeService {
       @Nullable ApplicationContext applicationContext,
       @Nullable PaygateEarningsTracker earningsTracker,
       @Nullable PaygateRateLimiter rateLimiter,
+      @Nullable AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter,
       @Nullable ClientIpResolver clientIpResolver,
       @Nullable CapabilityCache capabilityCache,
       boolean validatedTestMode,
@@ -111,6 +116,7 @@ public class PaygateChallengeService {
     this.serviceName = (svcName == null || svcName.isBlank()) ? "default" : svcName;
     this.earningsTracker = earningsTracker;
     this.rateLimiter = rateLimiter;
+    this.aggregateInvoiceRateLimiter = aggregateInvoiceRateLimiter;
     this.clientIpResolver = clientIpResolver;
     this.capabilityCache = capabilityCache;
     this.validatedTestMode = validatedTestMode;
@@ -315,11 +321,13 @@ public class PaygateChallengeService {
       PaygateEndpointConfig config,
       String routePattern,
       String requestMethod)
-      throws PaygateLightningUnavailableException {
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
 
     // Resolve and validate the effective price before any persistent or network side effect.
     long effectivePrice = resolvePrice(request, config);
     validatePrice(effectivePrice);
+
+    acquireAggregateInvoiceCapacity();
 
     // Create Lightning invoice before root key generation so invoice failures do not allocate
     // sensitive key material.
@@ -429,6 +437,27 @@ public class PaygateChallengeService {
     } catch (RuntimeException e) {
       throw new PaygateLightningUnavailableException(
           "Failed to generate root key: " + e.getMessage(), e);
+    }
+  }
+
+  private void acquireAggregateInvoiceCapacity()
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    AggregateInvoiceRateLimiter limiter = aggregateInvoiceRateLimiter;
+    if (limiter == null) {
+      return;
+    }
+    try {
+      if (!limiter.tryAcquire()) {
+        throw new PaygateRateLimitedException("Aggregate invoice limit exceeded");
+      }
+    } catch (PaygateRateLimitedException e) {
+      throw e;
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Aggregate invoice limiter failed; denying challenge: {0}",
+          e.getClass().getSimpleName());
+      throw new PaygateLightningUnavailableException("Aggregate invoice limiter unavailable", e);
     }
   }
 

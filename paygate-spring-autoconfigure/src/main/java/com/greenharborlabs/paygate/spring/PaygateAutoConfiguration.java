@@ -468,7 +468,9 @@ public class PaygateAutoConfiguration {
   @ConditionalOnMissingBean
   public PaygateEndpointRegistry paygateEndpointRegistry(PaygateProperties properties) {
     return new PaygateEndpointRegistry(
-        properties.getDefaultTimeoutSeconds(), properties.getCaveat().getMaxValuesPerCaveat());
+        properties.getDefaultTimeoutSeconds(),
+        properties.getCaveat().getMaxValuesPerCaveat(),
+        properties.getRouting().getOverlapPolicy());
   }
 
   /** Scans mappings only after MVC has completed constructing its configuration graph. */
@@ -485,6 +487,7 @@ public class PaygateAutoConfiguration {
           rejectUnsupportedPaidHandlerSource(entry.getKey(), handlerMapping);
         }
       }
+      registry.validateManualRouteOverlaps();
     };
   }
 
@@ -585,6 +588,14 @@ public class PaygateAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
+  public AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter(PaygateProperties properties) {
+    var aggregate = properties.getRateLimit().getAggregate();
+    return new TokenBucketAggregateInvoiceRateLimiter(
+        aggregate.getRequestsPerSecond(), aggregate.getBurstSize());
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
   public PaygateChallengeService paygateChallengeService(
       RootKeyStore rootKeyStore,
       LightningBackend lightningBackend,
@@ -592,6 +603,7 @@ public class PaygateAutoConfiguration {
       ApplicationContext applicationContext,
       @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
       @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
+      AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
       @Autowired(required = false) CapabilityCache capabilityCache,
       PaygateRequestPricingService paygateRequestPricingService,
@@ -604,6 +616,7 @@ public class PaygateAutoConfiguration {
         applicationContext,
         paygateEarningsTracker,
         paygateRateLimiter,
+        aggregateInvoiceRateLimiter,
         clientIpResolver,
         capabilityCache,
         validatedTestMode.getIfAvailable() != null,

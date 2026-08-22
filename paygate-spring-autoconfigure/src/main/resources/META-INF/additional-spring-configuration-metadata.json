@@ -89,6 +89,24 @@
       "defaultValue": 20
     },
     {
+      "name": "paygate.rate-limit.aggregate.requests-per-second",
+      "type": "java.lang.Double",
+      "description": "Identity-independent invoice-challenge refill rate. The default per-instance limiter can be replaced with a shared AggregateInvoiceRateLimiter bean.",
+      "defaultValue": 100.0
+    },
+    {
+      "name": "paygate.rate-limit.aggregate.burst-size",
+      "type": "java.lang.Integer",
+      "description": "Identity-independent invoice-challenge burst capacity. Aggregate limiting remains enabled whenever Paygate is enabled.",
+      "defaultValue": 200
+    },
+    {
+      "name": "paygate.routing.overlap-policy",
+      "type": "com.greenharborlabs.paygate.spring.PaygateProperties$OverlapPolicy",
+      "description": "Disposition for detected manual paid-route and unprotected MVC-route overlaps: WARN (default) or FAIL.",
+      "defaultValue": "WARN"
+    },
+    {
       "name": "paygate.rate-limit.ipv6-prefix-length",
       "type": "java.lang.Integer",
       "description": "IPv6 network prefix length used to group client addresses for challenge rate limiting. Must be between 0 and 128, inclusive; use 64 to group addresses by the standard IPv6 subnet.",

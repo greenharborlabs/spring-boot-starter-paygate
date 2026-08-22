@@ -149,6 +149,9 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.rate-limit.requests-per-second` | `double` | `10.0` | Token refill rate per second per client IP. Controls the sustained rate of 402 challenge issuance. |
 | `paygate.rate-limit.burst-size` | `int` | `20` | Maximum burst capacity per client IP. Allows short bursts above the sustained rate before throttling. |
 | `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum number of tracked IP rate-limit buckets. Limits memory usage under high-cardinality traffic. |
+| `paygate.rate-limit.aggregate.requests-per-second` | `double` | `100.0` | Instance-wide invoice creation refill rate. Replace `AggregateInvoiceRateLimiter` with a shared implementation for a deployment-wide ceiling. |
+| `paygate.rate-limit.aggregate.burst-size` | `int` | `200` | Instance-wide invoice creation burst capacity. Exhaustion returns 429 before invoice or root-key work. |
+| `paygate.routing.overlap-policy` | `WARN` or `FAIL` | `WARN` | Warn or fail startup when a manual paid route may overlap an unprotected MVC mapping. |
 
 ### Health Cache Properties
 
