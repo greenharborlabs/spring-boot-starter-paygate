@@ -11,8 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Kimi L-1–L-28 — accountable Low-finding hardening**: Added a canonical implemented-control
   ledger, append-only evidence schema, mutation-tested validator, and CI/release gates. The ledger
-  deliberately withholds verified and approved status until successful current-revision evidence
-  and named security or release review are recorded.
+  records successful current-revision evidence and approval by the named OpenAI Codex AI security
+  reviewer. The final review also closed nested Spring Security chain coverage, local LNbits
+  setup-state symlink handling, and test-mode preimage cleanup findings before the release gate
+  passed at reviewed revision `c45e2a9b4d6c9694dcb021d869242270d65356e3`.
 
 - L402 challenges now bind the settled invoice amount in a signed service-scoped paid-price caveat;
   protected requests re-evaluate their trusted current price on every validation, including cache hits.

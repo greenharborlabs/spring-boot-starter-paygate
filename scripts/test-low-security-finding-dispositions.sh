@@ -31,7 +31,7 @@ while IFS=' ' read -r case_name expected; do
     unmapped) sed -i.bak 's/FR-/RQ-/g' "$ledger" ;;
     stale) sed -i.bak 's/| passed | 0 |/| stale | 0 |/g' "$evidence" ;;
     failed) sed -i.bak 's/| passed | 0 |/| failed | 1 |/g' "$evidence" ;;
-    premature-approval) sed -i.bak 's/| verified | pending | — | — | — |/| verified | approved | Reviewer | 2026-08-23 | LOW-EV-CORE |/g' "$ledger" ;;
+    premature-approval) sed -i.bak 's/| approved | approved | [^|]* | [^|]* | [^|]* |/| verified | approved | Reviewer | 2026-08-23 | LOW-EV-CORE |/g' "$ledger" ;;
     unapproved-tradeoff) sed -i.bak 's/| remediated |/| accepted-limitation |/g' "$ledger" ;;
     marker-leak) printf '\nLOW_SECURITY_MARKER_TOKEN_ID_8c3e5b10\n' >> "$ledger" ;;
     *) fail "unknown case in inventory: $case_name" ;;

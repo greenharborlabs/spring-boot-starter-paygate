@@ -3,7 +3,7 @@
 This append-only ledger records only completed, redacted executions at a reviewed Git revision.
 Do not add planned, skipped, cancelled, or failed work as a passing record. Current records must use
 a 40-character revision, UTC timestamps, exit status `0`, a durable artifact/report reference, and
-a redaction attestation. The absence of records below is intentional until Phase 11 completes.
+a redaction attestation. Phase 11 records appear only after their corresponding executions finish.
 
 | Evidence ID | Implementation revision | Started (UTC) | Finished (UTC) | Command or scenario | Environment | Result | Exit/status | Findings | Artifact/report | Redaction attestation | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -19,13 +19,16 @@ a redaction attestation. The absence of records below is intentional until Phase
 | LOW-EV-FIXTURE-RUNTIME | b5d5ea83cdbd633a7f06d72a3ade45e2f4ddd8fd | 2026-08-23T00:53:51Z | 2026-08-23T00:57:25Z | Full Gradle integration/security suites and all four isolated Docker Compose scenarios | macOS; Docker Engine 29.7.2; Compose 5.4.0; loopback-only alternate ports | passed | 0 | L-24–L-28 | This tracked redacted record; `integration-tests/README.md`; `integration-tests/PLAYBOOK.md` | Proof-bearing logs and temporary state were destroyed after checking fixed pass markers; credentials, proofs, full IDs/hashes, generated secrets, backend text, and local secret paths omitted. | LND, LNbits FakeWallet, two-node LND, and LNbits-over-LND passed; isolated volumes were removed and the existing user stack was preserved. |
 | LOW-EV-LEDGER | 88b3e471aa4bf26ac4a5d6ebe8e4c1c5b8c16ce5 | 2026-08-23T01:03:06Z | 2026-08-23T01:03:07Z | Exact 28-row coverage validator and all isolated disposition mutations | macOS; JDK 25.0.1; Gradle 9.4.1; clean checkout | passed | 0 | L-1–L-28 | `docs/security/KIMI-LOW-FINDING-DISPOSITIONS.md`; `scripts/test-low-security-finding-dispositions.sh`; mutation inventory | Reviewed summary only; credentials, proofs, full IDs/hashes, generated secrets, backend text, and local secret paths omitted. | Verified rows and stale, failed, premature-approval, coverage, placeholder, trade-off, and marker mutations passed. |
 | LOW-EV-RELEASE | 88b3e471aa4bf26ac4a5d6ebe8e4c1c5b8c16ce5 | 2026-08-23T01:03:07Z | 2026-08-23T01:04:48Z | `./gradlew releaseReadiness -Pintegration` | macOS; JDK 25.0.1; Gradle 9.4.1; clean checkout | passed | 0 | L-1–L-28 | Dependency-Check, dependency-health, test, JaCoCo, and Javadoc reports under `build/reports` | Reviewed summary only; credentials, proofs, full IDs/hashes, generated secrets, backend text, and local secret paths omitted. | Aggregate release-readiness gate passed with the tracked verified ledger and repaired mutation harness. |
+| LOW-EV-RELEASE-REVIEWED | c45e2a9b4d6c9694dcb021d869242270d65356e3 | 2026-08-23T01:39:23Z | 2026-08-23T01:39:38Z | `./gradlew releaseReadiness -Pintegration` after security-review corrections | macOS; JDK 25.0.1; Gradle 9.4.1; clean checkout | passed | 0 | L-1–L-28; review I1–I3 | Dependency-Check, dependency-health, test, JaCoCo, PMD, Spotless, integration/security, and Javadoc reports under `build/reports` | Reviewed summary only; credentials, proofs, full IDs/hashes, generated secrets, backend text, and local secret paths omitted. | All 599 release-readiness tasks completed successfully at the reviewed implementation revision. |
+| LOW-EV-SECURITY-REVIEW | c45e2a9b4d6c9694dcb021d869242270d65356e3 | 2026-08-23T01:40:23Z | 2026-08-23T01:40:23Z | Independent AI security review of the feature diff, 28 dispositions, residual risks, and completed corrections | OpenAI Codex AI security reviewer; refreshed `origin/main`; local evidence and source inspection | passed | 0 | L-1–L-28; review I1–I3 | `docs/security/KIMI-LOW-SECURITY-REVIEW.md` | Review record contains bounded findings and revision identifiers only; credentials, proofs, full IDs/hashes, generated secrets, backend text, and local secret paths omitted. | Approval granted only after all review findings were corrected and `LOW-EV-RELEASE-REVIEWED` passed. |
 
 ## Required evidence groups
 
 `LOW-EV-CORE` covers L-1–L-8; `LOW-EV-WEB` L-9–L-16; `LOW-EV-LIGHTNING` L-17–L-21;
 `LOW-EV-PROVENANCE` L-22; `LOW-EV-IGNORE` L-23; `LOW-EV-FIXTURE-STATIC` and
 `LOW-EV-FIXTURE-RUNTIME` L-24–L-28; `LOW-EV-ADVISORY` L-28; `LOW-EV-COMPAT` L-4, L-7, L-13,
-L-15, L-16, and L-21; `LOW-EV-QUALITY`, `LOW-EV-RELEASE`, and `LOW-EV-LEDGER` all findings.
+L-15, L-16, and L-21; `LOW-EV-QUALITY`, `LOW-EV-RELEASE`, `LOW-EV-LEDGER`,
+`LOW-EV-RELEASE-REVIEWED`, and `LOW-EV-SECURITY-REVIEW` cover all findings.
 
 Records must not include root keys, credentials, proofs, full token IDs or payment hashes, generated
 passwords, backend text, descriptions, secret paths, or attacker-controlled exception messages.
