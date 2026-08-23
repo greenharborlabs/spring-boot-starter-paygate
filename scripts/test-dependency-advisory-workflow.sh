@@ -3,6 +3,12 @@
 set -euo pipefail
 export LC_ALL=C
 
+# GitHub-hosted runner images do not guarantee ripgrep. The checks below only use
+# portable extended regular expressions, so fall back to grep when needed.
+if ! command -v rg >/dev/null 2>&1; then
+  rg() { grep -E "$@"; }
+fi
+
 readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly WORKFLOW="${1:-$ROOT/.github/workflows/dependency-advisory.yml}"
 

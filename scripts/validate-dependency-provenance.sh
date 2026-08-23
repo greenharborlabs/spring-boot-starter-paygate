@@ -4,6 +4,12 @@
 set -euo pipefail
 export LC_ALL=C
 
+# GitHub-hosted runner images do not guarantee ripgrep. The expressions in this
+# validator are portable extended regular expressions, so grep is an equivalent fallback.
+if ! command -v rg >/dev/null 2>&1; then
+  rg() { grep -E "$@"; }
+fi
+
 readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly METADATA="${1:-$ROOT/gradle/verification-metadata.xml}"
 readonly KEYRING="${2:-$ROOT/gradle/verification-keyring.keys}"
@@ -22,6 +28,14 @@ fail() {
 rg -q '<verify-metadata>true</verify-metadata>' "$METADATA" || fail 'metadata verification is disabled'
 rg -q '<verify-signatures>true</verify-signatures>' "$METADATA" || fail 'signature verification is disabled'
 rg -q -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$KEYRING" || fail 'keyring has no armored public key'
+command -v gpg >/dev/null 2>&1 || fail 'gpg is required to inspect the committed keyring'
+
+missing_trusted_keys="$(
+  comm -23 \
+    <(sed -n 's/.*<trusted-key id="\([0-9A-F]\{40\}\)".*/\1/p' "$METADATA" | sort -u) \
+    <(gpg --show-keys --with-colons "$KEYRING" 2>/dev/null | awk -F: '$1 == "fpr" { print $10 }' | sort -u)
+)"
+[[ -z "$missing_trusted_keys" ]] || fail "trusted metadata keys are missing from the committed keyring: $missing_trusted_keys"
 
 if rg -q '<trusted-artifact([^>]*(group|name|version|file)="\*"|[^>]*/>)' "$METADATA"; then
   fail 'broad or unscoped trusted artifact is forbidden'
