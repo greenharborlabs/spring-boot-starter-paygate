@@ -3,6 +3,18 @@
 set -euo pipefail
 export LC_ALL=C
 
+# GitHub-hosted runner images do not guarantee ripgrep. This script uses only
+# portable fixed-string and extended-regular-expression searches.
+if ! command -v rg >/dev/null 2>&1; then
+  rg() {
+    local argument
+    for argument in "$@"; do
+      [[ "$argument" == -* && "$argument" == *F* ]] && { grep "$@"; return; }
+    done
+    grep -E "$@"
+  }
+fi
+
 readonly ROOT="${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 readonly APP_BIND='${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-'
 readonly REGTEST_GID='10001'
@@ -33,15 +45,22 @@ for compose_file in "${compose_files[@]:1}"; do
 done
 
 for compose_file in "${compose_files[@]:1}"; do
-  if rg -n '^\s+- "?\$\{?(APP_PORT|LND_|LNBITS_|BITCOIND_)' "$compose_file" >/dev/null; then
+  if rg -n '^[[:space:]]+- "?\$\{?(APP_PORT|LND_|LNBITS_|BITCOIND_)' "$compose_file" >/dev/null; then
     fail "an integration host port lacks an explicit loopback bind: ${compose_file#"$ROOT"/}"
   fi
 done
 
 for compose_file in "$integration_directory/docker-compose-lnbits.yml" "$integration_directory/docker-compose-lnbits-lnd.yml"; do
   require_file "$compose_file"
-  rg -U -q '# TEST ONLY:.*plaintext HTTP.*\n\s*PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP: "true"' "$compose_file" \
-    || fail "plaintext LNbits setting lacks an adjacent warning: ${compose_file#"$ROOT"/}"
+  awk '
+    /# TEST ONLY:.*plaintext HTTP/ {
+      if ((getline next_line) > 0 && next_line ~ /^[[:space:]]*PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP: "true"/) {
+        found = 1
+        exit
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$compose_file" || fail "plaintext LNbits setting lacks an adjacent warning: ${compose_file#"$ROOT"/}"
 done
 
 password_library="$integration_directory/scripts/lib/lnbits-setup-password.sh"

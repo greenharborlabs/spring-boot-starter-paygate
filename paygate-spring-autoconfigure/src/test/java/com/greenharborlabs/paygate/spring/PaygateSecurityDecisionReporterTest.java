@@ -42,6 +42,27 @@ class PaygateSecurityDecisionReporterTest {
   }
 
   @Test
+  void replacesControlCharactersBeforeRecordingMetricTags() {
+    var registry = new SimpleMeterRegistry();
+    var reporter = new PaygateSecurityDecisionReporter(registry);
+
+    reporter.onDecision(
+        new SecurityDecision(
+            SecurityDecisionReason.INSUFFICIENT_PRICE,
+            SecurityDecisionProtocol.L402,
+            "POST\r\nforged-entry",
+            "/api/analyze\u0000"));
+
+    assertThat(
+            registry
+                .find("paygate.security.decisions")
+                .tags("method", "POST__forged-entry", "endpoint", "/api/analyze_")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
   void noMetricSinkStillDoesNotAffectTheDecisionPath() {
     new PaygateSecurityDecisionReporter(null)
         .onDecision(
