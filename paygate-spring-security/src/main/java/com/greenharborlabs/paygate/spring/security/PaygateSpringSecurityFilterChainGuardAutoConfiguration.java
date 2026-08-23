@@ -1,6 +1,5 @@
 package com.greenharborlabs.paygate.spring.security;
 
-import com.greenharborlabs.paygate.spring.PaygateProperties;
 import com.greenharborlabs.paygate.spring.PaygateSpringSecurityModeCondition;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
@@ -17,7 +16,6 @@ import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -33,27 +31,20 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
 @ConditionalOnProperty(name = "paygate.enabled", havingValue = "true")
 @ConditionalOnClass({EnableWebSecurity.class, FilterChainProxy.class})
 @Conditional(PaygateSpringSecurityModeCondition.class)
-@EnableConfigurationProperties(PaygateProperties.class)
 public class PaygateSpringSecurityFilterChainGuardAutoConfiguration {
-
-  static final String ACKNOWLEDGEMENT_PROPERTY =
-      "paygate.spring-security.custom-filter-chain-acknowledged";
 
   @Bean
   SmartInitializingSingleton paygateSpringSecurityFilterChainGuard(
-      ObjectProvider<FilterChainProxy> filterChainProxies, PaygateProperties properties) {
-    return new PaygateSpringSecurityFilterChainGuard(filterChainProxies, properties);
+      ObjectProvider<FilterChainProxy> filterChainProxies) {
+    return new PaygateSpringSecurityFilterChainGuard(filterChainProxies);
   }
 
   static final class PaygateSpringSecurityFilterChainGuard implements SmartInitializingSingleton {
 
     private final ObjectProvider<FilterChainProxy> filterChainProxies;
-    private final PaygateProperties properties;
 
-    PaygateSpringSecurityFilterChainGuard(
-        ObjectProvider<FilterChainProxy> filterChainProxies, PaygateProperties properties) {
+    PaygateSpringSecurityFilterChainGuard(ObjectProvider<FilterChainProxy> filterChainProxies) {
       this.filterChainProxies = filterChainProxies;
-      this.properties = properties;
     }
 
     @Override
@@ -69,27 +60,92 @@ public class PaygateSpringSecurityFilterChainGuardAutoConfiguration {
     }
 
     private void validateChain(SecurityFilterChain chain) {
+      validateChain(chain, new IdentityHashMap<>());
+    }
+
+    private void validateChain(SecurityFilterChain chain, Map<Object, Boolean> visited) {
       List<Filter> filters = chain.getFilters();
+      validateFilterSequence(filters, visited);
+      validateErrorDispatcherCoverage(chain);
+    }
+
+    private void validateFilterSequence(List<Filter> filters, Map<Object, Boolean> visited) {
       int paygateIndex = directPaygateFilterIndex(filters);
-      if (paygateIndex < 0 && !containsPaygateAuthenticationFilter(filters)) {
+      int rateLimitIndex = directRateLimitFilterIndex(filters);
+
+      if (paygateIndex < 0 && rateLimitIndex < 0) {
+        validateWrappedProtection(filters, visited);
+        return;
+      }
+
+      validateDirectProtection(filters, paygateIndex, rateLimitIndex);
+    }
+
+    private void validateWrappedProtection(List<Filter> filters, Map<Object, Boolean> visited) {
+      int protectedWrapperIndex = protectedWrapperIndex(filters, visited);
+      if (protectedWrapperIndex < 0) {
         throw missingFilter();
       }
-      int rateLimitIndex = directRateLimitFilterIndex(filters);
-      if (rateLimitIndex < 0 && !containsPaygateAuthFailureRateLimitFilter(filters)) {
+      int authorizationIndex = directAuthorizationFilterIndex(filters);
+      if (authorizationIndex >= 0 && protectedWrapperIndex > authorizationIndex) {
+        throw paygateOrderingFailure();
+      }
+    }
+
+    private static void validateDirectProtection(
+        List<Filter> filters, int paygateIndex, int rateLimitIndex) {
+      if (paygateIndex < 0) {
+        throw missingFilter();
+      }
+      if (rateLimitIndex < 0) {
         throw missingRateLimitFilter();
       }
       int authorizationIndex = directAuthorizationFilterIndex(filters);
-      if (paygateIndex >= 0 && authorizationIndex >= 0 && paygateIndex > authorizationIndex) {
-        throw new IllegalStateException(
-            "PaygateAuthenticationFilter must run before downstream authorization in every "
-                + "effective Spring Security filter chain.");
+      if (authorizationIndex >= 0 && paygateIndex > authorizationIndex) {
+        throw paygateOrderingFailure();
       }
-      if (rateLimitIndex >= 0 && paygateIndex >= 0 && rateLimitIndex > paygateIndex) {
+      if (rateLimitIndex > paygateIndex) {
         throw new IllegalStateException(
             "PaygateAuthFailureRateLimitFilter must run before PaygateAuthenticationFilter in "
                 + "every effective Spring Security filter chain.");
       }
-      validateErrorDispatcherCoverage(chain);
+    }
+
+    private static IllegalStateException paygateOrderingFailure() {
+      return new IllegalStateException(
+          "PaygateAuthenticationFilter must run before downstream authorization in every "
+              + "effective Spring Security filter chain.");
+    }
+
+    private int protectedWrapperIndex(List<Filter> filters, Map<Object, Boolean> visited) {
+      for (int index = 0; index < filters.size(); index++) {
+        if (validateNestedProtection(filters.get(index), visited)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    private boolean validateNestedProtection(Filter filter, Map<Object, Boolean> visited) {
+      if (visited.put(filter, Boolean.TRUE) != null) {
+        return false;
+      }
+      if (filter instanceof FilterChainProxy nestedProxy) {
+        List<SecurityFilterChain> nestedChains = nestedProxy.getFilterChains();
+        if (nestedChains.isEmpty()) {
+          throw missingFilter();
+        }
+        for (SecurityFilterChain nestedChain : nestedChains) {
+          validateChain(nestedChain, visited);
+        }
+        return true;
+      }
+      Collection<Filter> nested = nestedFilters(filter);
+      if (nested.isEmpty()) {
+        return false;
+      }
+      validateFilterSequence(List.copyOf(nested), visited);
+      return true;
     }
 
     private static int directPaygateFilterIndex(List<Filter> filters) {
@@ -170,57 +226,6 @@ public class PaygateSpringSecurityFilterChainGuardAutoConfiguration {
           "Every effective Spring Security filter chain protecting paid routes must include "
               + "PaygateAuthFailureRateLimitFilter before PaygateAuthenticationFilter. Custom-chain "
               + "acknowledgement cannot waive this minimum protection.");
-    }
-
-    private boolean containsPaygateAuthenticationFilter(FilterChainProxy filterChainProxy) {
-      return filterChainProxy.getFilterChains().stream()
-          .map(SecurityFilterChain::getFilters)
-          .flatMap(List::stream)
-          .anyMatch(filter -> containsPaygateAuthenticationFilter(filter, new IdentityHashMap<>()));
-    }
-
-    private boolean containsPaygateAuthenticationFilter(List<Filter> filters) {
-      return filters.stream()
-          .anyMatch(filter -> containsPaygateAuthenticationFilter(filter, new IdentityHashMap<>()));
-    }
-
-    private boolean containsPaygateAuthenticationFilter(
-        Filter filter, Map<Object, Boolean> visited) {
-      if (filter instanceof PaygateAuthenticationFilter) {
-        return true;
-      }
-      if (visited.put(filter, Boolean.TRUE) != null) {
-        return false;
-      }
-      if (filter instanceof FilterChainProxy nestedProxy) {
-        return containsPaygateAuthenticationFilter(nestedProxy);
-      }
-      return nestedFilters(filter).stream()
-          .anyMatch(nested -> containsPaygateAuthenticationFilter(nested, visited));
-    }
-
-    private boolean containsPaygateAuthFailureRateLimitFilter(List<Filter> filters) {
-      return filters.stream()
-          .anyMatch(
-              filter -> containsPaygateAuthFailureRateLimitFilter(filter, new IdentityHashMap<>()));
-    }
-
-    private boolean containsPaygateAuthFailureRateLimitFilter(
-        Filter filter, Map<Object, Boolean> visited) {
-      if (filter instanceof PaygateAuthFailureRateLimitFilter) {
-        return true;
-      }
-      if (visited.put(filter, Boolean.TRUE) != null) {
-        return false;
-      }
-      if (filter instanceof FilterChainProxy nestedProxy) {
-        return nestedProxy.getFilterChains().stream()
-            .map(SecurityFilterChain::getFilters)
-            .flatMap(List::stream)
-            .anyMatch(nested -> containsPaygateAuthFailureRateLimitFilter(nested, visited));
-      }
-      return nestedFilters(filter).stream()
-          .anyMatch(nested -> containsPaygateAuthFailureRateLimitFilter(nested, visited));
     }
 
     @SuppressWarnings("unchecked")

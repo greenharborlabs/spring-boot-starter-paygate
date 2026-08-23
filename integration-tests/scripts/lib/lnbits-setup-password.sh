@@ -48,9 +48,21 @@ lnbits_read_secret_password() {
   LNBITS_SECRET_FILE="$secret_file" python3 -c '
 import json
 import os
+import stat
 from pathlib import Path
 
-value = json.loads(Path(os.environ["LNBITS_SECRET_FILE"]).read_text(encoding="utf-8"))
+path = Path(os.environ["LNBITS_SECRET_FILE"])
+flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+descriptor = os.open(path, flags)
+try:
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(1)
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, encoding="utf-8", closefd=False) as stream:
+        value = json.load(stream)
+finally:
+    os.close(descriptor)
 password = value.get("password")
 if not isinstance(password, str) or not password.strip():
     raise SystemExit(1)
@@ -94,8 +106,13 @@ resolve_lnbits_setup_password() {
   mkdir -p "$secret_directory"
   lnbits_acquire_secret_lock "$secret_file" || return 1
 
+  if [[ -L "$secret_file" || -e "$secret_file" && ! -f "$secret_file" ]]; then
+    lnbits_release_secret_lock
+    lnbits_fail 'local LNbits setup-secret state must be a regular non-symlink file'
+    return 1
+  fi
+
   if [[ -f "$secret_file" ]]; then
-    chmod 600 "$secret_file"
     if ! LNBITS_RESOLVED_SETUP_PASSWORD="$(lnbits_read_secret_password "$secret_file")"; then
       lnbits_release_secret_lock
       lnbits_fail 'local LNbits setup-secret state is invalid; reset the disposable stack or provide LNBITS_SETUP_PASSWORD'

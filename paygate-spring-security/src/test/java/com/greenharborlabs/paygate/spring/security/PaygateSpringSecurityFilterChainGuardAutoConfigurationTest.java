@@ -8,7 +8,6 @@ import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.spring.PaygateAutoConfiguration;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
-import com.greenharborlabs.paygate.spring.PaygateProperties;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -69,20 +68,16 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     var configuration = new PaygateSpringSecurityFilterChainGuardAutoConfiguration();
 
     assertThatCode(
-            () ->
-                configuration.paygateSpringSecurityFilterChainGuard(
-                    filterChainProxyProvider(), new PaygateProperties()))
+            () -> configuration.paygateSpringSecurityFilterChainGuard(filterChainProxyProvider()))
         .doesNotThrowAnyException();
   }
 
   @Test
-  @DisplayName("custom filter-chain acknowledgement cannot waive minimum filter controls")
-  void acknowledgementCannotSkipProxyInspection() {
+  @DisplayName("an effective chain without Paygate controls fails closed")
+  void effectiveChainWithoutPaygateControlsFailsClosed() {
     var provider = filterChainProxyProvider();
-    var properties = new PaygateProperties();
-    properties.getSpringSecurity().setCustomFilterChainAcknowledged(true);
 
-    assertThatThrownBy(() -> guard(provider, properties).afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(provider).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
@@ -90,10 +85,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   @Test
   @DisplayName("empty proxy provider fails closed")
   void emptyProxyProviderFailsClosed() {
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider()).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
@@ -103,10 +95,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   void directPaygateFilterStartsSuccessfully() {
     var proxy = filterChainProxy(rateLimitFilter(), paygateFilter());
 
-    assertThatCode(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatCode(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .doesNotThrowAnyException();
   }
 
@@ -126,10 +115,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     assertThat(otherChain.matches(request("/other"))).isTrue();
     assertThat(paidChain.matches(request("/other"))).isFalse();
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
@@ -153,10 +139,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     assertThat(paidChain.matches(request("/permit-all"))).isFalse();
     assertThat(paidChain.matches(request("/paid"))).isTrue();
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
@@ -167,10 +150,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     AuthorizationManager<HttpServletRequest> permitAll = (_, _) -> new AuthorizationDecision(true);
     var proxy = filterChainProxy(new AuthorizationFilter(permitAll));
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
@@ -182,10 +162,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     var authorizationFilter = new AuthorizationFilter(permitAll);
     var proxy = filterChainProxy(authorizationFilter, paygateFilter());
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("PaygateAuthenticationFilter");
   }
@@ -195,10 +172,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   void rateLimitFilterMustPrecedePaygateFilter() {
     var proxy = filterChainProxy(paygateFilter(), rateLimitFilter());
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("PaygateAuthFailureRateLimitFilter");
   }
@@ -222,10 +196,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
         .doesNotThrowAnyException();
     assertThat(paygateChainReached).isFalse();
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("dispatcher");
   }
@@ -242,10 +213,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
                 request -> request.getDispatcherType() != excluded,
                 List.of(rateLimitFilter(), paygateFilter())));
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("dispatcher");
   }
@@ -273,11 +241,37 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     var nestedProxy = filterChainProxy(rateLimitFilter(), paygateFilter());
     var outerProxy = filterChainProxy(nestedProxy);
 
-    assertThatCode(
-            () ->
-                guard(filterChainProxyProvider(outerProxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatCode(() -> guard(filterChainProxyProvider(outerProxy)).afterSingletonsInstantiated())
         .doesNotThrowAnyException();
+  }
+
+  @Test
+  @DisplayName("every effective nested security chain must contain both Paygate controls")
+  void nestedFilterChainProxyRejectsAnUnprotectedSiblingChain() {
+    var protectedChain =
+        new TestSecurityFilterChain(
+            requestMatcher("/paid"), List.of(rateLimitFilter(), paygateFilter()));
+    var unprotectedChain =
+        new TestSecurityFilterChain(requestMatcher("/other"), List.of(new NoNestedFiltersFilter()));
+    var nestedProxy = new FilterChainProxy(List.of(protectedChain, unprotectedChain));
+    var outerProxy = filterChainProxy(nestedProxy);
+
+    assertThatThrownBy(
+            () -> guard(filterChainProxyProvider(outerProxy)).afterSingletonsInstantiated())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no PaygateAuthenticationFilter");
+  }
+
+  @Test
+  @DisplayName("nested security chains enforce failure-rate limiter ordering")
+  void nestedFilterChainProxyRejectsMisorderedControls() {
+    var nestedProxy = filterChainProxy(paygateFilter(), rateLimitFilter());
+    var outerProxy = filterChainProxy(nestedProxy);
+
+    assertThatThrownBy(
+            () -> guard(filterChainProxyProvider(outerProxy)).afterSingletonsInstantiated())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("PaygateAuthFailureRateLimitFilter");
   }
 
   @Test
@@ -286,10 +280,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   void wrapperGetFiltersStartsSuccessfully() {
     var proxy = filterChainProxy(new FilterWrapper(List.of(rateLimitFilter(), paygateFilter())));
 
-    assertThatCode(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatCode(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .doesNotThrowAnyException();
   }
 
@@ -300,10 +291,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     recursiveFilter.setFilters(List.of(recursiveFilter));
     var proxy = filterChainProxy(recursiveFilter);
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
@@ -313,10 +301,7 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   void wrapperWithNonFilterCollectionIsIgnored() {
     var proxy = filterChainProxy(new NonFilterCollectionWrapper(List.of("not-a-filter")));
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
@@ -326,19 +311,16 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
   void plainFilterWithoutGetFiltersIsIgnored() {
     var proxy = filterChainProxy(new NoNestedFiltersFilter());
 
-    assertThatThrownBy(
-            () ->
-                guard(filterChainProxyProvider(proxy), new PaygateProperties())
-                    .afterSingletonsInstantiated())
+    assertThatThrownBy(() -> guard(filterChainProxyProvider(proxy)).afterSingletonsInstantiated())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
 
   private static PaygateSpringSecurityFilterChainGuardAutoConfiguration
           .PaygateSpringSecurityFilterChainGuard
-      guard(ObjectProvider<FilterChainProxy> filterChainProxies, PaygateProperties properties) {
+      guard(ObjectProvider<FilterChainProxy> filterChainProxies) {
     return new PaygateSpringSecurityFilterChainGuardAutoConfiguration
-        .PaygateSpringSecurityFilterChainGuard(filterChainProxies, properties);
+        .PaygateSpringSecurityFilterChainGuard(filterChainProxies);
   }
 
   private static FilterChainProxy filterChainProxy(Filter... filters) {

@@ -32,6 +32,18 @@ python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["p
 second="$(resolve "$secret_file")"
 [[ "$first" == "$second" ]] || fail 'persisted environment did not reuse one secret'
 
+printf '{"password":"linked-secret"}' > "$workspace/link-target.json"
+chmod 640 "$workspace/link-target.json"
+ln -s "$workspace/link-target.json" "$workspace/linked.json"
+if LNBITS_SETUP_SECRET_FILE="$workspace/linked.json" bash -c '
+  source "$1"
+  resolve_lnbits_setup_password
+' -- "$LIBRARY" >/dev/null 2>&1; then
+  fail 'symbolic-link setup-secret state was accepted'
+fi
+[[ "$(mode "$workspace/link-target.json")" == 640 ]] \
+  || fail 'symbolic-link rejection changed the target permissions'
+
 printf '{"password":"interrupted"' > "$workspace/interrupted.json.tmp"
 third="$(resolve "$workspace/interrupted.json")"
 [[ -n "$third" && "$third" != interrupted ]] || fail 'interrupted temporary state was accepted'

@@ -449,15 +449,20 @@ public class PaygateChallengeService {
   }
 
   private Map<String, String> testModeOpaqueData(Invoice invoice) {
-    byte[] invoicePreimage = invoice.preimage();
-    if (!validatedTestMode
-        || lightningBackend.getClass() != TestModeLightningBackend.class
-        || invoicePreimage == null) {
+    if (!validatedTestMode || lightningBackend.getClass() != TestModeLightningBackend.class) {
       return null;
     }
-    var opaque = new LinkedHashMap<String, String>();
-    opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
-    return opaque;
+    byte[] invoicePreimage = invoice.preimage();
+    try {
+      if (invoicePreimage == null) {
+        return null;
+      }
+      var opaque = new LinkedHashMap<String, String>();
+      opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
+      return opaque;
+    } finally {
+      KeyMaterial.zeroize(invoicePreimage);
+    }
   }
 
   private void storeCapability(String tokenIdHex, PaygateEndpointConfig config) {
