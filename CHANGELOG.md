@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-23
+
 ### Security
 
 - **Kimi L-1–L-28 — accountable Low-finding hardening**: Added a canonical implemented-control
@@ -234,6 +236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WWW-Authenticate` header format corrected to `L402 version="0", token=`
 - `MacaroonSerializer` validation for field types and lengths
 
+[0.1.6]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.2...v0.1.3
