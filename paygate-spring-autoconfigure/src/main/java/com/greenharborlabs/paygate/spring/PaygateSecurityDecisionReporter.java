@@ -32,13 +32,15 @@ public final class PaygateSecurityDecisionReporter implements SecurityDecisionOb
   /** Emits the fixed decision counter and structured event without affecting enforcement. */
   @Override
   public void onDecision(SecurityDecision decision) {
+    String sanitizedMethod = sanitizeForLog(decision.method());
+    String sanitizedEndpoint = sanitizeForLog(decision.endpoint());
     if (meterRegistry != null) {
       try {
         Counter.builder("paygate.security.decisions")
             .tag("reason", lower(decision.reason().name()))
             .tag("protocol", lower(decision.protocol().name()))
-            .tag("method", decision.method())
-            .tag("endpoint", decision.endpoint())
+            .tag("method", sanitizedMethod)
+            .tag("endpoint", sanitizedEndpoint)
             .description("Sanitized payment-gateway security decisions")
             .register(meterRegistry)
             .increment();
@@ -52,8 +54,8 @@ public final class PaygateSecurityDecisionReporter implements SecurityDecisionOb
           "paygate_security_decision reason={0} protocol={1} method={2} endpoint={3}",
           lower(decision.reason().name()),
           lower(decision.protocol().name()),
-          decision.method(),
-          decision.endpoint());
+          sanitizedMethod,
+          sanitizedEndpoint);
     } catch (RuntimeException ignored) {
       // Logging is likewise best effort.
     }
@@ -61,5 +63,21 @@ public final class PaygateSecurityDecisionReporter implements SecurityDecisionOb
 
   private static String lower(String value) {
     return value.toLowerCase(Locale.ROOT);
+  }
+
+  private static String sanitizeForLog(String value) {
+    if (value == null) {
+      return "_unknown";
+    }
+    StringBuilder sanitized = new StringBuilder(value.length());
+    for (int i = 0; i < value.length(); i++) {
+      char c = value.charAt(i);
+      if (c == '\r' || c == '\n' || Character.isISOControl(c)) {
+        sanitized.append('_');
+      } else {
+        sanitized.append(c);
+      }
+    }
+    return sanitized.toString();
   }
 }
