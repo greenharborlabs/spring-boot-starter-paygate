@@ -29,9 +29,9 @@ while IFS=' ' read -r case_name expected; do
     non-low) sed -i.bak 's/| Low |/| Medium |/g' "$ledger" ;;
     placeholder) sed -i.bak 's/Core credential boundary/pending/g' "$ledger" ;;
     unmapped) sed -i.bak 's/FR-/RQ-/g' "$ledger" ;;
-    stale) sed -i.bak 's/| implemented | pending | — | — | — |/| verified | pending | — | — | — |/g' "$ledger" ;;
-    failed) sed -i.bak 's/| implemented | pending | — | — | — |/| approved | approved | Reviewer | 2026-08-22 | LOW-EV-FAILED |/g' "$ledger" ;;
-    premature-approval) sed -i.bak 's/| implemented | pending | — | — | — |/| implemented | approved | Reviewer | 2026-08-22 | LOW-EV-APPROVAL |/g' "$ledger" ;;
+    stale) sed -i.bak 's/| passed | 0 |/| stale | 0 |/g' "$evidence" ;;
+    failed) sed -i.bak 's/| passed | 0 |/| failed | 1 |/g' "$evidence" ;;
+    premature-approval) sed -i.bak 's/| verified | pending | — | — | — |/| verified | approved | Reviewer | 2026-08-23 | LOW-EV-CORE |/g' "$ledger" ;;
     unapproved-tradeoff) sed -i.bak 's/| remediated |/| accepted-limitation |/g' "$ledger" ;;
     marker-leak) printf '\nLOW_SECURITY_MARKER_TOKEN_ID_8c3e5b10\n' >> "$ledger" ;;
     *) fail "unknown case in inventory: $case_name" ;;
