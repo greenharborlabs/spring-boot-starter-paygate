@@ -15,6 +15,6 @@ implemented controls without claiming final release verification or reviewer app
 - `planned` identifies a chosen path but makes no implementation claim.
 - `implemented` requires concrete code and regression references, but not final release evidence.
 - `verified` requires a successful current-implementation command record in
-  `specs/007-medium-security-remediation/validation-evidence.md`.
+  `docs/security/KIMI-MEDIUM-VALIDATION-EVIDENCE.md`.
 - `approved` requires `verified`, a named security or release reviewer, a date, and a current
   successful evidence reference. Approval remains pending until the final release gate.

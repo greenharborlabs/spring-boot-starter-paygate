@@ -4,7 +4,7 @@ export LC_ALL=C
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ledger="${1:-$root/docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md}"
-evidence="${2:-$root/specs/007-medium-security-remediation/validation-evidence.md}"
+evidence="${2:-$root/docs/security/KIMI-MEDIUM-VALIDATION-EVIDENCE.md}"
 [[ $# -le 2 && -r "$ledger" && -r "$evidence" ]] || {
   echo 'Kimi Medium finding ledger or validation evidence is missing or unreadable.' >&2
   exit 1

@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 validator="$root/scripts/validate-medium-security-finding-dispositions.sh"
 ledger="$root/docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md"
-evidence="$root/specs/007-medium-security-remediation/validation-evidence.md"
+evidence="$root/docs/security/KIMI-MEDIUM-VALIDATION-EVIDENCE.md"
 fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/kimi-medium-findings.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
