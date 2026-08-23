@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ENV_FILE="$PROJECT_DIR/.env"
+ENV_FILE="${INTEGRATION_ENV_FILE:-$PROJECT_DIR/.env}"
 
 cd "$PROJECT_DIR"
 

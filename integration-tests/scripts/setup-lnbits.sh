@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ENV_FILE="$PROJECT_DIR/.env"
+ENV_FILE="${INTEGRATION_ENV_FILE:-$PROJECT_DIR/.env}"
 LNBITS_SETUP_SECRET_FILE="${LNBITS_SETUP_SECRET_FILE:-$PROJECT_DIR/.lnbits-setup-secret.json}"
 
 cd "$PROJECT_DIR"

@@ -21,7 +21,7 @@ cd "$PROJECT_DIR"
 require_docker_daemon
 
 echo "==> Removing any stale paygate-example-app container..."
-PROJECT_NAME="$(basename "$PROJECT_DIR")"
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PROJECT_DIR")}"
 STALE_CONTAINERS=$(docker ps -aq \
   --filter "label=com.docker.compose.project=$PROJECT_NAME" \
   --filter "label=com.docker.compose.service=paygate-example-app" || true)
