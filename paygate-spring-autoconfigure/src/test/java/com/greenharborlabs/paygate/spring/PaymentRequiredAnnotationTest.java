@@ -84,6 +84,13 @@ class PaymentRequiredAnnotationTest {
     assertThat(config.timeoutSeconds()).isEqualTo(DEFAULT_TIMEOUT);
   }
 
+  @Test
+  @DisplayName("pricing stability defaults to request dependent")
+  void pricingStabilityDefaultsToRequestDependent() throws NoSuchMethodException {
+    assertThat(PaymentRequired.class.getMethod("pricingStability").getDefaultValue())
+        .isEqualTo(PricingStability.REQUEST_DEPENDENT);
+  }
+
   // --- helpers ---
 
   private static HandlerMethod mockHandlerMethod(PaymentRequired paymentRequired) {
@@ -136,6 +143,11 @@ class PaymentRequiredAnnotationTest {
       @Override
       public String capability() {
         return capability;
+      }
+
+      @Override
+      public PricingStability pricingStability() {
+        return PricingStability.REQUEST_DEPENDENT;
       }
     };
   }

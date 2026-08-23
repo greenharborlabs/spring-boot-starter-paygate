@@ -7,6 +7,7 @@ WORKDIR /workspace
 COPY gradlew gradlew.bat ./
 COPY gradle/wrapper/ gradle/wrapper/
 COPY gradle/verification-metadata.xml gradle/verification-metadata.xml
+COPY gradle/verification-keyring.keys gradle/verification-keyring.keys
 COPY build.gradle.kts settings.gradle.kts gradle.properties ./
 
 # Copy all module build files (needed for dependency resolution)
@@ -50,8 +51,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 WORKDIR /app
 
-# Run as non-root user
-RUN groupadd --system appgroup && useradd --system --gid appgroup appuser
+# Run as a non-root user. The fixed numeric group is only for the disposable LND regtest volume;
+# production deployments must provide their own least-privilege identity and secret mount policy.
+RUN groupadd --system --gid 10001 paygate-regtest \
+    && groupadd --system appgroup \
+    && useradd --system --gid appgroup --groups paygate-regtest appuser
 
 COPY --from=build /workspace/paygate-example-app/build/libs/*-SNAPSHOT.jar app.jar
 COPY paygate-example-app/docker-entrypoint.sh /app/docker-entrypoint.sh

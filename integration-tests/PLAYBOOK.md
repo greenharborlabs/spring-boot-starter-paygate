@@ -54,7 +54,10 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 ```
 
-This waits for LNbits to become healthy, creates a test wallet, and stores `LNBITS_API_KEY` in `.env`. After it finishes, restart the example app so it picks up the key:
+This waits for LNbits to become healthy, creates a test wallet, and stores `LNBITS_API_KEY` in
+owner-only ignored `.env` state. A separate owner-only local secret is generated once for the
+LNbits first-install password and is never printed. After it finishes, restart the example app so
+it picks up the key:
 
 ```bash
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
@@ -314,7 +317,7 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 | 2 | Defaults `COMPOSE_FILE` to `docker-compose-lnbits.yml`, `LNBITS_PORT` to `15000`, and `LNBITS_URL` to `http://localhost:15000`. | Lets the same script work for the fast FakeWallet stack and the LNbits-over-LND stack when `COMPOSE_FILE=docker-compose-lnbits-lnd.yml` is passed. |
 | 3 | Starts the `lnbits` service with Docker Compose, using `up -d --wait` when available. | Prevents the script from racing ahead before the container is healthy. |
 | 4 | Waits for `${LNBITS_URL}/api/v1/health` to return successfully. | Adds an HTTP-level readiness check before initialization. |
-| 5 | Calls `PUT /api/v1/auth/first_install` with a local setup username and password. | Initializes LNbits on a fresh volume so API login and wallet creation can work. |
+| 5 | Calls `PUT /api/v1/auth/first_install` with a local setup username and generated owner-only password. | Initializes LNbits on a fresh volume without a reusable repository default. |
 | 6 | Treats `200` as initialized, `401` as already initialized, and `404`/`405` as first-install endpoint unavailable. | Handles multiple LNbits versions and reruns without failing unnecessarily. |
 | 7 | Attempts to log in with `POST /api/v1/auth`. | Newer LNbits flows require a bearer token before creating an account wallet. |
 | 8 | Creates a wallet using `POST /api/v1/account` when login succeeded, otherwise falls back to `POST /api/v1/wallet`. | Supports both authenticated and older unauthenticated wallet creation APIs. |
@@ -322,7 +325,14 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 | 10 | Updates or appends `LNBITS_API_KEY=<adminkey>` in `integration-tests/.env`. | Makes the key available to Docker Compose and the example app after restart. |
 | 11 | Prints a reminder to restart `paygate-example-app`. | The app reads `LNBITS_API_KEY` at startup, so it will not see the new key until restarted. |
 
-The default setup credentials are local-only test values: `LNBITS_SETUP_USERNAME=paygate-admin` and `LNBITS_SETUP_PASSWORD=paygate-test-password`. Override them only if your LNbits volume was initialized with different credentials. The Docker health wait timeout defaults to `300` seconds via `COMPOSE_WAIT_TIMEOUT_SECONDS`, and the HTTP health wait defaults to `120` attempts via `MAX_ATTEMPTS`.
+The default setup username is the local-only value `LNBITS_SETUP_USERNAME=paygate-admin`. The
+password is generated with at least 128 bits of CSPRNG entropy once per persisted environment and
+stored only in ignored mode-0600 `.lnbits-setup-secret.json`; it is never printed. Repeated,
+interrupted, and concurrent setup runs reuse that one value. Set a nonblank
+`LNBITS_SETUP_PASSWORD` only to migrate an existing local volume, or reset that disposable volume
+with `docker compose ... down -v`. The Docker health wait timeout defaults to `300` seconds via
+`COMPOSE_WAIT_TIMEOUT_SECONDS`, and the HTTP health wait defaults to `120` attempts via
+`MAX_ATTEMPTS`.
 
 The script starts LNbits if needed and creates the wallet key, but it does **not** restart the example app after changing `.env`. Run:
 
@@ -352,6 +362,8 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/start-example-app.sh
 - `scripts/start-example-app.sh` removes any stale `paygate-example-app` container before starting it. The playbook uses several Compose files with the same project and service names; removing the old container prevents a previous LND-only run from keeping `PAYGATE_BACKEND=lnd`.
 - Inside Docker, the app reaches LNbits at `http://lnbits:5000`.
 - On your host, you reach the app at `http://localhost:18080` unless you changed `APP_PORT`.
+  The host bind remains loopback-only unless you explicitly set `APP_BIND_ADDRESS`; never use a
+  non-loopback bind for these plaintext/regtest fixtures outside an isolated development network.
 
 Wait for the app:
 

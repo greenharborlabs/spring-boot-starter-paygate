@@ -24,6 +24,9 @@ import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
@@ -317,9 +320,6 @@ class L402ProtocolTest {
 
       assertThat(repeatedResponse.wwwAuthenticateHeader())
           .isEqualTo(response.wwwAuthenticateHeader());
-      assertThat(extractQuotedValue(response.wwwAuthenticateHeader(), "token"))
-          .isEqualTo(
-              "AgJCAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAIXc2VydmljZXM9dGVzdC1zZXJ2aWNlOjAAAhNyb3V0ZT0vd2lkZ2V0cy97aWR9AAILbWV0aG9kPVBPU1QAAh50ZXN0LXNlcnZpY2VfY2FwYWJpbGl0aWVzPXJlYWQAAiN0ZXN0LXNlcnZpY2VfdmFsaWRfdW50aWw9MTc2NzMyNjY0NQAABiADF6Jr/FXe0HDLAv9t3OJY7/cVEGNkapmCsorFxm3Wcg==");
       assertThat(MacaroonIdentifier.decode(macaroon.identifier()).version()).isEqualTo(1);
       assertThat(macaroon.caveats())
           .extracting(caveat -> caveat.key() + "=" + caveat.value())
@@ -327,8 +327,115 @@ class L402ProtocolTest {
               "services=" + SERVICE_NAME + ":0",
               "route=/widgets/{id}",
               "method=POST",
+              SERVICE_NAME + "_price_sats=10",
               SERVICE_NAME + "_capabilities=read",
               SERVICE_NAME + "_valid_until=1767326645");
+    }
+
+    @Test
+    void enabledAddressBindingMintsExactlyOneCanonicalClientIpCaveat() {
+      protocol =
+          new L402Protocol(
+              validator,
+              SERVICE_NAME,
+              Clock.fixed(Instant.parse("2026-01-02T03:04:05Z"), ZoneOffset.UTC),
+              true);
+      byte[] rootKey = new byte[32];
+      byte[] paymentHash = new byte[32];
+      byte[] tokenId = new byte[32];
+      ChallengeContext context =
+          new ChallengeContext(
+              paymentHash,
+              HEX.formatHex(tokenId),
+              "lnbc1invoice",
+              10L,
+              "test description",
+              SERVICE_NAME,
+              3600L,
+              "read",
+              rootKey,
+              null,
+              null,
+              "/widgets/{id}",
+              "POST",
+              null,
+              false,
+              "2001:db8:0:0:0:0:0:7");
+
+      ChallengeResponse response = protocol.formatChallenge(context);
+      byte[] serialized =
+          Base64.getDecoder().decode(extractQuotedValue(response.wwwAuthenticateHeader(), "token"));
+      var macaroon = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(macaroon.caveats())
+          .filteredOn(caveat -> caveat.key().equals("client_ip"))
+          .extracting(caveat -> caveat.value())
+          .containsExactly("2001:db8:0:0:0:0:0:7");
+    }
+
+    @Test
+    void defaultAddressBindingLeavesTheEstablishedBearerCaveatsUnchanged() {
+      ChallengeResponse response =
+          protocol.formatChallenge(challengeContext("/widgets/{id}", "POST", "read"));
+      byte[] serialized =
+          Base64.getDecoder().decode(extractQuotedValue(response.wwwAuthenticateHeader(), "token"));
+      var macaroon = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(macaroon.caveats())
+          .filteredOn(caveat -> caveat.key().equals("client_ip"))
+          .isEmpty();
+    }
+
+    @Test
+    void enabledAddressBindingRejectsContextWithoutTrustedAddress() {
+      protocol = new L402Protocol(validator, SERVICE_NAME, Clock.systemUTC(), true);
+
+      assertThatThrownBy(
+              () -> protocol.formatChallenge(challengeContext("/widgets/{id}", "GET", "read")))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("client address");
+    }
+
+    @Test
+    void locallyMintedChallengeMatchesCommittedPaidPriceVector() throws IOException {
+      String vector = readPaidPriceVector();
+      String serviceName = vectorField(vector, "serviceName");
+      byte[] rootKey = HEX.parseHex(vectorField(vector, "rootKeyHex"));
+      byte[] identifierBytes = HEX.parseHex(vectorField(vector, "identifierHex"));
+      MacaroonIdentifier identifier = MacaroonIdentifier.decode(identifierBytes);
+      protocol =
+          new L402Protocol(
+              validator,
+              serviceName,
+              Clock.fixed(Instant.parse("2026-01-02T03:04:05Z"), ZoneOffset.UTC));
+      ChallengeContext context =
+          new ChallengeContext(
+              identifier.paymentHash(),
+              HEX.formatHex(identifier.tokenId()),
+              "lnbc1invoice",
+              Long.parseLong(vectorField(vector, "coveredAmountSats")),
+              "vector",
+              serviceName,
+              3600L,
+              "read",
+              rootKey,
+              null,
+              null,
+              "/widgets/{id}",
+              "POST");
+
+      ChallengeResponse response = protocol.formatChallenge(context);
+      byte[] serialized =
+          Base64.getDecoder().decode(extractQuotedValue(response.wwwAuthenticateHeader(), "token"));
+      var macaroon = MacaroonSerializer.deserializeV2(serialized);
+
+      assertThat(HEX.formatHex(serialized)).isEqualTo(vectorField(vector, "serializedMacaroonHex"));
+      assertThat(HEX.formatHex(macaroon.signature()))
+          .isEqualTo(vectorField(vector, "signatureHex"));
+      assertThat(macaroon.caveats())
+          .filteredOn(caveat -> caveat.key().equals(serviceName + "_price_sats"))
+          .extracting(caveat -> caveat.value())
+          .containsExactly(Long.toString(context.priceSats()));
     }
 
     @ParameterizedTest
@@ -512,9 +619,10 @@ class L402ProtocolTest {
               "services",
               "route",
               "method",
+              SERVICE_NAME + "_price_sats",
               SERVICE_NAME + "_capabilities",
               SERVICE_NAME + "_valid_until");
-      assertThat(macaroon.caveats().get(3).value()).isEqualTo("~");
+      assertThat(macaroon.caveats().get(4).value()).isEqualTo("~");
     }
 
     @Test
@@ -746,6 +854,27 @@ class L402ProtocolTest {
       assertThatThrownBy(() -> protocol.validate(credential, null))
           .isInstanceOf(NullPointerException.class)
           .hasMessageContaining("requestContext");
+    }
+
+    @Test
+    void enabledAddressBindingRejectsAStillLiveLegacyCredentialWithoutClientIpCaveat() {
+      protocol = new L402Protocol(validator, SERVICE_NAME, Clock.systemUTC(), true);
+      String authHeader = buildValidAuthHeader("L402");
+      PaymentCredential credential = protocol.parseCredential(authHeader);
+      L402Credential resultCredential = L402Credential.parse(authHeader);
+      when(validator.validate(eq(authHeader), any()))
+          .thenReturn(new L402Validator.ValidationResult(resultCredential, true));
+
+      assertThatThrownBy(
+              () ->
+                  protocol.validate(
+                      credential,
+                      Map.of(VerificationContextKeys.REQUEST_CLIENT_IP, "198.51.100.7")))
+          .isInstanceOf(PaymentValidationException.class)
+          .extracting(error -> ((PaymentValidationException) error).getErrorCode())
+          .isEqualTo(PaymentValidationException.ErrorCode.INVALID);
+
+      assertThat(resultCredential.preimage().isDestroyed()).isTrue();
     }
 
     @Test
@@ -1010,6 +1139,7 @@ class L402ProtocolTest {
               "services=" + SERVICE_NAME + ":0",
               "route=/widgets/{id}",
               "method=GET",
+              SERVICE_NAME + "_price_sats=1",
               SERVICE_NAME + "_capabilities=~");
     }
   }
@@ -1147,6 +1277,22 @@ class L402ProtocolTest {
     int start = header.indexOf(prefix) + prefix.length();
     int end = header.indexOf("\"", start);
     return header.substring(start, end);
+  }
+
+  private static String readPaidPriceVector() throws IOException {
+    try (InputStream input =
+        L402ProtocolTest.class.getResourceAsStream("/test-vectors/l402-paid-price-vectors.json")) {
+      assertThat(input).as("paid-price test vector resource").isNotNull();
+      return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+    }
+  }
+
+  private static String vectorField(String vector, String name) {
+    var matcher =
+        java.util.regex.Pattern.compile("\\\"" + name + "\\\"\\s*:\\s*\\\"?([^,\\\"\\n}]+)")
+            .matcher(vector);
+    assertThat(matcher.find()).as("field %s", name).isTrue();
+    return matcher.group(1).trim();
   }
 
   /** Stub metadata type used to test rejection of non-L402 metadata in validate(). */

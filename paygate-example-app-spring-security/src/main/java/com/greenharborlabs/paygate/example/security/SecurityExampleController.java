@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.example.security;
 
 import com.greenharborlabs.paygate.spring.PaymentRequired;
+import com.greenharborlabs.paygate.spring.PricingStability;
 import com.greenharborlabs.paygate.spring.security.PaygateAuthenticationToken;
 import java.time.Instant;
 import java.util.Map;
@@ -35,7 +36,10 @@ public class SecurityExampleController {
     return new HealthResponse("ok");
   }
 
-  @PaymentRequired(priceSats = 5, description = "Premium quote of the day")
+  @PaymentRequired(
+      priceSats = 5,
+      description = "Premium quote of the day",
+      pricingStability = PricingStability.ROUTE_STABLE)
   @GetMapping(value = "/quote", produces = MediaType.APPLICATION_JSON_VALUE)
   public QuoteResponse quote() {
     return new QuoteResponse(
@@ -44,13 +48,20 @@ public class SecurityExampleController {
         Instant.now().toString());
   }
 
-  @PaymentRequired(priceSats = 10, timeoutSeconds = 3600)
+  @PaymentRequired(
+      priceSats = 10,
+      timeoutSeconds = 3600,
+      pricingStability = PricingStability.ROUTE_STABLE)
   @GetMapping(value = "/data", produces = MediaType.APPLICATION_JSON_VALUE)
   public DataResponse data() {
     return new DataResponse("premium content", Instant.now().toString());
   }
 
-  @PaymentRequired(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
+  @PaymentRequired(
+      priceSats = 50,
+      timeoutSeconds = 3600,
+      pricingStrategy = "analysisPricer",
+      pricingStability = PricingStability.REQUEST_DEPENDENT)
   @PostMapping(
       value = "/analyze",
       consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -65,7 +76,10 @@ public class SecurityExampleController {
    * Returns information about the authenticated payment credential. Demonstrates accessing
    * PaygateAuthenticationToken from SecurityContext. Accepts both L402 and MPP protocols.
    */
-  @PaymentRequired(priceSats = 1, description = "Protocol info")
+  @PaymentRequired(
+      priceSats = 1,
+      description = "Protocol info",
+      pricingStability = PricingStability.ROUTE_STABLE)
   @GetMapping(value = "/protocol-info", produces = MediaType.APPLICATION_JSON_VALUE)
   public ProtocolInfoResponse protocolInfo() {
     var auth = (PaygateAuthenticationToken) SecurityContextHolder.getContext().getAuthentication();
@@ -80,7 +94,10 @@ public class SecurityExampleController {
    * L402-only endpoint. MPP credentials will be rejected because the SecurityFilterChain requires
    * hasRole("L402") for this path. Demonstrates protocol-specific authorization.
    */
-  @PaymentRequired(priceSats = 10, description = "L402-only premium data")
+  @PaymentRequired(
+      priceSats = 10,
+      description = "L402-only premium data",
+      pricingStability = PricingStability.ROUTE_STABLE)
   @GetMapping(value = "/l402-only", produces = MediaType.APPLICATION_JSON_VALUE)
   public DataResponse l402Only() {
     return new DataResponse("L402-exclusive content", Instant.now().toString());
@@ -93,7 +110,8 @@ public class SecurityExampleController {
   @PaymentRequired(
       priceSats = 25,
       capability = "premium-analyze",
-      description = "Capability-gated analysis")
+      description = "Capability-gated analysis",
+      pricingStability = PricingStability.ROUTE_STABLE)
   @PreAuthorize("hasAuthority('PAYGATE_CAPABILITY_premium-analyze')")
   @PostMapping(
       value = "/premium-analyze",

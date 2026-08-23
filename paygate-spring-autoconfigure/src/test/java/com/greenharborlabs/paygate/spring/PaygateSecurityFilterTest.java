@@ -61,6 +61,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -121,6 +123,95 @@ class PaygateSecurityFilterTest {
 
   @Autowired private TestController testController;
 
+  @ParameterizedTest(name = "MPP challenge body of {0} bytes honors the configured bound")
+  @ValueSource(ints = {0, 8191, 8192, 8193})
+  void mppChallengeBodyUsesConfiguredBound(int bodyLength) throws Exception {
+    var registry = new PaygateEndpointRegistry();
+    registry.register(new PaygateEndpointConfig("POST", "/body-bound", 1, 60, "body", "", ""));
+    PaymentProtocol mpp = mock(PaymentProtocol.class);
+    when(mpp.scheme()).thenReturn("Payment");
+    PaygateChallengeService challengeService = mock(PaygateChallengeService.class);
+    ChallengeContext context =
+        new ChallengeContext(
+            new byte[32],
+            "ab".repeat(32),
+            "lnbc1body",
+            1,
+            "body",
+            SERVICE_NAME,
+            60,
+            "",
+            new byte[32],
+            null,
+            null);
+    when(challengeService.createChallenge(any(), any(ResolvedEndpoint.class), any()))
+        .thenReturn(context);
+    when(mpp.formatChallenge(context))
+        .thenReturn(new ChallengeResponse("Payment token=\"test\"", "Payment", null));
+    var filter =
+        new PaygateSecurityFilter(
+            registry, List.of(mpp), challengeService, SERVICE_NAME, null, null, null, null, 8_192);
+    var request = new MockHttpServletRequest("POST", "/body-bound");
+    request.setRequestURI("/body-bound");
+    request.setContent(new byte[bodyLength]);
+    var response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, mock(jakarta.servlet.FilterChain.class));
+
+    assertThat(response.getStatus()).isEqualTo(bodyLength > 8_192 ? 400 : 402);
+  }
+
+  @ParameterizedTest(name = "replacement challenge body of {0} bytes honors the configured bound")
+  @ValueSource(ints = {0, 8191, 8192, 8193})
+  void replacementChallengeBodyUsesConfiguredBound(int bodyLength) throws Exception {
+    var registry = new PaygateEndpointRegistry();
+    registry.register(
+        new PaygateEndpointConfig("POST", "/replacement-bound", 1, 60, "body", "", ""));
+    PaymentProtocol l402 = mock(PaymentProtocol.class);
+    when(l402.scheme()).thenReturn("L402");
+    when(l402.canHandle("L402 token")).thenReturn(true);
+    when(l402.parseCredential("L402 token"))
+        .thenReturn(
+            new PaymentCredential(
+                new byte[32], new byte[32], "token", "L402", null, new ProtocolMetadata() {}));
+    var priceFailure =
+        new com.greenharborlabs.paygate.core.protocol.PriceValidationException(
+            com.greenharborlabs.paygate.core.protocol.PriceValidationException.Kind
+                .INSUFFICIENT_PRICE,
+            "token");
+    org.mockito.Mockito.doThrow(
+            new PaymentValidationException(
+                PaymentValidationException.ErrorCode.INSUFFICIENT,
+                "price is insufficient",
+                "token",
+                priceFailure))
+        .when(l402)
+        .validate(any(PaymentCredential.class), any());
+    PaymentProtocol mpp = mock(PaymentProtocol.class);
+    when(mpp.scheme()).thenReturn("Payment");
+    PaygateChallengeService challengeService = mock(PaygateChallengeService.class);
+    var filter =
+        new PaygateSecurityFilter(
+            registry,
+            List.of(l402, mpp),
+            challengeService,
+            SERVICE_NAME,
+            null,
+            null,
+            null,
+            null,
+            8_192);
+    var request = new MockHttpServletRequest("POST", "/replacement-bound");
+    request.setRequestURI("/replacement-bound");
+    request.addHeader("Authorization", "L402 token");
+    request.setContent(new byte[bodyLength]);
+    var response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, mock(jakarta.servlet.FilterChain.class));
+
+    assertThat(response.getStatus()).isEqualTo(bodyLength > 8_192 ? 400 : 503);
+  }
+
   @Test
   @DisplayName("returns sanitized 500 when endpoint policy resolution fails")
   void resolutionFailureReturnsInternalErrorWithoutSideEffects() throws Exception {
@@ -178,7 +269,7 @@ class PaygateSecurityFilterTest {
         .perform(get(PROTECTED_PATH).header("Authorization", "Payment method=unsupported"))
         .andExpect(status().isPaymentRequired())
         .andExpect(jsonPath("$.title", is("INVALID")))
-        .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")))
+        .andExpect(jsonPath("$.detail", is("Payment credential is invalid")))
         .andExpect(header().doesNotExist("WWW-Authenticate"))
         .andExpect(content().string(org.hamcrest.Matchers.not(containsString(tokenMarker))));
 
@@ -685,7 +776,7 @@ class PaygateSecurityFilterTest {
   class ValidCredential {
 
     @Test
-    @DisplayName("returns 200 with X-L402-Credential-Expires matching valid_until caveat")
+    @DisplayName("returns canonical expiry metadata for a signed padded valid_until key")
     void validCredentialReturns200WithHeaders() throws Exception {
       ((StubLightningBackend) lightningBackend).setHealthy(true);
 
@@ -706,7 +797,7 @@ class PaygateSecurityFilterTest {
               new Caveat("route", PROTECTED_PATH),
               new Caveat("method", "GET"),
               new Caveat(SERVICE_NAME + "_capabilities", "~"),
-              new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntilEpoch)));
+              new Caveat("\t" + SERVICE_NAME + "_valid_until\t", String.valueOf(validUntilEpoch)));
 
       // Mint a real macaroon using the known root key
       MacaroonIdentifier identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
@@ -1035,16 +1126,18 @@ class PaygateSecurityFilterTest {
       byte[] macaroonBytes = Base64.getDecoder().decode(macaroonB64);
       Macaroon macaroon = MacaroonSerializer.deserializeV2(macaroonBytes);
 
-      assertThat(macaroon.caveats()).hasSize(5);
+      assertThat(macaroon.caveats()).hasSize(6);
       assertThat(macaroon.caveats().get(0).key()).isEqualTo("services");
       assertThat(macaroon.caveats().get(0).value()).isEqualTo(SERVICE_NAME + ":0");
       assertThat(macaroon.caveats().get(1)).isEqualTo(new Caveat("route", PROTECTED_PATH));
       assertThat(macaroon.caveats().get(2)).isEqualTo(new Caveat("method", "GET"));
       assertThat(macaroon.caveats().get(3))
+          .isEqualTo(new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)));
+      assertThat(macaroon.caveats().get(4))
           .isEqualTo(new Caveat(SERVICE_NAME + "_capabilities", "~"));
-      assertThat(macaroon.caveats().get(4).key()).isEqualTo(SERVICE_NAME + "_valid_until");
+      assertThat(macaroon.caveats().get(5).key()).isEqualTo(SERVICE_NAME + "_valid_until");
       // valid_until should be a numeric epoch seconds value in the future
-      long epochSeconds = Long.parseLong(macaroon.caveats().get(4).value());
+      long epochSeconds = Long.parseLong(macaroon.caveats().get(5).value());
       assertThat(Instant.ofEpochSecond(epochSeconds)).isAfter(Instant.now());
     }
 
@@ -1068,7 +1161,7 @@ class PaygateSecurityFilterTest {
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
 
     @Test
@@ -1091,7 +1184,7 @@ class PaygateSecurityFilterTest {
           .perform(get(PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
   }
 
@@ -1264,7 +1357,7 @@ class PaygateSecurityFilterTest {
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
 
     @Test
@@ -1277,7 +1370,7 @@ class PaygateSecurityFilterTest {
           .perform(get(CAPABILITY_PROTECTED_PATH).header("Authorization", authHeader))
           .andExpect(status().isPaymentRequired())
           .andExpect(jsonPath("$.title", is("INVALID")))
-          .andExpect(jsonPath("$.detail", is("Payment validation failed: INVALID")));
+          .andExpect(jsonPath("$.detail", is("Payment credential is invalid")));
     }
 
     @Test

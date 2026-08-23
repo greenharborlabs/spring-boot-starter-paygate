@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.SecurityDecisionObserver;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -25,6 +26,13 @@ import org.springframework.context.annotation.Bean;
 @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
 @ConditionalOnBean(MeterRegistry.class)
 public class PaygateMetricsAutoConfiguration {
+
+  /** Registers the default sanitized decision reporter only when optional Micrometer is present. */
+  @Bean
+  @ConditionalOnMissingBean(SecurityDecisionObserver.class)
+  public SecurityDecisionObserver paygateSecurityDecisionReporter(MeterRegistry meterRegistry) {
+    return new PaygateSecurityDecisionReporter(meterRegistry);
+  }
 
   @Bean
   @ConditionalOnMissingBean

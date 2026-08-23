@@ -61,14 +61,14 @@ class L402ChallengeJsonBodyTest {
   }
 
   @Test
-  void toStringContainsPriceAndDescription() {
+  void toStringContainsPriceButOmitsDescription() {
     Macaroon macaroon = createTestMacaroon();
     L402Challenge challenge = new L402Challenge(macaroon, "lnbc100n1test", 42, "my desc");
 
     String result = challenge.toString();
 
     assertThat(result).contains("priceSats=42");
-    assertThat(result).contains("description=my desc");
+    assertThat(result).doesNotContain("my desc", "description");
   }
 
   @Test

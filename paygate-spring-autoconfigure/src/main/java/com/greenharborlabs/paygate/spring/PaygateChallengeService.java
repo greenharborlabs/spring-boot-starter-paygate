@@ -35,11 +35,14 @@ public class PaygateChallengeService {
   private final RootKeyStore rootKeyStore;
   private final LightningBackend lightningBackend;
   private final ApplicationContext applicationContext;
+  private final PaygateRequestPricingService requestPricingService;
   private final String serviceName;
 
   private final PaygateEarningsTracker earningsTracker;
   private final PaygateRateLimiter rateLimiter;
+  private final AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter;
   private final ClientIpResolver clientIpResolver;
+  private final boolean clientAddressBindingEnabled;
   private final CapabilityCache capabilityCache;
   private final boolean validatedTestMode;
   private final ConcurrentHashMap<String, PaygatePricingStrategy> pricingStrategyCache =
@@ -61,9 +64,11 @@ public class PaygateChallengeService {
         applicationContext,
         earningsTracker,
         rateLimiter,
+        null,
         clientIpResolver,
         capabilityCache,
-        false);
+        false,
+        null);
   }
 
   PaygateChallengeService(
@@ -73,18 +78,49 @@ public class PaygateChallengeService {
       @Nullable ApplicationContext applicationContext,
       @Nullable PaygateEarningsTracker earningsTracker,
       @Nullable PaygateRateLimiter rateLimiter,
+      @Nullable AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter,
       @Nullable ClientIpResolver clientIpResolver,
       @Nullable CapabilityCache capabilityCache,
       boolean validatedTestMode) {
+    this(
+        rootKeyStore,
+        lightningBackend,
+        properties,
+        applicationContext,
+        earningsTracker,
+        rateLimiter,
+        aggregateInvoiceRateLimiter,
+        clientIpResolver,
+        capabilityCache,
+        validatedTestMode,
+        null);
+  }
+
+  PaygateChallengeService(
+      RootKeyStore rootKeyStore,
+      LightningBackend lightningBackend,
+      @Nullable PaygateProperties properties,
+      @Nullable ApplicationContext applicationContext,
+      @Nullable PaygateEarningsTracker earningsTracker,
+      @Nullable PaygateRateLimiter rateLimiter,
+      @Nullable AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter,
+      @Nullable ClientIpResolver clientIpResolver,
+      @Nullable CapabilityCache capabilityCache,
+      boolean validatedTestMode,
+      @Nullable PaygateRequestPricingService requestPricingService) {
     this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
     this.lightningBackend =
         Objects.requireNonNull(lightningBackend, "lightningBackend must not be null");
     this.applicationContext = applicationContext;
+    this.requestPricingService = requestPricingService;
     String svcName = (properties != null) ? properties.getServiceName() : null;
     this.serviceName = (svcName == null || svcName.isBlank()) ? "default" : svcName;
     this.earningsTracker = earningsTracker;
     this.rateLimiter = rateLimiter;
+    this.aggregateInvoiceRateLimiter = aggregateInvoiceRateLimiter;
     this.clientIpResolver = clientIpResolver;
+    this.clientAddressBindingEnabled =
+        properties != null && properties.getProtocols().getL402().isClientAddressBindingEnabled();
     this.capabilityCache = capabilityCache;
     this.validatedTestMode = validatedTestMode;
   }
@@ -203,6 +239,17 @@ public class PaygateChallengeService {
     Objects.requireNonNull(routePattern, "routePattern must not be null");
     Objects.requireNonNull(options, "options must not be null");
 
+    String trustedClientAddress = null;
+    if (clientAddressBindingEnabled) {
+      trustedClientAddress =
+          clientIpResolver != null
+              ? clientIpResolver.resolveBindingAddress(request).orElse(null)
+              : null;
+      if (trustedClientAddress == null) {
+        throw new PaygateLightningUnavailableException("Trusted client address is unavailable");
+      }
+    }
+
     // 1. Check Lightning backend health
     if (!lightningBackend.isHealthy()) {
       throw new PaygateLightningUnavailableException("Lightning backend health check failed");
@@ -215,9 +262,8 @@ public class PaygateChallengeService {
 
     // 3. Generate root key, create invoice, build context
     try {
-      return buildChallengeContext(request, config, routePattern, request.getMethod());
-    } catch (PaygateLightningUnavailableException e) {
-      throw e;
+      return buildChallengeContext(
+          request, config, routePattern, request.getMethod(), trustedClientAddress);
     } catch (RuntimeException e) {
       throw new PaygateLightningUnavailableException(
           "Failed to create challenge: " + e.getMessage(), e);
@@ -289,30 +335,20 @@ public class PaygateChallengeService {
       HttpServletRequest request,
       PaygateEndpointConfig config,
       String routePattern,
-      String requestMethod)
-      throws PaygateLightningUnavailableException {
+      String requestMethod,
+      @Nullable String trustedClientAddress)
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
 
     // Resolve and validate the effective price before any persistent or network side effect.
     long effectivePrice = resolvePrice(request, config);
     validatePrice(effectivePrice);
 
+    acquireAggregateInvoiceCapacity();
+
     // Create Lightning invoice before root key generation so invoice failures do not allocate
     // sensitive key material.
-    Invoice invoice;
-    try {
-      invoice = lightningBackend.createInvoice(effectivePrice, config.description());
-    } catch (RuntimeException e) {
-      throw new PaygateLightningUnavailableException(
-          "Failed to create invoice: " + e.getMessage(), e);
-    }
-
-    final String safeBolt11;
-    try {
-      safeBolt11 = L402Challenge.sanitizeBolt11ForHeader(invoice.bolt11());
-    } catch (IllegalArgumentException e) {
-      throw new PaygateLightningUnavailableException(
-          "Lightning backend returned an invalid invoice", e);
-    }
+    Invoice invoice = createValidatedInvoice(effectivePrice, config.description());
+    String safeBolt11 = sanitizeInvoice(invoice);
 
     // Generate root key and tokenId atomically after invoice creation; try-with-resources ensures
     // SensitiveBytes.destroy() is called if a later step fails.
@@ -322,27 +358,8 @@ public class PaygateChallengeService {
         byte[] tokenId = generationResult.tokenId();
         boolean contextCreated = false;
         try {
-          // Record invoice creation in earnings tracker
-          try {
-            if (earningsTracker != null) {
-              earningsTracker.recordInvoiceCreated();
-            }
-          } catch (Exception e) {
-            log.log(
-                System.Logger.Level.WARNING,
-                "Failed to record invoice creation in earnings tracker: {0}",
-                e.getMessage());
-          }
-
-          // Build opaque map for test preimage if present
-          Map<String, String> opaque = null;
-          byte[] invoicePreimage = invoice.preimage();
-          if (validatedTestMode
-              && lightningBackend.getClass() == TestModeLightningBackend.class
-              && invoicePreimage != null) {
-            opaque = new LinkedHashMap<>();
-            opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
-          }
+          recordInvoiceCreated();
+          Map<String, String> opaque = testModeOpaqueData(invoice);
 
           String tokenIdHex = HexFormat.of().formatHex(tokenId);
           String requestDigest = RequestDigestSupport.digestAttribute(request);
@@ -366,22 +383,10 @@ public class PaygateChallengeService {
                     routePattern,
                     requestMethod,
                     request.getQueryString(),
-                    request.getQueryString() != null);
+                    request.getQueryString() != null,
+                    trustedClientAddress);
 
-            // Populate capability cache after successful invoice creation
-            if (capabilityCache != null
-                && config.capability() != null
-                && !config.capability().isEmpty()) {
-              try {
-                capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
-              } catch (RuntimeException e) {
-                log.log(
-                    System.Logger.Level.WARNING,
-                    "Failed to store capability in cache for token {0}: {1}",
-                    tokenIdHex,
-                    e.getMessage());
-              }
-            }
+            storeCapability(tokenIdHex, config);
 
             contextCreated = true;
             return challengeContext;
@@ -403,15 +408,115 @@ public class PaygateChallengeService {
     }
   }
 
+  private Invoice createValidatedInvoice(long effectivePrice, String description)
+      throws PaygateLightningUnavailableException {
+    final Invoice invoice;
+    try {
+      invoice = lightningBackend.createInvoice(effectivePrice, description);
+    } catch (RuntimeException e) {
+      throw new PaygateLightningUnavailableException(
+          "Failed to create invoice: " + e.getMessage(), e);
+    }
+    if (invoice == null || invoice.amountSats() != effectivePrice) {
+      throw new PaygateLightningUnavailableException(
+          "Lightning backend returned an invoice with an unexpected amount");
+    }
+    return invoice;
+  }
+
+  private static String sanitizeInvoice(Invoice invoice)
+      throws PaygateLightningUnavailableException {
+    try {
+      return L402Challenge.sanitizeBolt11ForHeader(invoice.bolt11());
+    } catch (IllegalArgumentException e) {
+      throw new PaygateLightningUnavailableException(
+          "Lightning backend returned an invalid invoice", e);
+    }
+  }
+
+  private void recordInvoiceCreated() {
+    if (earningsTracker == null) {
+      return;
+    }
+    try {
+      earningsTracker.recordInvoiceCreated();
+    } catch (Exception e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Failed to record invoice creation in earnings tracker: {0}",
+          e.getMessage());
+    }
+  }
+
+  private Map<String, String> testModeOpaqueData(Invoice invoice) {
+    if (!validatedTestMode || lightningBackend.getClass() != TestModeLightningBackend.class) {
+      return null;
+    }
+    byte[] invoicePreimage = invoice.preimage();
+    try {
+      if (invoicePreimage == null) {
+        return null;
+      }
+      var opaque = new LinkedHashMap<String, String>();
+      opaque.put("test_preimage", HexFormat.of().formatHex(invoicePreimage));
+      return opaque;
+    } finally {
+      KeyMaterial.zeroize(invoicePreimage);
+    }
+  }
+
+  private void storeCapability(String tokenIdHex, PaygateEndpointConfig config) {
+    if (capabilityCache == null || config.capability() == null || config.capability().isEmpty()) {
+      return;
+    }
+    try {
+      capabilityCache.store(tokenIdHex, config.capability(), config.timeoutSeconds());
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Failed to store capability in cache for token correlation {0}: {1}",
+          LogSanitizer.sanitizeTokenId(tokenIdHex),
+          e.getClass().getSimpleName());
+    }
+  }
+
+  private void acquireAggregateInvoiceCapacity()
+      throws PaygateLightningUnavailableException, PaygateRateLimitedException {
+    AggregateInvoiceRateLimiter limiter = aggregateInvoiceRateLimiter;
+    if (limiter == null) {
+      return;
+    }
+    try {
+      if (!limiter.tryAcquire()) {
+        throw new PaygateRateLimitedException("Aggregate invoice limit exceeded");
+      }
+    } catch (PaygateRateLimitedException e) {
+      throw e;
+    } catch (RuntimeException e) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "Aggregate invoice limiter failed; denying challenge: {0}",
+          e.getClass().getSimpleName());
+      throw new PaygateLightningUnavailableException("Aggregate invoice limiter unavailable", e);
+    }
+  }
+
   /**
    * Resolves the effective price for an endpoint by looking up the pricing strategy bean from the
-   * ApplicationContext. Falls back to the static annotation price if no strategy is configured, the
-   * ApplicationContext is unavailable, or the bean does not exist.
+   * ApplicationContext. A blank strategy deliberately uses the static annotation price; a named
+   * strategy that cannot be resolved fails closed rather than silently undercharging.
    */
   long resolvePrice(HttpServletRequest request, PaygateEndpointConfig config) {
+    Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+    if (memoized instanceof TrustedRequestPrice(long amountSats)) {
+      return amountSats;
+    }
     String strategyName = config.pricingStrategy();
-    if (strategyName == null || strategyName.isBlank() || applicationContext == null) {
+    if (strategyName == null || strategyName.isBlank()) {
       return config.priceSats();
+    }
+    if (applicationContext == null) {
+      throw new IllegalStateException("Named pricing strategy resolution is unavailable");
     }
     // Check cache first; failed lookups are NOT cached so they retry on each request.
     PaygatePricingStrategy strategy = pricingStrategyCache.get(strategyName);
@@ -422,10 +527,9 @@ public class PaygateChallengeService {
       } catch (Exception e) {
         log.log(
             System.Logger.Level.WARNING,
-            "Pricing strategy bean ''{0}'' not found or failed; falling back to static price {1} sats",
-            strategyName,
-            config.priceSats());
-        return config.priceSats();
+            "Pricing strategy bean ''{0}'' could not be resolved; failing closed",
+            strategyName);
+        throw new IllegalStateException("Named pricing strategy could not be resolved", e);
       }
     }
     try {
@@ -435,6 +539,27 @@ public class PaygateChallengeService {
       // invalid price calculation and let the outer fail-closed path return 503 before minting.
       throw new IllegalArgumentException("Dynamic price calculation failed", e);
     }
+  }
+
+  /**
+   * Resolves and stores a trusted price for this request before credential validation.
+   *
+   * <p>This compatibility implementation uses the challenge service's established strategy lookup.
+   * It memoizes the outcome so validation and any replacement challenge consume the same amount.
+   * Auto-configuration supplies the bounded runner for production request paths.
+   */
+  public TrustedRequestPrice resolveTrustedPrice(
+      HttpServletRequest request, PaygateEndpointConfig config) {
+    if (requestPricingService != null) {
+      return requestPricingService.resolve(request, config);
+    }
+    Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+    if (memoized instanceof TrustedRequestPrice trustedRequestPrice) {
+      return trustedRequestPrice;
+    }
+    TrustedRequestPrice resolved = new TrustedRequestPrice(resolvePrice(request, config));
+    request.setAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE, resolved);
+    return resolved;
   }
 
   private static void validatePrice(long priceSats) {
@@ -456,11 +581,15 @@ public class PaygateChallengeService {
    */
   public void discardChallenge(ChallengeContext challengeContext) {
     Objects.requireNonNull(challengeContext, "challengeContext must not be null");
-    byte[] tokenId = HexFormat.of().parseHex(challengeContext.tokenId());
     try {
-      revokeGeneratedRootKey(tokenId);
+      byte[] tokenId = HexFormat.of().parseHex(challengeContext.tokenId());
+      try {
+        revokeGeneratedRootKey(tokenId);
+      } finally {
+        KeyMaterial.zeroize(tokenId);
+      }
     } finally {
-      KeyMaterial.zeroize(tokenId);
+      challengeContext.close();
     }
   }
 

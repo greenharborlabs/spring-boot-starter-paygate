@@ -1,10 +1,18 @@
 package com.greenharborlabs.paygate.core.protocol;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
+import com.greenharborlabs.paygate.api.SecurityDecisionObserver;
+import com.greenharborlabs.paygate.api.SecurityDecisionProtocol;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import com.greenharborlabs.paygate.api.crypto.SensitiveBytes;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
+import com.greenharborlabs.paygate.core.lightning.Invoice;
+import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
+import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
+import com.greenharborlabs.paygate.core.macaroon.CaveatKey;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
@@ -13,11 +21,13 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
+import com.greenharborlabs.paygate.core.macaroon.PaidPriceCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.macaroon.VerificationFailureReason;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -32,6 +42,8 @@ import java.util.Set;
  * macaroon signature on all paths. This prevents oracle attacks where an adversary without
  * proof-of-payment can probe macaroon validity through differential error responses.
  */
+@SuppressWarnings(
+    "PMD.CyclomaticComplexity") // Security-critical validation order must remain explicit
 public final class L402Validator {
 
   private static final System.Logger log = System.getLogger(L402Validator.class.getName());
@@ -45,23 +57,87 @@ public final class L402Validator {
 
   private final RootKeyStore rootKeyStore;
   private final CredentialStore credentialStore;
+  private final LightningBackend lightningBackend;
   private final Map<String, CaveatVerifier> caveatVerifiersByKey;
   private final String serviceName;
   private final String capabilityCaveatKey;
   private final CapabilitiesCaveatVerifier capabilitiesCaveatVerifier;
+  private final PaidPriceCaveatVerifier paidPriceCaveatVerifier;
+  private final SecurityDecisionObserver decisionObserver;
 
   public L402Validator(
       RootKeyStore rootKeyStore,
       CredentialStore credentialStore,
       List<CaveatVerifier> caveatVerifiers,
       String serviceName) {
+    this(
+        rootKeyStore,
+        credentialStore,
+        caveatVerifiers,
+        serviceName,
+        null,
+        SecurityDecisionObserver.NOOP);
+  }
+
+  /**
+   * Creates a validator with the bounded invoice-evidence lookup used only for explicitly
+   * route-stable legacy credentials.
+   *
+   * @param rootKeyStore authoritative root-key store
+   * @param credentialStore credential cache
+   * @param caveatVerifiers registered caveat verifiers
+   * @param serviceName first-party L402 service name
+   * @param lightningBackend optional invoice lookup backend; a missing backend makes legacy lookup
+   *     unavailable rather than accepting the credential
+   */
+  public L402Validator(
+      RootKeyStore rootKeyStore,
+      CredentialStore credentialStore,
+      List<CaveatVerifier> caveatVerifiers,
+      String serviceName,
+      LightningBackend lightningBackend) {
+    this(
+        rootKeyStore,
+        credentialStore,
+        caveatVerifiers,
+        serviceName,
+        lightningBackend,
+        SecurityDecisionObserver.NOOP);
+  }
+
+  /**
+   * Creates a validator with route-stable legacy lookup and best-effort security observation.
+   *
+   * @param rootKeyStore authoritative root-key store
+   * @param credentialStore credential cache
+   * @param caveatVerifiers registered caveat verifiers
+   * @param serviceName first-party L402 service name
+   * @param lightningBackend optional invoice lookup backend
+   * @param decisionObserver optional fixed-taxonomy observer
+   */
+  public L402Validator(
+      RootKeyStore rootKeyStore,
+      CredentialStore credentialStore,
+      List<CaveatVerifier> caveatVerifiers,
+      String serviceName,
+      LightningBackend lightningBackend,
+      SecurityDecisionObserver decisionObserver) {
     this.rootKeyStore = Objects.requireNonNull(rootKeyStore, "rootKeyStore must not be null");
     this.credentialStore =
         Objects.requireNonNull(credentialStore, "credentialStore must not be null");
+    this.lightningBackend = lightningBackend;
+    this.decisionObserver =
+        decisionObserver != null ? decisionObserver : SecurityDecisionObserver.NOOP;
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
     this.capabilityCaveatKey = this.serviceName + "_capabilities";
     List<CaveatVerifier> verifiers =
-        List.copyOf(Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
+        new ArrayList<>(
+            Objects.requireNonNull(caveatVerifiers, "caveatVerifiers must not be null"));
+    this.paidPriceCaveatVerifier = new PaidPriceCaveatVerifier(this.serviceName);
+    if (verifiers.stream()
+        .noneMatch(verifier -> verifier.getKey().equals(paidPriceCaveatVerifier.getKey()))) {
+      verifiers.add(paidPriceCaveatVerifier);
+    }
     this.caveatVerifiersByKey = MacaroonVerifier.buildVerifierMap(verifiers);
     requireBoundaryVerifier(SERVICES_CAVEAT_KEY);
     requireBoundaryVerifier(ROUTE_CAVEAT_KEY);
@@ -95,7 +171,8 @@ public final class L402Validator {
       L402Credential credential,
       boolean freshValidation,
       Set<String> effectiveCapabilities,
-      Map<String, String> verifiedAttributes) {
+      Map<String, String> verifiedAttributes,
+      PaidPriceEvidence paidPriceEvidence) {
 
     /** Creates a result after defensively snapshotting its effective capabilities. */
     public ValidationResult {
@@ -106,6 +183,8 @@ public final class L402Validator {
       verifiedAttributes =
           Map.copyOf(
               Objects.requireNonNull(verifiedAttributes, "verifiedAttributes must not be null"));
+      paidPriceEvidence =
+          Objects.requireNonNull(paidPriceEvidence, "paidPriceEvidence must not be null");
     }
 
     /**
@@ -116,13 +195,56 @@ public final class L402Validator {
      *     cache
      */
     public ValidationResult(L402Credential credential, boolean freshValidation) {
-      this(credential, freshValidation, Set.of(), Map.of());
+      this(credential, freshValidation, Set.of(), Map.of(), PaidPriceEvidence.absent());
     }
 
     /** Creates a result with effective capabilities but no additional verifier-approved values. */
     public ValidationResult(
         L402Credential credential, boolean freshValidation, Set<String> effectiveCapabilities) {
-      this(credential, freshValidation, effectiveCapabilities, Map.of());
+      this(
+          credential, freshValidation, effectiveCapabilities, Map.of(), PaidPriceEvidence.absent());
+    }
+
+    /**
+     * Creates a result with verifier-approved attributes and no paid-price evidence.
+     *
+     * <p>This compatibility constructor preserves existing custom protocol integrations. Request
+     * enforcement receives a populated value whenever a signed price caveat is present.
+     */
+    public ValidationResult(
+        L402Credential credential,
+        boolean freshValidation,
+        Set<String> effectiveCapabilities,
+        Map<String, String> verifiedAttributes) {
+      this(
+          credential,
+          freshValidation,
+          effectiveCapabilities,
+          verifiedAttributes,
+          PaidPriceEvidence.absent());
+    }
+  }
+
+  /**
+   * Immutable authenticated paid-price evidence carried with a successful validation result.
+   *
+   * @param coveredAmountSats signed amount that the credential proves, or empty when the credential
+   *     predates price caveats
+   * @param currentAmountSats trusted request price used for this validation, or empty for
+   *     compatibility callers that supplied no current price
+   * @param pricingStability declared route-price classification from trusted request metadata
+   */
+  public record PaidPriceEvidence(
+      java.util.OptionalLong coveredAmountSats,
+      java.util.OptionalLong currentAmountSats,
+      java.util.Optional<String> pricingStability) {
+
+    /** Creates an empty evidence value for a legacy or compatibility validation. */
+    public static PaidPriceEvidence absent() {
+      return new PaidPriceEvidence(
+          java.util.OptionalLong.empty(),
+          java.util.OptionalLong.empty(),
+          java.util.Optional.empty());
     }
   }
 
@@ -258,11 +380,14 @@ public final class L402Validator {
           credentialStore.store(tokenId, credential, cacheTtl);
 
           returningCredential = true;
+          PaidPriceEvidence paidPriceEvidence =
+              verifyPaidPrice(credential.macaroon(), context, tokenId);
           return new ValidationResult(
               credential,
               true,
               verificationDetails.effectiveCapabilities(),
-              verificationDetails.verifiedAttributes());
+              verificationDetails.verifiedAttributes(),
+              paidPriceEvidence);
         }
       } finally {
         KeyMaterial.zeroize(tokenIdBytes);
@@ -323,11 +448,10 @@ public final class L402Validator {
     requireRequestContext(context, tokenId);
     Map<String, String> verifiedAttributes;
     try {
-      verifiedAttributes =
-          MacaroonVerifier.verifyCaveats(
-              cached.macaroon().caveats(), caveatVerifiersByKey, context);
+      verifiedAttributes = verifyCanonicalCaveats(cached.macaroon().caveats(), context);
     } catch (MacaroonVerificationException e) {
       if (e.getReason() == VerificationFailureReason.CREDENTIAL_EXPIRED
+          || e.getReason() == VerificationFailureReason.CAVEAT_INVALID
           || e.getReason() == VerificationFailureReason.CAVEAT_ESCALATION) {
         applyCacheInvalidity(tokenId, EvictionReason.Invalidity.PERMANENT);
       }
@@ -338,7 +462,9 @@ public final class L402Validator {
     }
 
     Set<String> effectiveCapabilities = extractFinalEffectiveCapabilities(cached.macaroon());
-    return new ValidationResult(cached.copy(), false, effectiveCapabilities, verifiedAttributes);
+    PaidPriceEvidence paidPriceEvidence = verifyPaidPrice(cached.macaroon(), context, tokenId);
+    return new ValidationResult(
+        cached.copy(), false, effectiveCapabilities, verifiedAttributes, paidPriceEvidence);
   }
 
   private VerificationDetails verifyMacaroon(
@@ -365,13 +491,126 @@ public final class L402Validator {
       verifyCurrentIdentifierVersion(identifier);
       verifyRequiredBoundaryCaveats(macaroon.caveats());
       requireRequestContext(context, tokenId);
-      Map<String, String> verifiedAttributes =
-          MacaroonVerifier.verifyCaveats(macaroon.caveats(), caveatVerifiersByKey, context);
+      Map<String, String> verifiedAttributes = verifyCanonicalCaveats(macaroon.caveats(), context);
       return new VerificationDetails(
           extractFinalEffectiveCapabilities(macaroon), verifiedAttributes);
     } finally {
       KeyMaterial.zeroize(derivedKey, sig);
     }
+  }
+
+  private PaidPriceEvidence verifyPaidPrice(
+      Macaroon macaroon, L402VerificationContext context, String tokenId) {
+    try {
+      String currentValue =
+          context.getRequestMetadata().get(VerificationContextKeys.CURRENT_PRICE_SATS);
+      if (currentValue == null) {
+        return PaidPriceEvidence.absent();
+      }
+      final long currentPrice;
+      try {
+        currentPrice = PaidPriceCaveatVerifier.parse(currentValue);
+      } catch (MacaroonVerificationException exception) {
+        throw new PriceValidationException(
+            PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, tokenId);
+      }
+      Long coveredPrice = null;
+      for (Caveat caveat : macaroon.caveats()) {
+        if (paidPriceCaveatVerifier.getKey().equals(CaveatKey.canonicalize(caveat.key()))) {
+          long parsed = PaidPriceCaveatVerifier.parse(caveat.value());
+          coveredPrice = coveredPrice == null ? parsed : Math.min(coveredPrice, parsed);
+        }
+      }
+      if (coveredPrice == null) {
+        return verifyLegacyPaidPrice(macaroon, currentPrice, context, tokenId);
+      }
+      if (coveredPrice < currentPrice) {
+        throw new PriceValidationException(
+            PriceValidationException.Kind.INSUFFICIENT_PRICE, tokenId);
+      }
+      return new PaidPriceEvidence(
+          java.util.OptionalLong.of(coveredPrice),
+          java.util.OptionalLong.of(currentPrice),
+          pricingStability(context));
+    } catch (PriceValidationException failure) {
+      reportPriceDecision(failure, context);
+      throw failure;
+    }
+  }
+
+  private void reportPriceDecision(
+      PriceValidationException failure, L402VerificationContext context) {
+    SecurityDecisionReason reason =
+        switch (failure.kind()) {
+          case INSUFFICIENT_PRICE -> SecurityDecisionReason.INSUFFICIENT_PRICE;
+          case MISSING_PRICE_EVIDENCE -> SecurityDecisionReason.MISSING_PRICE_EVIDENCE;
+          case ROUTE_STABLE_PRICE_INCREASE -> SecurityDecisionReason.ROUTE_STABLE_PRICE_INCREASE;
+          default -> null;
+        };
+    if (reason == null) {
+      return;
+    }
+    Map<String, String> metadata = context.getRequestMetadata();
+    String method = metadata.get(VerificationContextKeys.REQUEST_METHOD);
+    String endpoint = metadata.get(VerificationContextKeys.REQUEST_ROUTE);
+    SecurityDecisionObserver.notifySafely(
+        decisionObserver,
+        new SecurityDecision(
+            reason,
+            SecurityDecisionProtocol.L402,
+            method == null || method.isBlank() ? "_unknown" : method,
+            endpoint == null || endpoint.isBlank() ? "_unknown" : endpoint));
+  }
+
+  private PaidPriceEvidence verifyLegacyPaidPrice(
+      Macaroon macaroon, long currentPrice, L402VerificationContext context, String tokenId) {
+    if (lightningBackend == null) {
+      // The legacy public constructor predates invoice-evidence lookup. Preserve its core-only
+      // compatibility semantics; Spring production wiring uses the backend-aware constructor and
+      // therefore takes the strict lookup branch below.
+      return new PaidPriceEvidence(
+          java.util.OptionalLong.empty(),
+          java.util.OptionalLong.of(currentPrice),
+          pricingStability(context));
+    }
+    if (!"ROUTE_STABLE"
+        .equals(context.getRequestMetadata().get(VerificationContextKeys.PRICING_STABILITY))) {
+      throw new PriceValidationException(
+          PriceValidationException.Kind.MISSING_PRICE_EVIDENCE, tokenId);
+    }
+    byte[] paymentHash = null;
+    try {
+      paymentHash = MacaroonIdentifier.decode(macaroon.identifier()).paymentHash();
+      Invoice invoice = lightningBackend.lookupInvoice(paymentHash);
+      if (invoice == null
+          || invoice.status() != InvoiceStatus.SETTLED
+          || !com.greenharborlabs.paygate.api.SecurityBounds.isValidPrice(invoice.amountSats())) {
+        throw new PriceValidationException(
+            PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, tokenId);
+      }
+      if (currentPrice > invoice.amountSats()) {
+        throw new PriceValidationException(
+            PriceValidationException.Kind.ROUTE_STABLE_PRICE_INCREASE, tokenId);
+      }
+      return new PaidPriceEvidence(
+          java.util.OptionalLong.of(invoice.amountSats()),
+          java.util.OptionalLong.of(currentPrice),
+          pricingStability(context));
+    } catch (PriceValidationException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      throw new PriceValidationException(
+          PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, tokenId);
+    } finally {
+      KeyMaterial.zeroize(paymentHash);
+    }
+  }
+
+  private static java.util.Optional<String> pricingStability(L402VerificationContext context) {
+    String stability = context.getRequestMetadata().get(VerificationContextKeys.PRICING_STABILITY);
+    return stability == null || stability.isBlank()
+        ? java.util.Optional.empty()
+        : java.util.Optional.of(stability);
   }
 
   private record VerificationDetails(
@@ -410,11 +649,12 @@ public final class L402Validator {
     boolean hasValidUntil = false;
     String validUntilCaveatKey = serviceName + "_valid_until";
     for (Caveat caveat : caveats) {
-      hasServices |= SERVICES_CAVEAT_KEY.equals(caveat.key());
-      hasRoute |= ROUTE_CAVEAT_KEY.equals(caveat.key());
-      hasMethod |= METHOD_CAVEAT_KEY.equals(caveat.key());
-      hasCapabilityCeiling |= capabilityCaveatKey.equals(caveat.key());
-      hasValidUntil |= validUntilCaveatKey.equals(caveat.key());
+      String canonicalKey = CaveatKey.canonicalize(caveat.key());
+      hasServices |= SERVICES_CAVEAT_KEY.equals(canonicalKey);
+      hasRoute |= ROUTE_CAVEAT_KEY.equals(canonicalKey);
+      hasMethod |= METHOD_CAVEAT_KEY.equals(canonicalKey);
+      hasCapabilityCeiling |= capabilityCaveatKey.equals(canonicalKey);
+      hasValidUntil |= validUntilCaveatKey.equals(canonicalKey);
     }
     if (!hasServices || !hasRoute || !hasMethod || !hasCapabilityCeiling || !hasValidUntil) {
       throw new MacaroonVerificationException(
@@ -426,7 +666,7 @@ public final class L402Validator {
   private Set<String> extractFinalEffectiveCapabilities(Macaroon macaroon) {
     Caveat finalCapabilityCaveat = null;
     for (Caveat caveat : macaroon.caveats()) {
-      if (capabilityCaveatKey.equals(caveat.key())) {
+      if (capabilityCaveatKey.equals(CaveatKey.canonicalize(caveat.key()))) {
         finalCapabilityCaveat = caveat;
       }
     }
@@ -468,7 +708,7 @@ public final class L402Validator {
     return switch (reason) {
       case CAVEAT_NOT_MET -> ErrorCode.INVALID_SERVICE;
       case CREDENTIAL_EXPIRED -> ErrorCode.EXPIRED_CREDENTIAL;
-      case SIGNATURE_INVALID, CAVEAT_ESCALATION -> ErrorCode.INVALID_MACAROON;
+      case SIGNATURE_INVALID, CAVEAT_INVALID, CAVEAT_ESCALATION -> ErrorCode.INVALID_MACAROON;
     };
   }
 
@@ -480,6 +720,7 @@ public final class L402Validator {
       case CAVEAT_NOT_MET -> "Credential constraints were not satisfied";
       case CREDENTIAL_EXPIRED -> "Credential has expired";
       case SIGNATURE_INVALID -> "Credential signature verification failed";
+      case CAVEAT_INVALID -> "Credential caveat is invalid";
       case CAVEAT_ESCALATION -> "Credential attenuation is invalid";
     };
   }
@@ -497,7 +738,7 @@ public final class L402Validator {
     boolean found = false;
 
     for (Caveat caveat : macaroon.caveats()) {
-      if (validUntilKey.equals(caveat.key())) {
+      if (validUntilKey.equals(CaveatKey.canonicalize(caveat.key()))) {
         try {
           long expiryEpoch = Long.parseLong(caveat.value());
           // Guard against pathological values that could cause overflow in arithmetic.
@@ -529,5 +770,17 @@ public final class L402Validator {
       minRemaining = Math.max(minRemaining - 30, 1L);
     }
     return Math.min(minRemaining, defaultTtlSeconds);
+  }
+
+  private Map<String, String> verifyCanonicalCaveats(
+      List<Caveat> caveats, L402VerificationContext context) {
+    MacaroonVerifier.notifyPaddedKnownCaveats(
+        caveats,
+        caveatVerifiersByKey,
+        decisionObserver,
+        SecurityDecisionProtocol.L402,
+        context.getRequestMetadata().get(VerificationContextKeys.REQUEST_METHOD),
+        context.getRequestMetadata().get(VerificationContextKeys.REQUEST_ROUTE));
+    return MacaroonVerifier.verifyCaveats(caveats, caveatVerifiersByKey, context);
   }
 }

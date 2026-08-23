@@ -41,6 +41,13 @@ new_signature = HMAC-SHA256(key=current_signature, data="key=value")
 
 The appended caveat and new signature form a different macaroon variant. Keep the identifier, location, and existing caveats unchanged; append the new caveat at the end. Paygate does not currently expose a high-level client attenuation helper, so client libraries must perform this operation with a Macaroon V2-compatible implementation and serialize the result with standard Base64 for the L402 header.
 
+Paygate authenticates the exact `key=value` spelling before it evaluates a caveat.
+After authentication it removes only edge ASCII spaces and horizontal tabs from a
+key when selecting a registered verifier. Do not rely on this compatibility
+behavior when minting: issue canonical, unpadded keys and preserve the original
+bytes when attenuating. Values and internal or Unicode whitespace are never
+normalized.
+
 Attenuation can only preserve or narrow authority:
 
 - `services`: the new service set must be a subset of the previous set.

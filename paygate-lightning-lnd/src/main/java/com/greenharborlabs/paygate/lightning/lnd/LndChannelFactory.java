@@ -12,9 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.util.Arrays;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -48,18 +46,15 @@ public final class LndChannelFactory {
           "TLS certificate path is required when plaintext is not allowed");
     }
 
-    // Validate all file paths upfront before attempting channel construction
+    // Validate all credential files before attempting channel construction.
     if (config.tlsCertPath() != null) {
       Path certPath = Path.of(config.tlsCertPath());
-      validateFileExists(certPath, "TLS certificate");
-      validateFileReadable(certPath, "TLS certificate");
-      warnIfPermissionsAreTooBroad(certPath, "TLS certificate");
+      LndCredentialFileValidator.validate(
+          certPath, "TLS certificate", config.strictFilePermissions());
     }
     if (config.macaroonPath() != null) {
       Path macaroonPath = Path.of(config.macaroonPath());
-      validateFileExists(macaroonPath, "Macaroon");
-      validateFileReadable(macaroonPath, "Macaroon");
-      warnIfPermissionsAreTooBroad(macaroonPath, "Macaroon");
+      LndCredentialFileValidator.validate(macaroonPath, "macaroon", config.strictFilePermissions());
     }
 
     ValidatedLndTarget plaintextTarget =
@@ -185,44 +180,6 @@ public final class LndChannelFactory {
       return Files.readAllBytes(path);
     } catch (IOException e) {
       throw new LndException("Failed to build LND gRPC channel: " + e.getMessage(), e);
-    }
-  }
-
-  private static void validateFileExists(Path path, String fileDescription) {
-    if (!Files.exists(path)) {
-      throw new LndException(fileDescription + " file not found: " + path);
-    }
-  }
-
-  private static void validateFileReadable(Path path, String fileDescription) {
-    if (!Files.isReadable(path)) {
-      throw new LndException(fileDescription + " file not readable: " + path);
-    }
-  }
-
-  /**
-   * Warns when credential material is accessible by a group or other users.
-   *
-   * <p>The access check deliberately follows symbolic links. Container secret mounts commonly
-   * expose credentials through symlinks, and rejecting those mounts would make a secure deployment
-   * pattern unusable. The warning contains only a credential type, never a path or file contents.
-   */
-  private static void warnIfPermissionsAreTooBroad(Path path, String fileDescription) {
-    try {
-      Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(path);
-      if (permissions.stream()
-          .anyMatch(
-              permission ->
-                  permission.name().startsWith("GROUP_")
-                      || permission.name().startsWith("OTHERS_"))) {
-        log.log(
-            System.Logger.Level.WARNING,
-            "{0} file permissions allow access beyond its owner; restrict credential permissions",
-            fileDescription);
-      }
-    } catch (UnsupportedOperationException | IOException ignored) {
-      // POSIX permissions are not universally available. File existence/readability remains
-      // checked.
     }
   }
 

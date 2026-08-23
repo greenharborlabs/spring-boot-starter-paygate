@@ -271,6 +271,28 @@ class PaygateResponseWriterTest {
   }
 
   @Test
+  @DisplayName("RFC 9457 fields never use an exception subclass message or token ID")
+  void mppErrorUsesOnlyClosedErrorCategory() throws Exception {
+    String marker = "ATTACKER_CONTROLLED_SECRET";
+    var exception =
+        new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INVALID, "ignored", marker) {
+          @Override
+          public String getMessage() {
+            return marker;
+          }
+        };
+
+    PaygateResponseWriter.writeMppError(response, exception, List.of());
+
+    assertThat(response.getContentAsString())
+        .contains("\"type\": \"https://paymentauth.org/problems/invalid\"")
+        .contains("\"title\": \"INVALID\"")
+        .contains("\"detail\": \"Payment credential is invalid\"")
+        .doesNotContain(marker, "token_id");
+  }
+
+  @Test
   @DisplayName("L402 invalid and expired failures map to 402 rather than authentication 401")
   void l402InvalidAndExpiredFailuresMapToPaymentRequired() throws Exception {
     for (ErrorCode errorCode : List.of(ErrorCode.INVALID_MACAROON, ErrorCode.EXPIRED_CREDENTIAL)) {
@@ -405,9 +427,17 @@ class PaygateResponseWriterTest {
     assertThat(response.getStatus()).isEqualTo(status);
     assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
     assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+    String detail =
+        switch (category) {
+          case "MALFORMED" -> "Malformed payment credential";
+          case "INVALID" -> "Payment credential is invalid";
+          case "INSUFFICIENT" -> "Payment amount is insufficient";
+          case "UNAVAILABLE" -> "Payment validation is unavailable";
+          default -> throw new IllegalArgumentException("Unknown category: " + category);
+        };
     assertThat(response.getContentAsString())
         .contains("\"title\": \"" + category + "\"")
-        .contains("\"detail\": \"Payment validation failed: " + category + "\"")
-        .doesNotContain(diagnostic);
+        .contains("\"detail\": \"" + detail + "\"")
+        .doesNotContain(diagnostic, "token_id");
   }
 }

@@ -72,7 +72,7 @@ class DynamicPricingTest {
   void setUp() {
     var stub = (CapturingStubLightningBackend) lightningBackend;
     stub.setHealthy(true);
-    stub.setNextInvoice(createStubInvoice());
+    stub.setNextInvoice(null);
     stub.resetCapturedAmount();
     DYNAMIC_PRICER.set((request, defaultPrice) -> DYNAMIC_PRICE);
   }

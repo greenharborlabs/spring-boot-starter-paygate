@@ -6,10 +6,12 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
+import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,14 +46,15 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
   private final List<PaymentProtocol> protocols;
   private final String serviceName;
   private final CapabilityResolver capabilityResolver;
+  private final boolean clientAddressBindingEnabled;
 
   public PaygateAuthenticationProvider(L402Validator l402Validator, String serviceName) {
-    this(l402Validator, List.of(), serviceName, NOOP_RESOLVER);
+    this(l402Validator, List.of(), serviceName, NOOP_RESOLVER, false);
   }
 
   public PaygateAuthenticationProvider(
       L402Validator l402Validator, List<PaymentProtocol> protocols, String serviceName) {
-    this(l402Validator, protocols, serviceName, NOOP_RESOLVER);
+    this(l402Validator, protocols, serviceName, NOOP_RESOLVER, false);
   }
 
   public PaygateAuthenticationProvider(
@@ -59,10 +62,24 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       List<PaymentProtocol> protocols,
       String serviceName,
       CapabilityResolver capabilityResolver) {
+    this(l402Validator, protocols, serviceName, capabilityResolver, false);
+  }
+
+  /**
+   * Creates a provider with optional enforcement that every L402 credential carries one client IP
+   * caveat.
+   */
+  public PaygateAuthenticationProvider(
+      L402Validator l402Validator,
+      List<PaymentProtocol> protocols,
+      String serviceName,
+      CapabilityResolver capabilityResolver,
+      boolean clientAddressBindingEnabled) {
     this.l402Validator = Objects.requireNonNull(l402Validator, "l402Validator must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.serviceName = serviceName;
     this.capabilityResolver = capabilityResolver != null ? capabilityResolver : NOOP_RESOLVER;
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -97,18 +114,51 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       L402Validator.ValidationResult result = l402Validator.validate(components, context);
       L402Credential credential = result.credential();
       try {
-        return PaygateAuthenticationToken.authenticated(
-            credential.tokenId(),
-            serviceName,
-            "L402",
-            result.verifiedAttributes(),
-            l402Authorities(result.effectiveCapabilities()));
+        if (clientAddressBindingEnabled && clientAddressCaveatCount(credential.macaroon()) != 1) {
+          throw new L402Exception(
+              com.greenharborlabs.paygate.core.protocol.ErrorCode.INVALID_MACAROON,
+              "L402 credential validation failed",
+              credential.tokenId());
+        }
+        return PaygateAuthenticationToken.authenticated(result, serviceName);
       } finally {
         credential.destroy();
       }
+    } catch (PriceValidationException e) {
+      PaymentValidationException.ErrorCode errorCode =
+          e.isChallengeable()
+              ? PaymentValidationException.ErrorCode.INSUFFICIENT
+              : PaymentValidationException.ErrorCode.UNAVAILABLE;
+      throw new BadCredentialsException(
+          "L402 authentication failed",
+          new PaymentValidationException(
+              errorCode, "L402 paid-price validation failed", e.getTokenId(), e));
     } catch (L402Exception e) {
-      throw new BadCredentialsException("L402 authentication failed", e);
+      throw new BadCredentialsException("L402 authentication failed", mapL402Failure(e));
     }
+  }
+
+  private static long clientAddressCaveatCount(Macaroon macaroon) {
+    return macaroon.caveats().stream()
+        .filter(caveat -> "client_ip".equals(caveat.key().toString()))
+        .count();
+  }
+
+  private static PaymentValidationException mapL402Failure(L402Exception failure) {
+    PaymentValidationException.ErrorCode category =
+        switch (failure.getErrorCode()) {
+          case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED;
+          case LIGHTNING_UNAVAILABLE -> PaymentValidationException.ErrorCode.UNAVAILABLE;
+          case INVALID_MACAROON,
+              INVALID_PREIMAGE,
+              EXPIRED_CREDENTIAL,
+              INVALID_SERVICE,
+              MISSING_REQUEST_CONTEXT,
+              REVOKED_CREDENTIAL ->
+              PaymentValidationException.ErrorCode.INVALID;
+        };
+    return new PaymentValidationException(
+        category, "L402 credential validation failed", failure.getTokenId(), failure);
   }
 
   private Authentication authenticateProtocol(
@@ -154,19 +204,6 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
           e);
       return Set.of();
     }
-  }
-
-  private static Set<GrantedAuthority> l402Authorities(Set<String> capabilities) {
-    Set<GrantedAuthority> authorities = new LinkedHashSet<>();
-    authorities.add(new SimpleGrantedAuthority("ROLE_PAYMENT"));
-    authorities.add(new SimpleGrantedAuthority("ROLE_L402"));
-    for (String capability : capabilities) {
-      if (capability != null) {
-        authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + capability));
-        authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + capability));
-      }
-    }
-    return Set.copyOf(authorities);
   }
 
   private static Set<GrantedAuthority> paymentAuthorities(Set<String> capabilities) {

@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.spring;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.EvictionReason;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -44,6 +45,8 @@ public class PaygateMetrics {
   private final ConcurrentHashMap<String, Counter> rateLimiterEvictionCounters =
       new ConcurrentHashMap<>();
   private final ConcurrentHashMap<String, Counter> rateLimitRejectionCounters =
+      new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, Counter> securityDecisionCounters =
       new ConcurrentHashMap<>();
   private final Timer caveatVerifyTimer;
 
@@ -157,6 +160,31 @@ public class PaygateMetrics {
                     .tag("caveat_type", ct)
                     .tag("protocol", "l402")
                     .description("Caveat verification rejections by type")
+                    .register(registry))
+        .increment();
+  }
+
+  /**
+   * Records one sanitized security decision using only its fixed taxonomy and bounded dimensions.
+   *
+   * <p>Caller-owned enforcement must isolate failures from this best-effort metric operation.
+   *
+   * @param decision sanitized security decision
+   */
+  public void recordSecurityDecision(SecurityDecision decision) {
+    String reason = decision.reason().name().toLowerCase(java.util.Locale.ROOT);
+    String protocol = decision.protocol().name().toLowerCase(java.util.Locale.ROOT);
+    String key = reason + '\0' + protocol + '\0' + decision.method() + '\0' + decision.endpoint();
+    securityDecisionCounters
+        .computeIfAbsent(
+            key,
+            ignored ->
+                Counter.builder("paygate.security.decisions")
+                    .tag("reason", reason)
+                    .tag("protocol", protocol)
+                    .tag("method", decision.method())
+                    .tag("endpoint", decision.endpoint())
+                    .description("Sanitized payment-gateway security decisions")
                     .register(registry))
         .increment();
   }

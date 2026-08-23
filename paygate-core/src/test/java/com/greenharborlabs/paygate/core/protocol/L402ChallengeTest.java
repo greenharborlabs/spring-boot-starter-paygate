@@ -291,21 +291,21 @@ class L402ChallengeTest {
     }
 
     @Test
-    @DisplayName("toString includes price and description")
-    void toStringIncludesFields() {
+    @DisplayName("toString includes price but omits description")
+    void toStringOmitsDescription() {
       L402Challenge challenge = new L402Challenge(mintTestMacaroon(), "lnbc1test", 42, "premium");
       String s = challenge.toString();
 
       assertThat(s).startsWith("L402Challenge[");
       assertThat(s).contains("priceSats=42");
-      assertThat(s).contains("description=premium");
+      assertThat(s).doesNotContain("premium", "description");
     }
 
     @Test
-    @DisplayName("toString uses null for description when null")
+    @DisplayName("toString omits null description")
     void toStringNullDescription() {
       L402Challenge challenge = new L402Challenge(mintTestMacaroon(), "lnbc1test", 1, null);
-      assertThat(challenge.toString()).contains("description=null");
+      assertThat(challenge.toString()).doesNotContain("description");
     }
   }
 
@@ -348,6 +348,15 @@ class L402ChallengeTest {
       assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\u007F"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("0x7f");
+    }
+
+    @Test
+    @DisplayName("rejects non-ASCII and surrogate characters")
+    void rejectsNonAsciiAndSurrogateCharacters() {
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\u00e9"))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> L402Challenge.sanitizeBolt11ForHeader("lnbc\ud800"))
+          .isInstanceOf(IllegalArgumentException.class);
     }
   }
 

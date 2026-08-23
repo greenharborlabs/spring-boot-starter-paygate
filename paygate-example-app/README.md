@@ -160,7 +160,7 @@ The `PaygateSecurityFilter` automatically discovers all `@PaymentRequired` metho
 
 ### Dynamic Pricing
 
-The `/api/v1/analyze` endpoint uses `AnalysisPricingStrategy`, a custom implementation of the `PaygatePricingStrategy` interface that scales the invoice price based on request content length:
+The `/api/v1/analyze` endpoint uses `AnalysisPricingStrategy`, a custom implementation of the `PaygatePricingStrategy` interface that scales the invoice price from bytes the server actually observed:
 
 - Requests up to 1,000 bytes pay the base price (50 sats)
 - Larger payloads add 1 sat per 100 bytes of content beyond the threshold
@@ -173,7 +173,14 @@ The pricing strategy is wired to the endpoint via the `pricingStrategy` attribut
 public AnalyzeResponse analyze(@RequestBody AnalyzeRequest request) { ... }
 ```
 
-This demonstrates how to implement pay-per-use pricing that scales with resource consumption.
+Before any named strategy executes, Paygate captures at most `paygate.request-body.max-bytes` and
+replays those exact bytes to the controller. `Content-Length` and transfer metadata are never price
+evidence, so missing, chunked, understated, and overstated declarations cannot reduce the charge.
+The endpoint accepts only absent or `identity` `Content-Encoding`; compressed requests are rejected
+before a challenge or handler is reached. Bodies over the bound also fail closed.
+
+This demonstrates how to implement pay-per-use pricing that scales with resource consumption without
+trusting client-controlled metadata.
 
 ---
 
@@ -517,7 +524,7 @@ services:
       context: .
       dockerfile: paygate-example-app/Dockerfile
     ports:
-      - "8080:8080"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8080}:8080"
     environment:
       PAYGATE_ENABLED: "true"
       PAYGATE_TEST_MODE: "true"
@@ -530,6 +537,9 @@ Key details:
 - The build context is the **project root** (not `paygate-example-app/`) because the multi-module build needs access to all submodules.
 - Environment variables use Spring Boot's relaxed binding (e.g., `PAYGATE_TEST_MODE` maps to `paygate.test-mode`).
 - `PAYGATE_ROOT_KEY_STORE=memory` is used because file-based key storage would require a persistent volume. For production, mount a volume and use `file` instead.
+- The default host bind is loopback-only. `APP_BIND_ADDRESS=0.0.0.0` is an explicit local
+  development override; do not expose this test-mode image without production TLS,
+  authentication, firewalling, real backend credentials, and an appropriate trusted-proxy policy.
 
 ### Building the Docker image manually
 

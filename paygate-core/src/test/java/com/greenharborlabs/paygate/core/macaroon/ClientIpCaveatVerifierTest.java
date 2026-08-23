@@ -67,6 +67,16 @@ class ClientIpCaveatVerifierTest {
           .extracting(e -> ((MacaroonVerificationException) e).getReason())
           .isEqualTo(VerificationFailureReason.CAVEAT_NOT_MET);
     }
+
+    @Test
+    @DisplayName("a canonical bound address is accepted only at the same address")
+    void canonicalBoundAddressRejectsReplayFromDifferentAddress() {
+      Caveat caveat = new Caveat("client_ip", "2001:db8:0:0:0:0:0:7");
+
+      assertThatCode(() -> verifier.verify(caveat, contextWithClientIp("2001:db8:0:0:0:0:0:7")))
+          .doesNotThrowAnyException();
+      assertCaveatNotMet(caveat, contextWithClientIp("2001:db8:0:0:0:0:0:8"));
+    }
   }
 
   // ---------------------------------------------------------------

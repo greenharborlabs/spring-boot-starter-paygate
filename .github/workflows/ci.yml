@@ -46,7 +46,9 @@ jobs:
 
           while IFS= read -r -d '' file; do
             case "$file" in
-              */src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
+              # The keyring is integrity-validated separately and may legitimately contain
+              # every scoped publisher key required for clean-cache dependency verification.
+              gradle/verification-keyring.keys|*/src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
                 continue
                 ;;
             esac
@@ -59,7 +61,7 @@ jobs:
 
           while IFS= read -r -d '' file; do
             case "$file" in
-              gradle/verification-metadata.xml|*/src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
+              gradle/verification-metadata.xml|gradle/verification-keyring.keys|*/src/test/*|*/src/integrationTest/*|*/src/securityTest/*)
                 continue
                 ;;
             esac
@@ -158,8 +160,8 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      - name: Verify disposition, example, and dependency-health gates
-        run: ./gradlew validateAddressSecurityFindingDispositions validateDependencyCheckRiskDispositions verifyExampleArtifactSafety buildHealth
+      - name: Verify provenance, disposition, example, and dependency-health gates
+        run: ./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls validateAddressSecurityFindingDispositions validateMediumSecurityFindingDispositions validateLowSecurityFindingDispositions verifyLowSecurityFindingNegativeControls validateDependencyCheckRiskDispositions verifyExampleArtifactSafety buildHealth
 
   integration-test:
     needs: [agents-md-validation, large-file-detection, formatting]

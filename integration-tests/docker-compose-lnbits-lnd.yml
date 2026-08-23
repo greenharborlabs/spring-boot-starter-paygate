@@ -1,3 +1,4 @@
+# REGTEST / LOCAL TEST ONLY — contains disposable regtest credentials and plaintext LNbits transport; never reuse in production.
 services:
 
   bitcoind:
@@ -129,16 +130,18 @@ services:
       lnbits:
         condition: service_healthy
     ports:
-      - "${APP_PORT:-18080}:8080"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-18080}:8080"
     environment:
       SPRING_PROFILES_ACTIVE: "dev"
       PAYGATE_ENABLED: "true"
       PAYGATE_TEST_MODE: "false"
       PAYGATE_SERVICE_NAME: "example-api"
+      PAYGATE_MPP_SECRET: "${PAYGATE_MPP_SECRET:-}"
       PAYGATE_BACKEND: "lnbits"
       PAYGATE_ROOT_KEY_STORE: "memory"
       PAYGATE_DEFAULT_TIMEOUT_SECONDS: "${PAYGATE_DEFAULT_TIMEOUT_SECONDS:-3600}"
       PAYGATE_LNBITS_URL: "http://lnbits:5000"
+      # TEST ONLY: LNbits is isolated in this local regtest network; plaintext HTTP is unsafe elsewhere.
       PAYGATE_LNBITS_ALLOW_PLAINTEXT_HTTP: "true"
       PAYGATE_LNBITS_API_KEY: "${LNBITS_API_KEY:-}"
       PAYGATE_EXAMPLE_LNBITS_AUTO_PROVISION: "false"
@@ -148,6 +151,8 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    group_add:
+      - "10001"
 
 volumes:
   bitcoind-data:

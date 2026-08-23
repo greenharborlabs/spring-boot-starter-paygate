@@ -138,6 +138,12 @@ class FileBasedRootKeyStoreTest {
   class GetRootKey {
 
     @Test
+    @DisplayName("rejects null keyId before filesystem access")
+    void rejectsNullKeyId() {
+      assertThatThrownBy(() -> store.getRootKey(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     @DisplayName("returns null for unknown keyId")
     void returnsNullForUnknownKeyId() {
       byte[] unknownKeyId = new byte[KEY_LENGTH];
@@ -295,6 +301,12 @@ class FileBasedRootKeyStoreTest {
   @Nested
   @DisplayName("revokeRootKey")
   class RevokeRootKey {
+
+    @Test
+    @DisplayName("rejects null keyId before filesystem mutation")
+    void rejectsNullKeyId() {
+      assertThatThrownBy(() -> store.revokeRootKey(null)).isInstanceOf(NullPointerException.class);
+    }
 
     @Test
     @DisplayName("after revocation, getRootKey returns null")

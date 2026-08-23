@@ -24,6 +24,12 @@ release, or artifact. The repository ignores the local integration-test state
 that these tools create; tracked example configuration remains the only
 configuration intended to ship with the source.
 
+All host application ports default to `127.0.0.1`. `APP_BIND_ADDRESS` is an explicit development
+override only; exposing one of these stacks requires production TLS, authentication, firewalling,
+trusted-proxy controls, a real backend, and separately managed secrets. The plaintext LNbits
+settings, regtest usernames/passwords, fixed numeric group, and generated credentials in these
+files are local-test conveniences and must never be copied to production.
+
 ## Environments
 
 | File | Backend | What it runs |
@@ -69,7 +75,8 @@ docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 # Provision through host loopback and write a disposable API key to ignored .env
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 
-# Now start the example app (picks up LNBITS_API_KEY from .env)
+# Enable MPP with an ephemeral secret, then start the app (which also picks up LNBITS_API_KEY from .env)
+export PAYGATE_MPP_SECRET="$(openssl rand -hex 32)"
 docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
 
 # Verify
@@ -166,8 +173,13 @@ All host-side ports are configurable via the `.env` file in this directory:
 | `LND_PAYER_REST_PORT` | 18082 | Payer LND REST API |
 | `LNBITS_PORT` | 15000 | LNbits HTTP |
 | `APP_PORT` | 18080 | Example app HTTP |
+| `APP_BIND_ADDRESS` | 127.0.0.1 | Host interface for the example app; non-loopback is an explicit local override |
 
 Edit `.env` before starting to avoid port conflicts with services already running on your machine.
+The generated `LNBITS_API_KEY` and `.lnbits-setup-secret.json` are ignored local state and are
+owner-only. A fresh LNbits volume gets a random setup password; reruns reuse it. Existing volumes
+created with the retired stable setup password must be reset with `docker compose ... down -v`, or
+the existing password must be supplied once as `LNBITS_SETUP_PASSWORD`; it is never printed.
 
 ## Tearing Down
 
@@ -230,6 +242,10 @@ Ensure the LND TLS cert and macaroon are accessible. The compose file mounts the
 docker compose -f docker-compose-lnd.yml exec paygate-example-app ls -la /lnd/tls.cert
 docker compose -f docker-compose-lnd.yml exec paygate-example-app ls -la /lnd/data/chain/bitcoin/regtest/admin.macaroon
 ```
+
+The setup scripts assign the disposable fixed group `10001`, use `0750` traversal directories and
+`0640` credential files, and keep the app mount read-only. This is a test-only container-volume
+arrangement, not a production ownership model.
 
 ## Live Endpoint Testing
 

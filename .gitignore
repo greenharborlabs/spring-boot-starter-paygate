@@ -1,10 +1,13 @@
 # Ignore Gradle build artifacts and cache
 .gradle/
 build/
+target/
+*.class
+*.jar
 
 # Keep planning and specification artifacts local-only.
 plans/
-specs/
+/specs/
 # Ignore the entire specify directory and all its contents
 .specify/
 # Ignore generated local agent integrations
@@ -31,6 +34,9 @@ bin/
 
 # OS files
 .DS_Store
+Thumbs.db
+*.tmp
+*.swp
 
 # Secrets
 .env
@@ -39,10 +45,22 @@ bin/
 *.env
 !*.env.example
 
+# Private keys, keystores, macaroons, and TLS credentials. Non-secret fixtures are deliberately
+# force-added during review rather than maintained through broad ignore-rule exceptions.
+*.pem
+*.key
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.macaroon
+tls.cert
+
 # Local integration-test state (never release with production artifacts)
 /integration-tests/.venv/
 /integration-tests/.pytest_cache/
 /integration-tests/**/__pycache__/
 /integration-tests/.breez-spark-payer/
 /integration-tests/.l402-credential.env
+/integration-tests/.lnbits-setup-secret.json
 /reports/

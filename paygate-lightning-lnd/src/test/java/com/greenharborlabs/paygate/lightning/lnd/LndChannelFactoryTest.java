@@ -165,8 +165,9 @@ class LndChannelFactoryTest {
 
     assertThatThrownBy(() -> LndChannelFactory.create(config))
         .isInstanceOf(LndException.class)
-        .hasMessageContaining("TLS certificate file not found:")
-        .hasMessageContaining("/nonexistent/path/tls.cert");
+        .hasMessage("LND TLS certificate credential file is unavailable")
+        .message()
+        .doesNotContain("/nonexistent/path/tls.cert");
   }
 
   @Test
@@ -186,8 +187,9 @@ class LndChannelFactoryTest {
 
     assertThatThrownBy(() -> LndChannelFactory.create(config))
         .isInstanceOf(LndException.class)
-        .hasMessageContaining("TLS certificate file not readable:")
-        .hasMessageContaining(certFile.toString());
+        .hasMessage("LND TLS certificate credential file is unavailable")
+        .message()
+        .doesNotContain(certFile.toString());
   }
 
   @Test
@@ -207,8 +209,9 @@ class LndChannelFactoryTest {
 
     assertThatThrownBy(() -> LndChannelFactory.create(config))
         .isInstanceOf(LndException.class)
-        .hasMessageContaining("Macaroon file not readable:")
-        .hasMessageContaining(macaroonFile.toString());
+        .hasMessage("LND macaroon credential file is unavailable")
+        .message()
+        .doesNotContain(macaroonFile.toString());
   }
 
   @Test
@@ -229,8 +232,9 @@ class LndChannelFactoryTest {
 
     assertThatThrownBy(() -> LndChannelFactory.create(config))
         .isInstanceOf(LndException.class)
-        .hasMessageContaining("Macaroon file not found:")
-        .hasMessageContaining("/nonexistent/path/admin.macaroon");
+        .hasMessage("LND macaroon credential file is unavailable")
+        .message()
+        .doesNotContain("/nonexistent/path/admin.macaroon");
   }
 
   @Test

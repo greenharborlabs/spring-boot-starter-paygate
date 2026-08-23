@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectOutputStream;
 import java.security.SecureRandom;
@@ -97,19 +98,23 @@ class PaygateAuthenticationTokenTest {
   }
 
   @Test
-  void authenticatedTokenExtractsCaveatAttributes() {
+  void deprecatedCredentialOnlyFactoryExposesSystemMetadataButNeverRawCaveatAttributes() {
     L402Credential credential =
-        createTestCredential(List.of(new Caveat("service", "api"), new Caveat("tier", "premium")));
+        createTestCredential(
+            List.of(
+                new Caveat("role", "admin"),
+                new Caveat("tenant", "other-tenant"),
+                new Caveat("permission", "delete"),
+                new Caveat("tokenId", "attacker-controlled")));
 
     var token = PaygateAuthenticationToken.authenticated(credential, "api");
 
     assertThat(token.getAttributes())
         .containsEntry("tokenId", credential.tokenId())
         .containsEntry("serviceName", "api")
-        .containsEntry("service", "api")
-        .containsEntry("tier", "premium");
-    assertThat(token.getAttribute("tier")).isEqualTo("premium");
-    assertThat(token.getAttribute("nonexistent")).isNull();
+        .containsEntry("protocolScheme", "L402")
+        .doesNotContainKeys("role", "tenant", "permission");
+    assertThat(token.getAttribute("tokenId")).isEqualTo(credential.tokenId());
   }
 
   @Test
@@ -119,11 +124,11 @@ class PaygateAuthenticationTokenTest {
 
     assertThatThrownBy(() -> token.getAttributes().put("tier", "attacker-controlled"))
         .isInstanceOf(UnsupportedOperationException.class);
-    assertThat(token.getAttributes()).containsEntry("tier", "premium");
+    assertThat(token.getAttributes()).doesNotContainKey("tier");
   }
 
   @Test
-  void builtInAttributesCannotBeOverwrittenByCaveats() {
+  void credentialOnlyFactoryKeepsSystemMetadataWhenCaveatsCollide() {
     L402Credential credential =
         createTestCredential(
             List.of(
@@ -135,6 +140,42 @@ class PaygateAuthenticationTokenTest {
     // Built-in attributes must win over attacker-controlled caveat keys
     assertThat(token.getAttribute("tokenId")).isEqualTo(credential.tokenId());
     assertThat(token.getAttribute("serviceName")).isEqualTo("trusted-service");
+  }
+
+  @Test
+  void validationResultFactoryExposesOnlyVerifierApprovedAttributes() {
+    L402Credential credential =
+        createTestCredential(List.of(new Caveat("role", "admin"), new Caveat("tenant", "forged")));
+    var result =
+        new L402Validator.ValidationResult(
+            credential, true, Set.of("read"), Map.of("tenant", "trusted-tenant"));
+
+    var token = PaygateAuthenticationToken.authenticated(result, "api");
+
+    assertThat(token.getAttributes())
+        .containsEntry("tokenId", credential.tokenId())
+        .containsEntry("serviceName", "api")
+        .containsEntry("protocolScheme", "L402")
+        .containsEntry("tenant", "trusted-tenant")
+        .doesNotContainKey("role");
+    assertThat(token.getAuthorities())
+        .extracting(GrantedAuthority::getAuthority)
+        .containsExactlyInAnyOrder(
+            "ROLE_PAYMENT", "ROLE_L402", "L402_CAPABILITY_read", "PAYGATE_CAPABILITY_read");
+  }
+
+  @Test
+  void credentialOnlyFactoriesAreDeprecatedForTrustHazardMigration() throws Exception {
+    assertThat(
+            PaygateAuthenticationToken.class
+                .getMethod("authenticated", L402Credential.class, String.class)
+                .isAnnotationPresent(Deprecated.class))
+        .isTrue();
+    assertThat(
+            PaygateAuthenticationToken.class
+                .getMethod("authenticated", L402Credential.class, String.class, Set.class)
+                .isAnnotationPresent(Deprecated.class))
+        .isTrue();
   }
 
   @Test

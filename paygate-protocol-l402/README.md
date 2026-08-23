@@ -1,5 +1,14 @@
 # paygate-protocol-l402
 
+## Optional client-address binding
+
+The Spring starter can opt in with
+`paygate.protocols.l402.client-address-binding-enabled=true`. It mints one exact canonical
+`client_ip` caveat from trusted request provenance and requires the same address at validation.
+Binding is L402-only; it changes neither default L402 vectors nor MPP. Deploy it only after
+reviewing proxy trust, IPv4/IPv6 normalization, NAT/mobile-client mobility, privacy exposure, and
+credential lifetime: existing unbound L402 credentials are intentionally rejected once enabled.
+
 The L402 protocol adapter for the `spring-boot-starter-paygate` project. This module implements the protocol-agnostic `PaymentProtocol` interface from `paygate-api` by delegating to the existing L402 infrastructure in `paygate-core`. It bridges the gap between the multi-protocol framework and the battle-tested macaroon-based L402 authentication system.
 
 ---
@@ -452,6 +461,13 @@ This module depends on:
 ---
 
 ## License
+
+## Signed price evidence
+
+`L402Protocol` mints exactly one `${serviceName}_price_sats` first-party caveat using the settled
+invoice amount. Because the caveat is part of the macaroon signature, clients cannot raise its
+coverage after issuance. Integrations should treat an `INSUFFICIENT` result as a request for a
+fresh current-price challenge and an `UNAVAILABLE` result as a 503 fail-closed outcome.
 
 This project is licensed under the [MIT License](../LICENSE).
 

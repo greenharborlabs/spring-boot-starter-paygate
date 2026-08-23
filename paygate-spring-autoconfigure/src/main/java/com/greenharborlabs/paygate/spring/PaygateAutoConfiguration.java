@@ -229,12 +229,21 @@ public class PaygateAutoConfiguration {
       RootKeyStore rootKeyStore,
       CredentialStore credentialStore,
       List<CaveatVerifier> caveatVerifiers,
-      PaygateProperties properties) {
+      LightningBackend lightningBackend,
+      PaygateProperties properties,
+      @Autowired(required = false)
+          com.greenharborlabs.paygate.api.SecurityDecisionObserver securityDecisionObserver) {
     String serviceName = properties.getServiceName();
     if (serviceName == null || serviceName.isBlank()) {
       serviceName = "default";
     }
-    return new L402Validator(rootKeyStore, credentialStore, caveatVerifiers, serviceName);
+    return new L402Validator(
+        rootKeyStore,
+        credentialStore,
+        caveatVerifiers,
+        serviceName,
+        lightningBackend,
+        securityDecisionObserver);
   }
 
   @Configuration(proxyBeanMethods = false)
@@ -253,7 +262,11 @@ public class PaygateAutoConfiguration {
       if (serviceName == null || serviceName.isBlank()) {
         serviceName = "default";
       }
-      return new L402Protocol(paygateValidator, serviceName);
+      return new L402Protocol(
+          paygateValidator,
+          serviceName,
+          java.time.Clock.systemUTC(),
+          properties.getProtocols().getL402().isClientAddressBindingEnabled());
     }
   }
 
@@ -459,7 +472,9 @@ public class PaygateAutoConfiguration {
   @ConditionalOnMissingBean
   public PaygateEndpointRegistry paygateEndpointRegistry(PaygateProperties properties) {
     return new PaygateEndpointRegistry(
-        properties.getDefaultTimeoutSeconds(), properties.getCaveat().getMaxValuesPerCaveat());
+        properties.getDefaultTimeoutSeconds(),
+        properties.getCaveat().getMaxValuesPerCaveat(),
+        properties.getRouting().getOverlapPolicy());
   }
 
   /** Scans mappings only after MVC has completed constructing its configuration graph. */
@@ -476,6 +491,7 @@ public class PaygateAutoConfiguration {
           rejectUnsupportedPaidHandlerSource(entry.getKey(), handlerMapping);
         }
       }
+      registry.validateManualRouteOverlaps();
     };
   }
 
@@ -561,6 +577,29 @@ public class PaygateAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
+  public PaygateRequestPricingService paygateRequestPricingService(
+      ApplicationContext applicationContext,
+      PaygateProperties properties,
+      @Autowired(required = false)
+          com.greenharborlabs.paygate.api.SecurityDecisionObserver securityDecisionObserver) {
+    var pricing = properties.getPricing();
+    return new PaygateRequestPricingService(
+        applicationContext,
+        pricing.getEvaluationTimeout(),
+        pricing.getMaxConcurrentEvaluations(),
+        securityDecisionObserver);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter(PaygateProperties properties) {
+    var aggregate = properties.getRateLimit().getAggregate();
+    return new TokenBucketAggregateInvoiceRateLimiter(
+        aggregate.getRequestsPerSecond(), aggregate.getBurstSize());
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
   public PaygateChallengeService paygateChallengeService(
       RootKeyStore rootKeyStore,
       LightningBackend lightningBackend,
@@ -568,8 +607,10 @@ public class PaygateAutoConfiguration {
       ApplicationContext applicationContext,
       @Autowired(required = false) PaygateEarningsTracker paygateEarningsTracker,
       @Autowired(required = false) PaygateRateLimiter paygateRateLimiter,
+      AggregateInvoiceRateLimiter aggregateInvoiceRateLimiter,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
       @Autowired(required = false) CapabilityCache capabilityCache,
+      PaygateRequestPricingService paygateRequestPricingService,
       org.springframework.beans.factory.ObjectProvider<DevelopmentSafetyPolicy.ValidatedTestMode>
           validatedTestMode) {
     return new PaygateChallengeService(
@@ -579,9 +620,11 @@ public class PaygateAutoConfiguration {
         applicationContext,
         paygateEarningsTracker,
         paygateRateLimiter,
+        aggregateInvoiceRateLimiter,
         clientIpResolver,
         capabilityCache,
-        validatedTestMode.getIfAvailable() != null);
+        validatedTestMode.getIfAvailable() != null,
+        paygateRequestPricingService);
   }
 
   @Bean
@@ -604,7 +647,8 @@ public class PaygateAutoConfiguration {
         paygateMetrics,
         paygateEarningsTracker,
         paygateRateLimiter,
-        properties.getRequestBody().getMaxBytes());
+        properties.getRequestBody().getMaxBytes(),
+        properties.getProtocols().getL402().isClientAddressBindingEnabled());
   }
 
   @Bean
@@ -758,7 +802,8 @@ public class PaygateAutoConfiguration {
           lnd.getKeepAliveTimeoutSeconds(),
           lnd.getIdleTimeoutMinutes(),
           lnd.getMaxInboundMessageSize(),
-          rpcDeadline);
+          rpcDeadline,
+          lnd.isStrictFilePermissions());
     }
 
     @Bean(destroyMethod = "shutdown")

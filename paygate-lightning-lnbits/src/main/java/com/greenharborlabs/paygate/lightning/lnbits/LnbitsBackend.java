@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.lightning.lnbits;
 
+import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
@@ -50,8 +51,8 @@ public class LnbitsBackend implements LightningBackend {
 
   @Override
   public Invoice createInvoice(long amountSats, String memo) {
-    if (amountSats <= 0) {
-      throw new IllegalArgumentException("amountSats must be greater than zero");
+    if (!SecurityBounds.isValidPrice(amountSats)) {
+      throw new IllegalArgumentException("amountSats must be within the supported invoice range");
     }
 
     try {
@@ -71,7 +72,7 @@ public class LnbitsBackend implements LightningBackend {
 
       HttpResponse<String> response =
           httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-      checkResponseStatus(response, "createInvoice", "");
+      checkResponseStatus(response, "createInvoice");
       JsonNode json = objectMapper.readTree(response.body());
 
       byte[] providerPaymentHash =
@@ -105,8 +106,8 @@ public class LnbitsBackend implements LightningBackend {
     } catch (LnbitsException e) {
       throw e;
     } catch (Exception e) {
-      log.log(System.Logger.Level.WARNING, "LNbits createInvoice failed", e);
-      throw new LnbitsException("Failed to create invoice via LNbits", e);
+      log.log(System.Logger.Level.WARNING, "LNbits createInvoice failed");
+      throw LnbitsException.requestFailed(e);
     }
   }
 
@@ -132,7 +133,7 @@ public class LnbitsBackend implements LightningBackend {
 
       HttpResponse<String> response =
           httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-      checkResponseStatus(response, "lookupInvoice", " for hash=" + hashHex);
+      checkResponseStatus(response, "lookupInvoice");
       JsonNode json = objectMapper.readTree(response.body());
       return parseLookupResponse(json, paymentHash);
     } catch (HttpTimeoutException e) {
@@ -148,8 +149,8 @@ public class LnbitsBackend implements LightningBackend {
     } catch (LnbitsException e) {
       throw e;
     } catch (Exception e) {
-      log.log(System.Logger.Level.WARNING, "LNbits lookupInvoice failed", e);
-      throw new LnbitsException("Failed to lookup invoice via LNbits", e);
+      log.log(System.Logger.Level.WARNING, "LNbits lookupInvoice failed");
+      throw LnbitsException.requestFailed(e);
     }
   }
 
@@ -192,13 +193,12 @@ public class LnbitsBackend implements LightningBackend {
                 .asString(),
             "details.payment_hash");
     if (!CryptoUtils.constantTimeEquals(providerPaymentHash, paymentHash)) {
-      throw new LnbitsException("LNbits response payment_hash does not match requested invoice");
+      throw LnbitsException.invalidBackendData();
     }
 
     String bolt11 = requireField(details, "bolt11", "lookup response", "details.bolt11").asString();
     long amount =
-        requireField(details, "amount", "lookup response", "details.amount").asLong()
-            / MSAT_PER_SAT;
+        parseAmountSats(requireField(details, "amount", "lookup response", "details.amount"));
     String memo = details.has("memo") ? details.get("memo").asString() : null;
 
     InvoiceStatus status = paid ? InvoiceStatus.SETTLED : InvoiceStatus.PENDING;
@@ -208,7 +208,7 @@ public class LnbitsBackend implements LightningBackend {
           parseProviderHash(
               requireField(json, "preimage", "lookup response").asString(), "preimage");
       if (!CryptoUtils.constantTimeEquals(sha256(preimage), paymentHash)) {
-        throw new LnbitsException("LNbits response preimage does not match requested invoice");
+        throw LnbitsException.invalidBackendData();
       }
     }
 
@@ -224,12 +224,30 @@ public class LnbitsBackend implements LightningBackend {
     try {
       byte[] valueBytes = HEX.parseHex(value);
       if (valueBytes.length != 32) {
-        throw new LnbitsException("LNbits response " + fieldName + " must be exactly 32 bytes");
+        throw LnbitsException.invalidBackendData();
       }
       return valueBytes;
     } catch (IllegalArgumentException e) {
-      throw new LnbitsException("LNbits response " + fieldName + " is not valid hexadecimal", e);
+      throw LnbitsException.invalidBackendData(e);
     }
+  }
+
+  /**
+   * Converts a provider amount only when its JSON representation is an exact supported msat value.
+   */
+  private static long parseAmountSats(JsonNode amountNode) {
+    if (!amountNode.isIntegralNumber() || !amountNode.canConvertToLong()) {
+      throw LnbitsException.invalidBackendData();
+    }
+    long millisatoshis = amountNode.longValue();
+    if (millisatoshis <= 0 || millisatoshis % MSAT_PER_SAT != 0) {
+      throw LnbitsException.invalidBackendData();
+    }
+    long satoshis = millisatoshis / MSAT_PER_SAT;
+    if (!SecurityBounds.isValidPrice(satoshis)) {
+      throw LnbitsException.invalidBackendData();
+    }
+    return satoshis;
   }
 
   /** Computes a SHA-256 digest using a fresh JCA object for each provider response. */
@@ -272,7 +290,7 @@ public class LnbitsBackend implements LightningBackend {
       JsonNode parent, String field, String context, String displayName) {
     JsonNode node = parent.get(field);
     if (node == null || node.isNull()) {
-      throw new LnbitsException("Missing '" + displayName + "' in LNbits " + context);
+      throw LnbitsException.invalidBackendData();
     }
     return node;
   }
@@ -281,17 +299,14 @@ public class LnbitsBackend implements LightningBackend {
    * Validates the HTTP response status code and throws {@link LnbitsException} on non-2xx
    * responses.
    */
-  private static void checkResponseStatus(
-      HttpResponse<String> response, String operation, String detail) {
+  private static void checkResponseStatus(HttpResponse<String> response, String operation) {
     if (response.statusCode() < 200 || response.statusCode() >= 300) {
       log.log(
           System.Logger.Level.WARNING,
-          "LNbits {0} returned HTTP {1}{2}",
+          "LNbits {0} returned a non-success status ({1})",
           operation,
-          response.statusCode(),
-          detail);
-      throw new LnbitsException(
-          "LNbits " + operation + " returned HTTP " + response.statusCode() + detail);
+          response.statusCode());
+      throw LnbitsException.requestFailed();
     }
   }
 }

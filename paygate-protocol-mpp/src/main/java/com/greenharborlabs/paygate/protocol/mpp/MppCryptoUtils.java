@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.protocol.mpp;
 
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -32,6 +33,20 @@ final class MppCryptoUtils {
    */
   static boolean constantTimeEquals(byte[] a, byte[] b) {
     return CryptoUtils.constantTimeEquals(a, b);
+  }
+
+  /** Compares exact UTF-8 string encodings and clears the temporary encoded representations. */
+  static boolean constantTimeEqualsUtf8(String a, String b) {
+    if (a == null || b == null) {
+      return false;
+    }
+    byte[] left = a.getBytes(StandardCharsets.UTF_8);
+    byte[] right = b.getBytes(StandardCharsets.UTF_8);
+    try {
+      return CryptoUtils.constantTimeEquals(left, right);
+    } finally {
+      CryptoUtils.zeroize(left, right);
+    }
   }
 
   /**

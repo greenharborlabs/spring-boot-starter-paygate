@@ -93,6 +93,7 @@ Startup fails with `IllegalStateException` if any validation fails.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `paygate.protocols.l402.enabled` | `boolean` | `true` | Enable/disable the L402 protocol |
+| `paygate.protocols.l402.client-address-binding-enabled` | `boolean` | `false` | Opt in to one exact canonical `client_ip` caveat per L402 credential. |
 | `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present; `true` requires secret; `false` disables |
 | `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 UTF-8 bytes. |
 | `paygate.protocols.mpp.previous-challenge-binding-secret` | `string` | -- | Optional previous HMAC secret for key rotation. Minimum 32 UTF-8 bytes when set. New challenges are still signed with `challenge-binding-secret`. |
@@ -126,8 +127,9 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.test-mode` | `boolean` | `false` | Enables test mode with an in-memory Lightning backend. Must not be used in production. See [Test Mode](#test-mode). |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Whether to read `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. See [Rate Limiting](#rate-limiting). |
 | `paygate.security-mode` | `string` | `"auto"` | Selects `auto`, `servlet`, or `spring-security` enforcement. |
-| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Advanced opt-out for the Spring Security filter-chain startup guard when enforcement is deliberately wired elsewhere. |
+| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Compatibility acknowledgement for custom wiring; it cannot waive authentication, authentication-failure rate limiting, filter ordering, or dispatcher coverage. |
 | `paygate.actuator.enabled` | `boolean` | `false` | Registers the sensitive `/actuator/paygate` endpoint when Actuator is present and the endpoint is exposed. |
+| `paygate.request-body.max-bytes` | `int` | `8192` | Protected-request body maximum. Valid range: 1–16,777,216 bytes. |
 
 ### Root Key Store Properties
 
@@ -148,7 +150,10 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 |----------|------|---------|-------------|
 | `paygate.rate-limit.requests-per-second` | `double` | `10.0` | Token refill rate per second per client IP. Controls the sustained rate of 402 challenge issuance. |
 | `paygate.rate-limit.burst-size` | `int` | `20` | Maximum burst capacity per client IP. Allows short bursts above the sustained rate before throttling. |
-| `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum number of tracked IP rate-limit buckets. Limits memory usage under high-cardinality traffic. |
+| `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum number of tracked IP rate-limit buckets; must be at least 1. |
+| `paygate.rate-limit.aggregate.requests-per-second` | `double` | `100.0` | Instance-wide invoice creation refill rate; must be finite, greater than 0, and at most 100,000. Replace `AggregateInvoiceRateLimiter` with a shared implementation for a deployment-wide ceiling. |
+| `paygate.rate-limit.aggregate.burst-size` | `int` | `200` | Instance-wide invoice creation burst capacity; valid range 1–1,000,000. Exhaustion returns 429 before invoice or root-key work. |
+| `paygate.routing.overlap-policy` | `WARN` or `FAIL` | `WARN` | Warn or fail startup when a manual paid route may overlap an unprotected MVC mapping. |
 
 ### Health Cache Properties
 
@@ -189,6 +194,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | No | Idle connection timeout. |
 | `paygate.lnd.max-inbound-message-size` | `int` | `4194304` | No | Max inbound gRPC message size. |
 | `paygate.lnd.rpc-deadline-seconds` | `Integer` | -- | No | Per-call gRPC deadline. |
+| `paygate.lnd.strict-file-permissions` | `boolean` | `false` | No | Require readable regular non-symlink credential files with no other-user permissions and no group write/execute bits. Unavailable POSIX metadata fails closed when enabled. |
 
 ### Example application.yml
 
@@ -473,6 +479,16 @@ rate-limit identity; the default is `/64`. This grouping is an abuse-control buc
 identity or authorization boundary. Forwarded addresses are authoritative only when forwarding is
 enabled *and* the direct peer is configured in `paygate.trusted-proxy-addresses`; do not trust
 forwarded headers supplied by untrusted peers.
+
+### L402 Client-Address Binding
+
+Set `paygate.protocols.l402.client-address-binding-enabled=true` to bind newly issued L402
+credentials to the exact canonical IPv4 or IPv6 address of the request. It is intentionally off by
+default: mobile clients, NAT changes, and proxy reconfiguration invalidate bound credentials.
+When the direct peer is configured as a trusted forwarding proxy, issuance and validation require a
+complete unambiguous `X-Forwarded-For` chain; unavailable provenance fails with 503 before invoice
+or root-key creation. Existing unbound L402 credentials become invalid after enablement. This
+control reduces replay exposure but does not eliminate it, and it never changes MPP challenges.
 
 ### Overriding the Rate Limiter
 
@@ -915,8 +931,23 @@ Tests use Spring Boot's `WebApplicationContextRunner` to spin up the auto-config
 | `PaygateActuatorEndpointTest` | Actuator response structure with endpoint list, credentials, and earnings |
 | `PaygateMetricsTest` | Micrometer counter and gauge registration and increment |
 | `LsatChallengeSchemeTest` | Backward compatibility with `LSAT` prefix in Authorization header |
-| `DynamicPricingTest` | Pricing strategy bean lookup and fallback to static price |
-| `PricingFallbackTest` | Fallback behavior when pricing strategy bean is missing |
+| `DynamicPricingTest` | Bounded, memoized dynamic pricing |
+| `PricingFallbackTest` | Fail-closed behavior when pricing strategy resolution fails |
+
+### Price integrity
+
+Every protected request resolves a `TrustedRequestPrice` once and reuses it for validation and any
+replacement challenge. Set `PricingStability.ROUTE_STABLE` only for a route-and-method whose price
+cannot depend on request data; the safe default is `REQUEST_DEPENDENT`. Missing strategies,
+timeouts, saturation, invalid amounts, and ambiguous legacy payment evidence return 503. A signed
+credential that covers too little receives a fresh 402 at the memoized current price.
+
+### Security decision telemetry and evidence
+
+The optional observer emits fixed reason/protocol/method/endpoint dimensions only. Metrics and
+structured events are best effort, cardinality-capped, and never include credentials, payment
+proofs, caveats, headers, bodies, or exception messages. The Kimi M-1 through M-4 disposition
+ledger links these controls to tests, migration guidance, residual risk, and release review.
 
 ---
 

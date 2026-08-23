@@ -14,6 +14,24 @@ consent, a complete allowed profile set, local target validation, bounded direct
 in-memory key. A configuration String cannot be reliably zeroized, so this residual risk is
 limited to the opted-in disposable example lifecycle.
 
+## Dependency provenance and local credentials
+
+Gradle verifies both SHA-256 checksums and publisher signatures using the committed
+`gradle/verification-metadata.xml` and `gradle/verification-keyring.keys`. A dependency without
+usable publisher authentication requires one exact, independently reviewed row in
+`config/dependency-provenance-exceptions.tsv`; rows record the coordinate, artifact bytes,
+authoritative source, rationale, owner, review date, and renewal trigger. Never accept generated
+verification metadata or a key-server identity as approval by itself. Re-resolve from an isolated
+Gradle user home after any dependency, checksum, publisher key, or exception change.
+
+The repository ignores common private-key, keystore, macaroon, and TLS credential filenames by
+default. A reviewed non-secret fixture may be force-added deliberately; force-add is a review
+exception, never evidence that a secret is safe to commit.
+
+Dependency-Check runs daily at an off-minute and can be started manually. Its report is retained
+for seven days. A missing, cancelled, failed, or older report is stale release evidence and must be
+refreshed before approval.
+
 ## Supported Versions
 
 | Version | Supported |
@@ -51,6 +69,15 @@ Paygate's controls are deliberately scoped. Deployments must account for these b
 - **Test mode is restricted to safe profiles.** Every active profile must be one of `test`, `dev`, `local`, or `development`; production-like or unrecognized active profiles cause startup failure. Never package test credentials or enable test mode as a production fallback.
 - **Development shortcuts are complete-policy opt-ins.** Test mode also requires an effective ephemeral memory root-key store and the exact synthetic backend. Plaintext LND additionally requires a loopback literal or exact all-loopback `localhost` target before channel creation; an explicit local bootstrap may create an example wallet only in process memory and never through a Docker service hostname.
 - **Only verified authorization data is trusted.** Only values from a uniquely owned caveat key whose verifier succeeds become authentication attributes or authorities. Authenticated state is credential-free: it retains no raw header, parsed bearer, or payment preimage. Components receiving `SensitiveBytes` or other destroyable values must follow their ownership-transfer and deterministic `close()`/`destroy()` contracts; best-effort zeroization cannot erase immutable string copies.
+- **Caveat key compatibility never weakens authentication.** The HMAC chain authenticates the exact raw `key=value` bytes. Only after signature verification, ASCII space and horizontal-tab edge padding on a key are removed for known-verifier lookup; values, internal whitespace, Unicode whitespace, and newlines are unchanged. Padded registrations are rejected, and a padded unknown key remains delegated/unknown.
+- **Medium-finding evidence remains auditable.** The Kimi M-1 through M-4 remediation ledger is
+  tracked in `docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md`. It records only implemented
+  controls until successful current-implementation validation and named security or release review
+  can promote a row; operational decision signals remain sanitized and best effort.
+- **Low-finding evidence remains auditable.** The Kimi L-1 through L-28 ledger is tracked in
+  `docs/security/KIMI-LOW-FINDING-DISPOSITIONS.md`; its companion evidence ledger records only
+  redacted successful commands at a reviewed revision. A row cannot become verified or approved
+  from a planned, stale, failed, or locally asserted result.
 - **Parsing and delegation support are deliberately strict.** Noncanonical/bounded macaroon, MPP JSON, UTF-8, and base64url inputs fail closed. Third-party caveats and additional/discharge macaroons are unsupported and rejected, not exposed as partially verified metadata.
 - **Provider trust stops at verified payment data.** LND and LNbits boundaries reject wrong-length hashes/preimages and a paid response whose preimage does not match the queried payment hash. Plaintext opt-ins are local-only, and ambiguous numeric loopback forms are evaluated by canonical address bytes rather than trusted by spelling.
 - **Filesystem secrets rely on host controls.** File-backed root-key storage requires protections equivalent to `0700` directories and `0600` files and refuses unsafe or symlinked root-key paths. LND secret/certificate symlink mounts are supported only as a documented trusted-orchestrator case. Protect ownership, parent directories, and mounts at the host layer.

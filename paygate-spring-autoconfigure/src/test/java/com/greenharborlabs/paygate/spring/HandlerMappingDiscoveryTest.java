@@ -115,6 +115,11 @@ class HandlerMappingDiscoveryTest {
       public String capability() {
         return capability;
       }
+
+      @Override
+      public PricingStability pricingStability() {
+        return PricingStability.REQUEST_DEPENDENT;
+      }
     };
   }
 }

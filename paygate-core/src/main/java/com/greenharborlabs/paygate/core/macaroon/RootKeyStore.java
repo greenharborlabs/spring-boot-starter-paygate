@@ -58,8 +58,18 @@ public interface RootKeyStore extends Closeable {
 
   GenerationResult generateRootKey();
 
+  /**
+   * Returns a defensive root-key copy for a non-null key ID, or {@code null} when it is unknown.
+   *
+   * @param keyId non-null root-key identifier; an empty ID is treated as not found
+   */
   SensitiveBytes getRootKey(byte[] keyId);
 
+  /**
+   * Revokes the root key for a non-null key ID.
+   *
+   * @param keyId non-null root-key identifier; an empty ID is a no-op
+   */
   void revokeRootKey(byte[] keyId);
 
   /**

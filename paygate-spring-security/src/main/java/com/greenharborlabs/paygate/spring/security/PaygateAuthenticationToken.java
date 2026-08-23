@@ -2,9 +2,9 @@ package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
-import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -34,7 +34,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
  * <p>Two authenticated paths exist:
  *
  * <ul>
- *   <li>L402-only: created via {@link #authenticated(L402Credential, String)}
+ *   <li>L402-only: created from a validator-produced {@link L402Validator.ValidationResult}
  *   <li>Protocol-agnostic: created via {@link #authenticated(PaymentCredential, String)}
  * </ul>
  */
@@ -168,51 +168,83 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
   // ========== Static Factories ==========
 
   /**
-   * Creates an authenticated token from a validated L402 credential, extracting attributes from
-   * caveats. Delegates to the 3-arg overload with an empty capabilities set.
+   * Creates an authenticated L402 token from verifier-approved validation output.
+   *
+   * <p>This is the preferred L402 factory. It exposes only attributes returned by successful
+   * registered caveat verifiers and derives authorities only from the validator's effective
+   * capabilities. It never promotes merely parsed credential caveats into Spring Security
+   * authorization state.
+   *
+   * @param validationResult validated credential, verified attributes, and capabilities
+   * @param serviceName verified service name, may be null
+   * @return authenticated token containing only trusted identity facts
    */
+  public static PaygateAuthenticationToken authenticated(
+      L402Validator.ValidationResult validationResult, String serviceName) {
+    Objects.requireNonNull(validationResult, "validationResult must not be null");
+    L402Credential credential = validationResult.credential();
+    return authenticated(
+        credential.tokenId(),
+        serviceName,
+        "L402",
+        validationResult.verifiedAttributes(),
+        l402Authorities(validationResult.effectiveCapabilities()));
+  }
+
+  /**
+   * Creates an authenticated token from a validated L402 credential with no caveat-derived
+   * attributes. Delegates to the capability overload with an empty set.
+   *
+   * <p><strong>Security migration:</strong> this method formerly copied raw parsed caveats into
+   * authorization attributes, even though a credential alone cannot establish verifier provenance.
+   * It now retains only protected system metadata. Migrate to {@link
+   * #authenticated(L402Validator.ValidationResult, String)} to expose verifier-approved facts.
+   *
+   * @deprecated use {@link #authenticated(L402Validator.ValidationResult, String)} with the
+   *     validator result that established attribute provenance
+   */
+  @Deprecated(since = "0.1.6", forRemoval = false)
   public static PaygateAuthenticationToken authenticated(
       L402Credential credential, String serviceName) {
     return authenticated(credential, serviceName, Set.of());
   }
 
   /**
-   * Creates an authenticated token from a validated L402 credential, extracting attributes from
-   * caveats, and adding capability authorities from the resolved capabilities set.
+   * Creates an authenticated token from a validated L402 credential with protected system metadata
+   * and explicit capability authorities.
+   *
+   * <p><strong>Security migration:</strong> this method no longer copies raw parsed caveats into
+   * authorization attributes because it cannot know which caveats were verifier-approved. Migrate
+   * to {@link #authenticated(L402Validator.ValidationResult, String)} to retain approved facts.
    *
    * @param credential validated L402 credential, must not be null
    * @param serviceName service name, may be null
    * @param capabilities explicit capabilities to grant as {@code PAYGATE_CAPABILITY_*} authorities,
    *     must not be null
-   * @return authenticated token
+   * @return authenticated token without caveat-derived attributes
+   * @deprecated use {@link #authenticated(L402Validator.ValidationResult, String)} with the
+   *     validator result that established attribute provenance
    */
+  @Deprecated(since = "0.1.6", forRemoval = false)
   public static PaygateAuthenticationToken authenticated(
       L402Credential credential, String serviceName, Set<String> capabilities) {
+    Objects.requireNonNull(credential, "credential must not be null");
     Objects.requireNonNull(capabilities, "capabilities must not be null");
+    return authenticated(
+        credential.tokenId(), serviceName, "L402", Map.of(), l402Authorities(capabilities));
+  }
 
-    Map<String, String> attrs = new HashMap<>();
-    for (Caveat caveat : credential.macaroon().caveats()) {
-      attrs.put(caveat.key(), caveat.value());
-    }
-    // Built-in attributes placed after caveats so attacker-controlled caveat keys
-    // cannot overwrite trusted values like tokenId and serviceName.
-    attrs.put("tokenId", credential.tokenId());
-    if (serviceName != null) {
-      attrs.put("serviceName", serviceName);
-    }
-
+  private static Set<GrantedAuthority> l402Authorities(Set<String> capabilities) {
     Set<GrantedAuthority> authorities = new LinkedHashSet<>();
     authorities.add(new SimpleGrantedAuthority("ROLE_PAYMENT"));
     authorities.add(new SimpleGrantedAuthority("ROLE_L402"));
-
-    for (String cap : capabilities) {
-      if (cap != null) {
-        authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + cap));
-        authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + cap));
+    for (String capability : capabilities) {
+      if (capability != null) {
+        authorities.add(new SimpleGrantedAuthority("L402_CAPABILITY_" + capability));
+        authorities.add(new SimpleGrantedAuthority("PAYGATE_CAPABILITY_" + capability));
       }
     }
-
-    return authenticated(credential.tokenId(), serviceName, "L402", attrs, authorities);
+    return authorities;
   }
 
   /**

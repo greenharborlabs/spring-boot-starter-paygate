@@ -1,11 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
@@ -33,24 +29,20 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * TDD test for pricing strategy fallback behavior (T087).
+ * Regression tests for named pricing strategy resolution.
  *
  * <p>Verifies that when {@code @PaymentRequired(priceSats = 50, pricingStrategy =
  * "nonExistentPricer")} references a bean name that does not exist in the application context, the
- * system falls back to the static {@code priceSats} value of 50 rather than failing.
- *
- * <p>This test is expected NOT to compile until {@link PaygatePricingStrategy} is created (T088),
- * and NOT to pass until the filter integrates pricing strategy lookup with fallback (T089).
+ * system fails closed rather than minting an invoice at the static {@code priceSats} value.
  */
 @SpringBootTest(classes = PricingFallbackTest.TestApp.class)
 @AutoConfigureMockMvc
-@DisplayName("L402 pricing strategy fallback")
+@DisplayName("L402 named pricing strategy resolution")
 class PricingFallbackTest {
 
   private static final byte[] ROOT_KEY = new byte[32];
@@ -162,30 +154,22 @@ class PricingFallbackTest {
   // -----------------------------------------------------------------------
 
   @Test
-  @DisplayName("returns 402 with fallback price_sats=50 when pricingStrategy bean does not exist")
-  void returns402WithFallbackPriceWhenStrategyBeanMissing() throws Exception {
-    mockMvc
-        .perform(get(FALLBACK_PATH))
-        .andExpect(status().isPaymentRequired())
-        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
-        .andExpect(jsonPath("$.code", is(402)))
-        .andExpect(jsonPath("$.message", is("Payment required")))
-        .andExpect(jsonPath("$.price_sats", is(50)))
-        .andExpect(jsonPath("$.invoice", notNullValue()));
+  @DisplayName("returns 503 when a named pricingStrategy bean does not exist")
+  void returns503WhenNamedStrategyBeanMissing() throws Exception {
+    mockMvc.perform(get(FALLBACK_PATH)).andExpect(status().isServiceUnavailable());
   }
 
   @Test
-  @DisplayName(
-      "invoice is created with fallback amountSats=50 when pricingStrategy bean does not exist")
-  void invoiceCreatedWithFallbackAmount() throws Exception {
+  @DisplayName("does not create an invoice when a named pricingStrategy bean does not exist")
+  void doesNotCreateInvoiceWhenNamedStrategyBeanMissing() throws Exception {
     var stub = (PricingCapturingStubLightningBackend) lightningBackend;
     stub.resetCapturedAmount();
 
-    mockMvc.perform(get(FALLBACK_PATH)).andExpect(status().isPaymentRequired());
+    mockMvc.perform(get(FALLBACK_PATH)).andExpect(status().isServiceUnavailable());
 
     assertThat(stub.getCapturedAmountSats())
-        .as("Invoice should be created with the static priceSats fallback value")
-        .isEqualTo(FALLBACK_PRICE_SATS);
+        .as("Named strategy resolution must fail before invoice creation")
+        .isEqualTo(-1);
   }
 
   // -----------------------------------------------------------------------

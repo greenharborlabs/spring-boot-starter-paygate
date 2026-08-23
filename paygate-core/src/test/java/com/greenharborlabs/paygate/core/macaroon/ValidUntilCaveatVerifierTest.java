@@ -76,8 +76,7 @@ class ValidUntilCaveatVerifierTest {
   class MalformedTimestamp {
 
     @Test
-    @DisplayName(
-        "throws MacaroonVerificationException with CREDENTIAL_EXPIRED when value is not a number")
+    @DisplayName("throws CAVEAT_INVALID when value is not a number")
     void throwsWhenValueIsNotANumber() {
       // This hits the NumberFormatException catch block in verify().
       // Even though "abc" isn't a date, we treat any unparseable value as
@@ -92,13 +91,12 @@ class ValidUntilCaveatVerifierTest {
       assertThatThrownBy(() -> verifier.verify(caveat, context))
           .isInstanceOf(MacaroonVerificationException.class)
           .extracting(e -> ((MacaroonVerificationException) e).getReason())
-          .isEqualTo(VerificationFailureReason.CREDENTIAL_EXPIRED);
+          .isEqualTo(VerificationFailureReason.CAVEAT_INVALID);
     }
 
     @Test
-    @DisplayName("exception message includes the malformed value")
-    void exceptionMessageContainsMalformedValue() {
-      // The message should be useful for debugging — include the raw string.
+    @DisplayName("exception message omits the malformed value")
+    void exceptionMessageOmitsMalformedValue() {
       String badValue = "tuesday";
       Caveat caveat = new Caveat("my-api_valid_until", badValue);
       L402VerificationContext context =
@@ -109,7 +107,25 @@ class ValidUntilCaveatVerifierTest {
 
       assertThatThrownBy(() -> verifier.verify(caveat, context))
           .isInstanceOf(MacaroonVerificationException.class)
-          .hasMessageContaining(badValue);
+          .hasMessageNotContaining(badValue);
+    }
+
+    @Test
+    @DisplayName("rejects parsed long values outside the Instant range as invalid")
+    void rejectsLongValuesOutsideInstantRange() {
+      var context =
+          L402VerificationContext.builder()
+              .serviceName(SERVICE_NAME)
+              .currentTime(Instant.now())
+              .build();
+
+      for (String value :
+          java.util.List.of(String.valueOf(Long.MIN_VALUE), String.valueOf(Long.MAX_VALUE))) {
+        assertThatThrownBy(() -> verifier.verify(new Caveat("my-api_valid_until", value), context))
+            .isInstanceOf(MacaroonVerificationException.class)
+            .extracting(e -> ((MacaroonVerificationException) e).getReason())
+            .isEqualTo(VerificationFailureReason.CAVEAT_INVALID);
+      }
     }
   }
 
@@ -211,6 +227,15 @@ class ValidUntilCaveatVerifierTest {
     void invalidCurrentReturnsFalse() {
       Caveat previous = new Caveat("my-api_valid_until", "2000000000");
       Caveat current = new Caveat("my-api_valid_until", "not-a-number");
+
+      assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
+    }
+
+    @Test
+    @DisplayName("returns false when either value is outside the Instant range")
+    void outOfRangeValueReturnsFalse() {
+      Caveat previous = new Caveat("my-api_valid_until", String.valueOf(Long.MAX_VALUE));
+      Caveat current = new Caveat("my-api_valid_until", "2000000000");
 
       assertThat(verifier.isMoreRestrictive(previous, current)).isFalse();
     }

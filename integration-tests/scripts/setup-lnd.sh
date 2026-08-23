@@ -20,6 +20,8 @@ require_docker_daemon
 
 COMPOSE_WAIT_TIMEOUT_SECONDS="${COMPOSE_WAIT_TIMEOUT_SECONDS:-300}"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-60}"
+REGTEST_GID="${REGTEST_GID:-10001}"
+[[ "$REGTEST_GID" =~ ^[0-9]+$ ]] || { echo "ERROR: REGTEST_GID must be numeric." >&2; exit 1; }
 
 echo "==> Starting bitcoind and LND with $COMPOSE_FILE..."
 if docker compose up --help | grep -q -- '--wait'; then
@@ -69,11 +71,13 @@ echo "==> Checking LND wallet balance..."
 docker compose -f "$COMPOSE_FILE" exec -T lnd \
   lncli --network=regtest walletbalance
 
-echo "==> Making LND TLS cert and admin macaroon readable by the example app..."
-docker compose -f "$COMPOSE_FILE" exec -T lnd sh -c '
-  chmod o+rx /root/.lnd /root/.lnd/data /root/.lnd/data/chain /root/.lnd/data/chain/bitcoin /root/.lnd/data/chain/bitcoin/regtest
-  chmod o+r /root/.lnd/tls.cert /root/.lnd/data/chain/bitcoin/regtest/admin.macaroon
-'
+echo "==> Granting the fixed regtest group least-privilege read access to LND credentials..."
+docker compose -f "$COMPOSE_FILE" exec -T lnd sh -c "
+  chgrp ${REGTEST_GID} /root /root/.lnd /root/.lnd/data /root/.lnd/data/chain /root/.lnd/data/chain/bitcoin /root/.lnd/data/chain/bitcoin/regtest
+  chmod 0750 /root /root/.lnd /root/.lnd/data /root/.lnd/data/chain /root/.lnd/data/chain/bitcoin /root/.lnd/data/chain/bitcoin/regtest
+  chgrp ${REGTEST_GID} /root/.lnd/tls.cert /root/.lnd/data/chain/bitcoin/regtest/admin.macaroon
+  chmod 0640 /root/.lnd/tls.cert /root/.lnd/data/chain/bitcoin/regtest/admin.macaroon
+"
 
 echo ""
 echo "==> Setup complete."

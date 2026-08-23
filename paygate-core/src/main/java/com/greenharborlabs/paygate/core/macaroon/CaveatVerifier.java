@@ -1,8 +1,11 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+/** Verifies one registered, canonical caveat-key grammar against trusted request context. */
 public interface CaveatVerifier {
+  /** Returns the canonical, edge-space/tab-free key handled by this verifier. */
   String getKey();
 
+  /** Verifies a caveat whose key is the registered canonical key. */
   void verify(Caveat caveat, L402VerificationContext context);
 
   /**

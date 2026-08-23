@@ -4,8 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import com.greenharborlabs.paygate.core.credential.CredentialStore;
 import com.greenharborlabs.paygate.core.credential.InMemoryCredentialStore;
+import com.greenharborlabs.paygate.core.lightning.Invoice;
+import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
+import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
@@ -1442,6 +1447,22 @@ class L402ValidatorTest {
   class ExpiredCaveat {
 
     @Test
+    @DisplayName("maps malformed or out-of-range expiry caveats to invalid macaroon")
+    void malformedExpiryReturnsInvalidMacaroon() {
+      for (String expiry :
+          List.of("not-a-number", String.valueOf(Long.MIN_VALUE), String.valueOf(Long.MAX_VALUE))) {
+        String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_valid_until", expiry)));
+        L402Validator validator =
+            new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+        assertThatThrownBy(() -> validator.validate(header, boundaryContext()))
+            .isInstanceOf(L402Exception.class)
+            .extracting(error -> ((L402Exception) error).getErrorCode())
+            .isEqualTo(ErrorCode.INVALID_MACAROON);
+      }
+    }
+
+    @Test
     @DisplayName("throws EXPIRED_CREDENTIAL when valid_until caveat is in the past")
     void expiredCaveatReturnsExpiredCredential() throws NoSuchAlgorithmException {
       String caveatDetailMarker = "CAVEAT-DETAIL-SECRET-a6677b41";
@@ -1976,6 +1997,75 @@ class L402ValidatorTest {
     };
   }
 
+  @Test
+  @DisplayName(
+      "accepts signed padded boundary keys and returns canonical attributes on fresh and cache paths")
+  void acceptsPaddedBoundaryKeysOnFreshAndCachePaths() {
+    List<Caveat> paddedBoundaries =
+        boundaryCaveats().stream()
+            .map(caveat -> new Caveat("\t" + caveat.key() + " ", caveat.value()))
+            .toList();
+    Macaroon padded =
+        MacaroonMinter.mint(rootKey, identifier, "https://example.com", paddedBoundaries);
+    var decisions = new AtomicLong();
+    L402Validator validator =
+        new L402Validator(
+            rootKeyStore,
+            credentialStore,
+            boundaryVerifiers(),
+            SERVICE_NAME,
+            null,
+            ignored -> decisions.incrementAndGet());
+    String header = authHeaderFor(padded);
+
+    var fresh = validator.validate(header, boundaryContext(REQUEST_ROUTE, REQUEST_METHOD));
+    try {
+      assertThat(fresh.verifiedAttributes())
+          .containsKeys("services", "route", "method", SERVICE_NAME + "_valid_until")
+          .doesNotContainKey("\tservices ");
+      assertThat(fresh.freshValidation()).isTrue();
+    } finally {
+      fresh.credential().destroy();
+    }
+    var cached = validator.validate(header, boundaryContext(REQUEST_ROUTE, REQUEST_METHOD));
+    try {
+      assertThat(cached.freshValidation()).isFalse();
+      assertThat(cached.verifiedAttributes()).containsKey("services");
+    } finally {
+      cached.credential().destroy();
+    }
+    assertThat(decisions).hasValue(10);
+  }
+
+  @Test
+  @DisplayName("isolates observer failures while normalizing authenticated padded keys")
+  void isolatesObserverFailureForAuthenticatedPaddedKeys() {
+    List<Caveat> paddedBoundaries =
+        boundaryCaveats().stream()
+            .map(caveat -> new Caveat(" " + caveat.key() + "\t", caveat.value()))
+            .toList();
+    Macaroon padded =
+        MacaroonMinter.mint(rootKey, identifier, "https://example.com", paddedBoundaries);
+    L402Validator validator =
+        new L402Validator(
+            rootKeyStore,
+            credentialStore,
+            boundaryVerifiers(),
+            SERVICE_NAME,
+            null,
+            ignored -> {
+              throw new IllegalStateException("observer unavailable");
+            });
+
+    var result =
+        validator.validate(authHeaderFor(padded), boundaryContext(REQUEST_ROUTE, REQUEST_METHOD));
+    try {
+      assertThat(result.verifiedAttributes()).containsKey(SERVICE_NAME + "_valid_until");
+    } finally {
+      result.credential().destroy();
+    }
+  }
+
   private List<CaveatVerifier> boundaryVerifiers(CaveatVerifier... additionalVerifiers) {
     List<CaveatVerifier> verifiers = new ArrayList<>(5 + additionalVerifiers.length);
     verifiers.add(new ServicesCaveatVerifier(10));
@@ -2015,6 +2105,299 @@ class L402ValidatorTest {
 
   private L402VerificationContext boundaryContext() {
     return boundaryContext(REQUEST_ROUTE, REQUEST_METHOD);
+  }
+
+  @Nested
+  @DisplayName("signed paid-price enforcement")
+  class SignedPaidPriceEnforcement {
+
+    @Test
+    void rechecksSignedCoverageOnFreshAndCachedPaths() {
+      String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+      L402VerificationContext covered = pricedContext("10", "REQUEST_DEPENDENT");
+
+      L402Validator.ValidationResult fresh = validator.validate(header, covered);
+      try {
+        assertThat(fresh.freshValidation()).isTrue();
+        assertThat(fresh.paidPriceEvidence().coveredAmountSats()).hasValue(10);
+      } finally {
+        fresh.credential().destroy();
+      }
+      L402Validator.ValidationResult cached = validator.validate(header, covered);
+      try {
+        assertThat(cached.freshValidation()).isFalse();
+        assertThat(cached.paidPriceEvidence().currentAmountSats()).hasValue(10);
+      } finally {
+        cached.credential().destroy();
+      }
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("11", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.INSUFFICIENT_PRICE));
+    }
+
+    @Test
+    void usesTheMostRestrictiveRepeatedSignedPriceOnFreshAndCachedPaths() {
+      String header =
+          buildAuthHeader(
+              List.of(
+                  new Caveat(SERVICE_NAME + "_price_sats", "10"),
+                  new Caveat(SERVICE_NAME + "_price_sats", "9")));
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      L402Validator.ValidationResult fresh =
+          validator.validate(header, pricedContext("9", "REQUEST_DEPENDENT"));
+      try {
+        assertThat(fresh.freshValidation()).isTrue();
+        assertThat(fresh.paidPriceEvidence().coveredAmountSats()).hasValue(9);
+      } finally {
+        fresh.credential().destroy();
+      }
+
+      L402Validator.ValidationResult cached =
+          validator.validate(header, pricedContext("9", "REQUEST_DEPENDENT"));
+      try {
+        assertThat(cached.freshValidation()).isFalse();
+        assertThat(cached.paidPriceEvidence().coveredAmountSats()).hasValue(9);
+      } finally {
+        cached.credential().destroy();
+      }
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("10", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.INSUFFICIENT_PRICE));
+    }
+
+    @Test
+    void rejectsPriceLessCredentialOnRequestDependentRoutes() {
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              boundaryVerifiers(),
+              SERVICE_NAME,
+              unavailableLightningBackend());
+
+      assertThatThrownBy(
+              () -> validator.validate(validAuthHeader, pricedContext("10", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.MISSING_PRICE_EVIDENCE));
+    }
+
+    @Test
+    void reportsOneTypedDecisionForInsufficientSignedPrice() {
+      var decisions = new ArrayList<SecurityDecision>();
+      String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              boundaryVerifiers(),
+              SERVICE_NAME,
+              unavailableLightningBackend(),
+              decisions::add);
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("11", "REQUEST_DEPENDENT")))
+          .isInstanceOf(PriceValidationException.class);
+
+      assertThat(decisions)
+          .containsExactly(
+              new SecurityDecision(
+                  SecurityDecisionReason.INSUFFICIENT_PRICE,
+                  com.greenharborlabs.paygate.api.SecurityDecisionProtocol.L402,
+                  REQUEST_METHOD,
+                  REQUEST_ROUTE));
+    }
+
+    @Test
+    void rejectsPostSigningPaidPriceEditsBeforePriceEvaluation() {
+      Macaroon signed =
+          MacaroonMinter.mint(
+              rootKey,
+              identifier,
+              "https://example.com",
+              boundaryCaveats(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      List<Caveat> editedCaveats = new ArrayList<>(signed.caveats());
+      editedCaveats.set(3, new Caveat(SERVICE_NAME + "_price_sats", "11"));
+      Macaroon edited =
+          new Macaroon(signed.identifier(), signed.location(), editedCaveats, signed.signature());
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(
+              () -> validator.validate(authHeaderFor(edited), pricedContext("11", "ROUTE_STABLE")))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              failure ->
+                  assertThat(((L402Exception) failure).getErrorCode())
+                      .isEqualTo(ErrorCode.INVALID_MACAROON));
+    }
+
+    @Test
+    void rejectsSignedPriceWithWrongRootKey() {
+      String header = buildAuthHeader(List.of(new Caveat(SERVICE_NAME + "_price_sats", "10")));
+      byte[] wrongRootKey = rootKey.clone();
+      wrongRootKey[0] ^= 1;
+      rootKeyMap.put(tokenIdHex, wrongRootKey);
+      L402Validator validator =
+          new L402Validator(rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME);
+
+      assertThatThrownBy(() -> validator.validate(header, pricedContext("10", "ROUTE_STABLE")))
+          .isInstanceOf(L402Exception.class)
+          .satisfies(
+              failure ->
+                  assertThat(((L402Exception) failure).getErrorCode())
+                      .isEqualTo(ErrorCode.INVALID_MACAROON));
+    }
+
+    @Test
+    void allowsRouteStableLegacyCredentialAtItsExactSettledIssuancePrice() {
+      AtomicLong lookups = new AtomicLong();
+      LightningBackend settledBackend =
+          new LightningBackend() {
+            @Override
+            public Invoice createInvoice(long amountSats, String memo) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Invoice lookupInvoice(byte[] hash) {
+              lookups.incrementAndGet();
+              return new Invoice(
+                  hash,
+                  "lnbc10test",
+                  10,
+                  "legacy",
+                  InvoiceStatus.SETTLED,
+                  preimageBytes,
+                  Instant.now(),
+                  Instant.now().plusSeconds(60));
+            }
+
+            @Override
+            public boolean isHealthy() {
+              return true;
+            }
+          };
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME, settledBackend);
+
+      L402Validator.ValidationResult result =
+          validator.validate(validAuthHeader, pricedContext("10", "ROUTE_STABLE"));
+      try {
+        assertThat(result.paidPriceEvidence().coveredAmountSats()).hasValue(10);
+        assertThat(lookups).hasValue(1);
+      } finally {
+        result.credential().destroy();
+      }
+    }
+
+    @Test
+    void rejectsRouteStableLegacyCredentialAfterConfiguredPriceIncrease() {
+      LightningBackend settledBackend = settledLegacyBackend(10);
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore, credentialStore, boundaryVerifiers(), SERVICE_NAME, settledBackend);
+
+      assertThatThrownBy(
+              () -> validator.validate(validAuthHeader, pricedContext("11", "ROUTE_STABLE")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.ROUTE_STABLE_PRICE_INCREASE));
+    }
+
+    @Test
+    void failsClosedWhenRouteStableLegacyInvoiceLookupIsUnavailable() {
+      L402Validator validator =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              boundaryVerifiers(),
+              SERVICE_NAME,
+              unavailableLightningBackend());
+
+      assertThatThrownBy(
+              () -> validator.validate(validAuthHeader, pricedContext("10", "ROUTE_STABLE")))
+          .isInstanceOf(PriceValidationException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((PriceValidationException) failure).kind())
+                      .isEqualTo(PriceValidationException.Kind.EVIDENCE_UNAVAILABLE));
+    }
+  }
+
+  private LightningBackend settledLegacyBackend(long amountSats) {
+    return new LightningBackend() {
+      @Override
+      public Invoice createInvoice(long amount, String memo) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public Invoice lookupInvoice(byte[] hash) {
+        return new Invoice(
+            hash,
+            "lnbc" + amountSats + "test",
+            amountSats,
+            "legacy",
+            InvoiceStatus.SETTLED,
+            preimageBytes,
+            Instant.now(),
+            Instant.now().plusSeconds(60));
+      }
+
+      @Override
+      public boolean isHealthy() {
+        return true;
+      }
+    };
+  }
+
+  private L402VerificationContext pricedContext(String amountSats, String stability) {
+    Map<String, String> metadata = new HashMap<>(boundaryMetadata());
+    metadata.put(VerificationContextKeys.CURRENT_PRICE_SATS, amountSats);
+    metadata.put(VerificationContextKeys.PRICING_STABILITY, stability);
+    return L402VerificationContext.builder()
+        .serviceName(SERVICE_NAME)
+        .currentTime(Instant.now())
+        .requestMetadata(metadata)
+        .build();
+  }
+
+  private static com.greenharborlabs.paygate.core.lightning.LightningBackend
+      unavailableLightningBackend() {
+    return new com.greenharborlabs.paygate.core.lightning.LightningBackend() {
+      @Override
+      public com.greenharborlabs.paygate.core.lightning.Invoice createInvoice(
+          long amountSats, String memo) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public com.greenharborlabs.paygate.core.lightning.Invoice lookupInvoice(byte[] paymentHash) {
+        return null;
+      }
+
+      @Override
+      public boolean isHealthy() {
+        return false;
+      }
+    };
   }
 
   private L402VerificationContext boundaryContext(String route, String method) {

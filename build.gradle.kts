@@ -356,8 +356,13 @@ val supplyChainNegativeControlTasks = mapOf(
     "verifyReleaseHygieneNegativeControls" to "scripts/test-release-hygiene.sh",
     "verifyReleaseWorkflowNegativeControls" to "scripts/test-release-workflow.sh",
     "verifyAddressSecurityFindingNegativeControls" to "scripts/test-address-security-finding-dispositions.sh",
+    "verifyMediumSecurityFindingNegativeControls" to "scripts/test-validate-medium-security-finding-dispositions.sh",
     "verifyExampleArtifactSafetyNegativeControls" to "scripts/test-example-artifact-safety.sh",
     "verifyDependencyCheckRiskNegativeControls" to "scripts/test-dependency-check-risk-dispositions.sh",
+    "verifyDependencyProvenanceNegativeControls" to "scripts/test-dependency-provenance.sh",
+    "verifyRepositorySecretIgnoreControls" to "scripts/test-repository-secret-ignore.sh",
+    "verifyDependencyAdvisoryWorkflowControls" to "scripts/test-dependency-advisory-workflow.sh",
+    "verifyLowSecurityFindingNegativeControls" to "scripts/test-low-security-finding-dispositions.sh",
 ).map { (taskName, scriptPath) ->
     tasks.register<Exec>(taskName) {
         group = "verification"
@@ -394,11 +399,67 @@ val validateAddressSecurityFindingDispositions = tasks.register<Exec>("validateA
     outputs.upToDateWhen { false }
 }
 
+val validateMediumSecurityFindingDispositions = tasks.register<Exec>("validateMediumSecurityFindingDispositions") {
+    group = "verification"
+    description = "Validates the four-finding Kimi Medium security disposition ledger."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-medium-security-finding-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val validateLowSecurityFindingDispositions = tasks.register<Exec>("validateLowSecurityFindingDispositions") {
+    group = "verification"
+    description = "Validates the 28-finding Kimi Low disposition and evidence ledgers."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-low-security-finding-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
 val validateDependencyCheckRiskDispositions = tasks.register<Exec>("validateDependencyCheckRiskDispositions") {
     group = "verification"
     description = "Rejects dependency suppressions without a scoped, approved, current risk record."
     workingDir(layout.projectDirectory)
     commandLine("bash", layout.projectDirectory.file("scripts/validate-dependency-check-risk-dispositions.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val validateDependencyProvenance = tasks.register<Exec>("validateDependencyProvenance") {
+    group = "verification"
+    description = "Validates signature trust, checksums, and exact reviewed provenance exceptions."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-dependency-provenance.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val validateLowSecurityFixtures = tasks.register<Exec>("validateLowSecurityFixtures") {
+    group = "verification"
+    description = "Validates local Docker fixture binds, warnings, generated secrets, and credential modes."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/validate-low-security-fixtures.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyLowSecurityFixtureNegativeControls = tasks.register<Exec>("verifyLowSecurityFixtureNegativeControls") {
+    group = "verification"
+    description = "Runs isolated mutation controls for local Docker fixture safety."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("scripts/test-low-security-fixtures.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyLnbitsSetupSecretControls = tasks.register<Exec>("verifyLnbitsSetupSecretControls") {
+    group = "verification"
+    description = "Tests generated, persisted, private LNbits setup-secret handling."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("integration-tests/scripts/test-setup-lnbits-security.sh").asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+val verifyLndCredentialPermissionControls = tasks.register<Exec>("verifyLndCredentialPermissionControls") {
+    group = "verification"
+    description = "Tests the fixed-group, read-only LND credential mount policy."
+    workingDir(layout.projectDirectory)
+    commandLine("bash", layout.projectDirectory.file("integration-tests/scripts/test-lnd-credential-permissions.sh").asFile.absolutePath)
     outputs.upToDateWhen { false }
 }
 
@@ -417,6 +478,24 @@ val verifyModuleCoverage = tasks.register("verifyModuleCoverage") {
     dependsOn(subprojects.map { it.tasks.named("jacocoTestCoverageVerification") })
 }
 
+tasks.register("check") {
+    group = "verification"
+    description = "Runs module checks and Kimi Medium finding disposition validation."
+    dependsOn(subprojects.map { "${it.path}:check" })
+    dependsOn(validateMediumSecurityFindingDispositions)
+    dependsOn(validateLowSecurityFindingDispositions)
+    dependsOn(validateDependencyProvenance)
+    dependsOn("verifyMediumSecurityFindingNegativeControls")
+    dependsOn("verifyLowSecurityFindingNegativeControls")
+    dependsOn("verifyDependencyProvenanceNegativeControls")
+    dependsOn("verifyRepositorySecretIgnoreControls")
+    dependsOn("verifyDependencyAdvisoryWorkflowControls")
+    dependsOn(validateLowSecurityFixtures)
+    dependsOn(verifyLowSecurityFixtureNegativeControls)
+    dependsOn(verifyLnbitsSetupSecretControls)
+    dependsOn(verifyLndCredentialPermissionControls)
+}
+
 tasks.register("releaseReadiness") {
     group = "verification"
     description = "Runs the full local release gate: build, dependency health, integration tests, and aggregate Javadoc."
@@ -430,8 +509,15 @@ tasks.register("releaseReadiness") {
     dependsOn(verifySupplyChainNegativeControls)
     dependsOn(validateFindingDispositions)
     dependsOn(validateAddressSecurityFindingDispositions)
+    dependsOn(validateMediumSecurityFindingDispositions)
+    dependsOn(validateLowSecurityFindingDispositions)
     dependsOn(validateDependencyCheckRiskDispositions)
+    dependsOn(validateDependencyProvenance)
     dependsOn(verifyExampleArtifactSafety)
+    dependsOn(validateLowSecurityFixtures)
+    dependsOn(verifyLowSecurityFixtureNegativeControls)
+    dependsOn(verifyLnbitsSetupSecretControls)
+    dependsOn(verifyLndCredentialPermissionControls)
     dependsOn("dependencyCheckAggregate")
     dependsOn(verifyModuleCoverage)
 

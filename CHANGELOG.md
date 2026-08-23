@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Kimi L-1–L-28 — accountable Low-finding hardening**: Added a canonical implemented-control
+  ledger, append-only evidence schema, mutation-tested validator, and CI/release gates. The ledger
+  records successful current-revision evidence and approval by the named OpenAI Codex AI security
+  reviewer. The final review also closed nested Spring Security chain coverage, local LNbits
+  setup-state symlink handling, and test-mode preimage cleanup findings before the release gate
+  passed at reviewed revision `c45e2a9b4d6c9694dcb021d869242270d65356e3`.
+
+- L402 challenges now bind the settled invoice amount in a signed service-scoped paid-price caveat;
+  protected requests re-evaluate their trusted current price on every validation, including cache hits.
+- Dynamic price evaluation is bounded and request-memoized; unavailable pricing and ambiguous legacy
+  evidence fail closed, while authenticated underpayment receives a fresh full-price challenge.
+- **M-3 — trustworthy request-size pricing**: Named pricing strategies now receive a bounded,
+  replayable server-observed body. The two `/api/v1/analyze` examples no longer use `Content-Length`
+  as price evidence; non-identity content encodings are rejected before challenge or handler work and
+  emit one sanitized `COMPRESSED_BODY_REJECTED` decision.
+- **M-4 — authenticated caveat-key compatibility**: Macaroon signatures continue to cover exact
+  raw caveat bytes. After a successful signature check, ASCII space/tab edge padding on a known
+  caveat key is canonicalized for verifier lookup and L402 boundary enforcement; padded
+  registrations are rejected and padded unknown keys retain delegation semantics.
+
+- **M-1 — trusted Spring Security attributes**: Deprecated credential-only L402 authentication
+  factories now expose protected system metadata and explicit capabilities only; they no longer
+  copy raw caveats. Use the new `L402Validator.ValidationResult` factory to carry
+  verifier-approved attributes into authentication state.
+- **M-1–M-4 — auditable remediation evidence**: Added the tracked Kimi Medium finding ledger,
+  strict disposition validator, isolated negative controls, and build/release gates. Rows remain
+  implemented with approval pending until successful current-implementation evidence and named
+  security or release review are recorded.
+
 ## [0.1.5] - 2026-08-16
 
 ### Security

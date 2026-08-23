@@ -330,6 +330,48 @@ class ClientIpResolverTest {
     }
   }
 
+  @Nested
+  @DisplayName("L402 binding address")
+  class BindingAddress {
+
+    @Test
+    @DisplayName("uses the canonical direct peer and ignores untrusted forwarded data")
+    void bindsDirectPeerAndIgnoresUntrustedForwardedData() {
+      var resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
+      var request = requestFrom("2001:0db8::1");
+      request.addHeader("X-Forwarded-For", "198.51.100.7");
+
+      assertThat(resolver.resolveBindingAddress(request)).contains("2001:db8:0:0:0:0:0:1");
+    }
+
+    @Test
+    @DisplayName("uses only a complete trusted proxy chain")
+    void bindsClientFromCompleteTrustedProxyChain() {
+      var resolver = new ClientIpResolver(true, List.of("10.0.0.1", "10.0.0.2"));
+      var request = requestFrom("10.0.0.1");
+      request.addHeader("X-Forwarded-For", "2001:db8::7, 10.0.0.2");
+
+      assertThat(resolver.resolveBindingAddress(request)).contains("2001:db8:0:0:0:0:0:7");
+    }
+
+    @Test
+    @DisplayName("rejects missing, malformed, ambiguous, hostname, and zone-bearing provenance")
+    void rejectsUnsafeBindingProvenance() {
+      var resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
+      var missing = requestFrom("10.0.0.1");
+      var malformed = requestFrom("10.0.0.1");
+      malformed.addHeader("X-Forwarded-For", "attacker.example.test");
+      var ambiguous = requestFrom("10.0.0.1");
+      ambiguous.addHeader("X-Forwarded-For", "198.51.100.7, 198.51.100.8");
+      var zone = requestFrom("fe80::1%eth0");
+
+      assertThat(resolver.resolveBindingAddress(missing)).isEmpty();
+      assertThat(resolver.resolveBindingAddress(malformed)).isEmpty();
+      assertThat(resolver.resolveBindingAddress(ambiguous)).isEmpty();
+      assertThat(resolver.resolveBindingAddress(zone)).isEmpty();
+    }
+  }
+
   private static MockHttpServletRequest requestFrom(String remoteAddress) {
     var request = new MockHttpServletRequest();
     request.setRemoteAddr(remoteAddress);

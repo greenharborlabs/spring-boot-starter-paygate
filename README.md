@@ -346,7 +346,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.security-mode` | `string` | `auto` | Security integration mode: `auto`, `servlet`, or `spring-security`. See [Spring Security Integration](#spring-security-integration). |
 | `paygate.test-mode` | `boolean` | `false` | Enable test mode only with a nonempty all-allowed `dev`, `local`, `development`, or `test` profile set, `root-key-store=memory`, an effective ephemeral store, and the built-in synthetic backend. |
 | `paygate.trust-forwarded-headers` | `boolean` | `false` | Trust `X-Forwarded-For` for client IP resolution. Enable only behind a trusted reverse proxy. |
-| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Advanced acknowledgement for intentional Spring Security enforcement outside the inspectable filter chain. |
+| `paygate.spring-security.custom-filter-chain-acknowledged` | `boolean` | `false` | Compatibility acknowledgement for custom Spring Security wiring; it cannot waive authentication, authentication-failure rate limiting, filter ordering, or dispatcher coverage. |
 | `paygate.actuator.enabled` | `boolean` | `false` | Register the sensitive `/actuator/paygate` endpoint when Actuator is present. |
 | `paygate.request-body.max-bytes` | `int` | `8192` | Maximum body captured for payment binding on protected requests. Valid range: 1–16,777,216 bytes (16 MiB); larger bodies are rejected before protected handler work. |
 
@@ -355,6 +355,7 @@ All properties are under the `paygate.*` prefix.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `paygate.protocols.l402.enabled` | `boolean` | `true` | Enable/disable L402 protocol. |
+| `paygate.protocols.l402.client-address-binding-enabled` | `boolean` | `false` | Bind new L402 credentials to one canonical client address. Existing unbound credentials become invalid when enabled; MPP is unchanged. |
 | `paygate.protocols.mpp.enabled` | `string` | `auto` | `auto` enables MPP when secret is present, `true` requires secret, `false` disables. |
 | `paygate.protocols.mpp.challenge-binding-secret` | `string` | -- | HMAC secret for MPP challenge binding. Minimum 32 bytes. |
 | `paygate.protocols.mpp.previous-challenge-binding-secret` | `string` | -- | Previous HMAC secret accepted during a deliberate key-rotation window. |
@@ -378,6 +379,9 @@ All properties are under the `paygate.*` prefix.
 | `paygate.rate-limit.burst-size` | `int` | `20` | Maximum burst size (token bucket capacity) for the challenge rate limiter. |
 | `paygate.rate-limit.max-buckets` | `int` | `100000` | Maximum client-IP buckets retained by the in-memory limiter. |
 | `paygate.rate-limit.ipv6-prefix-length` | `int` | `64` | IPv6 prefix used to group challenge-rate identities. Valid range: 0–128 bits. Trusted-proxy client-address resolution happens before this grouping. |
+| `paygate.rate-limit.aggregate.requests-per-second` | `double` | `100.0` | Instance-wide invoice refill rate. Valid range: finite, greater than 0, and at most 100,000. Replace the bean with a shared limiter for a deployment-wide ceiling. |
+| `paygate.rate-limit.aggregate.burst-size` | `int` | `200` | Instance-wide invoice burst capacity. Valid range: 1–1,000,000. |
+| `paygate.routing.overlap-policy` | `WARN` or `FAIL` | `WARN` | Warn or fail startup when a manual paid route may overlap an unprotected MVC mapping. |
 
 ### Lightning Backend Timeout
 
@@ -416,6 +420,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | Timeout for keepalive ping acknowledgement. |
 | `paygate.lnd.idle-timeout-minutes` | `int` | `5` | Idle gRPC connection timeout. |
 | `paygate.lnd.max-inbound-message-size` | `int` | `4194304` | Maximum inbound gRPC message size in bytes. |
+| `paygate.lnd.strict-file-permissions` | `boolean` | `false` | Require readable regular non-symlink credential files with no other-user permissions and no group write/execute bits. Unavailable POSIX metadata fails closed when enabled. |
 
 ### Metrics
 
@@ -519,6 +524,7 @@ docker compose -f docker-compose-lnbits-lnd.yml up -d bitcoind lnd lnd-payer
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnd-channel.sh
 docker compose -f docker-compose-lnbits-lnd.yml up -d lnbits
 COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
+export PAYGATE_MPP_SECRET="$(openssl rand -hex 32)"
 docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app
 PAYER_BACKEND=lnd-cli bash scripts/run-smoke-test.sh
 PAYER_BACKEND=lnd-cli bash scripts/run-mpp-smoke-test.sh
@@ -562,7 +568,8 @@ public AnalysisResponse analyze(@RequestBody AnalysisRequest request) {
 }
 ```
 
-If the named pricing strategy bean is not found at runtime, the filter falls back to the static `priceSats` value.
+If a named pricing strategy is unavailable or cannot safely evaluate the bounded request, the request
+fails closed rather than falling back to the static `priceSats` value.
 
 ---
 
@@ -929,6 +936,7 @@ This library handles payment credentials and cryptographic tokens. The following
 - **Constant-time comparison** for all secret material (root keys, signatures, preimages, HMAC bindings) using XOR accumulation -- never `Arrays.equals`
 - **Key derivation** follows the macaroon specification: `HMAC-SHA256(key="macaroons-key-generator", data=rootKey)`
 - **SecureRandom** for all random byte generation (token IDs, root keys)
+- **Canonical caveat lookup after authentication** -- the exact raw `key=value` bytes remain HMAC-authenticated; only edge ASCII space/tab padding on a key is removed for registered-verifier lookup after a valid signature.
 
 ### Operational Security
 
@@ -936,6 +944,14 @@ This library handles payment credentials and cryptographic tokens. The following
 - **Never log full macaroon values** -- diagnostic correlation is restricted to sanitized, truncated identifiers. Logs, metrics, health output, and client errors must not contain authorization headers, preimages, root keys, backend credentials, or binding secrets.
 - **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`) and MPP challenge binding secrets, not plaintext in configuration files
 - **LNbits HTTPS by default** -- `http://` LNbits URLs require `paygate.lnbits.allow-plaintext-http=true` and are accepted only for local/test loopback targets
+- **Supplied Docker fixtures are local-only** -- every example application bind defaults to
+  `127.0.0.1`; setting `APP_BIND_ADDRESS` to a non-loopback value is a deliberate development
+  override, not a production deployment. Before exposing any service, use TLS, real credentials,
+  authentication, firewall rules, a trusted-proxy policy, and a real Lightning backend.
+- **Disposable fixture credentials stay private** -- the LNbits bootstrap generates one random,
+  owner-only secret per persisted local environment and the LND fixtures use a fixed test-only
+  supplemental group with `0750` directories and `0640` credential files. Those numeric IDs and
+  plaintext/regtest settings are intentionally unsuitable for production.
 - **Forwarded rate-limit inputs** -- enable forwarded headers only behind an explicitly configured trusted proxy. IP and IPv6-prefix buckets are spoofable abuse controls, not a user identity and not an authorization boundary.
 - **Test mode is profile-gated** -- every active profile must be one of `test`, `dev`, `local`, or `development`; any other or production-like profile fails startup
 - **Fail-closed responses** -- malformed presented credentials receive a stable safe 400; structurally valid but invalid, expired, or insufficient credentials receive 402; abuse throttling receives 429; backend outages and unexpected server failures receive 503. Presented invalid credentials do not mint a replacement invoice or root key, and backend failure never exposes protected content.
@@ -951,6 +967,15 @@ First-party L402 macaroons are bound to the canonical registered route, the actu
 - Spring MVC policy resolution uses the active mapping semantics and rejects indistinguishable conflicting policies at startup. REQUEST, ASYNC, FORWARD, and ERROR dispatches re-check a changed protected target without charging twice for the same target. In Spring Security mode, every effective chain serving paid routes must contain Paygate enforcement; a later permissive rule does not bypass the paid route.
 - Credentials issued before these boundaries were required are intentionally rejected when they omit `route`, `method`, or the capability ceiling. This deliberate compatibility break cannot be configured away; clients recover by obtaining a new challenge.
 - Diagnostics redact bearer material. Do not log full macaroons, payment preimages, `Authorization` headers, root keys, or detailed validation reasons; safe summaries expose only structural counts or lengths and non-secret identifiers.
+
+### Trusted Spring Security Attributes
+
+Spring Security authentication exposes protected token metadata and only caveat attributes returned
+by successful registered verifiers. Holder-appended or otherwise merely parsed caveats never become
+attributes or authorities. The legacy credential-only L402 token factories remain callable but are
+deprecated: they expose system metadata and explicit capabilities only. Integrations needing
+caveat-derived facts must use the `L402Validator.ValidationResult` factory path so provenance is
+preserved.
 
 ### Supported Parsing and Delegation Limits
 
@@ -980,6 +1005,10 @@ Before upgrading, inventory outstanding L402 and MPP credentials, proxy settings
 The upgrade intentionally rejects identifier-v0 or boundary-incomplete L402 credentials, noncanonical macaroon/MPP encodings, MPP credentials without authenticated expiry, MPP requests whose exact raw-query presence/value differs, third-party caveats, and additional macaroons. Drain or allow old credentials to expire before rollout where possible; otherwise clients must obtain and pay a new challenge. Treat a rollback carefully: credentials issued under the hardened exact-request contract may not restore compatibility with legacy clients, and rolling back re-enables acceptance behavior that this release deliberately removed. Keep root keys and both current/previous MPP binding secrets available only for the planned migration window; never copy secrets into logs or release evidence.
 
 Roll out first to a canary with the production routing and Spring Security topology. Verify fixed 400/402 client failures, 429 throttling, fail-closed 503 outages, zero replacement artifacts for presented invalid credentials, redispatch behavior, bounded metrics, and secret-free health/log output before expanding traffic.
+
+Custom integrations that call `PaygateAuthenticationToken.authenticated(L402Credential, ...)`
+must migrate to the `L402Validator.ValidationResult` overload if they need verified caveat
+attributes. The retained credential-only overloads intentionally no longer expose raw caveats.
 
 ---
 
@@ -1048,6 +1077,37 @@ The L402 `protocol-specification.md` recommends expressing prices in milli-satos
 **Rationale:** Satoshis are the practical unit for most L402 use cases. BOLT 11 invoices handle the conversion to milli-satoshis internally. Using whole satoshis avoids fractional pricing complexity for the vast majority of API monetization scenarios where sub-satoshi granularity is unnecessary.
 
 ---
+
+## Price integrity and dynamic pricing
+
+New L402 credentials include a signed `${serviceName}_price_sats` caveat containing the settled
+invoice amount. On every protected request, including a credential-cache hit, Paygate evaluates the
+trusted current price once and permits the credential only when its signed coverage is sufficient.
+
+`REQUEST_DEPENDENT` is the default stability declaration and requires signed price evidence.
+Select `ROUTE_STABLE` only for a route-and-method whose price never depends on request input; it
+enables bounded compatibility lookup for a legacy credential that lacks signed evidence. Insufficient
+evidence produces a fresh 402 for the current price. Missing, invalid, unavailable, or ambiguous
+evidence produces 503 without executing protected behavior.
+
+### Request-size pricing
+
+For a named pricing strategy, Paygate eagerly captures a bounded request body and passes a replayable
+view to both pricing and the eventual handler. Strategies must use server-observed bytes rather than
+`Content-Length`, transfer metadata, or other client declarations. The published size-priced example
+routes accept only identity encoding; a non-identity `Content-Encoding` is rejected before challenge
+creation or protected work, and emits one sanitized `COMPRESSED_BODY_REJECTED` security decision.
+
+The Kimi M-1 through M-4 remediation ledger in
+[`docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md`](docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md)
+links these controls to tests, migration guidance, residual risk, and release-review evidence.
+Set `paygate.request-body.max-bytes` for the largest accepted paid request; an over-bound or unreadable
+body fails closed and is never silently priced at the base amount.
+
+The Kimi Low L-1 through L-28 ledger in
+[`docs/security/KIMI-LOW-FINDING-DISPOSITIONS.md`](docs/security/KIMI-LOW-FINDING-DISPOSITIONS.md)
+tracks the implemented boundary, fixture, and supply-chain controls. It remains `implemented` until
+the append-only current-revision evidence and a named security or release review are recorded.
 
 ## Contributing
 

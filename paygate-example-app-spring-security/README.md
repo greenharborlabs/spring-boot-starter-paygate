@@ -170,6 +170,15 @@ Paygate provides three Spring Security components, all auto-configured by the `p
 
 These beans are auto-configured and injected into your `SecurityFilterChain`. You do not instantiate them manually.
 
+### Trustworthy request-size pricing
+
+The size-priced `POST /api/v1/analyze` route is measured from a bounded body capture, not from
+`Content-Length` or transfer metadata. The capture is replayed to the controller after pricing, so
+the strategy and handler see the same bytes exactly once. Missing, chunked, understated, and
+overstated length declarations cannot lower the price. Only absent or `identity` content encoding is
+accepted; compressed requests and bodies above `paygate.request-body.max-bytes` fail closed before a
+challenge or protected handler runs.
+
 ### SecurityFilterChain Configuration
 
 The core of this example is the `SecurityConfig` class, which wires the Paygate components into a standard Spring Security filter chain:

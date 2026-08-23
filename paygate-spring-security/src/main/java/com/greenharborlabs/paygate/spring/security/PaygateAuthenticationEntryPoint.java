@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
+import com.greenharborlabs.paygate.spring.TrustedRequestPrice;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -38,17 +39,28 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
   private final PaygateEndpointRegistry endpointRegistry;
   private final List<PaymentProtocol> protocols;
   private final boolean mppEnabled;
+  private final int requestBodyMaxBytes;
 
   public PaygateAuthenticationEntryPoint(
       PaygateChallengeService challengeService,
       PaygateEndpointRegistry endpointRegistry,
       List<PaymentProtocol> protocols) {
+    this(challengeService, endpointRegistry, protocols, 8_192);
+  }
+
+  /** Creates an entry point using the configured request-body bound. */
+  public PaygateAuthenticationEntryPoint(
+      PaygateChallengeService challengeService,
+      PaygateEndpointRegistry endpointRegistry,
+      List<PaymentProtocol> protocols,
+      int requestBodyMaxBytes) {
     this.challengeService =
         Objects.requireNonNull(challengeService, "challengeService must not be null");
     this.endpointRegistry =
         Objects.requireNonNull(endpointRegistry, "endpointRegistry must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.mppEnabled = this.protocols.stream().anyMatch(RequestDigestSupport::isMppProtocol);
+    this.requestBodyMaxBytes = requestBodyMaxBytes;
   }
 
   @Override
@@ -89,6 +101,12 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
     commence(request, response, resolvedEndpoint);
   }
 
+  /** Resolves the request price once for the Security filter and this entry point. */
+  public TrustedRequestPrice resolveTrustedPrice(
+      HttpServletRequest request, ResolvedEndpoint resolvedEndpoint) {
+    return challengeService.resolveTrustedPrice(request, resolvedEndpoint.config());
+  }
+
   /**
    * Issues an absent-credential challenge using the endpoint already resolved by the authentication
    * filter. This preserves the exact MVC handler mapping used for later enforcement and avoids a
@@ -107,13 +125,35 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
       PaygateResponseWriter.writeMethodUnsupported(response, "Unsupported payment credential");
       return;
     }
+    issueChallenge(request, response, resolvedEndpoint);
+  }
+
+  /**
+   * Issues a replacement challenge after a typed L402 paid-price failure.
+   *
+   * <p>The caller may use this only after core validation classified the presented credential as
+   * insufficient. It deliberately shares the request-memoized trusted price with the original
+   * validation and preserves unavailable failures as 503 at the caller.
+   */
+  public void commenceReplacement(
+      HttpServletRequest request, HttpServletResponse response, ResolvedEndpoint resolvedEndpoint)
+      throws IOException {
+    Objects.requireNonNull(request, "request must not be null");
+    Objects.requireNonNull(response, "response must not be null");
+    Objects.requireNonNull(resolvedEndpoint, "resolvedEndpoint must not be null");
+    issueChallenge(request, response, resolvedEndpoint);
+  }
+
+  private void issueChallenge(
+      HttpServletRequest request, HttpServletResponse response, ResolvedEndpoint resolvedEndpoint)
+      throws IOException {
     try {
       HttpServletRequest challengeRequest = request;
       challengeService.acquireChallengeRateLimit(request);
       if (mppEnabled) {
         String path = ApplicationRelativeRequestResolver.resolve(request);
-        challengeRequest = RequestDigestSupport.wrapForDigest(request);
-        RequestDigestSupport.ensureDigestAttribute(challengeRequest, path);
+        challengeRequest = RequestDigestSupport.wrapForDigest(request, requestBodyMaxBytes);
+        RequestDigestSupport.ensureDigestAttribute(challengeRequest, path, requestBodyMaxBytes);
       }
 
       var challengeContext =
@@ -121,26 +161,30 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
               challengeRequest,
               resolvedEndpoint,
               PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
-      List<ChallengeResponse> challenges = new ArrayList<>();
-      for (PaymentProtocol protocol : protocols) {
-        try {
-          ChallengeResponse challenge = protocol.formatChallenge(challengeContext);
-          if (challenge != null) {
-            challenges.add(challenge);
+      try {
+        List<ChallengeResponse> challenges = new ArrayList<>();
+        for (PaymentProtocol protocol : protocols) {
+          try {
+            ChallengeResponse challenge = protocol.formatChallenge(challengeContext);
+            if (challenge != null) {
+              challenges.add(challenge);
+            }
+          } catch (RuntimeException e) {
+            // Do not expose formatter details; another protocol may still issue a usable challenge.
+            log.log(
+                System.Logger.Level.WARNING,
+                "Payment challenge formatter failed; attempting remaining enabled protocols");
           }
-        } catch (RuntimeException e) {
-          // Do not expose formatter details; another protocol may still issue a usable challenge.
-          log.log(
-              System.Logger.Level.WARNING,
-              "Payment challenge formatter failed; attempting remaining enabled protocols");
         }
+        if (challenges.isEmpty()) {
+          challengeService.discardChallenge(challengeContext);
+          PaygateResponseWriter.writeLightningUnavailable(response);
+          return;
+        }
+        PaygateResponseWriter.writePaymentRequired(response, challengeContext, challenges);
+      } finally {
+        challengeContext.close();
       }
-      if (challenges.isEmpty()) {
-        challengeService.discardChallenge(challengeContext);
-        PaygateResponseWriter.writeLightningUnavailable(response);
-        return;
-      }
-      PaygateResponseWriter.writePaymentRequired(response, challengeContext, challenges);
 
     } catch (RequestBodyTooLargeException e) {
       log.log(System.Logger.Level.WARNING, "Rejected request: {0}", e.getMessage());

@@ -30,7 +30,7 @@ import org.springframework.security.web.SecurityFilterChain;
 @DisplayName("SecurityMode: auto (with Spring Security on classpath)")
 class SecurityModeAutoTest {
 
-  private final WebApplicationContextRunner contextRunner =
+  private final WebApplicationContextRunner unwiredContextRunner =
       new WebApplicationContextRunner()
           .withConfiguration(
               AutoConfigurations.of(
@@ -42,9 +42,12 @@ class SecurityModeAutoTest {
               "paygate.enabled=true",
               "paygate.backend=lnbits",
               "paygate.root-key-store=memory",
-              "paygate.security-mode=auto",
-              "paygate.spring-security.custom-filter-chain-acknowledged=true")
+              "paygate.security-mode=auto")
           .withBean(LightningBackend.class, StubLightningBackend::new);
+
+  private final WebApplicationContextRunner contextRunner =
+      unwiredContextRunner.withBean(
+          FilterChainProxy.class, () -> new FilterChainProxy(referenceSecurityChain()));
 
   @Test
   @DisplayName("servlet filter registration bean does NOT exist (auto resolves to spring-security)")
@@ -89,40 +92,47 @@ class SecurityModeAutoTest {
   @Test
   @DisplayName("fails closed when auto resolves to spring-security without Paygate filter")
   void failsClosedWhenPaygateFilterMissing() {
-    contextRunner
-        .withPropertyValues("paygate.spring-security.custom-filter-chain-acknowledged=false")
-        .run(
-            context -> {
-              assertThat(context).hasFailed();
-              assertThat(context.getStartupFailure())
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("servlet enforcement is disabled in Spring Security mode")
-                  .hasMessageContaining("no PaygateAuthenticationFilter")
-                  .hasMessageContaining("http.addFilterBefore(paygateFilter")
-                  .hasMessageContaining("paygate.spring-security.custom-filter-chain-acknowledged");
-            });
+    unwiredContextRunner.run(
+        context -> {
+          assertThat(context).hasFailed();
+          assertThat(context.getStartupFailure())
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("servlet enforcement is disabled in Spring Security mode")
+              .hasMessageContaining("no PaygateAuthenticationFilter")
+              .hasMessageContaining("http.addFilterBefore(paygateFilter")
+              .hasMessageContaining("cannot waive");
+        });
   }
 
   @Test
   @DisplayName("reference filter-chain wiring starts successfully")
   void referenceFilterChainWiringStarts() {
-    contextRunner
-        .withPropertyValues("paygate.spring-security.custom-filter-chain-acknowledged=false")
+    unwiredContextRunner
         .withBean(FilterChainProxy.class, () -> new FilterChainProxy(referenceSecurityChain()))
         .run(context -> assertThat(context).hasNotFailed());
   }
 
   @Test
-  @DisplayName("custom filter-chain acknowledgement allows startup without Paygate filter")
-  void customFilterChainAcknowledgementAllowsStartup() {
-    contextRunner.run(context -> assertThat(context).hasNotFailed());
+  @DisplayName("custom filter-chain acknowledgement cannot waive minimum protection")
+  void customFilterChainAcknowledgementCannotWaiveMinimumProtection() {
+    unwiredContextRunner
+        .withPropertyValues("paygate.spring-security.custom-filter-chain-acknowledged=true")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("cannot waive");
+            });
   }
 
   private static SecurityFilterChain referenceSecurityChain() {
+    PaygateAuthFailureRateLimitFilter rateLimitFilter =
+        mock(PaygateAuthFailureRateLimitFilter.class);
     PaygateAuthenticationFilter paygateFilter =
         new PaygateAuthenticationFilter(
             authentication -> authentication, List.of(), mock(PaygateEndpointRegistry.class));
-    return new TestSecurityFilterChain(List.of(paygateFilter));
+    return new TestSecurityFilterChain(List.of(rateLimitFilter, paygateFilter));
   }
 
   private record TestSecurityFilterChain(List<Filter> filters) implements SecurityFilterChain {

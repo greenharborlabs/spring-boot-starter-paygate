@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.spring.CapabilityCache;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateChallengeService;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.PaygateProperties;
 import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateSpringSecurityModeCondition;
 import java.util.List;
@@ -16,6 +17,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
@@ -46,6 +48,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 @ConditionalOnClass({EnableWebSecurity.class, L402Validator.class})
 @ConditionalOnBean(L402Validator.class)
 @Conditional(PaygateSpringSecurityModeCondition.class)
+@EnableConfigurationProperties(PaygateProperties.class)
 public class PaygateSecurityAutoConfiguration {
 
   @Bean
@@ -61,9 +64,14 @@ public class PaygateSecurityAutoConfiguration {
       L402Validator l402Validator,
       List<PaymentProtocol> protocols,
       @Value("${paygate.service-name:default}") String serviceName,
-      CapabilityResolver capabilityResolver) {
+      CapabilityResolver capabilityResolver,
+      PaygateProperties properties) {
     return new PaygateAuthenticationProvider(
-        l402Validator, protocols, serviceName, capabilityResolver);
+        l402Validator,
+        protocols,
+        serviceName,
+        capabilityResolver,
+        properties.getProtocols().getL402().isClientAddressBindingEnabled());
   }
 
   @Bean
@@ -75,14 +83,18 @@ public class PaygateSecurityAutoConfiguration {
       PaygateEndpointRegistry paygateEndpointRegistry,
       @Autowired(required = false) ClientIpResolver clientIpResolver,
       @Value("${paygate.service-name:default}") String serviceName,
-      PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint) {
+      PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint,
+      @Value("${paygate.request-body.max-bytes:8192}") int requestBodyMaxBytes,
+      PaygateProperties properties) {
     return new PaygateAuthenticationFilter(
         authenticationManager,
         protocols,
         paygateEndpointRegistry,
         clientIpResolver,
         serviceName,
-        paygateAuthenticationEntryPoint);
+        paygateAuthenticationEntryPoint,
+        requestBodyMaxBytes,
+        properties.getProtocols().getL402().isClientAddressBindingEnabled());
   }
 
   /**
@@ -117,8 +129,12 @@ public class PaygateSecurityAutoConfiguration {
   public PaygateAuthenticationEntryPoint paygateAuthenticationEntryPoint(
       PaygateChallengeService paygateChallengeService,
       PaygateEndpointRegistry paygateEndpointRegistry,
-      List<PaymentProtocol> protocols) {
+      List<PaymentProtocol> protocols,
+      PaygateProperties properties) {
     return new PaygateAuthenticationEntryPoint(
-        paygateChallengeService, paygateEndpointRegistry, protocols);
+        paygateChallengeService,
+        paygateEndpointRegistry,
+        protocols,
+        properties.getRequestBody().getMaxBytes());
   }
 }

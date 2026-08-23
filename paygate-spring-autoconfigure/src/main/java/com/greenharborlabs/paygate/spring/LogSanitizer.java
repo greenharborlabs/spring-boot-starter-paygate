@@ -28,8 +28,21 @@ public final class LogSanitizer {
    * @return a sanitized prefix containing at most eight token bytes
    */
   public static String sanitizeTokenId(String tokenId) {
-    String sanitized = sanitize(tokenId);
-    return sanitized.substring(0, Math.min(sanitized.length(), TOKEN_CORRELATION_HEX_LENGTH));
+    if (tokenId == null || tokenId.isEmpty()) {
+      return "<unavailable>";
+    }
+    int length = Math.min(tokenId.length(), TOKEN_CORRELATION_HEX_LENGTH);
+    var correlation = new StringBuilder(length);
+    for (int i = 0; i < length; i++) {
+      char character = tokenId.charAt(i);
+      if (!((character >= '0' && character <= '9')
+          || (character >= 'a' && character <= 'f')
+          || (character >= 'A' && character <= 'F'))) {
+        return "<unavailable>";
+      }
+      correlation.append(Character.toLowerCase(character));
+    }
+    return correlation.toString();
   }
 
   private static boolean isSafeLogCodePoint(int codePoint) {

@@ -1,9 +1,12 @@
 package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
+import com.greenharborlabs.paygate.spring.BoundedRequestBody;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
@@ -12,6 +15,8 @@ import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
+import com.greenharborlabs.paygate.spring.TrustedRequestPrice;
+import com.greenharborlabs.paygate.spring.UnsupportedRequestEncodingException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,6 +49,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * missing or unrelated credential is rejected before downstream authorization can apply a {@code
  * permitAll} rule.
  */
+@SuppressWarnings("PMD.CyclomaticComplexity") // Security response classification must stay explicit
 public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
 
   private static final System.Logger log =
@@ -59,6 +65,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   private final ClientIpResolver clientIpResolver;
   private final String serviceName;
   private final PaygateAuthenticationEntryPoint authenticationEntryPoint;
+  private final int requestBodyMaxBytes;
+  private final boolean clientAddressBindingEnabled;
 
   /**
    * @deprecated Use the constructor accepting {@link PaygateAuthenticationEntryPoint}. This
@@ -95,6 +103,47 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       ClientIpResolver clientIpResolver,
       String serviceName,
       PaygateAuthenticationEntryPoint authenticationEntryPoint) {
+    this(
+        authenticationManager,
+        protocols,
+        endpointRegistry,
+        clientIpResolver,
+        serviceName,
+        authenticationEntryPoint,
+        RequestDigestSupport.MAX_CACHED_BODY_BYTES,
+        false);
+  }
+
+  /** Creates a filter with the configured protected request-body bound. */
+  public PaygateAuthenticationFilter(
+      AuthenticationManager authenticationManager,
+      List<PaymentProtocol> protocols,
+      PaygateEndpointRegistry endpointRegistry,
+      ClientIpResolver clientIpResolver,
+      String serviceName,
+      PaygateAuthenticationEntryPoint authenticationEntryPoint,
+      int requestBodyMaxBytes) {
+    this(
+        authenticationManager,
+        protocols,
+        endpointRegistry,
+        clientIpResolver,
+        serviceName,
+        authenticationEntryPoint,
+        requestBodyMaxBytes,
+        false);
+  }
+
+  /** Creates a filter with the configured request-body and L402 address-binding settings. */
+  public PaygateAuthenticationFilter(
+      AuthenticationManager authenticationManager,
+      List<PaymentProtocol> protocols,
+      PaygateEndpointRegistry endpointRegistry,
+      ClientIpResolver clientIpResolver,
+      String serviceName,
+      PaygateAuthenticationEntryPoint authenticationEntryPoint,
+      int requestBodyMaxBytes,
+      boolean clientAddressBindingEnabled) {
     this.authenticationManager =
         Objects.requireNonNull(authenticationManager, "authenticationManager must not be null");
     this.protocols = protocols != null ? List.copyOf(protocols) : List.of();
@@ -103,6 +152,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     this.clientIpResolver = clientIpResolver;
     this.serviceName = serviceName;
     this.authenticationEntryPoint = authenticationEntryPoint;
+    this.requestBodyMaxBytes = requestBodyMaxBytes;
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -130,18 +181,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       return;
     }
 
-    HttpServletRequest authRequest = request;
     boolean includeDigest =
         !L402HeaderComponents.extract(authHeader).isPresent() && matchesAnyProtocol(authHeader);
-    if (includeDigest) {
-      try {
-        authRequest = RequestDigestSupport.wrapForDigest(request);
-      } catch (RequestBodyTooLargeException e) {
-        SecurityContextHolder.clearContext();
-        PaygateResponseWriter.writeRequestBodyTooLarge(response);
-        return;
-      }
-    }
 
     ResolvedEndpoint resolvedEndpoint;
     try {
@@ -162,13 +203,55 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       return;
     }
 
+    HttpServletRequest authRequest = request;
+    if (hasNamedPricingStrategy(resolvedEndpoint.config())) {
+      try {
+        authRequest = BoundedRequestBody.capture(request, requestBodyMaxBytes);
+      } catch (RequestBodyTooLargeException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeRequestBodyTooLarge(response);
+        return;
+      } catch (IOException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeLightningUnavailable(response);
+        return;
+      }
+    }
+    if (includeDigest) {
+      try {
+        authRequest = RequestDigestSupport.wrapForDigest(authRequest, requestBodyMaxBytes);
+      } catch (RequestBodyTooLargeException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeRequestBodyTooLarge(response);
+        return;
+      }
+    }
+
+    try {
+      if (authenticationEntryPoint != null) {
+        authenticationEntryPoint.resolveTrustedPrice(authRequest, resolvedEndpoint);
+      } else {
+        authRequest.setAttribute(
+            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE",
+            new TrustedRequestPrice(resolvedEndpoint.config().priceSats()));
+      }
+    } catch (UnsupportedRequestEncodingException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeUnsupportedRequestEncoding(response);
+      return;
+    } catch (RuntimeException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeLightningUnavailable(response);
+      return;
+    }
+
     if (authHeader == null) {
       SecurityContextHolder.clearContext();
       if (authenticationEntryPoint == null) {
         PaygateResponseWriter.writeLightningUnavailable(response);
         return;
       }
-      authenticationEntryPoint.commence(request, response, resolvedEndpoint);
+      authenticationEntryPoint.commence(authRequest, response, resolvedEndpoint);
       return;
     }
 
@@ -193,10 +276,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
               normalizedPath,
               resolvedEndpoint.routePattern(),
               capability,
-              includeDigest);
+              includeDigest,
+              endpointConfig);
     } catch (RequestBodyTooLargeException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
+      return;
+    } catch (RuntimeException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeLightningUnavailable(response);
       return;
     }
 
@@ -211,9 +299,27 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       var securityContext = SecurityContextHolder.createEmptyContext();
       securityContext.setAuthentication(authenticated);
       SecurityContextHolder.setContext(securityContext);
-      request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, resolvedEndpoint.handlerMethod());
+      authRequest.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, resolvedEndpoint.handlerMethod());
     } catch (AuthenticationException e) {
       SecurityContextHolder.clearContext();
+      PaymentValidationException priceFailure = findPaymentValidationFailure(e);
+      if (priceFailure != null
+          && priceFailure.getErrorCode() == PaymentValidationException.ErrorCode.INSUFFICIENT
+          && priceFailure.getCause() instanceof PriceValidationException typedFailure
+          && typedFailure.isChallengeable()
+          && authenticationEntryPoint != null) {
+        authenticationEntryPoint.commenceReplacement(authRequest, response, resolvedEndpoint);
+        return;
+      }
+      if (priceFailure != null
+          && priceFailure.getErrorCode() == PaymentValidationException.ErrorCode.UNAVAILABLE) {
+        PaygateResponseWriter.writeLightningUnavailable(response);
+        return;
+      }
+      if (priceFailure != null) {
+        PaygateResponseWriter.writeMppError(response, priceFailure, List.of());
+        return;
+      }
       PaygateResponseWriter.writeAuthenticationFailed(response);
       return;
     } catch (RuntimeException e) {
@@ -228,6 +334,15 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     writeReceipt(authenticated, response);
 
     filterChain.doFilter(authRequest, response);
+  }
+
+  private static PaymentValidationException findPaymentValidationFailure(Throwable failure) {
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current instanceof PaymentValidationException paymentFailure) {
+        return paymentFailure;
+      }
+    }
+    return null;
   }
 
   private PaygateAuthenticationToken createAuthToken(
@@ -260,19 +375,28 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     return false;
   }
 
+  private static boolean hasNamedPricingStrategy(PaygateEndpointConfig endpoint) {
+    return endpoint.pricingStrategy() != null && !endpoint.pricingStrategy().isBlank();
+  }
+
   private Map<String, String> extractRequestMetadata(
       HttpServletRequest request,
       String normalizedPath,
       String canonicalRoute,
       String capability,
-      boolean includeDigest)
+      boolean includeDigest,
+      PaygateEndpointConfig endpointConfig)
       throws IOException {
     Map<String, String> metadata = new HashMap<>(5);
     metadata.put(VerificationContextKeys.REQUEST_PATH, normalizedPath);
     metadata.put(VerificationContextKeys.REQUEST_ROUTE, canonicalRoute);
     metadata.put(VerificationContextKeys.REQUEST_METHOD, request.getMethod());
     String clientIp =
-        clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+        clientAddressBindingEnabled
+            ? resolveBindingAddress(request)
+            : clientIpResolver != null
+                ? clientIpResolver.resolve(request)
+                : request.getRemoteAddr();
     metadata.put(VerificationContextKeys.REQUEST_CLIENT_IP, clientIp);
     if (includeDigest) {
       metadata.put(
@@ -282,7 +406,27 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     if (capability != null && !capability.isBlank()) {
       metadata.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
+    Object resolvedPrice =
+        request.getAttribute(
+            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE");
+    TrustedRequestPrice trustedPrice =
+        resolvedPrice instanceof TrustedRequestPrice candidate
+            ? candidate
+            : new TrustedRequestPrice(endpointConfig.priceSats());
+    metadata.put(
+        VerificationContextKeys.CURRENT_PRICE_SATS, Long.toString(trustedPrice.amountSats()));
+    metadata.put(
+        VerificationContextKeys.PRICING_STABILITY, endpointConfig.pricingStability().name());
     return metadata;
+  }
+
+  private String resolveBindingAddress(HttpServletRequest request) {
+    if (clientIpResolver == null) {
+      throw new IllegalStateException("Trusted client address is unavailable");
+    }
+    return clientIpResolver
+        .resolveBindingAddress(request)
+        .orElseThrow(() -> new IllegalStateException("Trusted client address is unavailable"));
   }
 
   /**

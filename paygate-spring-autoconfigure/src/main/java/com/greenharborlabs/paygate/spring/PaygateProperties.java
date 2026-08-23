@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.spring;
 
 import com.greenharborlabs.paygate.api.SecurityBounds;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -48,7 +49,11 @@ public class PaygateProperties {
 
   private RequestBody requestBody = new RequestBody();
 
+  private Pricing pricing = new Pricing();
+
   private RateLimit rateLimit = new RateLimit();
+
+  private Routing routing = new Routing();
 
   private HealthCache healthCache = new HealthCache();
 
@@ -88,12 +93,28 @@ public class PaygateProperties {
     this.rateLimit = rateLimit;
   }
 
+  public Routing getRouting() {
+    return routing;
+  }
+
+  public void setRouting(Routing routing) {
+    this.routing = routing;
+  }
+
   public RequestBody getRequestBody() {
     return requestBody;
   }
 
   public void setRequestBody(RequestBody requestBody) {
     this.requestBody = requestBody;
+  }
+
+  public Pricing getPricing() {
+    return pricing;
+  }
+
+  public void setPricing(Pricing pricing) {
+    this.pricing = pricing;
   }
 
   public HealthCache getHealthCache() {
@@ -243,6 +264,10 @@ public class PaygateProperties {
   /** Spring Security integration configuration bound from {@code paygate.spring-security.*}. */
   public static class SpringSecurity {
 
+    /**
+     * Retained configuration acknowledgement for compatibility with existing deployments. Minimum
+     * authentication, rate-limit, ordering, and dispatcher protections cannot be waived.
+     */
     private boolean customFilterChainAcknowledged = false;
 
     public boolean isCustomFilterChainAcknowledged() {
@@ -257,6 +282,7 @@ public class PaygateProperties {
   /** Request-body configuration bound from {@code paygate.request-body.*}. */
   public static class RequestBody {
 
+    /** Maximum protected-request body size; defaults to 8192 bytes and accepts 1 through 16 MiB. */
     private int maxBytes = 8_192;
 
     public int getMaxBytes() {
@@ -277,6 +303,45 @@ public class PaygateProperties {
     }
   }
 
+  /** Pricing-strategy evaluation limits bound from {@code paygate.pricing.*}. */
+  public static class Pricing {
+
+    private static final Duration MAX_EVALUATION_TIMEOUT = Duration.ofSeconds(60);
+
+    private Duration evaluationTimeout = Duration.ofSeconds(1);
+
+    private int maxConcurrentEvaluations = 64;
+
+    public Duration getEvaluationTimeout() {
+      return evaluationTimeout;
+    }
+
+    public void setEvaluationTimeout(Duration evaluationTimeout) {
+      if (evaluationTimeout == null
+          || evaluationTimeout.isZero()
+          || evaluationTimeout.isNegative()
+          || evaluationTimeout.compareTo(MAX_EVALUATION_TIMEOUT) > 0) {
+        throw new IllegalArgumentException(
+            "paygate.pricing.evaluation-timeout must be positive and at most 60 seconds, got: "
+                + evaluationTimeout);
+      }
+      this.evaluationTimeout = evaluationTimeout;
+    }
+
+    public int getMaxConcurrentEvaluations() {
+      return maxConcurrentEvaluations;
+    }
+
+    public void setMaxConcurrentEvaluations(int maxConcurrentEvaluations) {
+      if (maxConcurrentEvaluations < 1 || maxConcurrentEvaluations > 1024) {
+        throw new IllegalArgumentException(
+            "paygate.pricing.max-concurrent-evaluations must be between 1 and 1024, got: "
+                + maxConcurrentEvaluations);
+      }
+      this.maxConcurrentEvaluations = maxConcurrentEvaluations;
+    }
+  }
+
   /** Rate-limiting configuration bound from {@code paygate.rate-limit.*}. */
   public static class RateLimit {
 
@@ -287,6 +352,8 @@ public class PaygateProperties {
     private int maxBuckets = 100_000;
 
     private int ipv6PrefixLength = 64;
+
+    private Aggregate aggregate = new Aggregate();
 
     public double getRequestsPerSecond() {
       return requestsPerSecond;
@@ -328,6 +395,80 @@ public class PaygateProperties {
       }
       this.ipv6PrefixLength = ipv6PrefixLength;
     }
+
+    public Aggregate getAggregate() {
+      return aggregate;
+    }
+
+    public void setAggregate(Aggregate aggregate) {
+      this.aggregate = aggregate;
+    }
+
+    /**
+     * Aggregate invoice-challenge limit bound from {@code paygate.rate-limit.aggregate.*}. Defaults
+     * to 100 requests per second with a burst of 200; valid maxima are 100,000 requests per second
+     * and 1,000,000 burst tokens.
+     */
+    public static class Aggregate {
+
+      private static final double MAX_REQUESTS_PER_SECOND = 100_000.0d;
+      private static final int MAX_BURST_SIZE = 1_000_000;
+      private double requestsPerSecond = 100.0d;
+      private int burstSize = 200;
+
+      public double getRequestsPerSecond() {
+        return requestsPerSecond;
+      }
+
+      public void setRequestsPerSecond(double requestsPerSecond) {
+        if (!Double.isFinite(requestsPerSecond)
+            || requestsPerSecond <= 0.0d
+            || requestsPerSecond > MAX_REQUESTS_PER_SECOND) {
+          throw new IllegalArgumentException(
+              "paygate.rate-limit.aggregate.requests-per-second must be finite and between 0 and "
+                  + MAX_REQUESTS_PER_SECOND
+                  + ", got: "
+                  + requestsPerSecond);
+        }
+        this.requestsPerSecond = requestsPerSecond;
+      }
+
+      public int getBurstSize() {
+        return burstSize;
+      }
+
+      public void setBurstSize(int burstSize) {
+        if (burstSize < 1 || burstSize > MAX_BURST_SIZE) {
+          throw new IllegalArgumentException(
+              "paygate.rate-limit.aggregate.burst-size must be between 1 and "
+                  + MAX_BURST_SIZE
+                  + ", got: "
+                  + burstSize);
+        }
+        this.burstSize = burstSize;
+      }
+    }
+  }
+
+  /** Startup policy for paid/manual route overlap findings. */
+  public static class Routing {
+
+    /** Warns by default when a manual paid route may overlap an unprotected MVC route. */
+    private OverlapPolicy overlapPolicy = OverlapPolicy.WARN;
+
+    public OverlapPolicy getOverlapPolicy() {
+      return overlapPolicy;
+    }
+
+    public void setOverlapPolicy(OverlapPolicy overlapPolicy) {
+      this.overlapPolicy = overlapPolicy;
+    }
+  }
+
+  /** Route overlap disposition policy. */
+  public enum OverlapPolicy {
+    WARN,
+    FAIL
   }
 
   /** Health-check caching configuration bound from {@code paygate.health-cache.*}. */
@@ -456,6 +597,20 @@ public class PaygateProperties {
     private int maxInboundMessageSize = 4194304;
 
     private Integer rpcDeadlineSeconds;
+
+    private boolean strictFilePermissions = false;
+
+    /**
+     * Whether LND credential and trust files must satisfy strict POSIX permission checks; defaults
+     * to {@code false} for compatibility with non-POSIX and managed-secret environments.
+     */
+    public boolean isStrictFilePermissions() {
+      return strictFilePermissions;
+    }
+
+    public void setStrictFilePermissions(boolean strictFilePermissions) {
+      this.strictFilePermissions = strictFilePermissions;
+    }
 
     public boolean isAllowPlaintext() {
       return allowPlaintext;
@@ -613,12 +768,23 @@ public class PaygateProperties {
 
       private boolean enabled = true;
 
+      /** Whether credentials bind to one canonical client address; defaults to {@code false}. */
+      private boolean clientAddressBindingEnabled = false;
+
       public boolean isEnabled() {
         return enabled;
       }
 
       public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+      }
+
+      public boolean isClientAddressBindingEnabled() {
+        return clientAddressBindingEnabled;
+      }
+
+      public void setClientAddressBindingEnabled(boolean clientAddressBindingEnabled) {
+        this.clientAddressBindingEnabled = clientAddressBindingEnabled;
       }
     }
 

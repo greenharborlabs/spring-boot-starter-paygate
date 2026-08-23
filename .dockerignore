@@ -6,7 +6,12 @@
 .specify
 **/build/
 **/out/
+**/target/
 **/*.class
+*.jar
+*.log*
+.env*
+coverage/
 plans/
 specs/
 *.md

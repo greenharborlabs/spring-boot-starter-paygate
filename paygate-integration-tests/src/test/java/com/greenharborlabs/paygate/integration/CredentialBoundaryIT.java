@@ -110,6 +110,23 @@ class CredentialBoundaryIT {
   }
 
   @Test
+  @DisplayName("a signed malformed expiry returns a stable denial before the handler")
+  void rejectsMalformedExpiryBeforeHandler() throws Exception {
+    try (var client = HttpClient.newHttpClient()) {
+      var credential = obtainCredential(client);
+      var malformedExpiry =
+          mintReplacingCaveat(
+              credential, "example-api_valid_until", "not-a-supported-epoch-second");
+
+      var response = send(client, malformedExpiry);
+
+      assertThat(response.statusCode()).isNotEqualTo(200);
+      assertThat(response.body()).doesNotContain("not-a-supported-epoch-second");
+      assertThat(TestConfig.BoundaryController.INVOCATIONS).hasValue(0);
+    }
+  }
+
+  @Test
   @DisplayName("a transient root-key lookup failure does not poison a valid cached credential")
   void transientRootKeyLookupFailureDoesNotEvictValidCachedCredential() throws Exception {
     try (var client = HttpClient.newHttpClient()) {
@@ -227,6 +244,33 @@ class CredentialBoundaryIT {
         MacaroonSerializer.deserializeV2(Base64.getDecoder().decode(credential.macaroon()));
     var caveats = new ArrayList<>(original.caveats());
     assertThat(caveats.removeIf(caveat -> caveat.key().equals(boundary))).isTrue();
+
+    try (var rootKey = TestConfig.ROOT_KEY_STORE.getRootKey(tokenId(credential))) {
+      assertThat(rootKey).isNotNull();
+      byte[] keyMaterial = rootKey.value();
+      try {
+        var reminted =
+            MacaroonMinter.mint(
+                keyMaterial,
+                MacaroonIdentifier.decode(original.identifier()),
+                original.location(),
+                caveats);
+        return new Credential(
+            Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(reminted)),
+            credential.preimage());
+      } finally {
+        java.util.Arrays.fill(keyMaterial, (byte) 0);
+      }
+    }
+  }
+
+  private static Credential mintReplacingCaveat(
+      Credential credential, String caveatKey, String replacementValue) {
+    Macaroon original =
+        MacaroonSerializer.deserializeV2(Base64.getDecoder().decode(credential.macaroon()));
+    var caveats = new ArrayList<>(original.caveats());
+    assertThat(caveats.removeIf(caveat -> caveat.key().equals(caveatKey))).isTrue();
+    caveats.add(new com.greenharborlabs.paygate.core.macaroon.Caveat(caveatKey, replacementValue));
 
     try (var rootKey = TestConfig.ROOT_KEY_STORE.getRootKey(tokenId(credential))) {
       assertThat(rootKey).isNotNull();

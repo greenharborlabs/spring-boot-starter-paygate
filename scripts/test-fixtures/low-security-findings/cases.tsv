@@ -1,0 +1,13 @@
+# case expected-validator-outcome
+valid pass
+missing fail
+duplicate fail
+unknown fail
+non-low fail
+placeholder fail
+unmapped fail
+stale fail
+failed fail
+premature-approval fail
+unapproved-tradeoff fail
+marker-leak fail

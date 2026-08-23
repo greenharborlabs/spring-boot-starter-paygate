@@ -53,4 +53,11 @@ class LogSanitizerTest {
     assertThat(correlation).isEqualTo("0011223344556677");
     assertThat(correlation).doesNotContain(secretMarker, fullTokenId);
   }
+
+  @Test
+  @DisplayName("rejects missing and malformed token correlations rather than reflecting input")
+  void rejectsMissingAndMalformedTokenCorrelations() {
+    assertThat(LogSanitizer.sanitizeTokenId(null)).isEqualTo("<unavailable>");
+    assertThat(LogSanitizer.sanitizeTokenId("deadbeef-ATTACKER_MARKER")).isEqualTo("<unavailable>");
+  }
 }

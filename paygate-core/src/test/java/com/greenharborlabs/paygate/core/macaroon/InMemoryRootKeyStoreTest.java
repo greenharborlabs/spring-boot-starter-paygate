@@ -85,6 +85,12 @@ class InMemoryRootKeyStoreTest {
   class GetRootKey {
 
     @Test
+    @DisplayName("rejects null keyId before lookup")
+    void rejectsNullKeyId() {
+      assertThatThrownBy(() -> store.getRootKey(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     @DisplayName("returns null for unknown keyId")
     void returnsNullForUnknownKeyId() {
       byte[] unknownKeyId = new byte[KEY_LENGTH];
@@ -127,6 +133,12 @@ class InMemoryRootKeyStoreTest {
   @Nested
   @DisplayName("revokeRootKey")
   class RevokeRootKey {
+
+    @Test
+    @DisplayName("rejects null keyId before mutation")
+    void rejectsNullKeyId() {
+      assertThatThrownBy(() -> store.revokeRootKey(null)).isInstanceOf(NullPointerException.class);
+    }
 
     @Test
     @DisplayName("after revocation, getRootKey returns null")

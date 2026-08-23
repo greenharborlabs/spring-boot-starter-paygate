@@ -45,6 +45,13 @@ public final class RequestDigestSupport {
       wrapped.ensureWithinBound(maxBytes);
       return request;
     }
+    if (request instanceof BoundedRequestBody wrapped) {
+      if (wrapped.observedLength() > maxBytes) {
+        throw new RequestBodyTooLargeException(
+            "Request body exceeds " + maxBytes + " bytes for digest binding");
+      }
+      return request;
+    }
     return new CachedBodyRequestWrapper(request, maxBytes);
   }
 
@@ -93,6 +100,13 @@ public final class RequestDigestSupport {
     if (request instanceof CachedBodyRequestWrapper wrapped) {
       wrapped.ensureWithinBound(maxBytes);
       return wrapped.cachedBodyBytes();
+    }
+    if (request instanceof BoundedRequestBody wrapped) {
+      if (wrapped.observedLength() > maxBytes) {
+        throw new RequestBodyTooLargeException(
+            "Request body exceeds " + maxBytes + " bytes for digest binding");
+      }
+      return wrapped.observedBytes();
     }
     return readBounded(request.getInputStream(), maxBytes);
   }

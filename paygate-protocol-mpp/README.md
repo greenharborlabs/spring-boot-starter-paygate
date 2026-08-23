@@ -1,5 +1,11 @@
 # paygate-protocol-mpp
 
+## L402 client-address binding scope
+
+`paygate.protocols.l402.client-address-binding-enabled` applies only to L402. MPP preserves its
+existing exact-request bearer binding and never receives a client address in its signed `opaque`
+data.
+
 ## Replay and state-changing operations
 
 MPP credentials are reusable exact-request bearer material until their authenticated expiry. They

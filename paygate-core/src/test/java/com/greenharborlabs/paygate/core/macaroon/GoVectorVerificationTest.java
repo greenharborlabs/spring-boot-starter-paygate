@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -172,6 +173,28 @@ class GoVectorVerificationTest {
     assertThat(vector.identifier())
         .as("identifier length for: %s", vector.description())
         .hasSize(66);
+  }
+
+  @org.junit.jupiter.api.Test
+  @DisplayName("Go-minted padded known key evaluates as its canonical registered key")
+  void evaluatesGoPaddedKeyCanonically() {
+    VectorData vector =
+        vectors.stream()
+            .filter(candidate -> candidate.description().contains("padded known key"))
+            .findFirst()
+            .orElseThrow();
+    Macaroon macaroon = MacaroonSerializer.deserializeV2(vector.expectedSerializedV2());
+
+    assertThat(
+            MacaroonVerifier.verifyCaveats(
+                macaroon.caveats(),
+                List.of(new ServicesCaveatVerifier(10)),
+                L402VerificationContext.builder()
+                    .serviceName("my_api")
+                    .requestMetadata(Map.of())
+                    .build()))
+        .containsEntry("services", "my_api:0")
+        .doesNotContainKey("\tservices\t");
   }
 
   @ParameterizedTest(name = "{0}")

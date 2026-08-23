@@ -18,6 +18,7 @@ import com.greenharborlabs.paygate.core.protocol.L402Challenge;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402Exception;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -39,15 +40,26 @@ public class L402Protocol implements PaymentProtocol {
   private final L402Validator validator;
   private final String serviceName;
   private final Clock clock;
+  private final boolean clientAddressBindingEnabled;
 
   public L402Protocol(L402Validator validator, String serviceName) {
-    this(validator, serviceName, Clock.systemUTC());
+    this(validator, serviceName, Clock.systemUTC(), false);
   }
 
   public L402Protocol(L402Validator validator, String serviceName, Clock clock) {
+    this(validator, serviceName, clock, false);
+  }
+
+  /** Creates an L402 adapter with optional exact client-address caveat enforcement. */
+  public L402Protocol(
+      L402Validator validator,
+      String serviceName,
+      Clock clock,
+      boolean clientAddressBindingEnabled) {
     this.validator = Objects.requireNonNull(validator, "validator must not be null");
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
     this.clock = Objects.requireNonNull(clock, "clock must not be null");
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -113,6 +125,14 @@ public class L402Protocol implements PaymentProtocol {
     caveats.add(new Caveat("services", serviceName + ":0"));
     caveats.add(new Caveat("route", routePattern));
     caveats.add(new Caveat("method", requestMethod));
+    if (clientAddressBindingEnabled) {
+      String clientAddress =
+          requireChallengeBoundary(context.trustedClientAddress(), "client address");
+      caveats.add(new Caveat("client_ip", clientAddress));
+    }
+    // The invoice amount is authenticated by the macaroon HMAC, preventing a lower-priced
+    // credential from being reused after a trusted route price increases.
+    caveats.add(new Caveat(serviceName + "_price_sats", Long.toString(context.priceSats())));
     String capability = context.capability();
     String capabilityCeiling = capability == null || capability.isBlank() ? "~" : capability;
     caveats.add(new Caveat(serviceName + "_capabilities", capabilityCeiling));
@@ -176,8 +196,19 @@ public class L402Protocol implements PaymentProtocol {
     L402Validator.ValidationResult result = null;
     try {
       result = validator.validate(metadata.rawAuthorizationHeader(), context);
+      if (clientAddressBindingEnabled
+          && clientAddressCaveatCount(result.credential().macaroon()) != 1) {
+        throw new PaymentValidationException(
+            PaymentValidationException.ErrorCode.INVALID,
+            "L402 credential validation failed",
+            credential.tokenId());
+      }
     } catch (L402Exception e) {
       throw mapL402Exception(e);
+    } catch (PaymentValidationException e) {
+      // Locally classified policy failures, such as a legacy credential lacking a required
+      // client-address caveat, are already safe public validation outcomes.
+      throw e;
     } catch (RuntimeException e) {
       // Validator implementation failures cannot be attributed safely to the credential. Treat
       // them as transient service failures and keep both the cause and header out of the response.
@@ -196,11 +227,23 @@ public class L402Protocol implements PaymentProtocol {
     return value;
   }
 
+  private static long clientAddressCaveatCount(Macaroon macaroon) {
+    return macaroon.caveats().stream().filter(caveat -> "client_ip".equals(caveat.key())).count();
+  }
+
   /**
    * Maps an L402 core {@link ErrorCode} to the protocol-agnostic {@link
    * PaymentValidationException.ErrorCode}.
    */
   private static PaymentValidationException mapL402Exception(L402Exception e) {
+    if (e instanceof PriceValidationException priceFailure) {
+      PaymentValidationException.ErrorCode priceCode =
+          priceFailure.isChallengeable()
+              ? PaymentValidationException.ErrorCode.INSUFFICIENT
+              : PaymentValidationException.ErrorCode.UNAVAILABLE;
+      return new PaymentValidationException(
+          priceCode, "L402 paid-price validation failed", e.getTokenId(), priceFailure);
+    }
     PaymentValidationException.ErrorCode mapped =
         switch (e.getErrorCode()) {
           case MALFORMED_HEADER -> PaymentValidationException.ErrorCode.MALFORMED;

@@ -74,9 +74,27 @@ public class PaymentValidationException extends RuntimeException {
    * @param cause the underlying cause
    */
   public PaymentValidationException(ErrorCode errorCode, String message, Throwable cause) {
-    super(publicMessage(errorCode), null, true, true);
+    super(publicMessage(errorCode), cause, true, true);
     this.errorCode = Objects.requireNonNull(errorCode, "errorCode must not be null");
     this.tokenId = null;
+    this.problemTypeUri = errorCode.problemTypeUri();
+    this.httpStatus = errorCode.httpStatus();
+  }
+
+  /**
+   * Creates a validation exception that preserves a safe token correlation identifier and typed
+   * internal cause for framework integrations.
+   *
+   * @param errorCode stable response classification
+   * @param message diagnostic detail retained for logs only
+   * @param tokenId optional sanitized token identifier
+   * @param cause typed internal cause; it is never exposed in a response
+   */
+  public PaymentValidationException(
+      ErrorCode errorCode, String message, String tokenId, Throwable cause) {
+    super(publicMessage(errorCode), cause, true, true);
+    this.errorCode = Objects.requireNonNull(errorCode, "errorCode must not be null");
+    this.tokenId = tokenId;
     this.problemTypeUri = errorCode.problemTypeUri();
     this.httpStatus = errorCode.httpStatus();
   }

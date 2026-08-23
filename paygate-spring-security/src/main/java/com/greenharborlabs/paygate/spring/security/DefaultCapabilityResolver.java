@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.spring.security;
 
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.spring.CapabilityCache;
+import com.greenharborlabs.paygate.spring.LogSanitizer;
 import java.util.Set;
 
 /**
@@ -70,8 +71,8 @@ public final class DefaultCapabilityResolver implements CapabilityResolver {
     } catch (RuntimeException e) {
       log.log(
           System.Logger.Level.WARNING,
-          "Capability cache lookup failed for token; proceeding without cached capability",
-          e);
+          "Capability cache lookup failed for token correlation {0}; proceeding without cached capability",
+          LogSanitizer.sanitizeTokenId(tokenId));
     }
     return Set.of();
   }

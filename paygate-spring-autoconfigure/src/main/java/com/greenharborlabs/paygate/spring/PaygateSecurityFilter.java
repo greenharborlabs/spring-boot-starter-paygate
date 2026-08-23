@@ -7,9 +7,11 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.UnsupportedPaymentMethodException;
+import com.greenharborlabs.paygate.core.macaroon.CaveatKey;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonVerificationException;
 import com.greenharborlabs.paygate.core.macaroon.PathNormalizer;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
+import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import com.greenharborlabs.paygate.protocol.l402.L402Metadata;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -60,6 +62,7 @@ public class PaygateSecurityFilter implements Filter {
   private final PaygateChallengeService challengeService;
   private final String serviceName;
   private final ClientIpResolver clientIpResolver;
+  private final boolean clientAddressBindingEnabled;
   private final PaygateMetrics metrics;
   private final PaygateEarningsTracker earningsTracker;
   private final PaygateRateLimiter rateLimiter;
@@ -88,7 +91,8 @@ public class PaygateSecurityFilter implements Filter {
         metrics,
         earningsTracker,
         rateLimiter,
-        RequestDigestSupport.MAX_CACHED_BODY_BYTES);
+        RequestDigestSupport.MAX_CACHED_BODY_BYTES,
+        false);
   }
 
   /** Creates a filter with the configured protected request-body bound. */
@@ -102,6 +106,31 @@ public class PaygateSecurityFilter implements Filter {
       @Nullable PaygateEarningsTracker earningsTracker,
       @Nullable PaygateRateLimiter rateLimiter,
       int requestBodyMaxBytes) {
+    this(
+        registry,
+        protocols,
+        challengeService,
+        serviceName,
+        clientIpResolver,
+        metrics,
+        earningsTracker,
+        rateLimiter,
+        requestBodyMaxBytes,
+        false);
+  }
+
+  /** Creates a filter with the configured request-body and L402 address-binding settings. */
+  public PaygateSecurityFilter(
+      PaygateEndpointRegistry registry,
+      List<PaymentProtocol> protocols,
+      PaygateChallengeService challengeService,
+      String serviceName,
+      @Nullable ClientIpResolver clientIpResolver,
+      @Nullable PaygateMetrics metrics,
+      @Nullable PaygateEarningsTracker earningsTracker,
+      @Nullable PaygateRateLimiter rateLimiter,
+      int requestBodyMaxBytes,
+      boolean clientAddressBindingEnabled) {
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.challengeService =
@@ -113,6 +142,7 @@ public class PaygateSecurityFilter implements Filter {
     this.rateLimiter = rateLimiter;
     this.mppEnabled = this.protocols.stream().anyMatch(RequestDigestSupport::isMppProtocol);
     this.requestBodyMaxBytes = requestBodyMaxBytes;
+    this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
   @Override
@@ -164,24 +194,52 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
 
+    HttpServletRequest protectedRequest = httpRequest;
+    if (hasNamedPricingStrategy(resolvedEndpoint.config())) {
+      try {
+        protectedRequest = BoundedRequestBody.capture(httpRequest, requestBodyMaxBytes);
+      } catch (RequestBodyTooLargeException e) {
+        PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
+        return;
+      } catch (IOException e) {
+        log.log(System.Logger.Level.WARNING, "Request body observation failed; failing closed");
+        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+        return;
+      }
+    }
+
+    // Resolve exactly once before either credential validation or challenge creation. The result
+    // is request-scoped and therefore cannot drift between an insufficient-price response and its
+    // replacement invoice.
+    try {
+      challengeService.resolveTrustedPrice(protectedRequest, resolvedEndpoint.config());
+    } catch (UnsupportedRequestEncodingException e) {
+      PaygateResponseWriter.writeUnsupportedRequestEncoding(httpResponse);
+      return;
+    } catch (RuntimeException e) {
+      log.log(System.Logger.Level.WARNING, "Trusted price evaluation failed; failing closed");
+      PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+      return;
+    }
+
     // 2. Check Authorization header — validate credentials before checking Lightning health,
     //    so requests with valid cached credentials skip the health-check cost entirely.
-    String authHeader = httpRequest.getHeader(AUTHORIZATION_HEADER);
+    String authHeader = protectedRequest.getHeader(AUTHORIZATION_HEADER);
     CredentialState credentialState =
         authHeader == null ? CredentialState.NO_CREDENTIAL : CredentialState.PRESENTED;
     if (credentialState == CredentialState.PRESENTED) {
       for (PaymentProtocol protocol : protocols) {
         if (protocol.canHandle(authHeader)) {
-          if (!tryAcquireRateLimit(httpRequest)) {
+          if (!tryAcquireRateLimit(protectedRequest)) {
             PaygateResponseWriter.writeRateLimited(httpResponse);
             recordRateLimitRejection(resolvedEndpoint.routePattern());
             return;
           }
-          HttpServletRequest protocolRequest = httpRequest;
+          HttpServletRequest protocolRequest = protectedRequest;
           if (RequestDigestSupport.isMppProtocol(protocol)) {
             try {
               protocolRequest =
-                  RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
+                  RequestDigestSupport.wrapForDigest(protectedRequest, requestBodyMaxBytes);
             } catch (RequestBodyTooLargeException e) {
               PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
               recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
@@ -206,7 +264,7 @@ public class PaygateSecurityFilter implements Filter {
       // A presented credential that no enabled protocol accepts is not a request for a new
       // credential. Bound its cost with the normal validation limiter and fail closed without
       // consulting Lightning or minting replacement state.
-      if (!tryAcquireRateLimit(httpRequest)) {
+      if (!tryAcquireRateLimit(protectedRequest)) {
         PaygateResponseWriter.writeRateLimited(httpResponse);
         recordRateLimitRejection(resolvedEndpoint.routePattern());
         return;
@@ -218,9 +276,9 @@ public class PaygateSecurityFilter implements Filter {
 
     // 3. Only NO_CREDENTIAL reaches ChallengeService for health check,
     //    rate limiting, invoice creation, and macaroon minting.
-    HttpServletRequest challengeRequest = httpRequest;
+    HttpServletRequest challengeRequest = protectedRequest;
     try {
-      challengeService.acquireChallengeRateLimit(httpRequest);
+      challengeService.acquireChallengeRateLimit(protectedRequest);
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
       recordRateLimitRejection(resolvedEndpoint.routePattern());
@@ -228,7 +286,8 @@ public class PaygateSecurityFilter implements Filter {
     }
     if (mppEnabled) {
       try {
-        challengeRequest = RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
+        challengeRequest =
+            RequestDigestSupport.wrapForDigest(protectedRequest, requestBodyMaxBytes);
         RequestDigestSupport.ensureDigestAttribute(challengeRequest, path, requestBodyMaxBytes);
       } catch (RequestBodyTooLargeException e) {
         PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
@@ -237,6 +296,10 @@ public class PaygateSecurityFilter implements Filter {
       }
     }
     issuePaymentChallenge(challengeRequest, httpResponse, method, safePath, resolvedEndpoint);
+  }
+
+  private static boolean hasNamedPricingStrategy(PaygateEndpointConfig endpoint) {
+    return endpoint.pricingStrategy() != null && !endpoint.pricingStrategy().isBlank();
   }
 
   /**
@@ -269,6 +332,17 @@ public class PaygateSecurityFilter implements Filter {
     if (capability != null && !capability.isEmpty()) {
       context.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
+    TrustedRequestPrice trustedPrice =
+        (TrustedRequestPrice)
+            httpRequest.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+    if (trustedPrice == null) {
+      // Some container and unit-test request implementations do not retain attributes. The
+      // endpoint's configured price is still trusted for fixed-price policies.
+      trustedPrice = new TrustedRequestPrice(config.priceSats());
+    }
+    context.put(
+        VerificationContextKeys.CURRENT_PRICE_SATS, Long.toString(trustedPrice.amountSats()));
+    context.put(VerificationContextKeys.PRICING_STABILITY, config.pricingStability().name());
     return Map.copyOf(context);
   }
 
@@ -290,14 +364,18 @@ public class PaygateSecurityFilter implements Filter {
               httpRequest,
               resolvedEndpoint,
               PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed());
-      List<ChallengeResponse> challenges = buildChallenges(challengeContext);
-      if (challenges.isEmpty()) {
-        challengeService.discardChallenge(challengeContext);
-        PaygateResponseWriter.writeLightningUnavailable(httpResponse);
-        return;
+      try {
+        List<ChallengeResponse> challenges = buildChallenges(challengeContext);
+        if (challenges.isEmpty()) {
+          challengeService.discardChallenge(challengeContext);
+          PaygateResponseWriter.writeLightningUnavailable(httpResponse);
+          return;
+        }
+        PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
+        recordChallenge(resolvedEndpoint.routePattern());
+      } finally {
+        challengeContext.close();
       }
-      PaygateResponseWriter.writePaymentRequired(httpResponse, challengeContext, challenges);
-      recordChallenge(resolvedEndpoint.routePattern());
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(httpResponse);
       recordRateLimitRejection(resolvedEndpoint.routePattern());
@@ -441,6 +519,43 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
 
+    // Only the core's typed paid-price outcomes may allocate a replacement challenge for a
+    // presented credential. The trusted request price was resolved before validation and remains
+    // memoized on this request, so the replacement invoice cannot drift from the rejected price.
+    if ("L402".equals(protocol.scheme())
+        && e.getErrorCode() == PaymentValidationException.ErrorCode.INSUFFICIENT
+        && e.getCause() instanceof PriceValidationException priceFailure
+        && priceFailure.isChallengeable()) {
+      try {
+        challengeService.acquireChallengeRateLimit(httpRequest);
+      } catch (PaygateRateLimitedException _) {
+        PaygateResponseWriter.writeRateLimited(httpResponse);
+        recordRateLimitRejection(resolvedEndpoint.routePattern());
+        return;
+      }
+      HttpServletRequest replacementRequest = httpRequest;
+      if (mppEnabled) {
+        try {
+          replacementRequest = RequestDigestSupport.wrapForDigest(httpRequest, requestBodyMaxBytes);
+          RequestDigestSupport.ensureDigestAttribute(
+              replacementRequest,
+              ApplicationRelativeRequestResolver.resolve(replacementRequest),
+              requestBodyMaxBytes);
+        } catch (RequestBodyTooLargeException bodyTooLarge) {
+          PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
+          recordRejected(resolvedEndpoint.routePattern(), "Payment");
+          return;
+        }
+      }
+      issuePaymentChallenge(
+          replacementRequest,
+          httpResponse,
+          replacementRequest.getMethod(),
+          "<unavailable>",
+          resolvedEndpoint);
+      return;
+    }
+
     // Every remaining validation error came from a presented credential. Return its safe RFC
     // 9457 response without allocating a replacement invoice or root key.
     log.log(
@@ -489,7 +604,18 @@ public class PaygateSecurityFilter implements Filter {
    * available, falling back to {@code getRemoteAddr()}.
    */
   private String resolveClientIp(HttpServletRequest request) {
+    if (clientAddressBindingEnabled) {
+      return clientIpResolver != null
+          ? clientIpResolver
+              .resolveBindingAddress(request)
+              .orElseThrow(() -> new IllegalStateException("Trusted client address is unavailable"))
+          : throwBindingAddressUnavailable();
+    }
     return clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+  }
+
+  private static String throwBindingAddressUnavailable() {
+    throw new IllegalStateException("Trusted client address is unavailable");
   }
 
   /**
@@ -625,7 +751,7 @@ public class PaygateSecurityFilter implements Filter {
       String caveatKey = serviceName + "_valid_until";
       OptionalLong earliest =
           l402Meta.macaroon().caveats().stream()
-              .filter(c -> caveatKey.equals(c.key()))
+              .filter(c -> caveatKey.equals(CaveatKey.canonicalize(c.key())))
               .flatMapToLong(
                   c -> {
                     try {

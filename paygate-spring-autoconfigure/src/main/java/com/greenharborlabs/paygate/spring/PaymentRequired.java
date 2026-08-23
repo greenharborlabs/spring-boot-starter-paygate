@@ -37,6 +37,13 @@ public @interface PaymentRequired {
   String pricingStrategy() default "";
 
   /**
+   * Declares whether this route-and-method pair has a request-independent price.
+   *
+   * <p>The safe default rejects legacy credentials without signed paid-price evidence.
+   */
+  PricingStability pricingStability() default PricingStability.REQUEST_DEPENDENT;
+
+  /**
    * Capability requirement for this endpoint. Comma-separated names use any-of (OR) semantics:
    * {@code "search,analyze"} accepts a verified final ceiling containing either name. A wholly
    * blank value indicates no named capability; blank list segments are invalid.

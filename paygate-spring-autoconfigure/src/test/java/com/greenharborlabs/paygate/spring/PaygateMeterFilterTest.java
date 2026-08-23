@@ -85,6 +85,17 @@ class PaygateMeterFilterTest {
     assertThat(result.getTag("endpoint")).isEqualTo(customOverflow);
   }
 
+  @Test
+  @DisplayName("security decision meters use the same bounded endpoint dimension")
+  void securityDecisionEndpointCardinalityIsCapped() {
+    var bounded = new PaygateMeterFilter(1, DEFAULT_OVERFLOW);
+
+    bounded.map(meterId("paygate.security.decisions", "endpoint", "/api/one"));
+    var overflow = bounded.map(meterId("paygate.security.decisions", "endpoint", "/api/two"));
+
+    assertThat(overflow.getTag("endpoint")).isEqualTo(DEFAULT_OVERFLOW);
+  }
+
   /** Helper to build a {@link Meter.Id} with the given name and key-value tag pairs. */
   private Meter.Id meterId(String name, String... tagPairs) {
     if (tagPairs.length % 2 != 0) {

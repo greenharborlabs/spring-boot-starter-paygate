@@ -1,6 +1,8 @@
 package com.greenharborlabs.paygate.example.security;
 
+import com.greenharborlabs.paygate.spring.BoundedRequestBody;
 import com.greenharborlabs.paygate.spring.PaygatePricingStrategy;
+import com.greenharborlabs.paygate.spring.PricingEvaluationException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
 
@@ -12,10 +14,14 @@ public class AnalysisPricingStrategy implements PaygatePricingStrategy {
 
   @Override
   public long calculatePrice(HttpServletRequest request, long defaultPrice) {
-    int contentLength = request.getContentLength();
-    if (contentLength <= BASE_THRESHOLD) {
+    if (!(request instanceof BoundedRequestBody body)) {
+      throw new PricingEvaluationException(
+          "Analysis pricing requires bounded observed request bytes");
+    }
+    int observedLength = body.observedLength();
+    if (observedLength <= BASE_THRESHOLD) {
       return defaultPrice;
     }
-    return defaultPrice + contentLength / BYTES_PER_SAT;
+    return Math.addExact(defaultPrice, observedLength / BYTES_PER_SAT);
   }
 }

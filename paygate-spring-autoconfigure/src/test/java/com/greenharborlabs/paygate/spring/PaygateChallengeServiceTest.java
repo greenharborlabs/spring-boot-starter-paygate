@@ -332,6 +332,60 @@ class PaygateChallengeServiceTest {
       assertThat(ctx).isNotNull();
       verify(rateLimiter, never()).tryAcquire(anyString());
     }
+
+    @Test
+    @DisplayName("aggregate exhaustion creates neither an invoice nor a root key")
+    void aggregateExhaustionHasNoInvoiceOrRootKeySideEffect() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      var rootKeyStore = createTrackingRootKeyStore();
+      AggregateInvoiceRateLimiter aggregateLimiter = mock(AggregateInvoiceRateLimiter.class);
+      when(aggregateLimiter.tryAcquire()).thenReturn(false);
+      var service =
+          new PaygateChallengeService(
+              rootKeyStore,
+              lightningBackend,
+              properties,
+              applicationContext,
+              null,
+              null,
+              aggregateLimiter,
+              null,
+              null,
+              false);
+
+      assertThatThrownBy(() -> service.createChallenge(request, config))
+          .isInstanceOf(PaygateRateLimitedException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(rootKeyStore.generateRootKeyInvocations).isZero();
+    }
+
+    @Test
+    @DisplayName("aggregate limiter failures fail closed before invoice creation")
+    void aggregateLimiterFailureIsUnavailableBeforeInvoiceCreation() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      var rootKeyStore = createTrackingRootKeyStore();
+      AggregateInvoiceRateLimiter aggregateLimiter = mock(AggregateInvoiceRateLimiter.class);
+      when(aggregateLimiter.tryAcquire()).thenThrow(new IllegalStateException("offline"));
+      var service =
+          new PaygateChallengeService(
+              rootKeyStore,
+              lightningBackend,
+              properties,
+              applicationContext,
+              null,
+              null,
+              aggregateLimiter,
+              null,
+              null,
+              false);
+
+      assertThatThrownBy(() -> service.createChallenge(request, config))
+          .isInstanceOf(PaygateLightningUnavailableException.class);
+
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
+      assertThat(rootKeyStore.generateRootKeyInvocations).isZero();
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -448,7 +502,7 @@ class PaygateChallengeServiceTest {
     void usesPricingStrategyBean() throws Exception {
       when(lightningBackend.isHealthy()).thenReturn(true);
       when(lightningBackend.createInvoice(anyLong(), anyString()))
-          .thenReturn(createStubInvoice(null));
+          .thenReturn(createStubInvoice(42L, null));
 
       PaygatePricingStrategy strategy = (req, defaultPrice) -> 42L;
       when(applicationContext.getBean("myStrategy", PaygatePricingStrategy.class))
@@ -466,11 +520,49 @@ class PaygateChallengeServiceTest {
     }
 
     @Test
+    @DisplayName(
+        "uses the memoized trusted price for invoice creation without rerunning the strategy")
+    void usesMemoizedTrustedPriceForInvoiceCreation() throws Exception {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(42L, null));
+      request.setAttribute(
+          PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE, new TrustedRequestPrice(42L));
+      PaygatePricingStrategy strategy =
+          (ignoredRequest, ignoredDefaultPrice) -> {
+            throw new AssertionError("memoized trusted price must prevent strategy re-execution");
+          };
+      when(applicationContext.getBean("myStrategy", PaygatePricingStrategy.class))
+          .thenReturn(strategy);
+      PaygateEndpointConfig configWithStrategy =
+          new PaygateEndpointConfig(
+              "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "myStrategy", "");
+
+      ChallengeContext context =
+          createService(createTrackingRootKeyStore()).createChallenge(request, configWithStrategy);
+
+      assertThat(context.priceSats()).isEqualTo(42L);
+      verify(lightningBackend).createInvoice(eq(42L), anyString());
+    }
+
+    @Test
+    @DisplayName("fails closed when the backend invoice amount differs from the trusted price")
+    void failsClosedWhenBackendInvoiceAmountDiffersFromTrustedPrice() {
+      when(lightningBackend.isHealthy()).thenReturn(true);
+      when(lightningBackend.createInvoice(anyLong(), anyString()))
+          .thenReturn(createStubInvoice(PRICE_SATS + 1, null));
+
+      assertThatThrownBy(
+              () -> createService(createTrackingRootKeyStore()).createChallenge(request, config))
+          .isInstanceOf(PaygateLightningUnavailableException.class);
+    }
+
+    @Test
     @DisplayName("caches pricing strategy bean -- getBean called only once for repeated lookups")
     void cachesPricingStrategyBean() throws Exception {
       when(lightningBackend.isHealthy()).thenReturn(true);
       when(lightningBackend.createInvoice(anyLong(), anyString()))
-          .thenReturn(createStubInvoice(null));
+          .thenReturn(createStubInvoice(42L, null));
 
       PaygatePricingStrategy strategy = (req, defaultPrice) -> 42L;
       when(applicationContext.getBean("cachedStrategy", PaygatePricingStrategy.class))
@@ -500,8 +592,8 @@ class PaygateChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("falls back to static price when strategy bean not found")
-    void fallsBackToStaticPriceWhenBeanMissing() throws Exception {
+    @DisplayName("fails closed when a named strategy bean is not found")
+    void failsClosedWhenNamedStrategyBeanMissing() {
       when(lightningBackend.isHealthy()).thenReturn(true);
       when(lightningBackend.createInvoice(anyLong(), anyString()))
           .thenReturn(createStubInvoice(null));
@@ -515,9 +607,9 @@ class PaygateChallengeServiceTest {
               "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "missing", "");
 
       PaygateChallengeService service = createService(createTrackingRootKeyStore());
-      ChallengeContext ctx = service.createChallenge(request, configWithStrategy);
-
-      assertThat(ctx.priceSats()).isEqualTo(PRICE_SATS);
+      assertThatThrownBy(() -> service.createChallenge(request, configWithStrategy))
+          .isInstanceOf(PaygateLightningUnavailableException.class);
+      verify(lightningBackend, never()).createInvoice(anyLong(), anyString());
     }
 
     @Test
@@ -1076,13 +1168,17 @@ class PaygateChallengeServiceTest {
   }
 
   private static Invoice createStubInvoice(byte[] preimage) {
+    return createStubInvoice(PRICE_SATS, preimage);
+  }
+
+  private static Invoice createStubInvoice(long amountSats, byte[] preimage) {
     byte[] paymentHash = new byte[32];
     new SecureRandom().nextBytes(paymentHash);
     Instant now = Instant.now();
     return new Invoice(
         paymentHash,
         BOLT11,
-        PRICE_SATS,
+        amountSats,
         "Test invoice",
         InvoiceStatus.PENDING,
         preimage,

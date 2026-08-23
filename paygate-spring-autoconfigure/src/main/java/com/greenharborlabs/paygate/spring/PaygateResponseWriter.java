@@ -124,6 +124,18 @@ public final class PaygateResponseWriter {
                 {"code": 400, "error": "REQUEST_BODY_TOO_LARGE", "message": "Request body exceeds 8192 bytes for digest binding"}""");
   }
 
+  /** Writes a stable 400 response for an unsupported content encoding on a size-priced route. */
+  public static void writeUnsupportedRequestEncoding(HttpServletResponse response)
+      throws IOException {
+    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    setSafeErrorHeaders(response, "application/json");
+    response
+        .getWriter()
+        .write(
+            """
+                {"code": 400, "error": "UNSUPPORTED_CONTENT_ENCODING", "message": "Content encoding is not supported for this request"}""");
+  }
+
   /** Writes a 401 Unauthorized response requiring a valid L402 credential. */
   public static void writeUnauthorized(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -268,7 +280,8 @@ public final class PaygateResponseWriter {
       PaymentValidationException exception,
       List<ChallengeResponse> challenges)
       throws IOException {
-    int status = exception.getHttpStatus();
+    var errorCode = exception.getErrorCode();
+    int status = errorCode.httpStatus();
     response.setStatus(status);
     setSafeErrorHeaders(response, "application/problem+json");
 
@@ -279,19 +292,12 @@ public final class PaygateResponseWriter {
     }
 
     var sb = new StringBuilder();
-    sb.append("{\"type\": \"")
-        .append(JsonEscaper.escape(exception.getProblemTypeUri()))
-        .append('"');
-    sb.append(", \"title\": \"")
-        .append(JsonEscaper.escape(exception.getErrorCode().name()))
-        .append('"');
+    sb.append("{\"type\": \"").append(JsonEscaper.escape(errorCode.problemTypeUri())).append('"');
+    sb.append(", \"title\": \"").append(JsonEscaper.escape(errorCode.name())).append('"');
     sb.append(", \"status\": ").append(status);
-    sb.append(", \"detail\": \"").append(JsonEscaper.escape(exception.getMessage())).append('"');
-    if (exception.getTokenId() != null) {
-      sb.append(", \"token_id\": \"")
-          .append(JsonEscaper.escape(exception.getTokenId()))
-          .append('"');
-    }
+    sb.append(", \"detail\": \"")
+        .append(JsonEscaper.escape(publicProblemDetail(errorCode)))
+        .append('"');
     sb.append('}');
     response.getWriter().write(sb.toString());
   }
@@ -339,6 +345,15 @@ public final class PaygateResponseWriter {
       case MALFORMED_HEADER -> HttpServletResponse.SC_BAD_REQUEST;
       case LIGHTNING_UNAVAILABLE -> HttpServletResponse.SC_SERVICE_UNAVAILABLE;
       default -> HttpServletResponse.SC_PAYMENT_REQUIRED;
+    };
+  }
+
+  private static String publicProblemDetail(PaymentValidationException.ErrorCode errorCode) {
+    return switch (errorCode) {
+      case MALFORMED -> "Malformed payment credential";
+      case INVALID -> "Payment credential is invalid";
+      case INSUFFICIENT -> "Payment amount is insufficient";
+      case UNAVAILABLE -> "Payment validation is unavailable";
     };
   }
 }

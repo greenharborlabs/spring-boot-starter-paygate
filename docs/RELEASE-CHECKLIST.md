@@ -118,13 +118,33 @@ For the defense-in-depth release, run the gates in this order so failures remain
 - [ ] Built example artifacts and source defaults contain no embedded credentials or unintended management exposure.
 - [ ] All eleven DeepSeek rows (`L1`–`L3`, `I1`–`I8`) have complete evidence. Promote a row only from the recorded command results; preserve `planned` or `implemented` for any failing or skipped gate.
 
+5a. Validate dependency provenance and repository secret-ignore controls from clean trust state:
+
+```bash
+./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls
+```
+
+- [ ] Each resolved artifact has a SHA-256 entry and either a scoped, reviewed publisher-signature path or one exact current exception in `config/dependency-provenance-exceptions.tsv`.
+- [ ] Re-resolve using an empty Gradle user home after any metadata/keyring/exception update. Reject untrusted signatures, changed bytes, wildcards, duplicate or orphaned exceptions, expired reviews, and generated trust-on-first-use inputs.
+- [ ] Common credential names are ignored. Any non-secret fixture force-added for review has explicit reviewer confirmation.
+- [ ] The Dependency-Check workflow has a successful report less than seven days old; missing, cancelled, or failed reports do not support release approval.
+
+5b. Validate the Kimi Low finding accountability ledger and its isolated negative controls:
+
+```bash
+./gradlew validateLowSecurityFindingDispositions verifyLowSecurityFindingNegativeControls
+```
+
+- [ ] All 28 Low rows remain uniquely mapped to a concrete implementation and documentation path.
+- [ ] Promote a row only after current-revision redacted evidence exists; a named security or release reviewer must approve verified evidence before release approval.
+
 6. Run the composed final local gate last:
 
 ```bash
 ./gradlew releaseReadiness -Pintegration
 ```
 
-- [ ] The final gate passes with `-Pintegration`; it composes module builds, dependency health, aggregate Javadoc, integration/security suites, dependency scanning and risk validation, example-artifact safety, both disposition validators, negative controls, and module coverage.
+- [ ] The final gate passes with `-Pintegration`; it composes module builds, dependency health, aggregate Javadoc, integration/security suites, dependency scanning and risk validation, example-artifact safety, all disposition validators, negative controls, and module coverage.
 - [ ] No local command is described as provenance, attestation, protected-environment approval, or proof of the bytes later published by GitHub Actions.
 
 Optional consumer-resolution check after the required gates:

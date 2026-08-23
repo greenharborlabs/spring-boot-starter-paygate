@@ -2,6 +2,9 @@ plugins {
     `java-library`
 }
 
+val grpcVersion: String by extra
+val protobufVersion: String by extra
+
 // This module is excluded from the default build.
 // Run with: ./gradlew :paygate-integration-tests:test -Pintegration
 // Spring Security tests: ./gradlew :paygate-integration-tests:securityTest -Pintegration
@@ -34,9 +37,14 @@ dependencies {
 
     securityTestImplementation(project(":paygate-example-app-spring-security"))
     securityTestImplementation(project(":paygate-spring-autoconfigure"))
+    securityTestImplementation(project(":paygate-lightning-lnbits"))
+    securityTestImplementation(project(":paygate-lightning-lnd"))
     securityTestImplementation("org.springframework.boot:spring-boot-starter-test")
     securityTestImplementation("org.springframework.boot:spring-boot-starter-web")
     securityTestImplementation("org.springframework.boot:spring-boot-starter-security")
+    securityTestImplementation("io.grpc:grpc-inprocess:$grpcVersion")
+    securityTestImplementation("io.grpc:grpc-stub:$grpcVersion")
+    securityTestImplementation("com.google.protobuf:protobuf-java:$protobufVersion")
 }
 
 tasks.test {

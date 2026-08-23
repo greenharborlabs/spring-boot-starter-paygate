@@ -200,20 +200,28 @@ The token has two states:
 
 | Property | Value |
 |----------|-------|
-| `credential` | Validated `L402Credential` object |
+| `credential` | Not retained after authentication |
 | `tokenId` | Hex-encoded 32-byte token identifier |
 | `serviceName` | Service name from configuration (`paygate.service-name`) |
 | `authenticated` | `true` |
 | `authorities` | `[ROLE_PAYMENT, ROLE_L402]` + `[L402_CAPABILITY_*]` and `[PAYGATE_CAPABILITY_*]` for each capability in the final verified effective set |
 | `principal` | token ID string |
 | `credentials` | `[REDACTED]`; no raw authorization header, parsed credential components, preimage, `L402Credential`, or `PaymentCredential` is retained |
-| `attributes` | Immutable map of verifier-approved values plus `tokenId` and `serviceName` |
+| `attributes` | Immutable map of verifier-approved values plus protected `tokenId`, `serviceName`, and `protocolScheme` metadata |
 
 Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
-#### Security: Attribute Overwrite Protection
+#### Security: Verified Attribute Provenance and Migration
 
-Built-in attributes (`tokenId`, `serviceName`) are inserted into the attributes map after caveat-derived entries. This ensures that attacker-controlled caveat keys cannot overwrite trusted values. A macaroon with a caveat `tokenId=attacker-value` will have that entry replaced by the real token ID.
+Only `L402Validator.ValidationResult.verifiedAttributes()` can supply caveat-derived attributes to
+an authenticated L402 token. Protected metadata (`tokenId`, `serviceName`, and `protocolScheme`)
+always takes precedence over a colliding value.
+
+The retained `authenticated(L402Credential, String)` and capability overload are deprecated for
+binary compatibility. A credential alone does not establish caveat-verifier provenance, so these
+methods now return protected system metadata and explicit capability authorities only; they never
+copy raw caveats. Migrate integrations that need caveat facts to
+`authenticated(L402Validator.ValidationResult, String)` using the result returned by validation.
 
 ### PaygateAuthenticationFilter
 
@@ -260,7 +268,7 @@ It registers up to five beans. A separate auto-configuration supplies the startu
 | `PaygateAuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
 | `PaygateSpringSecurityFilterChainGuard` | Spring Security mode + `FilterChainProxy` on classpath | Fails startup if no `PaygateAuthenticationFilter` is present in the effective filter chain. |
 
-The auto-configuration provides the beans but does **not** register the filter in the security filter chain. You must place the filter in your `SecurityFilterChain` definition (see Usage below). Startup validates every effective chain serving paid routes: it requires the Paygate filter, requires it before downstream authorization, checks rate-limit ordering when used, and requires `ERROR` redispatch coverage. It also prevents the security-chain-owned filter from being registered a second time as a container servlet filter. These failures are fail-closed. If you intentionally enforce Paygate through custom filter wiring that the guard cannot inspect, set `paygate.spring-security.custom-filter-chain-acknowledged=true`.
+The auto-configuration provides the beans but does **not** register the filters in the security filter chain. You must place `PaygateAuthFailureRateLimitFilter` before `PaygateAuthenticationFilter` in every effective `SecurityFilterChain` (see Usage below). Startup verifies both controls, their order, and REQUEST/ASYNC/FORWARD/ERROR coverage; it also prevents the security-chain-owned filter from being registered a second time as a container servlet filter. These checks are fail-closed. The custom-chain acknowledgement property is retained for configuration compatibility but cannot waive these minimum controls.
 
 ### Overriding Auto-Configured Beans
 
@@ -401,7 +409,7 @@ public class PremiumController {
         return Map.of(
             "tokenId", l402Token.getTokenId(),
             "service", l402Token.getServiceName(),
-            "tier", l402Token.getAttribute("tier"),  // from macaroon caveats
+            "tier", l402Token.getAttribute("tier"),  // only when a verifier approved it
             "data", "premium content"
         );
     }
@@ -516,6 +524,11 @@ Existing `hasRole('L402')` rules remain usable, but credential compatibility is 
 
 Payment roles are issued by the server: validated credentials receive `ROLE_PAYMENT`, and L402 credentials also receive `ROLE_L402`. A holder cannot mint Spring Security roles or authorities by adding caveats such as `role=ADMIN`. Capability authorities likewise come only from the verified effective capability ceiling.
 
+For binary compatibility, credential-only L402 factories remain callable but are deprecated. They
+expose protected metadata and explicit capability authorities only, because parsed caveats are not
+trusted facts. Use `authenticated(L402Validator.ValidationResult, String)` after validation when
+an integration needs verifier-approved attributes.
+
 ### Capability Non-Portability
 
 A credential with named capabilities is valid only for an endpoint that declares an overlapping named capability. It is rejected for an endpoint that declares no capability. The `~` ceiling represents no capability: it cannot satisfy a named declaration and produces no capability-derived authorities. This prevents a credential minted for one named capability from becoming a general-purpose paid credential.
@@ -562,7 +575,7 @@ The servlet filter and Spring Security paths are mutually exclusive. The `paygat
 
 Only one documented enforcement path is active per deployment. Servlet mode uses the container `PaygateSecurityFilter` and its final MVC interceptor; Spring Security mode uses `PaygateAuthenticationFilter` and the configured security chain. This prevents both paths from processing the same request.
 
-When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthenticationFilter` in your `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. If the filter is absent, startup fails closed unless `paygate.spring-security.custom-filter-chain-acknowledged=true` is set.
+When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthFailureRateLimitFilter` before `PaygateAuthenticationFilter` in every effective `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. Missing or misordered filters and incomplete dispatcher coverage fail startup; `paygate.spring-security.custom-filter-chain-acknowledged` cannot waive these minimum protections.
 
 `PaygateAuthenticationFilter` constructors without a `PaygateAuthenticationEntryPoint` are retained
 for source compatibility but deprecated. They fail closed (503) for an absent `Authorization`
@@ -715,7 +728,9 @@ void premiumEndpointReturnsDataForL402User() {
         new Caveat("tier", "premium")
     ));
 
-    var token = PaygateAuthenticationToken.authenticated(credential, "my-api");
+    var result = new L402Validator.ValidationResult(
+        credential, true, Set.of(), Map.of("tier", "premium")); // verifier-approved only
+    var token = PaygateAuthenticationToken.authenticated(result, "my-api");
     SecurityContextHolder.getContext().setAuthentication(token);
 
     // Call your controller or use MockMvc with .with(authentication(token))
@@ -733,13 +748,30 @@ void premiumEndpointRequiresL402() throws Exception {
 
 @Test
 void premiumEndpointAccessibleWithL402() throws Exception {
-    var token = PaygateAuthenticationToken.authenticated(credential, "my-api");
+    var token = PaygateAuthenticationToken.authenticated(validationResult, "my-api");
 
     mockMvc.perform(get("/api/premium/data")
             .with(authentication(token)))
             .andExpect(status().isOk());
 }
 ```
+
+---
+
+## Price integrity
+
+The Spring Security filter resolves the trusted request price before authentication and adds it to
+the L402 validation context. Price strategies run once per request. Insufficient signed evidence is
+challengeable with a fresh 402; unavailable or ambiguous evidence fails closed with 503. Declare
+`ROUTE_STABLE` only for genuinely fixed route-and-method pricing; undeclared routes are request
+dependent.
+
+### Security decision telemetry and evidence
+
+Spring Security preserves the same fixed, sanitized decision taxonomy as servlet enforcement.
+Observer or metric-sink failure cannot change authentication, rejection, rechallenge, or status
+mapping. M-1 through M-4 implementation and review evidence is tracked in
+`docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md`.
 
 ---
 

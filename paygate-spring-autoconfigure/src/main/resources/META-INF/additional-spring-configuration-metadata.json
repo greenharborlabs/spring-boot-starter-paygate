@@ -55,7 +55,7 @@
     {
       "name": "paygate.spring-security.custom-filter-chain-acknowledged",
       "type": "java.lang.Boolean",
-      "description": "Advanced-user acknowledgement that Paygate enforcement is intentionally wired outside the standard Spring Security FilterChainProxy. When false, Spring Security mode fails closed if no PaygateAuthenticationFilter is found in the effective filter chain.",
+      "description": "Compatibility acknowledgement for deployments that intentionally use custom Spring Security wiring. It cannot waive the required authentication filter, authentication-failure rate limiter, filter ordering, or dispatcher coverage checks.",
       "defaultValue": false
     },
     {
@@ -89,6 +89,30 @@
       "defaultValue": 20
     },
     {
+      "name": "paygate.rate-limit.max-buckets",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of client-identity token buckets retained by the local rate limiter. Must be at least 1.",
+      "defaultValue": 100000
+    },
+    {
+      "name": "paygate.rate-limit.aggregate.requests-per-second",
+      "type": "java.lang.Double",
+      "description": "Identity-independent invoice-challenge refill rate. Must be finite, greater than 0, and no more than 100000. The default per-instance limiter can be replaced with a shared AggregateInvoiceRateLimiter bean.",
+      "defaultValue": 100.0
+    },
+    {
+      "name": "paygate.rate-limit.aggregate.burst-size",
+      "type": "java.lang.Integer",
+      "description": "Identity-independent invoice-challenge burst capacity. Must be between 1 and 1000000, inclusive; aggregate limiting remains enabled whenever Paygate is enabled.",
+      "defaultValue": 200
+    },
+    {
+      "name": "paygate.routing.overlap-policy",
+      "type": "com.greenharborlabs.paygate.spring.PaygateProperties$OverlapPolicy",
+      "description": "Disposition for detected manual paid-route and unprotected MVC-route overlaps: WARN (default) or FAIL.",
+      "defaultValue": "WARN"
+    },
+    {
       "name": "paygate.rate-limit.ipv6-prefix-length",
       "type": "java.lang.Integer",
       "description": "IPv6 network prefix length used to group client addresses for challenge rate limiting. Must be between 0 and 128, inclusive; use 64 to group addresses by the standard IPv6 subnet.",
@@ -99,6 +123,18 @@
       "type": "java.lang.Integer",
       "description": "Maximum request body size in bytes accepted while processing payment-gated requests. Must be between 1 and 16777216, inclusive; larger requests are rejected to limit resource consumption.",
       "defaultValue": 8192
+    },
+    {
+      "name": "paygate.pricing.evaluation-timeout",
+      "type": "java.time.Duration",
+      "description": "Maximum time allowed for one named request-pricing strategy evaluation. Must be positive and no more than 60 seconds.",
+      "defaultValue": "1s"
+    },
+    {
+      "name": "paygate.pricing.max-concurrent-evaluations",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of named request-pricing strategy evaluations admitted concurrently. Must be between 1 and 1024; excess work is rejected instead of queued.",
+      "defaultValue": 64
     },
     {
       "name": "paygate.lightning.timeout-seconds",
@@ -127,6 +163,12 @@
       "name": "paygate.lnd.rpc-deadline-seconds",
       "type": "java.lang.Integer",
       "description": "Deadline in seconds for individual LND gRPC calls. Overrides paygate.lightning.timeout-seconds when set. If not set, the global lightning timeout is used."
+    },
+    {
+      "name": "paygate.lnd.strict-file-permissions",
+      "type": "java.lang.Boolean",
+      "description": "Require LND TLS certificate and macaroon files to be readable regular non-symlink files with strict POSIX permissions. Disabled by default for non-POSIX and managed-secret compatibility.",
+      "defaultValue": false
     },
     {
       "name": "paygate.lnbits.url",
@@ -207,6 +249,12 @@
       "type": "java.lang.Boolean",
       "description": "Whether the L402 protocol is enabled. When true, the gateway issues L402 macaroon+invoice challenges and accepts L402 credentials.",
       "defaultValue": true
+    },
+    {
+      "name": "paygate.protocols.l402.client-address-binding-enabled",
+      "type": "java.lang.Boolean",
+      "description": "When true, L402 credentials are bound to one canonical client address resolved from the transport peer or a fully trusted proxy chain. Existing unbound credentials become invalid; MPP is unchanged.",
+      "defaultValue": false
     },
     {
       "name": "paygate.protocols.mpp.enabled",

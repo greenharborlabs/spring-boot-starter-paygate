@@ -29,11 +29,13 @@ public final class ObservableRootKeyStore implements RootKeyStore {
 
   @Override
   public SensitiveBytes getRootKey(byte[] keyId) {
+    Objects.requireNonNull(keyId, "keyId must not be null");
     return delegate.getRootKey(keyId);
   }
 
   @Override
   public void revokeRootKey(byte[] keyId) {
+    Objects.requireNonNull(keyId, "keyId must not be null");
     delegate.revokeRootKey(keyId);
     for (RootKeyRevocationListener listener : listeners) {
       try {

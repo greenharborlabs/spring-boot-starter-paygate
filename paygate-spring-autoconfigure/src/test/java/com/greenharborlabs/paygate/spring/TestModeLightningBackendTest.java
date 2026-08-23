@@ -57,6 +57,7 @@ class TestModeLightningBackendTest {
     assertThat(looked.preimage()).hasSize(32);
     assertThat(looked.preimage()).isEqualTo(created.preimage());
     assertThat(looked.paymentHash()).isEqualTo(created.paymentHash());
+    assertThat(looked.amountSats()).isEqualTo(created.amountSats());
   }
 
   @Test

@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.example;
 
 import com.greenharborlabs.paygate.spring.PaymentRequired;
+import com.greenharborlabs.paygate.spring.PricingStability;
 import java.time.Instant;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,7 +29,10 @@ public class ExampleController {
     return new HealthResponse("ok");
   }
 
-  @PaymentRequired(priceSats = 5, description = "Premium quote of the day")
+  @PaymentRequired(
+      priceSats = 5,
+      description = "Premium quote of the day",
+      pricingStability = PricingStability.ROUTE_STABLE)
   @GetMapping(value = "/quote", produces = MediaType.APPLICATION_JSON_VALUE)
   public QuoteResponse quote() {
     return new QuoteResponse(
@@ -37,13 +41,17 @@ public class ExampleController {
         Instant.now().toString());
   }
 
-  @PaymentRequired(priceSats = 10)
+  @PaymentRequired(priceSats = 10, pricingStability = PricingStability.ROUTE_STABLE)
   @GetMapping(value = "/data", produces = MediaType.APPLICATION_JSON_VALUE)
   public DataResponse data() {
     return new DataResponse("premium content", Instant.now().toString());
   }
 
-  @PaymentRequired(priceSats = 50, timeoutSeconds = 3600, pricingStrategy = "analysisPricer")
+  @PaymentRequired(
+      priceSats = 50,
+      timeoutSeconds = 3600,
+      pricingStrategy = "analysisPricer",
+      pricingStability = PricingStability.REQUEST_DEPENDENT)
   @PostMapping(
       value = "/analyze",
       consumes = MediaType.APPLICATION_JSON_VALUE,

@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -563,6 +564,64 @@ class MacaroonVerifierTest {
               })
           .hasMessageContaining("missing required capabilities caveat")
           .hasMessageContaining("write");
+    }
+  }
+
+  @Nested
+  @DisplayName("canonical verifier key lookup")
+  class CanonicalVerifierKeyLookup {
+
+    @Test
+    void verifiesPaddedKnownKeyWithCanonicalEvaluationAndOutput() {
+      Caveat padded = new Caveat("\t tier ", "silver");
+      Macaroon macaroon =
+          createValidMacaroon(rootKey, identifier, "https://example.com", List.of(padded));
+      var evaluatedKeys = new java.util.concurrent.atomic.AtomicReference<String>();
+      CaveatVerifier verifier =
+          new CaveatVerifier() {
+            @Override
+            public String getKey() {
+              return "tier";
+            }
+
+            @Override
+            public void verify(Caveat caveat, L402VerificationContext ignored) {
+              evaluatedKeys.set(caveat.key());
+            }
+          };
+
+      assertThat(MacaroonVerifier.verifyCaveats(List.of(padded), List.of(verifier), context))
+          .containsEntry("tier", "silver")
+          .doesNotContainKey(padded.key());
+      assertThatCode(() -> MacaroonVerifier.verify(macaroon, rootKey, List.of(verifier), context))
+          .doesNotThrowAnyException();
+      assertThat(evaluatedKeys).hasValue("tier");
+    }
+
+    @Test
+    void groupsPaddedRepeatedKeysForMonotonicity() {
+      List<Caveat> caveats = List.of(new Caveat(" tier", "gold"), new Caveat("tier\t", "silver"));
+
+      assertThatThrownBy(
+              () ->
+                  MacaroonVerifier.verifyCaveats(
+                      caveats, List.of(monotonicVerifier("tier", false)), context))
+          .isInstanceOf(MacaroonVerificationException.class)
+          .hasMessageContaining("key: tier");
+    }
+
+    @Test
+    void skipsPaddedUnknownKeyAndRejectsPaddedRegistration() {
+      assertThatCode(
+              () ->
+                  MacaroonVerifier.verifyCaveats(
+                      List.of(new Caveat(" unknown\t", "value")), List.of(), context))
+          .doesNotThrowAnyException();
+
+      assertThatThrownBy(
+              () -> MacaroonVerifier.buildVerifierMap(List.of(acceptingVerifier(" tier"))))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("edge space or tab");
     }
   }
 }

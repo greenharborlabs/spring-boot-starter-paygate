@@ -32,10 +32,10 @@ public class PaygateEndpointRegistry {
   private static final PathPatternParser PATTERN_PARSER = new PathPatternParser();
   private static final long DEFAULT_TIMEOUT_SECONDS_FALLBACK = 3600;
   private static final int DEFAULT_MAX_VALUES_PER_CAVEAT = 50;
-  private static final String NO_CAPABILITY_SENTINEL = "~";
 
   private final long defaultTimeoutSeconds;
   private final int maxValuesPerCaveat;
+  private final PaygateProperties.OverlapPolicy overlapPolicy;
   private final List<RegisteredEndpoint> registrations = new CopyOnWriteArrayList<>();
 
   /**
@@ -44,7 +44,8 @@ public class PaygateEndpointRegistry {
    * @param defaultTimeoutSeconds the default credential timeout in seconds
    */
   public PaygateEndpointRegistry(long defaultTimeoutSeconds) {
-    this(defaultTimeoutSeconds, DEFAULT_MAX_VALUES_PER_CAVEAT);
+    this(
+        defaultTimeoutSeconds, DEFAULT_MAX_VALUES_PER_CAVEAT, PaygateProperties.OverlapPolicy.WARN);
   }
 
   /**
@@ -54,16 +55,29 @@ public class PaygateEndpointRegistry {
    * @param maxValuesPerCaveat the maximum number of capability values in one declaration
    */
   public PaygateEndpointRegistry(long defaultTimeoutSeconds, int maxValuesPerCaveat) {
+    this(defaultTimeoutSeconds, maxValuesPerCaveat, PaygateProperties.OverlapPolicy.WARN);
+  }
+
+  /** Creates a registry with the requested manual-paid/unprotected overlap policy. */
+  public PaygateEndpointRegistry(
+      long defaultTimeoutSeconds,
+      int maxValuesPerCaveat,
+      PaygateProperties.OverlapPolicy overlapPolicy) {
     if (maxValuesPerCaveat < 1) {
       throw new IllegalArgumentException("maxValuesPerCaveat must be >= 1");
     }
     this.defaultTimeoutSeconds = defaultTimeoutSeconds;
     this.maxValuesPerCaveat = maxValuesPerCaveat;
+    this.overlapPolicy =
+        java.util.Objects.requireNonNull(overlapPolicy, "overlapPolicy must not be null");
   }
 
   /** Creates a registry with the built-in default timeout of 3600 seconds. */
   public PaygateEndpointRegistry() {
-    this(DEFAULT_TIMEOUT_SECONDS_FALLBACK, DEFAULT_MAX_VALUES_PER_CAVEAT);
+    this(
+        DEFAULT_TIMEOUT_SECONDS_FALLBACK,
+        DEFAULT_MAX_VALUES_PER_CAVEAT,
+        PaygateProperties.OverlapPolicy.WARN);
   }
 
   /**
@@ -82,48 +96,7 @@ public class PaygateEndpointRegistry {
   }
 
   private PaygateEndpointConfig normalizeCapabilities(PaygateEndpointConfig config) {
-    String declaration = config.capability();
-    String normalized;
-    if (declaration == null || declaration.isBlank()) {
-      normalized = "";
-    } else {
-      int splitLimit =
-          maxValuesPerCaveat == Integer.MAX_VALUE ? Integer.MAX_VALUE : maxValuesPerCaveat + 1;
-      String[] segments = declaration.split(",", splitLimit);
-      if (segments.length > maxValuesPerCaveat) {
-        throw new IllegalArgumentException(
-            "Capability declaration has "
-                + segments.length
-                + " values, maximum allowed is "
-                + maxValuesPerCaveat);
-      }
-
-      var capabilities = new LinkedHashSet<String>();
-      for (String segment : segments) {
-        String capability = segment.trim();
-        if (capability.isEmpty()) {
-          throw new IllegalArgumentException("Capability declaration contains a blank segment");
-        }
-        if (NO_CAPABILITY_SENTINEL.equals(capability)) {
-          throw new IllegalArgumentException(
-              "Capability '~' is reserved for the internal no-capability state");
-        }
-        capabilities.add(capability);
-      }
-      normalized = String.join(",", capabilities);
-    }
-
-    if (normalized.equals(declaration)) {
-      return config;
-    }
-    return new PaygateEndpointConfig(
-        config.httpMethod(),
-        config.pathPattern(),
-        config.priceSats(),
-        config.timeoutSeconds(),
-        config.description(),
-        config.pricingStrategy(),
-        normalized);
+    return CapabilityDeclarationNormalizer.normalize(config, maxValuesPerCaveat);
   }
 
   /**
@@ -368,6 +341,40 @@ public class PaygateEndpointRegistry {
     }
   }
 
+  /**
+   * Checks manual paid routes against framework-owned unprotected MVC mappings after all mappings
+   * have been registered. Exact duplicate identities remain rejected at registration time.
+   */
+  public void validateManualRouteOverlaps() {
+    var findings = new LinkedHashSet<RouteOverlapAnalyzer.Finding>();
+    for (RegisteredEndpoint paid : registrations) {
+      if (paid.config() == null || paid.mappingInfo() != null) continue;
+      for (RegisteredEndpoint unprotected : registrations) {
+        if (unprotected.config() != null || unprotected.mappingInfo() == null) continue;
+        var finding =
+            RouteOverlapAnalyzer.analyze(
+                paid.policyMethod(),
+                paid.pattern().getPatternString(),
+                unprotected.policyMethod(),
+                unprotected.pattern().getPatternString());
+        if (finding != null) findings.add(finding);
+      }
+    }
+    for (RouteOverlapAnalyzer.Finding finding : findings) {
+      String message =
+          "Possible paid/unprotected route overlap: "
+              + finding.method()
+              + " paid="
+              + finding.paidPattern()
+              + " unprotected="
+              + finding.unprotectedPattern();
+      if (overlapPolicy == PaygateProperties.OverlapPolicy.FAIL) {
+        throw new IllegalStateException(message);
+      }
+      log.log(System.Logger.Level.WARNING, message);
+    }
+  }
+
   private void registerMappedEndpoint(
       PaygateEndpointConfig config,
       String policyMethod,
@@ -442,7 +449,8 @@ public class PaygateEndpointRegistry {
         timeout,
         annotation.description(),
         annotation.pricingStrategy(),
-        annotation.capability());
+        annotation.capability(),
+        annotation.pricingStability());
   }
 
   private static String normalizeMethod(String method) {

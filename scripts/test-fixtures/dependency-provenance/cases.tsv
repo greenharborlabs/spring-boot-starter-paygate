@@ -1,0 +1,9 @@
+# case	mutation
+missing-key	remove the committed keyring
+untrusted-signature	remove a scoped trusted-key entry
+checksum-change	change one SHA-256 value
+broad-exception	use a wildcard coordinate
+duplicate-exception	duplicate an exact exception coordinate
+orphaned-exception	reference an absent component
+expired-exception	use a past review date
+clean-resolution	validate the unmodified reviewed inputs

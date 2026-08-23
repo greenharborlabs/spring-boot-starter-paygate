@@ -1,5 +1,6 @@
 package com.greenharborlabs.paygate.core.macaroon;
 
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -18,15 +19,7 @@ public class ValidUntilCaveatVerifier implements CaveatVerifier {
 
   @Override
   public void verify(Caveat caveat, L402VerificationContext context) {
-    long epochSeconds;
-    try {
-      epochSeconds = Long.parseLong(caveat.value());
-    } catch (NumberFormatException e) {
-      throw new MacaroonVerificationException(
-          VerificationFailureReason.CREDENTIAL_EXPIRED,
-          "Invalid valid_until timestamp: " + caveat.value());
-    }
-    Instant expiresAt = Instant.ofEpochSecond(epochSeconds);
+    Instant expiresAt = parseExpiry(caveat.value());
 
     if (!expiresAt.isAfter(context.getCurrentTime())) {
       throw new MacaroonVerificationException(
@@ -46,12 +39,19 @@ public class ValidUntilCaveatVerifier implements CaveatVerifier {
   @Override
   public boolean isMoreRestrictive(Caveat previous, Caveat current) {
     try {
-      long previousEpoch = Long.parseLong(previous.value());
-      long currentEpoch = Long.parseLong(current.value());
-      return currentEpoch <= previousEpoch;
-    } catch (NumberFormatException _) {
+      return !parseExpiry(current.value()).isAfter(parseExpiry(previous.value()));
+    } catch (MacaroonVerificationException _) {
       // Malformed timestamps are rejected by verify(); treat as non-restrictive
       return false;
+    }
+  }
+
+  private static Instant parseExpiry(String value) {
+    try {
+      return Instant.ofEpochSecond(Long.parseLong(value));
+    } catch (NumberFormatException | DateTimeException exception) {
+      throw new MacaroonVerificationException(
+          VerificationFailureReason.CAVEAT_INVALID, "Invalid valid_until timestamp");
     }
   }
 }

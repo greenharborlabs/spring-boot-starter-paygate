@@ -3,6 +3,12 @@
 # workflow runner; it validates copied fixtures only.
 set -euo pipefail
 
+# GitHub-hosted runner images do not guarantee ripgrep. The workflow check below
+# uses a portable extended regular expression, so grep is an equivalent fallback.
+if ! command -v rg >/dev/null 2>&1; then
+  rg() { grep -E "$@"; }
+fi
+
 readonly SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPOSITORY_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
 readonly FIXTURE="$SCRIPT_DIR/test-fixtures/security/mutable-action.yml"
