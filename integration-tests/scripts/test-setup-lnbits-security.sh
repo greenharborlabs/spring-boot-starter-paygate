@@ -9,7 +9,7 @@ workspace=''
 fail() { printf 'LNbits setup-secret test failed: %s\n' "$*" >&2; exit 1; }
 cleanup() { [[ -n "$workspace" && -f "$workspace/.owned" ]] && rm -rf -- "$workspace"; }
 trap cleanup EXIT
-mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 resolve() {
   unset LNBITS_SETUP_PASSWORD LNBITS_RESOLVED_SETUP_PASSWORD
   LNBITS_SETUP_SECRET_FILE="$1"
