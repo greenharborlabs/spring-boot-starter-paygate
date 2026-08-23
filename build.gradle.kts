@@ -83,6 +83,15 @@ nexusPublishing {
 }
 
 val exampleModules = setOf("paygate-example-app", "paygate-example-app-spring-security")
+val dependencyCheckSuppressionTemplate =
+    layout.projectDirectory.file("config/dependency-check-suppressions.xml")
+val generatedDependencyCheckSuppressionFile =
+    layout.buildDirectory.file("dependency-check/dependency-check-suppressions.xml")
+val prepareDependencyCheckSuppressions = tasks.register<Copy>("prepareDependencyCheckSuppressions") {
+    from(dependencyCheckSuppressionTemplate)
+    into(generatedDependencyCheckSuppressionFile.map { it.asFile.parentFile })
+    filter { line: String -> line.replace("@PAYGATE_VERSION@", version.toString()) }
+}
 
 dependencyCheck {
     autoUpdate = true
@@ -90,10 +99,14 @@ dependencyCheck {
     failBuildOnCVSS = 0F
     formats = listOf("HTML", "JSON", "JUNIT")
     outputDirectory.set(layout.buildDirectory.dir("reports/dependency-check"))
-    suppressionFile = layout.projectDirectory.file("config/dependency-check-suppressions.xml").asFile.path
+    suppressionFile = generatedDependencyCheckSuppressionFile.get().asFile.path
     failBuildOnUnusedSuppressionRule = true
     nvd.datafeedUrl = "https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"
     nvd.apiKey = providers.environmentVariable("NVD_API_KEY").orNull
+}
+
+tasks.named("dependencyCheckAggregate") {
+    dependsOn(prepareDependencyCheckSuppressions)
 }
 
 subprojects {
