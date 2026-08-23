@@ -4,7 +4,7 @@ set -euo pipefail
 export LC_ALL=C
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-DEFAULT_LEDGER="$ROOT_DIR/specs/005-security-audit-hardening/finding-dispositions.md"
+DEFAULT_LEDGER="$ROOT_DIR/docs/security/LEGACY-SECURITY-FINDING-DISPOSITIONS.md"
 
 if (( $# > 1 )); then
   echo "Usage: scripts/validate-finding-dispositions.sh [ledger-path]" >&2
