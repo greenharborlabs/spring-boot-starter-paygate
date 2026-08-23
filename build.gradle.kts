@@ -90,7 +90,8 @@ val generatedDependencyCheckSuppressionFile =
 val prepareDependencyCheckSuppressions = tasks.register<Copy>("prepareDependencyCheckSuppressions") {
     from(dependencyCheckSuppressionTemplate)
     into(generatedDependencyCheckSuppressionFile.map { it.asFile.parentFile })
-    filter { line: String -> line.replace("@PAYGATE_VERSION@", version.toString()) }
+    // The filter replaces its @...@ token delimiters as well, so retain the PURL version separator.
+    filter { line: String -> line.replace("@PAYGATE_VERSION@", "@${version}") }
 }
 
 dependencyCheck {
