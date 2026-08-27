@@ -64,3 +64,4 @@ tls.cert
 /integration-tests/.l402-credential.env
 /integration-tests/.lnbits-setup-secret.json
 /reports/
+.gstack/

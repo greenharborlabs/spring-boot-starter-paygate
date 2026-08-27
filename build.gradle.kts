@@ -106,10 +106,6 @@ dependencyCheck {
     nvd.apiKey = providers.environmentVariable("NVD_API_KEY").orNull
 }
 
-tasks.named("dependencyCheckAggregate") {
-    dependsOn(prepareDependencyCheckSuppressions)
-}
-
 subprojects {
     if (project.name in exampleModules) {
         pluginManager.apply("java")
@@ -316,6 +312,35 @@ subprojects {
     }
 }
 
+val dependencyCheckArtifactTasks = subprojects.map { it.tasks.named("jar") }
+val dependencyCheckAggregate = tasks.named("dependencyCheckAggregate") {
+    dependsOn(prepareDependencyCheckSuppressions)
+    // Aggregate resolves project artifacts dynamically, so Gradle cannot infer their producer tasks.
+    dependsOn(dependencyCheckArtifactTasks)
+}
+
+val verifyDependencyCheckArtifactInputs = tasks.register("verifyDependencyCheckArtifactInputs") {
+    group = "verification"
+    description = "Verifies that Dependency-Check builds every internal artifact before scanning."
+
+    doLast {
+        val aggregateTask = dependencyCheckAggregate.get()
+        val configuredDependencies = aggregateTask.taskDependencies
+            .getDependencies(aggregateTask)
+            .map { it.path }
+            .toSet()
+        val missingArtifactTasks = dependencyCheckArtifactTasks
+            .map { it.get().path }
+            .filterNot(configuredDependencies::contains)
+
+        if (missingArtifactTasks.isNotEmpty()) {
+            throw GradleException(
+                "dependencyCheckAggregate is missing artifact producers: ${missingArtifactTasks.joinToString(", ")}"
+            )
+        }
+    }
+}
+
 // Install git pre-commit hook that runs spotlessApply before each commit
 tasks.register("installGitHook") {
     group = "verification"
@@ -504,6 +529,7 @@ tasks.register("check") {
     dependsOn("verifyDependencyProvenanceNegativeControls")
     dependsOn("verifyRepositorySecretIgnoreControls")
     dependsOn("verifyDependencyAdvisoryWorkflowControls")
+    dependsOn(verifyDependencyCheckArtifactInputs)
     dependsOn(validateLowSecurityFixtures)
     dependsOn(verifyLowSecurityFixtureNegativeControls)
     dependsOn(verifyLnbitsSetupSecretControls)
