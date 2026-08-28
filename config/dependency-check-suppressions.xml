@@ -8,22 +8,4 @@
         <packageUrl>pkg:maven/com.greenharborlabs/paygate-lightning-lnbits@PAYGATE_VERSION@</packageUrl>
         <cve>CVE-2025-32013</cve>
     </suppress>
-    <suppress until="2026-09-15Z">
-        <notes><![CDATA[
-            CVE-2026-66299 affects Tomcat's bundled WebSocket chat example. The embedded core JAR
-            does not contain the examples web application. Remove this disposition when 11.0.25
-            is available and adopted.
-        ]]></notes>
-        <packageUrl>pkg:maven/org.apache.tomcat.embed/tomcat-embed-core@11.0.24</packageUrl>
-        <cve>CVE-2026-66299</cve>
-    </suppress>
-    <suppress until="2026-09-15Z">
-        <notes><![CDATA[
-            CVE-2026-66299 affects Tomcat's bundled WebSocket chat example. The embedded WebSocket
-            JAR does not contain the examples web application. Remove this disposition when
-            11.0.25 is available and adopted.
-        ]]></notes>
-        <packageUrl>pkg:maven/org.apache.tomcat.embed/tomcat-embed-websocket@11.0.24</packageUrl>
-        <cve>CVE-2026-66299</cve>
-    </suppress>
 </suppressions>
