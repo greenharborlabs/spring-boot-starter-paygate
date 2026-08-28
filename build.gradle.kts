@@ -10,7 +10,7 @@ plugins {
 
 val springBootVersion = "4.0.7"
 val log4jVersion = "2.25.5"
-val tomcatVersion = "11.0.24"
+val tomcatVersion = "11.0.25"
 val caffeineVersion = "3.2.3"
 val grpcVersion = "1.80.0"
 val protobufVersion = "4.29.3"
