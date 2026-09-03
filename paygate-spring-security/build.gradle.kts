@@ -17,5 +17,4 @@ dependencies {
     testRuntimeOnly(project(":paygate-protocol-l402"))
     testImplementation("org.mockito:mockito-core")
     testImplementation("org.springframework:spring-test")
-    testImplementation("jakarta.servlet:jakarta.servlet-api")
 }
