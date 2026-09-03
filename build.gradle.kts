@@ -51,6 +51,9 @@ dependencyAnalysis {
             onIncorrectConfiguration {
                 severity("warn")
             }
+            onDuplicateClassWarnings {
+                severity("fail")
+            }
         }
 
         // Example apps intentionally depend on starters which aggregate transitive deps
