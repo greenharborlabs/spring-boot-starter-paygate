@@ -1,5 +1,5 @@
 plugins {
-    id("org.springframework.boot") version "4.0.7" apply false
+    id("org.springframework.boot") version "4.0.8" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
@@ -8,7 +8,7 @@ plugins {
     id("org.owasp.dependencycheck") version "13.0.0"
 }
 
-val springBootVersion = "4.0.7"
+val springBootVersion = "4.0.8"
 val log4jVersion = "2.25.5"
 val tomcatVersion = "11.0.25"
 val caffeineVersion = "3.2.3"
