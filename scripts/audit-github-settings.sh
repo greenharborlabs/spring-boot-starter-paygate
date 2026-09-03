@@ -36,7 +36,7 @@ validate_expected_configuration() {
     and (.actions.patternsAllowed | index("actions/attest-build-provenance/predicate@*") != null)
     and (.actions.patternsAllowed | index("actions/attest@*") != null)
     and .ruleset.includeRefs == ["refs/heads/main"]
-    and .ruleset.requiredStatusChecks == ["CI / pr-gate", "Security / security-gate"]
+    and .ruleset.requiredStatusChecks == ["pr-gate", "security-gate"]
     and .ruleset.requiredApprovals == 0
     and .ruleset.requireConversationResolution == true
     and .ruleset.blockDeletion == true

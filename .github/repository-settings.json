@@ -43,7 +43,7 @@
     "name": "protected-main",
     "enforcement": "active",
     "includeRefs": ["refs/heads/main"],
-    "requiredStatusChecks": ["CI / pr-gate", "Security / security-gate"],
+    "requiredStatusChecks": ["pr-gate", "security-gate"],
     "strictStatusChecks": true,
     "requiredApprovals": 0,
     "requireConversationResolution": true,
