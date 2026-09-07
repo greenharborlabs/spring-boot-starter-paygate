@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "evidenceAsOf": "2026-09-07",
+  "scope": "Phase 0 T0 paper review; no live capability gate is passed",
+  "receiverDaemon": {
+    "repository": "https://github.com/lightninglabs/wavelength",
+    "release": "v0.1.1",
+    "commit": "2e89c924e2e10095f7baf736bc9eefdabcd836ce",
+    "sourceArchiveSha256": "d19cd903e1f19f1b0f547e83ce60e9113c29014bd965b2e001efebe6f077ce99",
+    "requiredBuildTarget": "make build-wavewalletrpc",
+    "requiredBuildTags": ["wavewalletrpc", "swapruntime"],
+    "goDirective": "1.26.0",
+    "network": "signet",
+    "warning": "Published waved release binaries are default builds with no RELEASE_TAGS and do not expose the required wallet RPC surface; build the pinned source target."
+  },
+  "browserSdk": {
+    "repository": "https://github.com/lightninglabs/wavelength-sdk",
+    "release": "v0.1.1",
+    "commit": "cd136619838dd15aa74c11ab4545a5788c48ad94",
+    "runtimeManifestVersion": "v0.1.1",
+    "packages": [
+      {
+        "name": "@lightninglabs/wavelength-core",
+        "version": "0.1.1",
+        "integrity": "sha512-I3bGQPMm0ZAYLvIe7K92KIqHp/QRjVvGgWU0FVv5Ebt5h3w9eP24LAa5TKKip8xaeG4fSCI8qgb0ExVfQVan7g==",
+        "license": "MIT"
+      },
+      {
+        "name": "@lightninglabs/wavelength-web",
+        "version": "0.1.1",
+        "integrity": "sha512-pithOaW2PfaWIUoo1ZM6hjjHXbWYf1py6TJafb9L1upwaTeYZpbgSvueFjblKeybtTBjLHeQCCXXjkPy0zYP3A==",
+        "license": "MIT"
+      }
+    ],
+    "runtimeArchive": {
+      "name": "Wavewalletdk.wasm.tar.gz",
+      "sha256": "15c04c53d9fa9e31e6529ce6f574d03e469afa39574138311da8cd2caee18d17",
+      "assetsSha256": {
+        "wavewalletdk.wasm": "868e8a7b56c49dd150e62238ffc26a7654c1e2033c8c889aab80ece88e704662",
+        "wavewalletdk.wasm.gz": "4090ebaea89c31bbd4e9e4dea844bfafcbdbc13803caed640faddf3417fbf809",
+        "wasm_exec.js": "0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14",
+        "sqlite-bridge.js": "5af9600180007a6c1ce79ce53f1d4bd983c3cabc752761d77b449fe512a17066",
+        "sqlite-worker.js": "75d368280451880b5e7eac4bbce7d1a2d90b1546734ad6783d9d8712ddda37e9",
+        "sqlite3.js": "ceb7e58031eebac151c5a0374bc8bb82dff6221bac55947662011a7cb485bac9",
+        "sqlite3.wasm": "4dd52fadf5d76e0abee36e07441baa2b53a760d1591d3ba1200eca88e11e82c6",
+        "sqlite3-opfs-async-proxy.js": "4ea2bcbd715b0d56089fc871ea241f8c5985d8669d1ddecaab4d56a8da806ce9"
+      }
+    }
+  },
+  "jvmBolt11Decoder": {
+    "coordinate": "fr.acinq.lightning:lightning-kmp-core-jvm:1.13.0",
+    "repository": "https://github.com/ACINQ/lightning-kmp",
+    "tagCommit": "956299158b83023485001d8d6f66f6b5dc8ee366",
+    "jarSha256": "1e3b430ac93d7f3e0f9ed7501529b34b97620764cda7daf66ab0d9c39bd38ccc",
+    "moduleMetadataSha256": "74997b36b56d08ba9b4d13def7db88722109fa93d832f34b48d22db72f1af240",
+    "license": "Apache-2.0",
+    "decision": "approved for the isolated Phase 0 spike",
+    "verified": "BOLT 11 specification vector decoded amount, payment hash, timestamp, explicit expiry and checksum corruption on Java 25",
+    "risks": [
+      "Large Kotlin/Ktor transitive graph for a decoder-only use",
+      "Native secp256k1 JNI loads with a Java 25 native-access warning",
+      "BOLT11 lntb identifies the testnet family, not signet independently"
+    ]
+  },
+  "browserBolt11Decoder": {
+    "package": "farrier-kit",
+    "version": "1.1.3",
+    "integrity": "sha512-vxtRLVJXRNwpX4sAxt0Yg/VJm7LnV9+JreZcmm3VKnbqABrmZi/HqcMOSLYWs0hCMBJuE0nYZAChSUaLXm6Kvw==",
+    "license": "MIT",
+    "decision": "candidate for spike validation",
+    "reason": "Browser ESM/CJS exports, checksum/network/amount/hash/expiry decoding, BOLT vectors and differential tests; it intentionally does not recover or validate the invoice signature.",
+    "liveGate": "Cross-check a real v0.1.1 signet invoice and complete dependency review before T6."
+  },
+  "browserL402": {
+    "decision": "unresolved dependency gate",
+    "evaluated": [
+      {
+        "package": "l402-requests",
+        "version": "0.8.0",
+        "integrity": "sha512-0XLosLOmuILMHLxZLrV0Onoi+Vw9my2RQ5AFnk4kg/Gu4SCJCRIUBLnBJvuBjOaYMbmz8QQeylyHdoZ+gc5N8Q==",
+        "license": "MIT",
+        "result": "Reject as a browser integration dependency: root exports include Node-only wallet modules; its custom Wallet payInvoice contract also cannot represent prepare/dispatch/reconcile recovery. Its parser/header builder may inform a later reviewed narrow choice."
+      },
+      {
+        "package": "l402",
+        "version": "0.5.1",
+        "integrity": "sha512-KwmRlCfdatw1k79CimizO+IegzGsNzFeNKuqGL4kIgkV2NYm2nJpFFBfuZz2uOXUhF5CL3T7jiFco0fUv6TAYQ==",
+        "license": "MIT",
+        "result": "Reject: last release 2024-05-13 and its Axios flow dispatches and retries without the required durable unknown-outcome state machine."
+      }
+    ],
+    "gate": "Do not implement a local codec or begin T6 until a maintained browser-safe package is approved or a separate security review explicitly approves the added local surface."
+  },
+  "documentedApiCandidates": {
+    "receiver": ["Status", "Recv", "InspectActivity", "List"],
+    "payer": ["prepareSend", "sendPrepared", "subscribe", "startActivity", "list"],
+    "recovery": "Persist invoice, macaroon, target, payment hash and pre-dispatch state; reconcile terminal send events through includeExisting activity replay without redispatch."
+  },
+  "liveGates": [
+    "payer preimage is emitted and hash-valid for an externally supplied invoice",
+    "includeExisting replay recovers that preimage after reload and a lost send response",
+    "exactly one dispatch occurs during recovery and timeout is not misclassified as cancellation",
+    "receiver activity reconstructs every Invoice field after waved restart within the declared lookup envelope",
+    "Status.ready behavior during coordinator and swap outages",
+    "actual receive mode, asset, fee, control, redemption and exit properties",
+    "real signet BOLT11 and complete serialized HTTP header sizes",
+    "browser/version/CSP/OPFS/storage behavior in a clean profile"
+  ]
+}
