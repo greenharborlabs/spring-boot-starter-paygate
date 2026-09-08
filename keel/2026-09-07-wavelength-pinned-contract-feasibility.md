@@ -1,5 +1,5 @@
 # Wavelength Pinned Contract Feasibility
-Status: review
+Status: closed
 Base revision: 901de77496b3d3f683649b1ade7734b6d94e73a1
 Review scope: docs/wavelength-spike/setup.md, docs/wavelength-spike/compatibility.json, docs/wavelength-spike/contract-appendix.md
 
@@ -21,8 +21,14 @@ Perform a version-specific contract/dependency review only: inspect official Wav
 ## Review
 Implementation commit: `4a7c4688c83728cde78838ca22033b4d8fa34c10`. `compatibility.json` parsed successfully. ACINQ `Bolt11Invoice` 1.13.0 decoded the BOLT 11 specification amount/hash/timestamp/expiry vector and rejected checksum corruption on Java 25; the native-access warning is recorded. Scope inspection found documentation only, no harness/payment/Phase 1 work, and all live gates remain explicit. Awaiting fresh-context review.
 
+### Attempt 1
+Reviewed revision: 4a7c4688c83728cde78838ca22033b4d8fa34c10
+Verdict: pass
+Findings and dispositions: No findings; no rework required.
+Verification: `git rev-parse HEAD` -> `80c7ab54350f777472a84c49ca02abba118e0eb5`; scoped paths are unchanged from implementation commit `4a7c4688c83728cde78838ca22033b4d8fa34c10`. `python3 -m json.tool docs/wavelength-spike/compatibility.json` parsed successfully. Temporary Gradle/Java check using `fr.acinq.lightning:lightning-kmp-core-jvm:1.13.0` decoded the BOLT 11 specification vector for amount/hash/timestamp/expiry and rejected a checksum-corrupted invoice, with the expected Java 25 native-access warning. `git diff --name-only 901de77496b3d3f683649b1ade7734b6d94e73a1..4a7c4688c83728cde78838ca22033b4d8fa34c10` listed only the three scoped docs. Review confirmed exact version pins, JVM BOLT11 feasibility assessment, documented-vs-live capability separation, retained live/promotion gates, and no harness, payment, or Phase 1 task implementation.
+
 ## Outcome
-Pending fresh-context review.
+Completed T0 in implementation revision `4a7c4688c83728cde78838ca22033b4d8fa34c10`. The [setup guide](../docs/wavelength-spike/setup.md), [pinned compatibility manifest](../docs/wavelength-spike/compatibility.json), and [contract appendix](../docs/wavelength-spike/contract-appendix.md) pin Wavelength daemon/SDK/runtime artifacts, select the ACINQ JVM BOLT11 decoder for the isolated spike, and separate source-documented payer/receiver capabilities from funded live gates. Offline verification parsed the manifest and decoded the BOLT11 amount, hash, timestamp, and expiry while rejecting checksum corruption on Java 25. Fresh-context review passed with no findings and confirmed the reviewed scope is unchanged at current `HEAD`. Material limits remain explicit: no payment or live recovery/restart proof occurred, Java native access and decoder transitives need spike isolation, the browser L402 dependency is unresolved, and every Phase 0 and production promotion gate remains in force.
 
 ## Next action
-Run fresh-context Keel review of the recorded scope and commit.
+Plan T1 Gradle isolation from the [Phase 0 implementation tasks](../plans/wavelength-phase-0.md#implementation-tasks).
