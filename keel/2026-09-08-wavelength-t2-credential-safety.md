@@ -1,5 +1,5 @@
 # Wavelength T2 Credential Safety
-Status: review
+Status: closed
 Base revision: 9d1fe48b02c9b2f473350848503cb368dd78bee9
 Review scope: paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidator.java, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidatorTest.java
 
@@ -26,8 +26,14 @@ Implement only [Phase 0 T2](../plans/wavelength-phase-0.md#implementation-tasks)
 ## Review
 Implementation commit: `76f31efec39df6cc21735ddb362db6e20e94cc18`. Before implementation, the isolated offline task succeeded credential-free as `NO-SOURCE`, confirming T1 remained available without live work. The focused validator suite and full `wavelengthSpikeTest` task each passed with 13 tests and no skips; result/report scans found no temporary credential path or value marker. `spotlessCheck -Pintegration` passed. T2 is checked in the local Phase 0 plan, and T3 was not started. Awaiting fresh-context review.
 
+### Attempt 1
+Reviewed revision: ed7f8ee8226a8d9628cd10bdc60a9a3dbfb2daf1
+Verdict: pass
+Findings and dispositions: No findings; no rework required.
+Verification: `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon` succeeded (initially UP-TO-DATE); `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon --rerun-tasks` succeeded with 13 tests, 0 failures, 0 errors, 0 skipped in the wavelengthSpikeTest XML reports. Scoped paths were clean before review; only the unrelated staged T1 record relocation was present.
+
 ## Outcome
-Pending fresh-context review.
+Completed T2 in implementation revision `76f31efec39df6cc21735ddb362db6e20e94cc18`. The package-private [spike validator](../paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidator.java) mirrors the LND safety policy without widening production API: it fails closed for unavailable, unreadable, non-regular, symlinked, permissive, or unassessable credential files and emits only fixed path-free errors. The [temporary-file tests](../paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidatorTest.java) passed through the isolated offline task with 13 tests and no skips; rerun verification also passed with 0 failures/errors/skips, and `spotlessCheck -Pintegration` passed. Fresh-context review at `ed7f8ee8226a8d9628cd10bdc60a9a3dbfb2daf1` passed with no findings and confirmed the review scope remained clean. Permission coverage requires a POSIX-capable filesystem; the implementation conservatively rejects unsupported POSIX assessment. T2 is complete in the local [Phase 0 plan](../plans/wavelength-phase-0.md#implementation-tasks), and no T3 implementation was started.
 
 ## Next action
-Run fresh-context Keel review; do not begin T3.
+Plan [Phase 0 T3 transport and evidence safety](../plans/wavelength-phase-0.md#implementation-tasks).
