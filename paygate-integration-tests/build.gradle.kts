@@ -8,15 +8,22 @@ val protobufVersion: String by extra
 // This module is excluded from the default build.
 // Run with: ./gradlew :paygate-integration-tests:test -Pintegration
 // Spring Security tests: ./gradlew :paygate-integration-tests:securityTest -Pintegration
+// Live Wavelength spike: ./gradlew :paygate-integration-tests:wavelengthSpike -PwavelengthSpike
+// Offline Wavelength tests: ./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration
 
-// Separate source set for Spring Security integration tests.
-// The security example app and the plain example app have overlapping
-// component-scanned packages, so they cannot share a classpath.
-sourceSets {
-    create("securityTest") {
-        compileClasspath += sourceSets.main.get().output
-        runtimeClasspath += sourceSets.main.get().output
-    }
+// Separate source sets keep overlapping Spring applications and the funded Wavelength spike out
+// of each other's test discovery and out of the ordinary test lifecycle.
+val securityTestSourceSet = sourceSets.create("securityTest") {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+val wavelengthSpikeSourceSet = sourceSets.create("wavelengthSpike") {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+val wavelengthSpikeTestSourceSet = sourceSets.create("wavelengthSpikeTest") {
+    compileClasspath += sourceSets.main.get().output + wavelengthSpikeSourceSet.output
+    runtimeClasspath += sourceSets.main.get().output + wavelengthSpikeSourceSet.output
 }
 
 val securityTestImplementation by configurations.getting {
@@ -25,6 +32,18 @@ val securityTestImplementation by configurations.getting {
 val securityTestRuntimeOnly by configurations.getting {
     extendsFrom(configurations.runtimeOnly.get())
     extendsFrom(configurations.testRuntimeOnly.get())
+}
+val wavelengthSpikeImplementation by configurations.getting {
+    extendsFrom(configurations.testImplementation.get())
+}
+val wavelengthSpikeRuntimeOnly by configurations.getting {
+    extendsFrom(configurations.testRuntimeOnly.get())
+}
+val wavelengthSpikeTestImplementation by configurations.getting {
+    extendsFrom(wavelengthSpikeImplementation)
+}
+val wavelengthSpikeTestRuntimeOnly by configurations.getting {
+    extendsFrom(wavelengthSpikeRuntimeOnly)
 }
 
 dependencies {
@@ -56,14 +75,44 @@ tasks.test {
 val securityTest = tasks.register<Test>("securityTest") {
     description = "Runs Spring Security integration tests"
     group = "verification"
-    testClassesDirs = sourceSets["securityTest"].output.classesDirs
-    classpath = sourceSets["securityTest"].runtimeClasspath
+    testClassesDirs = securityTestSourceSet.output.classesDirs
+    classpath = securityTestSourceSet.runtimeClasspath
     useJUnitPlatform {
         includeTags("integration")
     }
 }
 
-// Wire securityTest into the check lifecycle when running with -Pintegration
+val requireWavelengthSpikeOptIn = tasks.register("requireWavelengthSpikeOptIn") {
+    description = "Requires explicit opt-in before the funded Wavelength spike can run"
+
+    doLast {
+        if (!providers.gradleProperty("wavelengthSpike").isPresent) {
+            throw GradleException(
+                "wavelengthSpike requires explicit -PwavelengthSpike opt-in; module inclusion alone cannot run live work."
+            )
+        }
+    }
+}
+
+val wavelengthSpike = tasks.register<Test>("wavelengthSpike") {
+    description = "Runs the explicitly opted-in live Wavelength signet capability spike"
+    group = "verification"
+    dependsOn(requireWavelengthSpikeOptIn)
+    testClassesDirs = wavelengthSpikeSourceSet.output.classesDirs
+    classpath = wavelengthSpikeSourceSet.runtimeClasspath
+    useJUnitPlatform()
+}
+
+val wavelengthSpikeTest = tasks.register<Test>("wavelengthSpikeTest") {
+    description = "Runs deterministic offline tests for the Wavelength spike"
+    group = "verification"
+    testClassesDirs = wavelengthSpikeTestSourceSet.output.classesDirs
+    classpath = wavelengthSpikeTestSourceSet.runtimeClasspath
+    useJUnitPlatform()
+}
+
+// Wire securityTest into the check lifecycle when running with -Pintegration.
+// The Wavelength tasks remain explicit-only and are deliberately not lifecycle dependencies.
 tasks.named("check") {
     dependsOn(securityTest)
 }

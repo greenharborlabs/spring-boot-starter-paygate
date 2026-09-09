@@ -26,7 +26,11 @@ include(
 )
 
 // Integration test module is excluded from the default build.
-// Include with: ./gradlew :paygate-integration-tests:test -Pintegration
-if (providers.gradleProperty("integration").isPresent) {
+// Include ordinary integration tests with -Pintegration, or the isolated live Wavelength spike
+// with -PwavelengthSpike. Module inclusion alone never starts live spike work.
+if (
+    providers.gradleProperty("integration").isPresent ||
+        providers.gradleProperty("wavelengthSpike").isPresent
+) {
     include("paygate-integration-tests")
 }
