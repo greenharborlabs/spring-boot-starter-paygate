@@ -1,7 +1,7 @@
 # Wavelength T2 Credential Safety
-Status: working
+Status: review
 Base revision: 9d1fe48b02c9b2f473350848503cb368dd78bee9
-Review scope: paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidator.java, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidatorTest.java, plans/wavelength-phase-0.md
+Review scope: paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidator.java, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidatorTest.java
 
 ## Goal
 Implement only [Phase 0 T2](../plans/wavelength-phase-0.md#implementation-tasks): a source-set-local Wavelength spike credential-file validator accepts only readable, regular, non-symlink files satisfying the repository's restrictive POSIX policy. Acceptance evidence is deterministic temporary-file coverage run solely through `wavelengthSpikeTest`, with fixed failures that expose neither credential values nor paths, followed by marking T2 complete only after those checks pass.
@@ -18,16 +18,16 @@ Implement only [Phase 0 T2](../plans/wavelength-phase-0.md#implementation-tasks)
 - Put all deterministic coverage in the matching `wavelengthSpikeTest` package using JUnit 5, AssertJ, and temporary files. Permission-specific cases will require a POSIX-capable temporary filesystem and restore permissions needed for cleanup. Reject sharing or making `LndCredentialFileValidator` public because that widens production API for spike-only reuse.
 
 ## Tasks
-- [ ] Re-run `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon` before implementation to verify T1 still provides the isolated credential-free offline task and no live dependency.
-- [ ] Implement `SpikeCredentialFileValidator` with strict no-follow file-type, readability, and POSIX-permission checks plus fixed safe failures.
-- [ ] Add temporary-file tests for accepted restrictive modes and rejected missing/non-regular/symlink/unreadable/permissive cases; assert failures contain neither path nor credential-value markers and produce no logging.
-- [ ] Run the focused validator tests and full `wavelengthSpikeTest` task, inspect output for secret/path markers, and update [T2](../plans/wavelength-phase-0.md#implementation-tasks) to complete only if all acceptance criteria pass; stop before T3.
+- [x] Re-run `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon` before implementation to verify T1 still provides the isolated credential-free offline task and no live dependency.
+- [x] Implement `SpikeCredentialFileValidator` with strict no-follow file-type, readability, and POSIX-permission checks plus fixed safe failures.
+- [x] Add temporary-file tests for accepted restrictive modes and rejected missing/non-regular/symlink/unreadable/permissive cases; assert failures contain neither path nor credential-value markers and produce no logging.
+- [x] Run the focused validator tests and full `wavelengthSpikeTest` task, inspect output for secret/path markers, and update [T2](../plans/wavelength-phase-0.md#implementation-tasks) to complete only if all acceptance criteria pass; stop before T3.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation commit: `76f31efec39df6cc21735ddb362db6e20e94cc18`. Before implementation, the isolated offline task succeeded credential-free as `NO-SOURCE`, confirming T1 remained available without live work. The focused validator suite and full `wavelengthSpikeTest` task each passed with 13 tests and no skips; result/report scans found no temporary credential path or value marker. `spotlessCheck -Pintegration` passed. T2 is checked in the local Phase 0 plan, and T3 was not started. Awaiting fresh-context review.
 
 ## Outcome
-Pending.
+Pending fresh-context review.
 
 ## Next action
-Approve or revise this plan.
+Run fresh-context Keel review; do not begin T3.
