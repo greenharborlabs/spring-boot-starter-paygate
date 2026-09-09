@@ -1,5 +1,5 @@
 # Wavelength T1 Gradle Isolation
-Status: working
+Status: review
 Base revision: 2421432504eb3e519d8e14006affe61f777afa05
 Review scope: settings.gradle.kts, paygate-integration-tests/build.gradle.kts
 
@@ -19,16 +19,16 @@ Implement only T1 from the [Phase 0 execution plan](../wavelength-phase-0.md#imp
 - Leave forced-fresh execution, mandatory preflight/evidence validation, and cache controls to T4 as assigned by the authoritative task sequence; T1 proves isolation and the opt-in boundary without implementing later gates.
 
 ## Tasks
-- [ ] Update `settings.gradle.kts` and `paygate-integration-tests/build.gradle.kts` with the two isolated source sets, explicit tasks, classpaths/configuration inheritance, module inclusion condition, and live opt-in guard.
-- [ ] Verify task resolution and dry-run graphs for default `test`, `build -Pintegration`, `check -PwavelengthSpike`, and `releaseReadiness -Pintegration`; assert no graph contains `:paygate-integration-tests:wavelengthSpike` unless explicitly requested.
-- [ ] Verify the canonical live command resolves with `-PwavelengthSpike`, direct live invocation with only `-Pintegration` fails the opt-in guard before live work, and `wavelengthSpikeTest -Pintegration` succeeds without credentials, daemon, or funding.
-- [ ] Run the ordinary `./gradlew build` and `./gradlew build -Pintegration` checks, record concise results in this record, and mark T1 complete in the local Phase 0 checklist only after every acceptance criterion passes.
+- [x] Update `settings.gradle.kts` and `paygate-integration-tests/build.gradle.kts` with the two isolated source sets, explicit tasks, classpaths/configuration inheritance, module inclusion condition, and live opt-in guard.
+- [x] Verify task resolution and dry-run graphs for default `test`, `build -Pintegration`, `check -PwavelengthSpike`, and `releaseReadiness -Pintegration`; assert no graph contains `:paygate-integration-tests:wavelengthSpike` unless explicitly requested.
+- [x] Verify the canonical live command resolves with `-PwavelengthSpike`, direct live invocation with only `-Pintegration` fails the opt-in guard before live work, and `wavelengthSpikeTest -Pintegration` succeeds without credentials, daemon, or funding.
+- [x] Run the ordinary `./gradlew build` and `./gradlew build -Pintegration` checks, record concise results in this record, and mark T1 complete in the local Phase 0 checklist only after every acceptance criterion passes.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation commit: `f6b2d4fdf8825d62d91d32891a77b268fd07f009`. Task listing with `-PwavelengthSpike` resolved both dedicated tasks and source sets. Dry runs of default `test`, `build -Pintegration`, `check -PwavelengthSpike`, and `releaseReadiness -Pintegration` contained neither explicit Wavelength task nor the live opt-in guard; the canonical live dry run contained the guard and live task. An actual live-task request with only `-Pintegration` failed at `requireWavelengthSpikeOptIn`, before the live test task started. `wavelengthSpikeTest -Pintegration --no-daemon` succeeded in an empty environment with no credentials or Wavelength daemon (currently `NO-SOURCE`, as expected before T2). `./gradlew build` and `./gradlew build -Pintegration` both passed. T1 is checked in the local Phase 0 plan. Awaiting fresh-context review.
 
 ## Outcome
-Pending.
+Pending fresh-context review.
 
 ## Next action
-Approve or revise this plan.
+Run fresh-context Keel review; do not begin T2.
