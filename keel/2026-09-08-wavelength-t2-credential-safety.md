@@ -1,0 +1,33 @@
+# Wavelength T2 Credential Safety
+Status: working
+Base revision: 9d1fe48b02c9b2f473350848503cb368dd78bee9
+Review scope: paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidator.java, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/SpikeCredentialFileValidatorTest.java, plans/wavelength-phase-0.md
+
+## Goal
+Implement only [Phase 0 T2](../plans/wavelength-phase-0.md#implementation-tasks): a source-set-local Wavelength spike credential-file validator accepts only readable, regular, non-symlink files satisfying the repository's restrictive POSIX policy. Acceptance evidence is deterministic temporary-file coverage run solely through `wavelengthSpikeTest`, with fixed failures that expose neither credential values nor paths, followed by marking T2 complete only after those checks pass.
+
+## Constraints
+- T1's [closed record](2026-09-08-wavelength-t1-gradle-isolation.md) and reviewed [integration-module build](../paygate-integration-tests/build.gradle.kts) establish the isolated offline task: it discovers only `wavelengthSpikeTest` output, compiles against spike helpers, has no live/preflight dependency, and previously ran credential-free as `NO-SOURCE`. Revalidate that boundary before relying on it; do not invoke live Wavelength work.
+- Mirror the applicable strict rules from the package-private [LND validator](../paygate-lightning-lnd/src/main/java/com/greenharborlabs/paygate/lightning/lnd/LndCredentialFileValidator.java) locally: readable, regular, non-symlink, no other-user access, and no group write/execute access. Do not expose or change the LND production API and do not add a dependency on the LND module.
+- Follow [AGENTS.md](../AGENTS.md), use temporary test entries only, fail closed when POSIX permission assessment is unsupported or fails, and keep paths, credential bytes, and test markers out of exception messages, logs, and assertion output.
+- Preserve T0's signet-only and secret-safe boundaries in the [setup guide](../docs/wavelength-spike/setup.md) and [contract appendix](../docs/wavelength-spike/contract-appendix.md). Do not begin T3 transport/evidence work or later Phase 0 tasks. The T1 record relocation under `keel/` is pre-existing task-external work; preserve it and any other unrelated changes.
+
+## Decisions
+- Add a package-private final helper under `wavelengthSpike` with a minimal path-only validation entry point and fixed, path-free configuration failures; T2 validates metadata but does not read or return credential contents.
+- Apply strict enforcement unconditionally for the spike. Accept restrictive owner-readable and group-readable regular files; reject missing paths, directories and other non-regular entries, symlinks even when their targets are safe, unreadable files, other-user permissions, group write/execute permissions, and unassessable metadata.
+- Put all deterministic coverage in the matching `wavelengthSpikeTest` package using JUnit 5, AssertJ, and temporary files. Permission-specific cases will require a POSIX-capable temporary filesystem and restore permissions needed for cleanup. Reject sharing or making `LndCredentialFileValidator` public because that widens production API for spike-only reuse.
+
+## Tasks
+- [ ] Re-run `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon` before implementation to verify T1 still provides the isolated credential-free offline task and no live dependency.
+- [ ] Implement `SpikeCredentialFileValidator` with strict no-follow file-type, readability, and POSIX-permission checks plus fixed safe failures.
+- [ ] Add temporary-file tests for accepted restrictive modes and rejected missing/non-regular/symlink/unreadable/permissive cases; assert failures contain neither path nor credential-value markers and produce no logging.
+- [ ] Run the focused validator tests and full `wavelengthSpikeTest` task, inspect output for secret/path markers, and update [T2](../plans/wavelength-phase-0.md#implementation-tasks) to complete only if all acceptance criteria pass; stop before T3.
+
+## Review
+Awaiting implementation and fresh-context review.
+
+## Outcome
+Pending.
+
+## Next action
+Approve or revise this plan.
