@@ -13,9 +13,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 
 /** Buffers a Wavelength response only while it remains within the fixed spike safety bounds. */
 final class BoundedBodyHandler implements HttpResponse.BodyHandler<byte[]> {
@@ -28,14 +29,26 @@ final class BoundedBodyHandler implements HttpResponse.BodyHandler<byte[]> {
   private static final ScheduledExecutorService DEADLINE_EXECUTOR =
       Executors.newSingleThreadScheduledExecutor(
           Thread.ofPlatform().daemon().name("wavelength-body-deadline").factory());
+  private static final DeadlineScheduler SYSTEM_DEADLINE_SCHEDULER =
+      (delay, task) -> DEADLINE_EXECUTOR.schedule(task, delay.toNanos(), TimeUnit.NANOSECONDS);
 
   private final Duration bodyDeadline;
+  private final LongSupplier nanoTime;
+  private final DeadlineScheduler deadlineScheduler;
 
   BoundedBodyHandler(Duration bodyDeadline) {
+    this(bodyDeadline, System::nanoTime, SYSTEM_DEADLINE_SCHEDULER);
+  }
+
+  BoundedBodyHandler(
+      Duration bodyDeadline, LongSupplier nanoTime, DeadlineScheduler deadlineScheduler) {
     this.bodyDeadline = Objects.requireNonNull(bodyDeadline, "bodyDeadline");
+    this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
+    this.deadlineScheduler = Objects.requireNonNull(deadlineScheduler, "deadlineScheduler");
     if (bodyDeadline.isZero() || bodyDeadline.isNegative()) {
       throw new IllegalArgumentException("bodyDeadline must be positive");
     }
+    bodyDeadline.toNanos();
   }
 
   @Override
@@ -44,7 +57,7 @@ final class BoundedBodyHandler implements HttpResponse.BodyHandler<byte[]> {
     if (declaresOversizedBody(responseInfo.headers())) {
       return new RejectedBodySubscriber(new IOException(BODY_TOO_LARGE_MESSAGE));
     }
-    return new BoundedBodySubscriber(bodyDeadline);
+    return new BoundedBodySubscriber(bodyDeadline, nanoTime, deadlineScheduler);
   }
 
   private static boolean declaresOversizedBody(HttpHeaders headers) {
@@ -58,6 +71,11 @@ final class BoundedBodyHandler implements HttpResponse.BodyHandler<byte[]> {
       }
     }
     return false;
+  }
+
+  @FunctionalInterface
+  interface DeadlineScheduler {
+    Future<?> schedule(Duration delay, Runnable task);
   }
 
   private static final class RejectedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
@@ -98,16 +116,23 @@ final class BoundedBodyHandler implements HttpResponse.BodyHandler<byte[]> {
 
     private final CompletableFuture<byte[]> body = new CompletableFuture<>();
     private final byte[] buffered = new byte[MAX_BODY_BYTES];
-    private ScheduledFuture<?> deadlineTask;
+    private final long startedAtNanos;
+    private final long deadlineNanos;
+    private final LongSupplier nanoTime;
+    private Future<?> deadlineTask;
 
     private Flow.Subscription subscription;
     private int observedBytes;
     private boolean terminated;
 
-    BoundedBodySubscriber(Duration bodyDeadline) {
+    BoundedBodySubscriber(
+        Duration bodyDeadline, LongSupplier nanoTime, DeadlineScheduler deadlineScheduler) {
+      this.nanoTime = nanoTime;
+      startedAtNanos = nanoTime.getAsLong();
+      deadlineNanos = bodyDeadline.toNanos();
       deadlineTask =
-          DEADLINE_EXECUTOR.schedule(
-              this::onDeadline, bodyDeadline.toNanos(), TimeUnit.NANOSECONDS);
+          deadlineScheduler.schedule(
+              bodyDeadline, () -> Thread.startVirtualThread(this::onDeadline));
     }
 
     @Override
@@ -116,84 +141,139 @@ final class BoundedBodyHandler implements HttpResponse.BodyHandler<byte[]> {
     }
 
     @Override
-    public synchronized void onSubscribe(Flow.Subscription candidate) {
+    public void onSubscribe(Flow.Subscription candidate) {
       Objects.requireNonNull(candidate, "subscription");
-      if (subscription != null || terminated) {
-        candidate.cancel();
-        return;
+      Failure failure = null;
+      boolean requestBody = false;
+      synchronized (this) {
+        if (subscription != null || terminated) {
+          // Cancellation occurs below, outside the subscriber monitor.
+        } else {
+          subscription = candidate;
+          if (deadlineExpired()) {
+            failure = terminateWithFailureLocked(new HttpTimeoutException(BODY_TIMEOUT_MESSAGE));
+          } else {
+            requestBody = true;
+          }
+        }
       }
-      subscription = candidate;
-      candidate.request(1);
+
+      if (failure != null) {
+        publishFailure(failure);
+      } else if (requestBody) {
+        candidate.request(1);
+      } else {
+        candidate.cancel();
+      }
     }
 
     @Override
     public void onNext(List<ByteBuffer> buffers) {
-      Flow.Subscription current;
+      long incomingBytes = 0;
+      for (var buffer : buffers) {
+        incomingBytes += buffer.remaining();
+        if (incomingBytes > MAX_BODY_BYTES) {
+          break;
+        }
+      }
+
+      Failure failure = null;
+      Flow.Subscription current = null;
       synchronized (this) {
         if (terminated) {
           return;
         }
-
-        long incomingBytes = 0;
-        for (var buffer : buffers) {
-          incomingBytes += buffer.remaining();
-          if (incomingBytes > MAX_BODY_BYTES - observedBytes) {
-            failLocked(new IOException(BODY_TOO_LARGE_MESSAGE));
-            return;
+        if (deadlineExpired()) {
+          failure = terminateWithFailureLocked(new HttpTimeoutException(BODY_TIMEOUT_MESSAGE));
+        } else if (incomingBytes > MAX_BODY_BYTES - observedBytes) {
+          failure = terminateWithFailureLocked(new IOException(BODY_TOO_LARGE_MESSAGE));
+        } else {
+          for (var buffer : buffers) {
+            int bytes = buffer.remaining();
+            buffer.get(buffered, observedBytes, bytes);
+            observedBytes += bytes;
           }
+          current = subscription;
         }
-
-        for (var buffer : buffers) {
-          int bytes = buffer.remaining();
-          buffer.get(buffered, observedBytes, bytes);
-          observedBytes += bytes;
-        }
-        current = subscription;
       }
 
-      if (current != null) {
+      if (failure != null) {
+        publishFailure(failure);
+      } else if (current != null) {
         current.request(1);
       }
     }
 
     @Override
-    public synchronized void onError(Throwable throwable) {
-      failLocked(new IOException(BODY_READ_FAILURE_MESSAGE));
+    public void onError(Throwable throwable) {
+      publishFailure(terminateWithFailure(new IOException(BODY_READ_FAILURE_MESSAGE)));
     }
 
     @Override
-    public synchronized void onComplete() {
+    public void onComplete() {
+      Failure failure = null;
+      byte[] result = null;
+      synchronized (this) {
+        if (terminated) {
+          return;
+        }
+        if (deadlineExpired()) {
+          failure = terminateWithFailureLocked(new HttpTimeoutException(BODY_TIMEOUT_MESSAGE));
+        } else {
+          terminated = true;
+          cancelDeadlineLocked();
+          result = Arrays.copyOf(buffered, observedBytes);
+          Arrays.fill(buffered, (byte) 0);
+        }
+      }
+
+      if (failure != null) {
+        publishFailure(failure);
+      } else {
+        body.complete(result);
+      }
+    }
+
+    private void onDeadline() {
+      publishFailure(terminateWithFailure(new HttpTimeoutException(BODY_TIMEOUT_MESSAGE)));
+    }
+
+    private Failure terminateWithFailure(IOException exception) {
+      synchronized (this) {
+        return terminateWithFailureLocked(exception);
+      }
+    }
+
+    private Failure terminateWithFailureLocked(IOException exception) {
       if (terminated) {
-        return;
+        return null;
       }
       terminated = true;
-      cancelDeadline();
-      var result = Arrays.copyOf(buffered, observedBytes);
+      cancelDeadlineLocked();
       Arrays.fill(buffered, (byte) 0);
-      body.complete(result);
+      return new Failure(subscription, exception);
     }
 
-    private synchronized void onDeadline() {
-      failLocked(new HttpTimeoutException(BODY_TIMEOUT_MESSAGE));
-    }
-
-    private void failLocked(IOException failure) {
-      if (terminated) {
+    private void publishFailure(Failure failure) {
+      if (failure == null) {
         return;
       }
-      terminated = true;
-      cancelDeadline();
-      Arrays.fill(buffered, (byte) 0);
-      body.completeExceptionally(failure);
-      if (subscription != null) {
-        subscription.cancel();
+      if (failure.subscription() != null) {
+        failure.subscription().cancel();
       }
+      body.completeExceptionally(failure.exception());
     }
 
-    private void cancelDeadline() {
+    private boolean deadlineExpired() {
+      return nanoTime.getAsLong() - startedAtNanos >= deadlineNanos;
+    }
+
+    private void cancelDeadlineLocked() {
       if (deadlineTask != null) {
         deadlineTask.cancel(false);
       }
     }
+
+    private record Failure(Flow.Subscription subscription, IOException exception) {}
   }
 }

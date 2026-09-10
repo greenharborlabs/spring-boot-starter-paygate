@@ -17,6 +17,8 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 
 @DisplayName("Sanitized Wavelength evidence")
@@ -80,6 +82,24 @@ class SanitizedEvidenceWriterTest {
     assertDirectoryIsEmpty();
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"gate", "operation", "outcome"})
+  void rejectsNullRequiredEnumFieldsWithoutReplacingEvidence(String field) throws Exception {
+    var candidate = validCandidate();
+    candidate.put(field, null);
+
+    assertRejectedWithoutReplacing(candidate);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"grpc_code", "receive_mode", "asset_category", "browser_event_code"})
+  void rejectsNullOptionalEnumFieldsWithoutReplacingEvidence(String field) throws Exception {
+    var candidate = validCandidate();
+    candidate.put(field, null);
+
+    assertRejectedWithoutReplacing(candidate);
+  }
+
   @Test
   void canaryNeverReachesArtifactsLogsOrAssertionDiagnostics() throws Exception {
     var logEvents = new ListAppender<ILoggingEvent>();
@@ -134,6 +154,21 @@ class SanitizedEvidenceWriterTest {
     candidate.put("operation", "artifact_write");
     candidate.put("outcome", "passed");
     return candidate;
+  }
+
+  private void assertRejectedWithoutReplacing(Map<String, Object> candidate) throws Exception {
+    var artifact = SanitizedEvidenceWriter.write(tempDir, validCandidate());
+    var original = Files.readString(artifact);
+
+    assertThatThrownBy(() -> SanitizedEvidenceWriter.write(tempDir, candidate))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(SanitizedEvidenceWriter.INVALID_EVIDENCE_MESSAGE);
+
+    assertThat(Files.readString(artifact)).isEqualTo(original);
+    try (var entries = Files.list(tempDir)) {
+      assertThat(entries.map(path -> path.getFileName().toString()).toList())
+          .containsExactly(SanitizedEvidenceWriter.ARTIFACT_NAME);
+    }
   }
 
   private void assertDirectoryIsEmpty() {

@@ -154,6 +154,9 @@ final class SanitizedEvidenceWriter {
   }
 
   private static boolean isValid(String field, Object value) {
+    if (value == null) {
+      return false;
+    }
     return switch (field) {
       case "run_id" -> matches(value, RUN_ID);
       case "manifest_sha256" -> matches(value, SHA_256);

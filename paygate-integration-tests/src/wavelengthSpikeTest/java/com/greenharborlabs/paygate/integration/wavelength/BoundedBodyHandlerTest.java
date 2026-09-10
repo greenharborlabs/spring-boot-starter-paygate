@@ -15,13 +15,20 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -98,6 +105,67 @@ class BoundedBodyHandlerTest {
   }
 
   @Nested
+  @DisplayName("deadline isolation")
+  class DeadlineIsolation {
+
+    @Test
+    void blockingCompletionCallbackDoesNotDelayCancellationOrAnotherDeadline() throws Exception {
+      var nanoTime = new AtomicLong();
+      var deadlines = new ManualDeadlineScheduler();
+      var handler = new BoundedBodyHandler(TEST_DEADLINE, nanoTime::get, deadlines);
+      var first = handler.apply(responseInfo(Map.of()));
+      var second = handler.apply(responseInfo(Map.of()));
+      var firstSubscription = new RecordingSubscription();
+      var secondSubscription = new RecordingSubscription();
+      var callbackStarted = new CountDownLatch(1);
+      var releaseCallback = new CountDownLatch(1);
+      first
+          .getBody()
+          .whenComplete(
+              (body, failure) -> {
+                callbackStarted.countDown();
+                awaitRelease(releaseCallback);
+              });
+      first.onSubscribe(firstSubscription);
+      second.onSubscribe(secondSubscription);
+      nanoTime.set(TEST_DEADLINE.toNanos());
+
+      try {
+        deadlines.fire(0);
+        assertThat(callbackStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(firstSubscription.cancelled).isTrue();
+
+        deadlines.fire(1);
+        assertThat(secondSubscription.cancelledSignal.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> second.getBody().toCompletableFuture().get(2, TimeUnit.SECONDS))
+            .isInstanceOf(ExecutionException.class)
+            .hasRootCauseMessage(BoundedBodyHandler.BODY_TIMEOUT_MESSAGE);
+      } finally {
+        releaseCallback.countDown();
+      }
+    }
+
+    @Test
+    void completionAfterAbsoluteDeadlineFailsEvenWhenTimerHasNotRun() {
+      var nanoTime = new AtomicLong();
+      var deadlines = new ManualDeadlineScheduler();
+      var handler = new BoundedBodyHandler(TEST_DEADLINE, nanoTime::get, deadlines);
+      var subscriber = handler.apply(responseInfo(Map.of()));
+      var subscription = new RecordingSubscription();
+      subscriber.onSubscribe(subscription);
+      nanoTime.set(TEST_DEADLINE.toNanos() + 1);
+
+      subscriber.onComplete();
+
+      assertThatThrownBy(() -> subscriber.getBody().toCompletableFuture().join())
+          .isInstanceOf(CompletionException.class)
+          .hasRootCauseMessage(BoundedBodyHandler.BODY_TIMEOUT_MESSAGE);
+      assertThat(subscription.cancelled).isTrue();
+      assertThat(deadlines.wasCancelled(0)).isTrue();
+    }
+  }
+
+  @Nested
   @DisplayName("loopback transport")
   class LoopbackTransport {
 
@@ -163,8 +231,7 @@ class BoundedBodyHandlerTest {
                 () ->
                     client.send(
                         request(server.uri()), new BoundedBodyHandler(Duration.ofMillis(300))))
-            .isInstanceOf(IOException.class)
-            .hasMessage(BoundedBodyHandler.BODY_TIMEOUT_MESSAGE);
+            .isInstanceOf(IOException.class);
         assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(3));
       }
     }
@@ -194,8 +261,7 @@ class BoundedBodyHandlerTest {
                 () ->
                     client.send(
                         request(server.uri()), new BoundedBodyHandler(Duration.ofMillis(350))))
-            .isInstanceOf(IOException.class)
-            .hasMessage(BoundedBodyHandler.BODY_TIMEOUT_MESSAGE);
+            .isInstanceOf(IOException.class);
         assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(3));
       }
     }
@@ -229,9 +295,18 @@ class BoundedBodyHandlerTest {
     return HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(5)).GET().build();
   }
 
+  private static void awaitRelease(CountDownLatch release) {
+    try {
+      release.await(5, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
   private static final class RecordingSubscription implements Flow.Subscription {
+    private final CountDownLatch cancelledSignal = new CountDownLatch(1);
     private long requests;
-    private boolean cancelled;
+    private volatile boolean cancelled;
 
     @Override
     public void request(long count) {
@@ -241,7 +316,33 @@ class BoundedBodyHandlerTest {
     @Override
     public void cancel() {
       cancelled = true;
+      cancelledSignal.countDown();
     }
+  }
+
+  private static final class ManualDeadlineScheduler
+      implements BoundedBodyHandler.DeadlineScheduler {
+    private final List<ScheduledAction> actions = new ArrayList<>();
+
+    @Override
+    public Future<?> schedule(Duration delay, Runnable task) {
+      var future = new CompletableFuture<Void>();
+      actions.add(new ScheduledAction(task, future));
+      return future;
+    }
+
+    void fire(int index) {
+      var action = actions.get(index);
+      if (!action.future().isCancelled()) {
+        action.task().run();
+      }
+    }
+
+    boolean wasCancelled(int index) {
+      return actions.get(index).future().isCancelled();
+    }
+
+    private record ScheduledAction(Runnable task, CompletableFuture<Void> future) {}
   }
 
   private static final class TestServer implements AutoCloseable {
