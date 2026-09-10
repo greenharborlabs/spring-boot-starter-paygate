@@ -1,5 +1,5 @@
 # Wavelength T3 Transport and Evidence Safety
-Status: review
+Status: closed
 Base revision: 00a6c92a9bc0b161b9bd8a179a834d31431e6659
 Review scope: paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/{BoundedBodyHandler.java,SanitizedEvidenceWriter.java}, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/{BoundedBodyHandlerTest.java,SanitizedEvidenceWriterTest.java}, docs/wavelength-spike/setup.md
 
@@ -53,8 +53,16 @@ Implementation commit: `65d6d22516028faff5f7863ba78c09d2b42adba7`. Evidence vali
 
 Verification: focused handler/writer verification passed 22 tests with 0 failures, errors, or skips; its XML/HTML canary and `raw_response` scans were clean. The full credential-free suite passed 35 tests with 0 failures, errors, or skips before the final focused rerun. `spotlessCheck -Pintegration`, `pmdWavelengthSpike`, and `pmdWavelengthSpikeTest` passed. T4 and live wallet/browser work remain untouched, and the unrelated staged T1 relocation remains preserved. Awaiting another fresh-context review.
 
+### Attempt 3
+Reviewed revision: f6a36f018bdae89ee358c96e09e143f15fda13eb
+Verdict: pass
+Findings and dispositions: No findings; no rework required. Attempt 2's null-key finding is resolved by explicit rejection before immutable-set membership testing. The regression test verifies the fixed error, no initial publication, and preservation of existing evidence. Attempt 1's deadline isolation and null-value fixes remain intact. The complete scoped diff from the recorded base was reviewed; bounded buffering, cancellation, absolute deadlines, allowlisted atomic evidence output, and browser capture restrictions satisfy the T3 scope without claiming live capability or implementing T4.
+Verification: Scoped implementation paths were clean at HEAD and unchanged from implementation commit `65d6d22516028faff5f7863ba78c09d2b42adba7`. `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon --rerun-tasks --tests '*BoundedBodyHandlerTest*' --tests '*SanitizedEvidenceWriterTest*'` passed 22 tests with 0 failures/errors/skips. `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon --rerun-tasks` passed 35 tests with 0 failures/errors/skips. XML/HTML report scans after both runs found no canary or `raw_response` marker. `./gradlew spotlessCheck :paygate-integration-tests:pmdWavelengthSpike :paygate-integration-tests:pmdWavelengthSpikeTest -Pintegration --no-daemon` succeeded. Only this task record was modified; the unrelated staged T1 record relocation was preserved. No live services, wallets, credentials, payments, or browser captures were used.
+
 ## Outcome
-Pending.
+Completed T3 through implementation commits `85b31213d305c71869d66470a7227eee3ab034c6`, `09dde025baeefb797a5860dd37b04d4b77bacc6b`, and `65d6d22516028faff5f7863ba78c09d2b42adba7`. The package-local [bounded response handler](../paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/BoundedBodyHandler.java) enforces the exact 256 KiB pre-buffer limit, cancellation, and monotonic absolute body deadlines without letting blocking completion callbacks delay concurrent deadlines. The [evidence writer](../paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/SanitizedEvidenceWriter.java) atomically emits only validated allowlisted metadata and rejects unknown, null-key, and null-value inputs with fixed failures without publishing or replacing evidence. The [setup guide](../docs/wavelength-spike/setup.md#browser-evidence-capture-policy) now prohibits raw console, wallet, trace, HAR/network, video, and screenshot capture before live work.
+
+Focused verification passed 22 tests and the full credential-free `wavelengthSpikeTest` suite passed 35 tests, both without failures, errors, or skips; canary and `raw_response` report scans were clean, and Spotless plus both Wavelength PMD tasks passed. Review corrections added deterministic concurrent-deadline, late-completion, null enum value, and null-key publication/replacement coverage. Attempt 3 passed at reviewed revision `f6a36f018bdae89ee358c96e09e143f15fda13eb`, and the scoped implementation remains unchanged at closeout. Material limits remain: no live daemon, wallet, payment, browser runtime, or network capability was exercised, so all later Phase 0 live gates and T4 remain unresolved.
 
 ## Next action
-Run another fresh-context Keel review of implementation commit `65d6d22516028faff5f7863ba78c09d2b42adba7`.
+Plan T4 acceptance integrity from the [Phase 0 implementation tasks](../plans/wavelength-phase-0.md#implementation-tasks).
