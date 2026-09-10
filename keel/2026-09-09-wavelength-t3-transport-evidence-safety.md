@@ -40,8 +40,21 @@ Implementation commit: `09dde025baeefb797a5860dd37b04d4b77bacc6b`. Deadline time
 
 Verification: focused handler/writer tests passed 21 tests. The final credential-free `wavelengthSpikeTest --rerun-tasks` passed 34 tests with 0 failures, errors, or skips. XML/HTML report scans found no canary or `raw_response` marker. `spotlessCheck -Pintegration`, `pmdWavelengthSpike`, and `pmdWavelengthSpikeTest` passed. No live task, wallet, browser work, or network capture was used; T4 remains untouched and the unrelated staged T1 relocation remains preserved. Awaiting another fresh-context review.
 
+### Attempt 2
+Reviewed revision: 5bae2c71c0f39654616f152fda9f6e43c9f90dbe
+Verdict: rework
+Findings and dispositions:
+1. Attempt 1's deadline-isolation and null-enum-value findings are resolved. Cancellation precedes exceptional completion, deadline callbacks run independently, elapsed time is checked on body delivery/completion, and the new regression tests pass.
+2. **P2 — Null metadata keys still bypass fixed validation failures.** `SanitizedEvidenceWriter.validate` invokes `ALLOWED_FIELDS::contains` on every candidate key. Because this is an immutable null-rejecting set, an otherwise valid `LinkedHashMap<String, Object>` containing a null key throws `NullPointerException` with a null message instead of `IllegalArgumentException(INVALID_EVIDENCE_MESSAGE)`. A temporary Java 25 probe reproduced this. It fails closed without publishing evidence, but violates the recorded fixed-failure contract for unknown/invalid metadata. Reject null keys explicitly before membership testing and add regression coverage proving the fixed rejection, no initial artifact publication, and no replacement of existing evidence.
+Verification: All scoped implementation paths were clean at the reviewed revision; implementation remains unchanged from `09dde025baeefb797a5860dd37b04d4b77bacc6b`. The identified unrelated staged T1 relocation was left untouched. `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon --rerun-tasks` passed 34 tests with 0 failures/errors/skips. The same task with `--tests '*BoundedBodyHandlerTest*' --tests '*SanitizedEvidenceWriterTest*'` passed 21 tests. XML/HTML report scans after both runs found no canary or raw-response marker. `./gradlew spotlessCheck :paygate-integration-tests:pmdWavelengthSpike :paygate-integration-tests:pmdWavelengthSpikeTest -Pintegration --no-daemon` succeeded. `/tmp/T3NullKeyProbe.java`, compiled with the two scoped helpers using Java 25, reproduced finding 2 without repository implementation changes. Browser capture restrictions and the no-live-claims boundary remain intact. No live services, wallets, credentials, or payments were used.
+
+### Rework after Attempt 2
+Implementation commit: `65d6d22516028faff5f7863ba78c09d2b42adba7`. Evidence validation now explicitly rejects null map keys before consulting the immutable allowlist, preserving the fixed `INVALID_EVIDENCE_MESSAGE`. The regression test proves an invalid null-key candidate neither creates an initial artifact nor replaces an existing valid artifact.
+
+Verification: focused handler/writer verification passed 22 tests with 0 failures, errors, or skips; its XML/HTML canary and `raw_response` scans were clean. The full credential-free suite passed 35 tests with 0 failures, errors, or skips before the final focused rerun. `spotlessCheck -Pintegration`, `pmdWavelengthSpike`, and `pmdWavelengthSpikeTest` passed. T4 and live wallet/browser work remain untouched, and the unrelated staged T1 relocation remains preserved. Awaiting another fresh-context review.
+
 ## Outcome
 Pending.
 
 ## Next action
-Run another fresh-context Keel review of implementation commit `09dde025baeefb797a5860dd37b04d4b77bacc6b`.
+Run another fresh-context Keel review of implementation commit `65d6d22516028faff5f7863ba78c09d2b42adba7`.
