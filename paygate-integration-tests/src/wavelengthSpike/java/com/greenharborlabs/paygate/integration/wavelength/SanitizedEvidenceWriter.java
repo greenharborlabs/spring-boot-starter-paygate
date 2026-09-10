@@ -134,7 +134,8 @@ final class SanitizedEvidenceWriter {
 
   private static Map<String, Object> validate(Map<String, ?> candidate) {
     if (candidate == null
-        || !candidate.keySet().stream().allMatch(ALLOWED_FIELDS::contains)
+        || !candidate.keySet().stream()
+            .allMatch(field -> field != null && ALLOWED_FIELDS.contains(field))
         || !candidate.keySet().containsAll(REQUIRED_FIELDS)) {
       throw new IllegalArgumentException(INVALID_EVIDENCE_MESSAGE);
     }

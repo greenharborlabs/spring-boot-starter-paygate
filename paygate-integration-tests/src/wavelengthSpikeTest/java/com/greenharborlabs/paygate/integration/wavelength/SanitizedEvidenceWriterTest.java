@@ -72,6 +72,19 @@ class SanitizedEvidenceWriterTest {
   }
 
   @Test
+  void rejectsNullKeyWithoutPublishingOrReplacingEvidence() throws Exception {
+    var candidate = validCandidate();
+    candidate.put(null, "passed");
+
+    assertThatThrownBy(() -> SanitizedEvidenceWriter.write(tempDir, candidate))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(SanitizedEvidenceWriter.INVALID_EVIDENCE_MESSAGE);
+    assertDirectoryIsEmpty();
+
+    assertRejectedWithoutReplacing(candidate);
+  }
+
+  @Test
   void rejectsArbitraryTextInAnAllowlistedField() {
     var candidate = validCandidate();
     candidate.put("gate", CANARY);
