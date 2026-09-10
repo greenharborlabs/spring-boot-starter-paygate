@@ -1,7 +1,7 @@
 # Wavelength T3 Transport and Evidence Safety
-Status: working
+Status: review
 Base revision: 00a6c92a9bc0b161b9bd8a179a834d31431e6659
-Review scope: paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/{BoundedBodyHandler.java,SanitizedEvidenceWriter.java}, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/{BoundedBodyHandlerTest.java,SanitizedEvidenceWriterTest.java}, docs/wavelength-spike/setup.md, plans/wavelength-phase-0.md
+Review scope: paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/{BoundedBodyHandler.java,SanitizedEvidenceWriter.java}, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/{BoundedBodyHandlerTest.java,SanitizedEvidenceWriterTest.java}, docs/wavelength-spike/setup.md
 
 ## Goal
 Implement only [Phase 0 T3](../plans/wavelength-phase-0.md#implementation-tasks): Wavelength spike responses are capped at exactly 256 KiB before complete buffering or later JSON parsing and aborted on an overall body deadline, while generated evidence contains only validated allowlisted metadata. Acceptance requires deterministic exact-boundary, 256 KiB + 1, slow/stalled-body, and canary-secret tests proving no secret reaches artifacts, captured logs, or assertion diagnostics, plus a documented browser artifact policy suitable for later live work.
@@ -19,16 +19,16 @@ Implement only [Phase 0 T3](../plans/wavelength-phase-0.md#implementation-tasks)
 - Exercise the subscriber directly for deterministic cancellation/boundary proof and use a loopback fixture server for end-to-end exact-boundary, oversized, stalled-after-headers, and slow-drip deadline behavior. Canary tests inspect temporary artifacts, fixed exceptions/assertion diagnostics, and captured root logs without printing the canary on failure.
 
 ## Tasks
-- [ ] Re-run the current credential-free `wavelengthSpikeTest` suite, then add `BoundedBodyHandler` and deterministic direct-subscriber/loopback tests for exact 256 KiB acceptance, declared and streamed 256 KiB + 1 rejection before complete buffering/parsing, cancellation, and absolute deadlines for stalled and slow-drip bodies.
-- [ ] Add `SanitizedEvidenceWriter` with atomic allowlisted output and tests for accepted deterministic metadata plus unknown-field, invalid-value, path/error, and canary rejection; verify artifacts, captured logs, and assertion diagnostics contain no canary or raw input.
-- [ ] Update `docs/wavelength-spike/setup.md` with the browser console/trace/HAR/video/screenshot policy required before T6/live use, explicitly prohibiting raw wallet and network capture.
-- [ ] Run focused handler/writer tests and the full `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon --rerun-tasks`, inspect reports/artifacts for the canary, run `spotlessCheck -Pintegration`, and mark only T3 complete in the Phase 0 plan after every acceptance criterion passes; stop before T4.
+- [x] Re-run the current credential-free `wavelengthSpikeTest` suite, then add `BoundedBodyHandler` and deterministic direct-subscriber/loopback tests for exact 256 KiB acceptance, declared and streamed 256 KiB + 1 rejection before complete buffering/parsing, cancellation, and absolute deadlines for stalled and slow-drip bodies.
+- [x] Add `SanitizedEvidenceWriter` with atomic allowlisted output and tests for accepted deterministic metadata plus unknown-field, invalid-value, path/error, and canary rejection; verify artifacts, captured logs, and assertion diagnostics contain no canary or raw input.
+- [x] Update `docs/wavelength-spike/setup.md` with the browser console/trace/HAR/video/screenshot policy required before T6/live use, explicitly prohibiting raw wallet and network capture.
+- [x] Run focused handler/writer tests and the full `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --no-daemon --rerun-tasks`, inspect reports/artifacts for the canary, run `spotlessCheck -Pintegration`, and mark only T3 complete in the Phase 0 plan after every acceptance criterion passes; stop before T4.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation commit: `85b31213d305c71869d66470a7227eee3ab034c6`. The final full `wavelengthSpikeTest` rerun passed 25 tests with 0 failures, errors, or skips; focused handler/writer tests also passed. Generated XML/HTML report scans found no canary or unsafe raw-evidence marker. `spotlessCheck -Pintegration`, `pmdWavelengthSpike`, and `pmdWavelengthSpikeTest` passed. The ignored local Phase 0 checklist marks T3 complete and leaves T4 unchecked. No live task, wallet, browser capture, or network trace was used. Awaiting fresh-context review.
 
 ## Outcome
 Pending.
 
 ## Next action
-Approve or revise this plan.
+Run a fresh-context Keel review of implementation commit `85b31213d305c71869d66470a7227eee3ab034c6`.
