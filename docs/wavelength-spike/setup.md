@@ -6,7 +6,7 @@ This guide pins the prerequisites selected by T0. It does **not** authorize a pa
 ./gradlew :paygate-integration-tests:wavelengthSpike -PwavelengthSpike
 ```
 
-That task does not exist until the separately approved T1 work.
+T1 added that task outside ordinary build and CI lifecycles. Do not run it against a live wallet until T4 adds the mandatory preflight and fresh-evidence gates.
 
 ## Pinned compatibility set
 
@@ -56,6 +56,12 @@ sqlite3-opfs-async-proxy.js
 Install exact SDK versions with a committed lockfile; verify npm integrity values from `compatibility.json`. `runtimeBaseUrl` must point at the versioned asset directory and `defaultConfig("signet")` selects the public signet services. The package defaults to a dedicated Web Worker; the runtime also requires WebAssembly, nested workers, fetch, OPFS for persistent encrypted wallet databases, and Web Locks for reliable cross-tab exclusion. Cache Storage is an optional performance cache. `DecompressionStream` is optional because the raw WASM file is the fallback. Secure-context, CSP (`worker-src`, `script-src`, and `connect-src`), same-origin/CORS, storage quota/persistence, browser versions, and whether cross-origin isolation is required remain clean-profile live gates; v0.1.1 does not publish a supported-browser matrix.
 
 Create or unlock the payer wallet in the browser/operator boundary. Fund it with signet bitcoin using its boarding/deposit flow, wait for confirmation and boarding into spendable Ark value, and verify enough spendable balance for the invoice plus fees. The receiver wallet must also be created/unlocked out of band and connected to the public signet Ark and swap services. Whether a receive uses server credits or a client-claimable swap path must be observed rather than assumed; funding and boarding requirements may differ by mode.
+
+## Browser evidence capture policy
+
+Before any live browser run, configure the harness to emit only reviewed structured event codes through the allowlisted evidence writer. Do not retain raw console message text or arguments. Console events may identify a fixed harness state such as `runtime_ready`, `payment_required`, `paying_over_lightning`, `unlocked`, or `payment_outcome_unknown`; wallet/SDK objects and exception payloads are not evidence fields.
+
+Disable browser and Playwright tracing, HAR/network recording, network request or response payload capture, video, and screenshots whenever a real wallet or payment is present. In particular, do not capture the wallet UI, browser developer tools, invoices, payment hashes, preimages, macaroons, authorization values, or upstream REST bodies. A later screenshot exception requires synthetic data or explicitly masked content plus separate reviewed secret-scanning tests before capture is enabled. T3 establishes this policy only; browser tooling and clean-profile verification remain T6 work.
 
 ## Preflight before any live payment
 
