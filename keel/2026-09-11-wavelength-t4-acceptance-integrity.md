@@ -1,5 +1,5 @@
 # Wavelength T4 Acceptance Integrity
-Status: review
+Status: closed
 Base revision: 5bbf9673721e93619802608caf0200e84e20e590
 Review scope: paygate-integration-tests/build.gradle.kts, paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/{WavelengthSpikeRun.java,WavelengthSpikeIT.java}, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/WavelengthSpikeRunTest.java, docs/wavelength-spike/setup.md
 
@@ -27,10 +27,25 @@ Implement only [Phase 0 T4](../plans/wavelength-phase-0.md#implementation-tasks)
 - [ ] After T8 produces a genuinely successful live invocation, repeat it with `waved` stopped and `--build-cache`; require a new run ID, no `UP-TO-DATE`/`FROM-CACHE` live work, and non-zero current-gate failure.
 
 ## Review
+
+### Attempt 1
+Reviewed revision: d9757ce3592c3e5315dfbbd29242ed92e71e0d12
+Verdict: pass
+Findings and dispositions:
+1. No findings; no rework required. Scope review: the diff from base `5bbf967` to the reviewed `HEAD` touches only the four scoped paths (build.gradle.kts, WavelengthSpikeRun/IT, WavelengthSpikeRunTest, setup.md) plus this record; the record itself is outside scope and the tree is clean. `build/wavelength-spike/` is covered by the root `build/` ignore rule.
+2. Manifest pin `c10ee0…c2d7` in `WavelengthSpikeRun` matches the on-disk SHA-256 of `docs/wavelength-spike/compatibility.json`; the eight runtime-asset hashes match `compatibility.json` `assetsSha256` exactly. Preflight rehashes the manifest at runtime and compares to the passed digest, so a mutated manifest cannot pass.
+3. Evidence `validateGateEvidence` compares the full artifact to the exact `SanitizedEvidenceWriter` serialization, binding both run ID and manifest digest per gate (preflight, evidence); grab-bag ordering and trailing newline match the writer's `FIELD_ORDER`/`toJson` output.
+4. Fail-closed paths confirmed live: neither live task reported `UP-TO-DATE` or `FROM-CACHE` under `--build-cache`; the nonexistent `--tests` filter failed through both Gradle (`No tests found`) and the acceptance finalizer (`zero discovered tests, missing or filtered mandatory test, missing mandatory evidence`).
+5. Isolation holds: default/integration/Wavelength-check/release-readiness graphs contain no live prepare/test/validation task (`wavelengthSpikeClasses` is compile-only, pulled in by module PMD wiring); `-Pintegration` alone still fails the opt-in guard before any test or network activity.
+6. Documentation claims in setup.md match implementation and verification: literal `confirmed` values, path-free fixed prerequisite names on failure verified in console output, fresh UUID directory layout under `build/wavelength-spike/<run-id>/`, and the explicit deferred post-T8 daemon-stopped/cache-enabled obligation. The plan's T4 checkbox and the record's post-T8 task item both remain unchecked.
+Verification: `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --rerun-tasks` passed 49 tests with 0 failures/skips (asserted from JUnit XML); `spotlessCheck`, `pmdWavelengthSpike`, and `pmdWavelengthSpikeTest` passed with `--rerun-tasks`; two `--build-cache` live invocations with empty prerequisite environments each allocated a distinct UUID directory, executed `prepareWavelengthSpikeRun`/`wavelengthSpike`/`validateWavelengthSpikeAcceptance`, and failed non-zero with a path-free preflight checklist (`daemon TLS endpoint, credential file, …, WAVELENGTH_SPIKE_PAYMENT_AUTHORIZED`).
+
 Implementation commit: `d84f6880e4ebaee7a44a25ed6862b6e9c71a5d2b`. The full credential-free `wavelengthSpikeTest --rerun-tasks` suite passed 49 tests with 0 failures, errors, or skips; Spotless and both Wavelength PMD tasks passed. Offline coverage rejects absent prerequisites, zero discovery, filtered/skipped/duplicate mandatory tests, stale run and manifest identities, missing/incomplete evidence, and prior-run artifacts. An actual nonexistent `--tests` filter failed through both Gradle and the acceptance finalizer. Two `--build-cache` invocations with empty prerequisite environments each allocated distinct UUID directories, executed `prepareWavelengthSpikeRun` and `wavelengthSpike`, and failed non-zero without either live task reporting `UP-TO-DATE` or `FROM-CACHE`; the path-free preflight checklist was visible. Default, integration, Wavelength-check, and release-readiness dry-run graphs contained no live prepare/test/validation task, and `-Pintegration` alone still failed the opt-in guard. No daemon API, wallet, browser, payment, or T5 capability probe ran. The Phase 0 T4 checkbox and the successful-live daemon-stopped/cache-enabled verification remain deliberately pending until after T8. Awaiting fresh-context review.
 
 ## Outcome
-Pending.
+Completed the T4 implementation in revision `d84f6880e4ebaee7a44a25ed6862b6e9c71a5d2b`: the [integration-test build](../paygate-integration-tests/build.gradle.kts) now forces fresh UUID-scoped live runs, disables live cache/up-to-date reuse, records test outcomes, and finalizes with fail-closed acceptance validation. [WavelengthSpikeRun](../paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/WavelengthSpikeRun.java) and [WavelengthSpikeIT](../paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/WavelengthSpikeIT.java) enforce secret-safe preflight plus exact current-run/manifest evidence; [offline tests](../paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/WavelengthSpikeRunTest.java) cover missing prerequisites, zero/filtered/skipped/duplicate mandatory tests, stale identities, and missing/incomplete/prior-run evidence. The [setup guide](../docs/wavelength-spike/setup.md#preflight-before-any-live-payment) documents the concrete environment contract and evidence layout.
+
+Fresh-context review Attempt 1 passed at `d9757ce3592c3e5315dfbbd29242ed92e71e0d12` with no findings. Verification passed 49 offline tests with no failures or skips, Spotless, both Wavelength PMD tasks, isolation/opt-in checks, and cache-enabled negative invocations that produced distinct run IDs and failed safely. No daemon API, browser wallet, payment, or T5 probe was exercised. Closing this record confirms the reviewed T4 implementation only: the Phase 0 T4 checklist and the successful-live rerun with `waved` stopped and caching enabled remain pending until T8 supplies a real successful baseline.
 
 ## Next action
-Approve or revise this plan.
+Plan [Phase 0 T5 vendor contract probe](../plans/wavelength-phase-0.md#implementation-tasks).
