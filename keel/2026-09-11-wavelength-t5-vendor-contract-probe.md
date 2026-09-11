@@ -1,5 +1,5 @@
 # Wavelength T5 Vendor Contract Probe
-Status: review
+Status: closed
 Base revision: 58242ed3e796c2e43b2c7fe72eb90eb056dc04ae
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-keyring.keys, gradle/verification-metadata.xml, paygate-integration-tests/build.gradle.kts, paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/
 
@@ -58,7 +58,9 @@ Findings and dispositions: No findings; no rework required.
 Verification: `HEAD` is `fbffee0740b09f2c52174cb4f667eafbb97df9ac`; implementation is `4b5fba0` plus the rework `96cab4d`, with no unrelated working-tree changes. `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --rerun-tasks` passed 111 tests with 0 failures, errors, or skips (JUnit XML; the four T5 classes total 62, including 13 in `WavelengthVendorProbeTest`). `./gradlew spotlessCheck pmdWavelengthSpike pmdWavelengthSpikeTest validateDependencyProvenance -Pintegration` succeeded and printed `Dependency provenance validation passed.` A scan of the `wavelengthSpikeTest` results and HTML reports for `synthetic-bolt11`, `raw_response`, the synthetic upstream detail, and the fixture payment-hash digest found nothing. No live daemon, credentials, wallet, browser, payment, restart, or Paygate flow ran.
 
 ## Outcome
-Pending fresh-context review. T5 is complete in the ignored local Phase 0 checklist; synthetic results are offline contract tests only and establish no live capability gate.
+Closed after Attempt 2 passed at reviewed revision `fbffee0740b09f2c52174cb4f667eafbb97df9ac`; current `HEAD` differed from that revision only by record updates, with no scoped working-tree changes and no scoped implementation diff. Phase 0 T5 from [the plan](../plans/wavelength-phase-0.md#implementation-tasks) is implemented as an offline Wavelength vendor contract probe: bounded Status/Recv/InspectActivity/List calls, strict `Invoice` reconstruction, isolated ACINQ decoder usage, deterministic fixture coverage for mapping/pagination/lookup failure modes, and allowlisted observed-mode evidence without live capability claims.
+
+Verification preserved in Attempt 2: `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration --rerun-tasks` passed 111 tests with 0 failures, errors, or skips; `./gradlew spotlessCheck pmdWavelengthSpike pmdWavelengthSpikeTest validateDependencyProvenance -Pintegration` passed and printed `Dependency provenance validation passed`; report scans for synthetic invoice/hash/upstream-detail and `raw_response` markers found nothing. Attempt 1's cross-page duplicate lookup finding was corrected in `96cab4db3751a0c85cd355e2e1aaa2afb958499a` by scanning to feed end within budget before returning a List fallback match and failing closed on ambiguity or exhausted uniqueness confirmation. Material limits remain: this was synthetic, credential-free validation only; no live daemon, wallet, browser, payment, restart, Paygate flow, or T6+ gate ran, so no live Wavelength capability is established.
 
 ## Next action
-Review implementation commits `4b5fba0ac677545d09085c91ed9e37f2c323a887` and `96cab4db3751a0c85cd355e2e1aaa2afb958499a` from a fresh context.
+Proceed to the next planned Wavelength phase in [the Phase 0 plan](../plans/wavelength-phase-0.md#implementation-tasks).
