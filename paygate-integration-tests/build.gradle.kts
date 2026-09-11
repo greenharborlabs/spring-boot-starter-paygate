@@ -75,6 +75,8 @@ dependencies {
     securityTestImplementation("io.grpc:grpc-inprocess:$grpcVersion")
     securityTestImplementation("io.grpc:grpc-stub:$grpcVersion")
     securityTestImplementation("com.google.protobuf:protobuf-java:$protobufVersion")
+
+    wavelengthSpikeImplementation("fr.acinq.lightning:lightning-kmp-core-jvm:1.13.0")
 }
 
 tasks.test {
