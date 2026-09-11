@@ -1,3 +1,14 @@
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.security.MessageDigest
+import java.util.Collections
+import java.util.HexFormat
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestListener
+import org.gradle.api.tasks.testing.TestResult
+
 plugins {
     `java-library`
 }
@@ -94,13 +105,139 @@ val requireWavelengthSpikeOptIn = tasks.register("requireWavelengthSpikeOptIn") 
     }
 }
 
+val wavelengthSpikeRunId = AtomicReference<String>()
+val wavelengthSpikeRunDirectory = AtomicReference<File>()
+val wavelengthSpikeManifestSha256 = AtomicReference<String>()
+val wavelengthSpikeTestOutcomes =
+    Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+val wavelengthSpikeManifest =
+    rootProject.layout.projectDirectory.file("docs/wavelength-spike/compatibility.json")
+
+val prepareWavelengthSpikeRun = tasks.register("prepareWavelengthSpikeRun") {
+    description = "Allocates a fresh identity and evidence directory for the live Wavelength spike"
+    dependsOn(requireWavelengthSpikeOptIn)
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+    notCompatibleWithConfigurationCache("A live payment run requires a new identity per invocation")
+
+    doLast {
+        val runId = UUID.randomUUID().toString()
+        val runRoot = layout.buildDirectory.dir("wavelength-spike").get().asFile.toPath()
+        Files.createDirectories(runRoot)
+        val runDirectory = runRoot.resolve(runId)
+        Files.createDirectory(runDirectory)
+        val digest = MessageDigest.getInstance("SHA-256")
+        val manifestSha256 =
+            HexFormat.of().formatHex(digest.digest(Files.readAllBytes(wavelengthSpikeManifest.asFile.toPath())))
+
+        wavelengthSpikeRunId.set(runId)
+        wavelengthSpikeRunDirectory.set(runDirectory.toFile())
+        wavelengthSpikeManifestSha256.set(manifestSha256)
+        wavelengthSpikeTestOutcomes.clear()
+    }
+}
+
 val wavelengthSpike = tasks.register<Test>("wavelengthSpike") {
     description = "Runs the explicitly opted-in live Wavelength signet capability spike"
     group = "verification"
-    dependsOn(requireWavelengthSpikeOptIn)
+    dependsOn(prepareWavelengthSpikeRun)
     testClassesDirs = wavelengthSpikeSourceSet.output.classesDirs
     classpath = wavelengthSpikeSourceSet.runtimeClasspath
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+    notCompatibleWithConfigurationCache("A live payment run must execute and validate fresh evidence")
+    filter {
+        isFailOnNoMatchingTests = true
+    }
     useJUnitPlatform()
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+
+    addTestListener(
+        object : TestListener {
+            override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {
+                val className = testDescriptor.className ?: return
+                val methodName = testDescriptor.name.substringBefore('(')
+                wavelengthSpikeTestOutcomes.add(
+                    "$className#$methodName" to result.resultType.name
+                )
+            }
+
+            override fun afterSuite(suite: TestDescriptor, result: TestResult) {
+                if (suite.parent != null) {
+                    return
+                }
+                val runDirectory = wavelengthSpikeRunDirectory.get()?.toPath()
+                    ?: throw GradleException("Wavelength spike run context is unavailable")
+                val snapshot = synchronized(wavelengthSpikeTestOutcomes) {
+                    wavelengthSpikeTestOutcomes.toList()
+                }
+                val summary = buildString {
+                    append("test.count=").append(snapshot.size).append('\n')
+                    snapshot.forEachIndexed { index, (id, outcome) ->
+                        append("test.").append(index).append(".id=").append(id).append('\n')
+                        append("test.").append(index).append(".outcome=").append(outcome).append('\n')
+                    }
+                }
+                Files.writeString(
+                    runDirectory.resolve("execution.properties"),
+                    summary,
+                    StandardCharsets.UTF_8
+                )
+            }
+        }
+    )
+
+    doFirst {
+        val runId = wavelengthSpikeRunId.get()
+            ?: throw GradleException("Wavelength spike run context is unavailable")
+        val runDirectory = wavelengthSpikeRunDirectory.get()
+            ?: throw GradleException("Wavelength spike run context is unavailable")
+        val manifestSha256 = wavelengthSpikeManifestSha256.get()
+            ?: throw GradleException("Wavelength spike run context is unavailable")
+        systemProperty("wavelength.spike.run-id", runId)
+        systemProperty("wavelength.spike.run-directory", runDirectory.absolutePath)
+        systemProperty("wavelength.spike.manifest-path", wavelengthSpikeManifest.asFile.absolutePath)
+        systemProperty("wavelength.spike.manifest-sha256", manifestSha256)
+    }
+}
+
+val validateWavelengthSpikeAcceptance =
+    tasks.register<JavaExec>("validateWavelengthSpikeAcceptance") {
+        description = "Rejects incomplete, skipped, filtered, cached, or stale live spike evidence"
+        classpath = wavelengthSpikeSourceSet.runtimeClasspath
+        mainClass.set(
+            "com.greenharborlabs.paygate.integration.wavelength.WavelengthSpikeRun"
+        )
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        notCompatibleWithConfigurationCache("Acceptance is bound to the current live invocation")
+        mustRunAfter(wavelengthSpike)
+
+        doFirst {
+            val runId = wavelengthSpikeRunId.get()
+                ?: throw GradleException("Wavelength spike run context is unavailable")
+            val runDirectory = wavelengthSpikeRunDirectory.get()
+                ?: throw GradleException("Wavelength spike run context is unavailable")
+            val manifestSha256 = wavelengthSpikeManifestSha256.get()
+                ?: throw GradleException("Wavelength spike run context is unavailable")
+            args = listOf(runDirectory.absolutePath, runId, manifestSha256)
+        }
+    }
+
+wavelengthSpike.configure {
+    finalizedBy(validateWavelengthSpikeAcceptance)
+}
+
+// T6 browser substeps must inherit the same fresh-execution boundary when they are added.
+tasks.configureEach {
+    if (name.startsWith("wavelengthSpikeBrowser")) {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        notCompatibleWithConfigurationCache("Live browser work requires fresh execution")
+    }
 }
 
 val wavelengthSpikeTest = tasks.register<Test>("wavelengthSpikeTest") {

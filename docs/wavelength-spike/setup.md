@@ -6,7 +6,7 @@ This guide pins the prerequisites selected by T0. It does **not** authorize a pa
 ./gradlew :paygate-integration-tests:wavelengthSpike -PwavelengthSpike
 ```
 
-T1 added that task outside ordinary build and CI lifecycles. Do not run it against a live wallet until T4 adds the mandatory preflight and fresh-evidence gates.
+T1 added that task outside ordinary build and CI lifecycles. T4 adds mandatory preflight and fresh-evidence enforcement, but no vendor capability probe; a green T4 integrity gate is not a successful Phase 0 capability result.
 
 ## Pinned compatibility set
 
@@ -65,18 +65,31 @@ Disable browser and Playwright tracing, HAR/network recording, network request o
 
 ## Preflight before any live payment
 
-The future task must fail before network activity unless all of these are present:
+The live task fails before any test method or payment operation unless these environment variables satisfy the fixed contract:
 
-1. exact daemon and SDK/runtime manifest identities;
-2. dedicated receiver daemon, wallet data directory, TLS endpoint, and credential path;
-3. fresh browser profile with the exact local assets and supported persistent storage;
-4. initialized/unlocked receiver and payer wallets on signet;
-5. payer spendable balance sufficient for principal and fees;
-6. operator authorization to make one bounded 10-sat signet payment;
-7. an isolated daemon restart mechanism that preserves its wallet data;
-8. an allowlisted evidence directory with a new run ID.
+| Variable | Required value |
+|---|---|
+| `WAVELENGTH_SPIKE_DAEMON_URL` | Authenticated daemon HTTPS endpoint with no user info or fragment |
+| `WAVELENGTH_SPIKE_CREDENTIAL_PATH` | Readable regular non-symlink file satisfying the restrictive credential policy |
+| `WAVELENGTH_SPIKE_RECEIVER_DATA_DIR` | Readable, writable, non-symlink dedicated receiver data directory |
+| `WAVELENGTH_SPIKE_BROWSER_PROFILE_DIR` | Readable, writable, non-symlink dedicated browser profile directory |
+| `WAVELENGTH_SPIKE_RUNTIME_DIR` | Directory containing all eight runtime assets with the hashes in `compatibility.json` |
+| `WAVELENGTH_SPIKE_RESTART_EXECUTABLE` | Executable regular non-symlink wrapper that restarts only the dedicated daemon while preserving wallet data |
+| `WAVELENGTH_SPIKE_RECEIVER_READY` | Literal `confirmed`: receiver wallet initialized/unlocked on signet |
+| `WAVELENGTH_SPIKE_PAYER_READY` | Literal `confirmed`: payer wallet initialized/unlocked on signet |
+| `WAVELENGTH_SPIKE_PAYER_FUNDED` | Literal `confirmed`: spendable balance covers the 10-sat principal and fees |
+| `WAVELENGTH_SPIKE_BROWSER_PROFILE_FRESH` | Literal `confirmed`: the dedicated profile and persistent storage were prepared for this run |
+| `WAVELENGTH_SPIKE_PAYMENT_AUTHORIZED` | Literal `confirmed`: operator authorizes one bounded 10-sat signet payment |
+
+The task computes the current `compatibility.json` SHA-256, verifies it against T4's reviewed pin, allocates a UUID directory at `paygate-integration-tests/build/wavelength-spike/<run-id>/`, and writes gate-scoped `evidence.json` files there. Preflight failures report prerequisite names only, never environment values or paths. Each invocation runs with Gradle up-to-date reuse, build-cache load/store, and configuration-cache reuse disabled for live work. Acceptance requires exactly one successful execution of every currently registered mandatory test and exact evidence identities for that run and manifest; zero discovery, filtering, skipping, stale artifacts, and missing or malformed evidence fail non-zero. Previous run directories are retained only for local review and are never searched to satisfy the current invocation.
+
+T4 itself emits only `preflight` and acceptance-harness evidence. Status, receive, payment, recovery, restart, Paygate authorization, and outage evidence remain unimplemented until T5–T8 and must not be inferred from a T4 run.
 
 Never place a mnemonic, password, macaroon, preimage, full invoice, full payment hash, full L402 credential, browser network trace, or raw daemon response in checked-in files or test output.
+
+### Deferred live freshness verification
+
+After T8 produces the first genuinely successful full live invocation, rerun the same canonical command with `waved` stopped and Gradle build caching enabled (for example, add `--build-cache`). The second invocation must allocate a different run ID, execute rather than report `UP-TO-DATE` or `FROM-CACHE`, and fail non-zero on a current mandatory daemon-dependent gate. This obligation is not satisfied by T4's offline tests or by repeated missing-prerequisite failures.
 
 ## Stop conditions retained from the design
 
