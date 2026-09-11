@@ -1,5 +1,5 @@
 # Wavelength T5 Vendor Contract Probe
-Status: working
+Status: review
 Base revision: 58242ed3e796c2e43b2c7fe72eb90eb056dc04ae
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-keyring.keys, gradle/verification-metadata.xml, paygate-integration-tests/build.gradle.kts, paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/
 
@@ -37,8 +37,19 @@ Findings and dispositions:
 2. No other findings. The scoped diff is limited to the recorded implementation paths plus this record; the client applies the pinned Status/Recv/InspectActivity/List shapes, fixed error classification, one-shot `Recv`, 10 s Status, 15 s/5-page/500-entry (20-page/2,000-entry hard) lookup budgets, cursor non-progress rejection, and authoritative-not-found versus exhaustion distinction. The mapper enforces exact amount/hash/timestamp/network/expiry/status/preimage rules and zeroizes transient preimage/digest buffers; the ACINQ decoder boundary is package-local, length/ASCII bounded, checksum-enforced, and defensively copies the hash. The ACINQ dependency and trust metadata stay scoped to the `wavelengthSpike` source set, `paygate-core` is untouched, and the provenance inputs match the recorded decisions (four narrowly scoped trusted publisher keys, six ACINQ metadata checksum exceptions).
 Verification: `HEAD` is `904b0c29421c18880c5228f2e056c6191134bb48`; `4b5fba0` is the implementation commit and `904b0c2` changes only this record, so the tree is clean and the scoped implementation is unchanged. `./gradlew :paygate-integration-tests:wavelengthSpikeTest -Pintegration` passed 109 tests with 0 failures, errors, or skips (JUnit XML; the four T5 classes total 60). `./gradlew spotlessCheck pmdWavelengthSpike pmdWavelengthSpikeTest validateDependencyProvenance -Pintegration` was successful and printed `Dependency provenance validation passed.` A scan of `paygate-integration-tests/build` for the synthetic invoice/hash/upstream-detail and `raw_response` markers returned nothing. No live daemon, credentials, wallet, browser, payment, restart, or Paygate flow ran.
 
+### Rework after Attempt 1
+Addressed P1 in commit `96cab4db3751a0c85cd355e2e1aaa2afb958499a`: the List fallback now records the first match but continues scanning within the existing lookup page/entry/deadline budget to confirm uniqueness before mapping and returning it. A second match on any later page fails closed with `WavelengthProtocolException`; exhausting the budget while confirming uniqueness fails closed with `WavelengthLookupExhaustedException`. Added deterministic regression coverage for cross-page duplicates and budget exhaustion after an initial match.
+
+Focused verification rerun:
+- `./gradlew :paygate-integration-tests:wavelengthSpikeTest --tests "com.greenharborlabs.paygate.integration.wavelength.WavelengthVendorProbeTest" -Pintegration` — passed.
+- `./gradlew :paygate-integration-tests:wavelengthSpikeTest --rerun-tasks -Pintegration` — passed 111 tests with 0 failures, errors, or skips.
+- `./gradlew spotlessCheck pmdWavelengthSpike pmdWavelengthSpikeTest validateDependencyProvenance -Pintegration` — passed; provenance validation printed `Dependency provenance validation passed.`
+- `grep -R -n -E 'synthetic-bolt11|raw_response|upstream-detail|[0-9a-f]{64}' paygate-integration-tests/build/test-results/wavelengthSpikeTest paygate-integration-tests/build/reports/tests/wavelengthSpikeTest 2>/dev/null || true` — no output.
+
+No live daemon, credentials, wallet, browser, payment, restart, or Paygate flow ran.
+
 ## Outcome
 Pending fresh-context review. T5 is complete in the ignored local Phase 0 checklist; synthetic results are offline contract tests only and establish no live capability gate.
 
 ## Next action
-Review implementation commit `4b5fba0ac677545d09085c91ed9e37f2c323a887` from a fresh context.
+Review implementation commits `4b5fba0ac677545d09085c91ed9e37f2c323a887` and `96cab4db3751a0c85cd355e2e1aaa2afb958499a` from a fresh context.
