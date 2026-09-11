@@ -1,0 +1,36 @@
+# Wavelength T5 Vendor Contract Probe
+Status: review
+Base revision: 58242ed3e796c2e43b2c7fe72eb90eb056dc04ae
+Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-keyring.keys, gradle/verification-metadata.xml, paygate-integration-tests/build.gradle.kts, paygate-integration-tests/src/wavelengthSpike/java/com/greenharborlabs/paygate/integration/wavelength/, paygate-integration-tests/src/wavelengthSpikeTest/java/com/greenharborlabs/paygate/integration/wavelength/
+
+## Goal
+Implement only [Phase 0 T5](../plans/wavelength-phase-0.md#implementation-tasks): a bounded Wavelength vendor contract probe with Status, Recv, InspectActivity, and List client calls; strict Invoice reconstruction; an isolated ACINQ BOLT11 decoder boundary; deterministic fixture coverage for mapping, pagination, and lookup failure modes; and live-probe wiring that records actual observed mode without fabricating capability evidence. Acceptance is passing relevant `wavelengthSpikeTest` tests plus T5 marked complete only after all offline T5 criteria pass.
+
+## Constraints
+- Use T0's approved pinned contracts and decoder from [compatibility.json](../docs/wavelength-spike/compatibility.json) and [contract appendix](../docs/wavelength-spike/contract-appendix.md): Wavelength v0.1.1 REST shapes, ACINQ `fr.acinq.lightning:lightning-kmp-core-jvm:1.13.0`, signet-only posture, no Recv idempotency/retry, BOLT11-derived expiry only, and no live gate pass from synthetic fixtures.
+- Preserve T1-T4 isolation/freshness/safety from [T1](2026-09-08-wavelength-t1-gradle-isolation.md), [T2](2026-09-08-wavelength-t2-credential-safety.md), [T3](2026-09-09-wavelength-t3-transport-evidence-safety.md), and [T4](2026-09-11-wavelength-t4-acceptance-integrity.md). Do not begin T6 browser work, T7 live payment/restart proof, T8 Paygate proof, production module work, Spring auto-configuration, or the deferred post-T8 T4 cache check.
+- Enforce the plan's exact validation/classification: 256 KiB response bound, request deadlines, 10-second no-retry Status, zero automatic Recv retries, 15-second bounded lookup, 100-entry pages, default 5-page/500-entry and hard 20-page/2,000-entry budgets, cursor/non-progress rejection, authoritative not-found versus scan exhaustion distinction, strict amount/hash/memo/timestamp/expiry/status/preimage validation, duplicate/inconsistent-match rejection, and fixed secret-free failures.
+- Keep paygate-core unchanged and do not add external production dependencies there. The decoder and its checksum/signature trust metadata remain isolated to the Wavelength spike source set. Preserve unrelated changes.
+
+## Decisions
+- Add package-local spike types: a JDK `HttpClient` client around `BoundedBodyHandler`, strict pinned JSON records/parser, mapper to the existing `Invoice`, isolated ACINQ decoder, explicit lookup exceptions, and a vendor probe reusable by later live tasks.
+- Use deterministic synthetic fixtures and local servers for T5 acceptance. Cover swap and credit identities, malformed/missing/contradictory fields, duplicate matches, status/hash/amount/expiry/preimage failures, pagination boundaries, stable concurrent-history cursors, and only the contract-permitted InspectActivity-not-found fallback. Reject shadow state and inferred reconstruction data.
+- Keep T5 synthetic-only: the probe's evidence method emits only allowlisted observed mode/category metadata, but no live gate is registered or claimed until T7. Swap-backed asset category remains `unknown` until live custody evidence exists.
+- Pin the decoder's full transitive graph in Gradle verification metadata. Scope four retrieved publisher keys narrowly by group/version; retain exact checksum exceptions for six ACINQ metadata artifacts whose signing key was unavailable. This expands review scope to the repository's existing provenance inputs rather than bypassing verification.
+- Mark only the ignored local T5 checklist item complete after offline acceptance; T4 remains unchecked because its successful-live daemon-stopped/cache verification is deferred until T8.
+
+## Tasks
+- [x] Add/lock the isolated ACINQ decoder dependency and implement a narrow decoder boundary with amount, hash, timestamp, explicit/default expiry, testnet-family, checksum, malformed, and overflow coverage.
+- [x] Implement bounded Status/Recv/InspectActivity/List transport, strict JSON parsing, fixed response/error classification, deadlines, cursor/lookup budgets, and no-Recv-retry behavior.
+- [x] Implement strict Invoice mapping and lookup orchestration, including the inline InspectActivity/List pipeline note, with deterministic receive-shape, contradiction, duplicate, status, hash, amount, expiry, preimage, absence, exhaustion, pagination, and concurrent-history coverage.
+- [x] Add the reusable vendor-probe entry point and allowlisted observed-mode evidence without browser/payment/restart/Paygate gates or synthetic live claims.
+- [x] Run focused and full offline Wavelength tests plus formatting, PMD, provenance validation, and report-marker scans; mark the local T5 checklist complete only after acceptance passes.
+
+## Review
+Implementation commit: `4b5fba0ac677545d09085c91ed9e37f2c323a887`. Focused T5 verification passed 60 tests; the final full credential-free `wavelengthSpikeTest --rerun-tasks` passed 109 tests with 0 failures, errors, or skips. `spotlessCheck`, `pmdWavelengthSpike`, `pmdWavelengthSpikeTest`, and `validateDependencyProvenance` passed. Generated test report scans found none of the synthetic invoice/hash/upstream-detail or `raw_response` markers. No live daemon, credentials, browser wallet, payment, restart, Paygate flow, or T6 work ran. Awaiting fresh-context review.
+
+## Outcome
+Pending fresh-context review. T5 is complete in the ignored local Phase 0 checklist; synthetic results are offline contract tests only and establish no live capability gate.
+
+## Next action
+Review implementation commit `4b5fba0ac677545d09085c91ed9e37f2c323a887` from a fresh context.
