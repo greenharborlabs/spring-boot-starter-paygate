@@ -126,6 +126,36 @@ class WavelengthVendorProbeTest {
   }
 
   @Test
+  void rejectsCrossPageDuplicateMatchesInsteadOfSelectingFirst() throws Exception {
+    var first = entryJson("credit-op-1", PAYMENT_HASH_HEX, "ENTRY_STATUS_PENDING", null, "");
+    var second = entryJson("credit-op-2", PAYMENT_HASH_HEX, "ENTRY_STATUS_PENDING", null, "");
+    try (var server =
+            new WavelengthTestFixtures.FixtureServer(
+                json(404, grpcError(5)),
+                json(200, pageJson(List.of(first), true, "cursor-1")),
+                json(200, pageJson(List.of(second), false, "")));
+        var http = HttpClient.newHttpClient()) {
+      assertThatThrownBy(() -> probe(http, server, 5, 500).lookup(PAYMENT_HASH))
+          .isInstanceOf(WavelengthProtocolException.class)
+          .hasMessage("Wavelength lookup returned duplicate matches");
+      assertThat(server.requests().get(2).body()).contains("\"cursor\":\"cursor-1\"");
+    }
+  }
+
+  @Test
+  void exhaustsBudgetWhileConfirmingSingleMatchUniqueness() throws Exception {
+    var match = entryJson("credit-op-1", PAYMENT_HASH_HEX, "ENTRY_STATUS_PENDING", null, "");
+    try (var server =
+            new WavelengthTestFixtures.FixtureServer(
+                json(404, grpcError(5)), json(200, pageJson(List.of(match), true, "cursor-1")));
+        var http = HttpClient.newHttpClient()) {
+      assertThatThrownBy(() -> probe(http, server, 1, 100).lookup(PAYMENT_HASH))
+          .isInstanceOf(WavelengthLookupExhaustedException.class)
+          .hasMessage("Wavelength invoice lookup budget was exhausted");
+    }
+  }
+
+  @Test
   void distinguishesAuthoritativeAbsenceFromPageBudgetExhaustion() throws Exception {
     var other = entryJson("credit-other", OTHER_HASH_HEX, "ENTRY_STATUS_PENDING", null, "");
     try (var absent =

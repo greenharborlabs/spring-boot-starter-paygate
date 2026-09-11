@@ -4,7 +4,6 @@ import com.greenharborlabs.paygate.core.lightning.Invoice;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 
@@ -84,25 +83,25 @@ final class WavelengthVendorProbe {
     var cursor = "";
     seenCursors.add(cursor);
 
+    WavelengthWire.WalletEntry match = null;
     while (true) {
       var page = client.list(cursor, budget);
       budget.consumePage(page.entries().size());
-      var matches = new ArrayList<WavelengthWire.WalletEntry>();
       for (var entry : page.entries()) {
         if (mapper.matchesPaymentHash(entry, paymentHash)) {
-          matches.add(entry);
+          if (match != null) {
+            throw new WavelengthProtocolException("Wavelength lookup returned duplicate matches");
+          }
+          match = entry;
         }
       }
-      if (matches.size() > 1) {
-        throw new WavelengthProtocolException("Wavelength lookup returned duplicate matches");
-      }
-      if (matches.size() == 1) {
-        var invoice = mapper.mapLookup(matches.getFirst(), paymentHash);
+      if (!page.hasMore()) {
+        if (match == null) {
+          throw new WavelengthInvoiceNotFoundException();
+        }
+        var invoice = mapper.mapLookup(match, paymentHash);
         budget.ensureActive();
         return invoice;
-      }
-      if (!page.hasMore()) {
-        throw new WavelengthInvoiceNotFoundException();
       }
       if (!budget.canContinue()) {
         throw new WavelengthLookupExhaustedException();
