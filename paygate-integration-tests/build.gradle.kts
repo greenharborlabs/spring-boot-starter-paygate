@@ -250,6 +250,38 @@ val wavelengthSpikeTest = tasks.register<Test>("wavelengthSpikeTest") {
     useJUnitPlatform()
 }
 
+val wavelengthSpikeBrowserDirectory =
+    layout.projectDirectory.dir("src/wavelengthSpike/browser").asFile
+
+val wavelengthSpikeBrowserInstall = tasks.register<Exec>("wavelengthSpikeBrowserInstall") {
+    description = "Installs the exact locked browser-spike dependencies"
+    workingDir(wavelengthSpikeBrowserDirectory)
+    commandLine("npm", "ci", "--ignore-scripts")
+}
+
+val wavelengthSpikeBrowserCheck = tasks.register<Exec>("wavelengthSpikeBrowserCheck") {
+    description = "Runs deterministic browser-spike type, recovery, and bundle checks"
+    group = "verification"
+    dependsOn(wavelengthSpikeBrowserInstall)
+    workingDir(wavelengthSpikeBrowserDirectory)
+    commandLine("npm", "run", "check")
+}
+
+val wavelengthSpikeBrowserRuntime = tasks.register<Exec>("wavelengthSpikeBrowserRuntime") {
+    description = "Downloads and hash-verifies the pinned local Wavelength browser runtime"
+    dependsOn(wavelengthSpikeBrowserInstall)
+    workingDir(wavelengthSpikeBrowserDirectory)
+    commandLine("npm", "run", "runtime:fetch")
+}
+
+val wavelengthSpikeBrowserSmoke = tasks.register<Exec>("wavelengthSpikeBrowserSmoke") {
+    description = "Loads the pinned local runtime in a temporary clean Chromium profile"
+    group = "verification"
+    dependsOn(wavelengthSpikeBrowserCheck)
+    workingDir(wavelengthSpikeBrowserDirectory)
+    commandLine("npm", "run", "test:browser")
+}
+
 // Wire securityTest into the check lifecycle when running with -Pintegration.
 // The Wavelength tasks remain explicit-only and are deliberately not lifecycle dependencies.
 tasks.named("check") {

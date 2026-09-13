@@ -6,7 +6,7 @@ This guide pins the prerequisites selected by T0. It does **not** authorize a pa
 ./gradlew :paygate-integration-tests:wavelengthSpike -PwavelengthSpike
 ```
 
-T1 added that task outside ordinary build and CI lifecycles. T4 adds mandatory preflight and fresh-evidence enforcement, but no vendor capability probe; a green T4 integrity gate is not a successful Phase 0 capability result.
+T1 added that task outside ordinary build and CI lifecycles. T4 adds mandatory preflight and fresh-evidence enforcement, and T5 adds the offline receiver probe. Neither a green integrity gate nor synthetic receiver/browser checks are a successful Phase 0 live capability result.
 
 ## Pinned compatibility set
 
@@ -56,6 +56,62 @@ sqlite3-opfs-async-proxy.js
 Install exact SDK versions with a committed lockfile; verify npm integrity values from `compatibility.json`. `runtimeBaseUrl` must point at the versioned asset directory and `defaultConfig("signet")` selects the public signet services. The package defaults to a dedicated Web Worker; the runtime also requires WebAssembly, nested workers, fetch, OPFS for persistent encrypted wallet databases, and Web Locks for reliable cross-tab exclusion. Cache Storage is an optional performance cache. `DecompressionStream` is optional because the raw WASM file is the fallback. Secure-context, CSP (`worker-src`, `script-src`, and `connect-src`), same-origin/CORS, storage quota/persistence, browser versions, and whether cross-origin isolation is required remain clean-profile live gates; v0.1.1 does not publish a supported-browser matrix.
 
 Create or unlock the payer wallet in the browser/operator boundary. Fund it with signet bitcoin using its boarding/deposit flow, wait for confirmation and boarding into spendable Ark value, and verify enough spendable balance for the invoice plus fees. The receiver wallet must also be created/unlocked out of band and connected to the public signet Ark and swap services. Whether a receive uses server credits or a client-claimable swap path must be observed rather than assumed; funding and boarding requirements may differ by mode.
+
+## T6 browser capability and recovery harness
+
+The minimal harness is under `paygate-integration-tests/src/wavelengthSpike/browser/`. It pins Wavelength Web/Core 0.1.1, farrier-kit 1.1.3, TypeScript 5.9.3, esbuild 0.28.2, and Playwright 1.63.0 in `package-lock.json`. Node 20 or later is supported by the selected browser tooling; T6 was observed with Node 26.8.1 and npm 11.19.0 on macOS 26.6.2 arm64.
+
+Run deterministic checks without a daemon, wallet, runtime archive, or payment:
+
+```bash
+./gradlew :paygate-integration-tests:wavelengthSpikeBrowserCheck -Pintegration --no-daemon
+```
+
+Fetch the immutable v0.1.1 runtime archive and verify the archive plus every extracted asset against `compatibility.json`, install the Playwright-pinned Chromium build, then run the clean-profile smoke check:
+
+```bash
+./gradlew :paygate-integration-tests:wavelengthSpikeBrowserRuntime -Pintegration --no-daemon
+cd paygate-integration-tests/src/wavelengthSpike/browser
+npx playwright install chromium
+cd ../../../..
+./gradlew :paygate-integration-tests:wavelengthSpikeBrowserSmoke -Pintegration --no-daemon
+```
+
+Alternatively set `WAVELENGTH_SPIKE_RUNTIME_DIR` for the smoke task to an existing directory containing the exact eight hash-verified files. The smoke server uses loopback HTTP, which Chromium treats as a secure context, and serves only local bundles/runtime files. It sends:
+
+```text
+Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Origin-Agent-Cluster: ?1
+Permissions-Policy: camera=(), microphone=(), geolocation=()
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+```
+
+Runtime assets receive `public, max-age=31536000, immutable`; the page and bundle receive `no-store`. WASM is `application/wasm`, the compressed WASM is `application/gzip` without `Content-Encoding`, and JavaScript is `text/javascript`. T6 observed `createWebClient().ready()` reach `runtime_ready` in Chrome for Testing 153.0.8010.12 (Playwright Chromium 1243), with `isSecureContext`, WebAssembly, Worker, Web Crypto, Web Locks, the OPFS API, and `crossOriginIsolated` available. A synthetic `sessionStorage` marker survived a same-tab reload in the temporary clean profile. Because T6 deliberately does not call `start`, create/unlock a wallet, or pay, this does not yet prove nested SQLite-worker behavior, quota/persistence, individual-header necessity, or preimage replay.
+
+The recovery state machine uses only public v0.1.1 APIs:
+
+```text
+prepareSend({ invoice })
+  -> validate paymentHash, amountSat, expiresAtUnix, and non-empty sendIntentId
+subscribe(listener)
+startActivity({ includeExisting: true, kinds: ["send"], cursor: 0 })
+list({ view: "activity", pendingOnly: false, kinds: ["send"], limit: 100, cursor? })
+  -> persist original challenge with dispatchMayHaveOccurred=true
+sendPrepared(prepared) exactly once
+  -> wait up to 120 seconds for matching terminal activity
+reload/lost response
+  -> repeat subscribe/startActivity/list for the stored paymentHash; never redispatch
+```
+
+`sendIntentId` is short-lived and single-use, so it is deliberately not persisted or reused. `SendResult` is treated as an initial activity result, not settlement. List snapshots can establish status but may omit the preimage; only a supported activity event/replay carrying `progress.preimage` can unlock. A timeout or failed entry remains blocked because v0.1.1 does not establish conclusive cancellation semantics for this harness.
+
+The same-origin `sessionStorage` record contains schema version, original invoice and macaroon, exact fragment-free GET target, payment hash, amount, verified invoice expiry, creation time, and the conservative dispatch marker. Same-origin scripts can read this confidential challenge/payment metadata. It contains neither the preimage nor an assembled Authorization value and cannot authorize alone. Storage access failure or corruption prevents dispatch or leaves recovery blocked. The complete record is cleared only after the original protected request returns exactly 200 or after an explicit operator abandonment that may forfeit a paid unlock. Session/tab/profile storage loss is outside automatic recovery and is never evidence that no payment occurred.
+
+T0 rejected the evaluated browser L402 packages because they either bundle Node-only wallet modules or cannot represent this recovery lifecycle. T6 therefore uses only the separately approved spike-local narrow boundary: strict parsing of Paygate's exact bounded `version="0"` header, identical canonical `token`/`macaroon`, verified BOLT11 fields, and formatting of `L402 <macaroon>:<64-hex-preimage>`. It is not a generic codec or auto-paying client and remains subject to fresh-context security review. No private Wavelength API or repayment fallback is used.
 
 ## Browser evidence capture policy
 

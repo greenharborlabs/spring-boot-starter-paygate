@@ -1,13 +1,15 @@
 # Wavelength v0.1.1 Contract Appendix
 
-Evidence date: 2026-09-07  
-Scope: Phase 0 T0 source/package review and an offline JVM decoder check. **No live gate is passed.**
+Evidence dates: 2026-09-07 through 2026-09-11
+
+Scope: Phase 0 T0 source/package review, T5 receiver fixtures, and T6 deterministic/clean-profile browser checks. **No live payment capability gate is passed.**
 
 ## Evidence labels
 
 - **Documented:** present in immutable v0.1.1 daemon/SDK source or published package types.
 - **Offline checked:** executed without a daemon, browser wallet, or payment.
-- **Live required:** cannot be promoted from source inspection.
+- **Clean-profile checked:** executed with the pinned local browser runtime but without starting/administering a wallet or paying.
+- **Live required:** cannot be promoted from source, fixture, or runtime-startup inspection.
 - **Rejected:** evaluated but not selected.
 
 Primary immutable sources are Wavelength daemon commit `2e89c924e2e10095f7baf736bc9eefdabcd836ce`, SDK commit `cd136619838dd15aa74c11ab4545a5788c48ad94`, and ACINQ lightning-kmp commit `956299158b83023485001d8d6f66f6b5dc8ee366`. Exact package/archive identities are in `compatibility.json`.
@@ -69,7 +71,9 @@ Risks retained for review: this is a whole Lightning engine artifact with a broa
 
 `farrier-kit@1.1.3` (MIT) is the current candidate because it has browser exports, one runtime dependency, checksum/network/amount/hash/timestamp/expiry parsing, BOLT vectors, differential tests, and published npm provenance. It is new and low-adoption, and intentionally does not verify invoice signatures. T6 therefore remains blocked on a focused dependency review and cross-check against a real v0.1.1 invoice; its role is only the browser checks required by the design, not receiver authority.
 
-No browser L402 package was approved. `l402-requests@0.8.0` has useful challenge/header APIs and a custom wallet interface, but its root export graph includes Node-only modules and its `payInvoice(): Promise<preimage>` abstraction cannot represent the required prepare/dispatch/recovery lifecycle. `l402@0.5.1` is browser-oriented but stale and directly couples payment to retry without durable unknown-outcome recovery. Do not write a local codec without the separate security review required by the design.
+T0 approved no browser L402 package. `l402-requests@0.8.0` has useful challenge/header APIs and a custom wallet interface, but its root export graph includes Node-only modules and its `payInvoice(): Promise<preimage>` abstraction cannot represent the required prepare/dispatch/recovery lifecycle. `l402@0.5.1` is browser-oriented but stale and directly couples payment to retry without durable unknown-outcome recovery.
+
+**T6 superseding spike-only decision:** the approved Keel scope authorizes a separately reviewed narrow local boundary rather than either rejected package. It accepts only Paygate's exact bounded `L402 version="0", token="...", macaroon="...", invoice="..."` output, requires identical canonical token/macaroon values and a verified signet-family amount-bearing BOLT11, and formats only `L402 <macaroon>:<64-hex-preimage>`. It is not a generic codec, automatic payment client, or production dependency. Fresh-context review must still approve this security-sensitive surface.
 
 ## Browser runtime inventory
 
@@ -81,7 +85,30 @@ Documented v0.1.1 requirements/candidates:
 - Cache Storage is optional; no `DecompressionStream` is acceptable when raw WASM is served;
 - runtime assets and network endpoints may require `worker-src`, `script-src`, and `connect-src` allowances.
 
-The selected SDK publishes no exact browser support matrix. Secure-context behavior, CSP directives, CORS/same-origin layout, quota/persistence, cross-origin isolation, declared browser versions, and recovery-record storage safety are live clean-profile gates, not documented successes.
+The selected SDK publishes no exact browser support matrix. Secure-context behavior, CSP directives, CORS/same-origin layout, quota/persistence, cross-origin isolation, declared browser versions, and recovery-record storage safety therefore require explicit observed evidence rather than inferred support.
+
+## T6 browser harness contract and offline evidence
+
+Evidence date: 2026-09-11. This section records deterministic and clean-profile capability checks only; it records no wallet payment or live preimage.
+
+The implemented public SDK call/result boundary is:
+
+| Step | Accepted v0.1.1 shape | Harness rule |
+|---|---|---|
+| Quote | `prepareSend({invoice}) -> PrepareSendResult` | Require non-empty `sendIntentId` and exact `paymentHash`, `amountSat`, and `expiresAtUnix` agreement with the decoded challenge. Quote does not dispatch and its intent is not persisted. |
+| Activity replay | register `subscribe(listener)`, then `startActivity({includeExisting:true,kinds:["send"],cursor:0})` | Match only `Entry.kind == "send"` with every present request/progress payment hash equal to the stored hash. Stream starts before dispatch. |
+| Snapshot | bounded `list({view:"activity",pendingOnly:false,kinds:["send"],limit:100,cursor?}) -> ListResult` | Validate tagged activity shape, page-local total, cursor progress, five-page bound, and uniqueness. Snapshot completion without a preimage is not payer proof. |
+| Dispatch | exactly one `sendPrepared(PrepareSendResult) -> SendResult` | Persist conservative recovery metadata first. Treat response as an initial activity entry; a throw, timeout, or completely lost response never permits redispatch. |
+| Completion | activity `Entry{status:"complete",progress:{paymentHash,preimage}}` | Require 32-byte lowercase hex and verify Web Crypto SHA-256 against the decoded invoice hash; zero temporary byte arrays where JavaScript permits. |
+| Retry | same original GET target with ephemeral `Authorization: L402 ...` | Never persist the preimage/header. Keep metadata after 402, 503 exhaustion, or any non-200. Clear only after exactly 200 or explicit warned abandonment. |
+
+`sessionStorage` was selected after classification: it is same-origin script-readable and carries confidential invoice, macaroon, target, hash, amount, and timing metadata, but no payer proof. It survives same-tab reload and normally ends with the tab/session; loss is outside automatic recovery. Access, quota, read-back, corruption, or cleanup failures fail closed. An unresolved record disables new dispatch. The harness deliberately treats SDK timeout/failed activity as unknown because v0.1.1 does not prove conclusive cancellation semantics.
+
+Deterministic tests cover storage write/read/cleanup failures, malformed stored data, quote/dispatch/activity shape checks, loss of the complete dispatch response, reload after durable storage but before dispatch, immediately after dispatch, while pending, and after settlement before protected 200, delayed completion, invalid preimage, original target/header reconstruction, and exact one-dispatch reconciliation.
+
+Clean-profile verification used Node 26.8.1/npm 11.19.0, Playwright 1.63.0, and Chrome for Testing 153.0.8010.12 (Chromium 1243) on macOS 26.6.2 arm64. The v0.1.1 archive and eight local assets were hash-verified. With the exact CSP/COEP/COOP/CORP/MIME/cache headers in `setup.md`, a temporary fresh persistent profile reported a secure and cross-origin-isolated context, WebAssembly, Worker, Web Crypto, Web Locks, and OPFS API availability; `createWebClient().ready()` reached `runtime_ready`, and synthetic session data survived reload. Tracing, HAR, video, screenshots, and raw console capture were disabled.
+
+Limits: the check did not call wallet `start`, create, unlock, fund, board, or dispatch. It therefore does not establish SQLite nested-worker/OPFS database operation, quota/persistence under wallet load, supported browser versions beyond the observed Chromium build, whether each isolation header is individually necessary, external-invoice preimage availability, or post-reload replay of a real preimage. Those remain T7 live gates, and an unsupported replay must stop the work without private APIs or repayment.
 
 ## Promotion-gate disposition
 
@@ -90,13 +117,13 @@ The selected SDK publishes no exact browser support matrix. Secure-context behav
 | Exact daemon/SDK/runtime pins | Resolved for spike: v0.1.1 set and immutable hashes recorded. |
 | Unchanged `LightningBackend` fields expressible | Documented feasible; restart persistence and bounded lookup remain live required. |
 | Acceptable maintained JVM decoder | Feasible and offline checked; final transitive/native and real-signet validation remain required. |
-| Supported payer dispatch/activity APIs | Documented candidates exist. |
-| Supported preimage after external payment | Live required. |
-| Lost-response/reload recovery without second dispatch | Source-supported candidate via activity replay; live required and a hard stop if replay fails. |
+| Supported payer dispatch/activity APIs | Public v0.1.1 shapes are compiled and exercised against deterministic doubles; real wallet behavior remains live required. |
+| Supported preimage after external payment | T6 validates synthetic preimages locally; real externally paid preimage remains T7 live required. |
+| Lost-response/reload recovery without second dispatch | Deterministic T6 state-machine coverage passes through public activity replay/list shapes; real replay remains T7 live required and a hard stop if it fails. |
 | Explicit receive expiry | Absent; verified BOLT11 expiry is the only allowed source. |
 | Exact receive idempotency key | Absent; `Recv` must not retry. |
 | Least-privilege receiver credential | Not operationally available from a supported v0.1.1 baking surface found by T0; promotion blocker. |
-| Browser L402 dependency | Unresolved; T6 blocker pending maintained browser-safe package or separate security review. |
+| Browser L402 dependency | T6 uses the separately approved narrow spike-local parser/formatter; fresh-context review is required and production dependency selection remains unresolved. |
 | Receive asset/custody/exit claims | Live required per observed mode; credit receipt proves only server-credit settlement and L402 compatibility. |
 
 T0 permits only the next explicitly approved Phase 0 work while these gates remain enforced. It does not approve T6, any payment, Phase 1 work, publication, mainnet use, or a custody claim.

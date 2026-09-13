@@ -27,7 +27,7 @@ public final class WavelengthSpikeRun {
   static final String MANIFEST_SHA256_PROPERTY = "wavelength.spike.manifest-sha256";
 
   static final String EXPECTED_MANIFEST_SHA256 =
-      "c10ee0755c9f46b80482029ca9fd5e57fab6ce6e4fdaa699d7eeb2a58829c2d7";
+      "256f71ebefffdffcef42ee94af789d0a5514aac024c7ea3db1417e7761a80447";
   static final String EXECUTION_SUMMARY_NAME = "execution.properties";
 
   private static final String LIVE_TEST_CLASS =
