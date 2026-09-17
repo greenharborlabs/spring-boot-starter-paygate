@@ -199,6 +199,7 @@ val wavelengthSpike = tasks.register<Test>("wavelengthSpike") {
             ?: throw GradleException("Wavelength spike run context is unavailable")
         val manifestSha256 = wavelengthSpikeManifestSha256.get()
             ?: throw GradleException("Wavelength spike run context is unavailable")
+        systemProperty("wavelength.spike.browser-directory", layout.projectDirectory.dir("src/wavelengthSpike/browser").asFile.absolutePath)
         systemProperty("wavelength.spike.run-id", runId)
         systemProperty("wavelength.spike.run-directory", runDirectory.absolutePath)
         systemProperty("wavelength.spike.manifest-path", wavelengthSpikeManifest.asFile.absolutePath)
@@ -252,6 +253,17 @@ val wavelengthSpikeTest = tasks.register<Test>("wavelengthSpikeTest") {
 
 val wavelengthSpikeBrowserDirectory =
     layout.projectDirectory.dir("src/wavelengthSpike/browser").asFile
+
+val wavelengthSpikeBrowserLiveBuild = tasks.register<Exec>("wavelengthSpikeBrowserLiveBuild") {
+    description = "Rebuilds local live browser assets without downloading dependencies or starting a wallet"
+    dependsOn(requireWavelengthSpikeOptIn)
+    workingDir(wavelengthSpikeBrowserDirectory)
+    commandLine("npm", "run", "build")
+}
+
+wavelengthSpike.configure {
+    dependsOn(wavelengthSpikeBrowserLiveBuild)
+}
 
 val wavelengthSpikeBrowserInstall = tasks.register<Exec>("wavelengthSpikeBrowserInstall") {
     description = "Installs the exact locked browser-spike dependencies"

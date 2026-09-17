@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "evidenceAsOf": "2026-09-11",
-  "scope": "Phase 0 T0 paper review plus T5 receiver and T6 browser offline checks; no live capability gate is passed",
+  "evidenceAsOf": "2026-09-16",
+  "scope": "Phase 0 T0 paper review, T5/T6 offline checks, and T7 bounded harness preparation; no live capability gate is passed",
   "receiverDaemon": {
     "repository": "https://github.com/lightninglabs/wavelength",
     "release": "v0.1.1",
@@ -162,5 +162,26 @@
       "storage": "A synthetic sessionStorage marker survived same-tab reload in a temporary clean persistent Chromium profile",
       "limits": "No wallet create/unlock/start, funded payment, terminal preimage replay, nested SQLite worker use, storage quota/persistence, or individual-header necessity was established."
     }
+  },
+  "t7Harness": {
+    "status": "operator prerequisites missing; implementation requires fresh-context review; live proof unpassed",
+    "workload": {
+      "paidInvoices": 1,
+      "principalSats": 10,
+      "unpaidAdditionalReceives": 2,
+      "liveConcurrency": "not exercised; sequential small history only"
+    },
+    "limits": {
+      "lookupPages": 5,
+      "lookupEntries": 500,
+      "lookupDeadlineSeconds": 15,
+      "responseBytes": 262144,
+      "paymentRecoverySeconds": 120,
+      "controllerActionSeconds": 30,
+      "browserOuterDeadlineSeconds": 330
+    },
+    "custody": "Record actual mode, balance deltas, explicit activity fee; credit is server-controlled; swap asset/control and unilateral exit remain unknown unless independently proved",
+    "inspectionWindow": "unverified; do not infer retention from one restart",
+    "payerProof": "Direct in-browser proof sink, not a Paygate protected response; T8 remains unimplemented"
   }
 }

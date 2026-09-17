@@ -150,3 +150,55 @@ After T8 produces the first genuinely successful full live invocation, rerun the
 ## Stop conditions retained from the design
 
 Stop before harness expansion or promotion if the supported APIs cannot provide a payer preimage, lost-response/reload recovery without redispatch, exact receiver reconstruction after restart, or an acceptable JVM decoder. T0 found a viable JVM candidate and documented SDK candidates, but all payer/restart behavior remains unproved until the funded live spike. The browser L402 package choice also remains blocked pending a browser-safe maintained package or a separate security review of a narrow local codec.
+
+## T7 bounded direct live harness (operator setup required)
+
+T7 preparation adds an ordered direct-vendor runner; it does **not** establish any live capability by itself. The current environment has no identified dedicated daemon or wallet directory. Do not guess a default wallet directory, start another operator's process, or run the controller until the inventory below is verified. Missing prerequisites are a blocked run, not a disproved vendor capability. T7 remains unchecked until current-run live evidence passes.
+
+First run the offline Java/browser checks and install the pinned Chromium/runtime as above. The canonical live command rebuilds the local browser bundle afresh (no dependency downloads in that substep); dependencies must already have been installed with the committed lockfile. It launches headed Chromium, not a headless wallet administrator. Keep the dedicated payer profile and its fixed loopback origin; prepare/create/fund/board that wallet separately. The live page permits **operator-entered unlock only**, never wallet creation, import, funding, or boarding. Do not put the password in environment variables, command arguments, scripts, or this guide. The operator must be present to unlock initially and again after reload. There is no automatic repayment if this misses the deadline.
+
+In addition to the eleven preflight variables above, supply:
+
+| Variable | T7 requirement |
+|---|---|
+| `WAVELENGTH_SPIKE_DAEMON_EXECUTABLE` | Canonical absolute non-symlink executable of the dedicated source-built v0.1.1 daemon |
+| `WAVELENGTH_SPIKE_DAEMON_PID_FILE` | Canonical, restrictive regular file containing only the dedicated PID; controller atomically updates it after restart |
+| `WAVELENGTH_SPIKE_DAEMON_SHA256` | Lowercase SHA-256 of that verified binary |
+| `WAVELENGTH_SPIKE_CONTROLLER_SHA256` | Lowercase SHA-256 of the reviewed controller executable supplied as `WAVELENGTH_SPIKE_RESTART_EXECUTABLE` |
+| `WAVELENGTH_SPIKE_BROWSER_PORT` | Fixed unoccupied loopback port, 1024–65535, matching the prepared payer profile's origin |
+| `WAVELENGTH_SPIKE_CONTROL_REVIEWED` | `confirmed` only after the controller and process/network/data-directory inventory are reviewed |
+| `WAVELENGTH_SPIKE_HISTORY_AUTHORIZED` | `confirmed` authorizes exactly two additional **unpaid** 10-sat receive requests, no retry |
+| `WAVELENGTH_SPIKE_DEPENDENCY_FAULT_AUTHORIZED` | `confirmed` authorizes one reversible, dedicated-daemon-only Ark or swap dependency fault |
+
+The receiver endpoint must be loopback HTTPS with trusted TLS; no certificate-validation bypass is installed. Identify the executable, pinned source commit and `wavewalletrpc,swapruntime` build tags, PID/start time, exact explicit data-directory argument, endpoint/listener mapping, controller identity, and dedicated signet configuration **out of band before setting confirmations**. No concrete deployment paths are published here because none have been supplied or verified. The harness additionally checks the process executable, PID/start identity, binary/controller hashes, explicit directory argument, and directory file identity before mutation and across restart. These checks complement operator review; they do not make an arbitrary script safe.
+
+### Reviewed controller contract
+
+This is an installation-specific external executable, **not** an arbitrary shell string embedded in Gradle. No generic lifecycle script is supplied because the daemon installation, service manager, TLS trust and fault proxy have not been identified. Every action gets a single fixed argument, has a 30-second deadline, exits nonzero on failure, and produces no stdout. Stderr is discarded. It must never log wallet material elsewhere either.
+
+- `verify`: read-only verification of the above inventory, source/build pins, dedicated endpoint/data-directory mapping, and normal dependency routing; verify no pre-existing foreign fault would be overwritten.
+- `restart`: stop only the verified dedicated instance, start the same pinned binary/config against the **same existing wallet directory**, and update the PID file. Do not delete/recreate the directory or wallet files. Redirect daemon output to a reviewed secret-safe destination, not inherited command pipes. Unlock remains out of band.
+- `fault-on`: enable a fault exclusively on an owned proxy/routing boundary used by that daemon and one named dependency. Never stop a public service or change a machine-wide firewall.
+- `fault-verify`: independently confirm that the targeted dependency traffic is blocked and that the receiver RPC listener remains available. A no-op controller does not prove an outage.
+- `fault-off`: undo only that owned fault, idempotently.
+- `restore`: idempotently remove the owned fault and restore the original running daemon configuration, including after partial restart/fault failure. Preserve the wallet and payer profile. Do not affect unrelated processes or routing.
+
+Mutation is marked before command dispatch because a lost response can hide a successful mutation. Cleanup executes even on hard-gate failure. The JVM polls receiver readiness after restoration; out-of-band unlock may still be required. If ownership changes or restoration cannot be verified, the run fails and the operator must inspect the dedicated installation. The subprocess runner bounds input/output and kills only its own command descendants on timeout; the controller remains responsible for its managed daemon/service state.
+
+### Declared workload and evidence
+
+One principal payment of 10 sats plus payer fees is authorized; two extra receiver invoices remain unpaid and are never retried. The live workload is intentionally small and sequential after settlement, **not** a claimed live page-boundary/concurrency/retention soak. Synthetic T5 coverage remains the evidence for large histories, concurrent pagination, page boundaries, ambiguity and exhaustion.
+
+The live sequence is Status → Recv and JVM cross-check → actual browser dispatch with its entire response withheld → same-tab reload → supported replay with local preimage hashing and exactly-one-dispatch assertion → receiver COMPLETE → custody observation → two unpaid receives/history scan → dedicated restart/out-of-band unlock → fresh-client exact reconstruction → dependency fault/readiness observation → restoration.
+
+The browser receives the invoice through a bounded private subprocess pipe, never an argument, file, or console. Its dispatch counter lives in the supervising Node process across reload; the second dispatch is refused. Initial settlement cannot clear the original recovery record. Only successful post-reload proof clears it. The synthetic macaroon and in-browser proof sink are explicitly **not** Paygate 402/200 evidence; no protected HTTP endpoint or T8 adapter is implemented.
+
+Browser initialization/unlock is bounded to 120 seconds. Payment/reload/re-unlock/recovery must finish within 120 seconds from dispatch; timeout leaves the outcome unknown. The Node watchdog is 300 seconds, outer command deadline 330 seconds, termination grace three seconds. Controller actions allow 30 seconds; receiver settlement/readiness polling allows 120 seconds plus at most one already-started bounded RPC (10-second Status or 15-second lookup). Receiver calls retain the 256-KiB limit, no Recv retries, 100-entry pages, five-page/500-entry and 15-second overall lookup budget. Restoration has its own bounded command/readiness budget. A single fresh receiver client/mapper is used after restart; only the payment hash is supplied to lookup, with prior fields retained solely for comparison.
+
+Evidence records actual scan counts, rank, age, lookup path, receive shape, confirmed/credit balance deltas and the activity's explicit `fee_sat` (missing fee fails the custody observation rather than becoming an assumed zero). The daemon's internal inspection-window capacity remains unverified; no retention duration is promised. Credit mode reports `server_credits`, server control/redemption dependency and unknown unilateral exit. Swap mode remains asset/control/redemption `unknown` until separate live custody evidence establishes more; a shape alone does not imply self-custodial receipt. Optional second mode is not exercised. Readiness during a verified dependency outage may remain true; that is recorded without claiming dependency-sensitive health or an affected-operation outage matrix (T8).
+
+Each successful gate has a current-run/manifest completion record and an allowlisted `observation/evidence.json`. Failed preflight produces `outcome: unavailable`; later failed gates retain partial records with fixed outcomes. Raw invoice/hash/preimage, credentials, paths, upstream messages, browser traces/HAR/video/screenshots and SDK console are absent. Mandatory gates now include the T7 chain; integrity-only test success can no longer pass acceptance.
+
+The live server retains the T6 headers and adds only these pinned signet origins to `connect-src` (including worker-script responses): `https://signet.wavelength-rest.lightning.finance`, `https://signet.swapd-rest.lightning.finance`, and `https://mempool-signet.testnet.lightningcluster.com`. Wallet startup, actual dependency CORS, OPFS persistence, funding, preimage replay and restoration still require live verification; static header checks do not prove them.
+
+On timeout/failure the harness closes its owned browser context while preserving the encrypted wallet profile. It does not promise sessionStorage recovery after tab/process closure, and a failure is **never** evidence of non-payment. Inspect payer/receiver activity out of band before explicitly authorizing another run; do not blindly rerun or claim an unpaid unlock was recovered. This T7 direct probe has no valuable Paygate credential to preserve; the real original-challenge HTTP lifecycle remains T8.

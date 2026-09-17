@@ -33,6 +33,18 @@ import org.junit.jupiter.params.provider.MethodSource;
 class WavelengthInvoiceMapperTest {
 
   @Test
+  void feeEvidenceDistinguishesMissingFromExplicitZeroAndRejectsNegative() {
+    var root = WavelengthWire.jsonMapper().readTree(swapRecvJson());
+    var entry = (tools.jackson.databind.node.ObjectNode) root.get("entry");
+    assertThat(WavelengthWire.parseRecv(WavelengthWire.jsonBytes(root)).entry().feeSats()).isNull();
+    entry.put("fee_sat", "0");
+    assertThat(WavelengthWire.parseRecv(WavelengthWire.jsonBytes(root)).entry().feeSats()).isZero();
+    entry.put("fee_sat", "-1");
+    assertThatThrownBy(() -> WavelengthWire.parseRecv(WavelengthWire.jsonBytes(root)))
+        .isInstanceOf(WavelengthProtocolException.class);
+  }
+
+  @Test
   void mapsSwapBackedReceiveWithoutInventingPreimage() {
     var mapped =
         mapper(decoded(), NOW)

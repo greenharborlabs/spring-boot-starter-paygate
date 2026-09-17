@@ -127,3 +127,22 @@ Limits: the check did not call wallet `start`, create, unlock, fund, board, or d
 | Receive asset/custody/exit claims | Live required per observed mode; credit receipt proves only server-credit settlement and L402 compatibility. |
 
 T0 permits only the next explicitly approved Phase 0 work while these gates remain enforced. It does not approve T6, any payment, Phase 1 work, publication, mainnet use, or a custody claim.
+
+## T7 preparation and blocked live attempt — 2026-09-16
+
+**Disposition: operator prerequisites unavailable; T7 is not complete. No hard vendor capability has been disproved or passed.** The bounded harness is implemented for review, not evidence that the funded flow works.
+
+The current canonical invocation with `--build-cache` failed nonzero before any daemon API, wallet lifecycle, browser wallet startup, dispatch, restart, or dependency fault. Its sanitized partial record is:
+
+- run ID: `afa43183-16d9-4135-84bf-b0bf836d4198`;
+- manifest SHA-256: `bcb7f3642830dd349e319731f72bccea7042c2c67560b573ee01f37e5a696ab9`;
+- ignored artifact: `paygate-integration-tests/build/wavelength-spike/afa43183-16d9-4135-84bf-b0bf836d4198/preflight/evidence.json`;
+- gate `preflight`, outcome `unavailable`; acceptance rejected missing T7 execution/evidence.
+
+All eleven original setup variables were absent: daemon TLS endpoint, credential path, dedicated receiver data directory, payer profile, pinned runtime directory, dedicated controller, and the receiver-ready/payer-ready/payer-funded/fresh-profile/payment-authorization confirmations. No `waved` executable was found on PATH and no exact-name daemon process was found. This does not rule out an installation elsewhere. No dedicated daemon or wallet data directory has been identified, so no lifecycle operation is authorized by inference. T7 additionally requires the concrete binary/PID/controller identities, fixed payer origin, reviewed controller and unpaid-history/dependency-fault confirmations documented in [setup.md](setup.md#t7-bounded-direct-live-harness-operator-setup-required). Funding, boarding and out-of-band unlock remain operator prerequisites, not harness-created state.
+
+Independent preparation verified 149 Java offline tests with zero failures/errors/skips and 28 browser tests plus typecheck/bundle. Clean-profile runtime/storage smoke and static live-route/worker CSP checks passed without starting a wallet. Spotless, both Wavelength PMD tasks, dependency provenance, report canary scans and default/check/release graph isolation passed. The opt-in-only guard rejected `-Pintegration` before live browser build; cache-enabled missing-prerequisite invocations allocated distinct run IDs and executed live preparation rather than reusing cached results. This is **not** T4's deferred successful-full-live-run-then-stopped-daemon proof.
+
+Added synthetic coverage includes output-limit/timeout/nonzero subprocess failures; positive process identity/restart with wallet-file preservation; foreign PID and changed-controller rejection; partial fault restoration; ordered gate failure/stop behavior; fresh-client reconstruction; explicit fee versus missing fee; missing observation/integrity-only acceptance rejection; and real-response-drop adapter behavior over a test double. These tests cannot establish upstream persistence, live fee wire presence, actual receive asset, preimage replay, dependency readiness, or real wallet restoration.
+
+The new direct browser flow deliberately uses a synthetic macaroon and an in-memory proof sink, not Paygate HTTP authorization. The live response-drop adapter invokes the real supported `sendPrepared` but withholds its entire result from the payment state machine, then reloads and reconciles through supported APIs; no live execution of that sequence occurred. T8 is untouched. All real receive/decode/payment/preimage/COMPLETE/custody/history/restart/outage/recovery gates, optional second mode and promotion decisions remain unpassed.

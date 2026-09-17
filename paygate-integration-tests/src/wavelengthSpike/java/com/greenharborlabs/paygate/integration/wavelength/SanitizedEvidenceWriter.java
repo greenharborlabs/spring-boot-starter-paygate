@@ -29,6 +29,9 @@ final class SanitizedEvidenceWriter {
 
   private static final Set<String> GATES =
       Set.of(
+          "history",
+          "custody",
+          "restore",
           "preflight",
           "transport",
           "status",
@@ -102,7 +105,22 @@ final class SanitizedEvidenceWriter {
           "identifier_prefix",
           "receive_mode",
           "asset_category",
-          "browser_event_code");
+          "browser_event_code",
+          "principal_sats",
+          "dispatch_count",
+          "credit_delta_sats",
+          "confirmed_delta_sats",
+          "fee_sats",
+          "asset_control",
+          "redemption_dependency",
+          "exit_evidence",
+          "readiness",
+          "history_entries",
+          "history_pages",
+          "target_rank",
+          "target_age_seconds",
+          "unpaid_receives",
+          "lookup_path");
   private static final Set<String> ALLOWED_FIELDS = Set.copyOf(FIELD_ORDER);
 
   private SanitizedEvidenceWriter() {}
@@ -130,6 +148,10 @@ final class SanitizedEvidenceWriter {
       deleteQuietly(temporary);
       throw new IOException(WRITE_FAILURE_MESSAGE);
     }
+  }
+
+  static String canonical(Map<String, ?> candidate) {
+    return toJson(validate(candidate));
   }
 
   private static Map<String, Object> validate(Map<String, ?> candidate) {
@@ -172,6 +194,25 @@ final class SanitizedEvidenceWriter {
       case "receive_mode" -> RECEIVE_MODES.contains(value);
       case "asset_category" -> ASSET_CATEGORIES.contains(value);
       case "browser_event_code" -> BROWSER_EVENT_CODES.contains(value);
+      default -> isValidObservation(field, value);
+    };
+  }
+
+  private static boolean isValidObservation(String field, Object value) {
+    return switch (field) {
+      case "principal_sats" -> isIntegerInRange(value, 10, 10);
+      case "dispatch_count" -> isIntegerInRange(value, 1, 1);
+      case "credit_delta_sats", "confirmed_delta_sats" ->
+          isIntegerInRange(value, -2_100_000_000_000_000L, 2_100_000_000_000_000L);
+      case "fee_sats" -> isIntegerInRange(value, 0, 2_100_000_000_000_000L);
+      case "asset_control", "redemption_dependency" -> Set.of("server", "unknown").contains(value);
+      case "exit_evidence" -> "unknown".equals(value);
+      case "readiness" -> Set.of("ready", "not_ready", "unavailable").contains(value);
+      case "history_entries", "target_rank" -> isIntegerInRange(value, 1, 500);
+      case "history_pages" -> isIntegerInRange(value, 1, 5);
+      case "target_age_seconds" -> isIntegerInRange(value, 0, 86_400);
+      case "lookup_path" -> Set.of("inspect_activity", "list", "not_observed").contains(value);
+      case "unpaid_receives" -> isIntegerInRange(value, 2, 2);
       default -> false;
     };
   }

@@ -27,14 +27,71 @@ public final class WavelengthSpikeRun {
   static final String MANIFEST_SHA256_PROPERTY = "wavelength.spike.manifest-sha256";
 
   static final String EXPECTED_MANIFEST_SHA256 =
-      "256f71ebefffdffcef42ee94af789d0a5514aac024c7ea3db1417e7761a80447";
+      "bcb7f3642830dd349e319731f72bccea7042c2c67560b573ee01f37e5a696ab9";
   static final String EXECUTION_SUMMARY_NAME = "execution.properties";
 
   private static final String LIVE_TEST_CLASS =
       "com.greenharborlabs.paygate.integration.wavelength.WavelengthSpikeIT";
   private static final Set<String> MANDATORY_TESTS =
-      Set.of(LIVE_TEST_CLASS + "#currentRunEvidenceIsBound");
-  private static final List<String> MANDATORY_GATES = List.of("preflight", "evidence");
+      Set.of(
+          LIVE_TEST_CLASS + "#currentRunEvidenceIsBound",
+          LIVE_TEST_CLASS + "#directSignetCapabilities");
+  static final List<String> MANDATORY_GATES =
+      List.of(
+          "preflight",
+          "evidence",
+          "status",
+          "receive",
+          "invoice_decode",
+          "payer_dispatch",
+          "payer_recovery",
+          "receiver_settlement",
+          "custody",
+          "history",
+          "restart_lookup",
+          "outage",
+          "restore");
+  static final Map<String, Set<String>> OBSERVATION_FIELDS =
+      Map.ofEntries(
+          Map.entry("status", Set.of()),
+          Map.entry("receive", Set.of("receive_mode")),
+          Map.entry("invoice_decode", Set.of("principal_sats")),
+          Map.entry("payer_dispatch", Set.of("dispatch_count")),
+          Map.entry("payer_recovery", Set.of("dispatch_count")),
+          Map.entry("receiver_settlement", Set.of()),
+          Map.entry(
+              "custody",
+              Set.of(
+                  "receive_mode",
+                  "asset_category",
+                  "credit_delta_sats",
+                  "confirmed_delta_sats",
+                  "fee_sats",
+                  "asset_control",
+                  "redemption_dependency",
+                  "exit_evidence")),
+          Map.entry(
+              "history",
+              Set.of(
+                  "history_entries",
+                  "history_pages",
+                  "target_rank",
+                  "target_age_seconds",
+                  "unpaid_receives",
+                  "lookup_path",
+                  "fee_sats")),
+          Map.entry(
+              "restart_lookup",
+              Set.of(
+                  "history_entries",
+                  "history_pages",
+                  "target_rank",
+                  "target_age_seconds",
+                  "lookup_path",
+                  "fee_sats")),
+          Map.entry("outage", Set.of("readiness")),
+          Map.entry("restore", Set.of()));
+
   private static final Pattern RUN_ID =
       Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
@@ -184,6 +241,9 @@ public final class WavelengthSpikeRun {
 
     for (var gate : MANDATORY_GATES) {
       validateGateEvidence(runDirectory, runId, manifestSha256, gate, failures);
+      if (OBSERVATION_FIELDS.containsKey(gate)) {
+        validateObservation(runDirectory, runId, manifestSha256, gate, failures);
+      }
     }
 
     if (!failures.isEmpty()) {
@@ -358,6 +418,41 @@ public final class WavelengthSpikeRun {
       }
     } catch (IOException e) {
       failures.add("unreadable mandatory evidence");
+    }
+  }
+
+  private static void validateObservation(
+      Path directory, String runId, String manifest, String gate, List<String> failures) {
+    try {
+      var path =
+          directory
+              .resolve(gate)
+              .resolve("observation")
+              .resolve(SanitizedEvidenceWriter.ARTIFACT_NAME);
+      if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+          || Files.isSymbolicLink(path)
+          || Files.size(path) > 4096) {
+        throw new IllegalArgumentException();
+      }
+      var text = Files.readString(path);
+      Map<String, Object> fields =
+          WavelengthWire.jsonMapper()
+              .readValue(text, new tools.jackson.core.type.TypeReference<Map<String, Object>>() {});
+      var expected = new java.util.HashSet<>(OBSERVATION_FIELDS.get(gate));
+      expected.addAll(
+          Set.of("schema_version", "run_id", "manifest_sha256", "gate", "operation", "outcome"));
+      if (!fields.keySet().equals(expected)
+          || !Integer.valueOf(1).equals(fields.remove("schema_version"))
+          || !runId.equals(fields.get("run_id"))
+          || !manifest.equals(fields.get("manifest_sha256"))
+          || !gate.equals(fields.get("gate"))
+          || !"artifact_write".equals(fields.get("operation"))
+          || !"passed".equals(fields.get("outcome"))
+          || !SanitizedEvidenceWriter.canonical(fields).equals(text)) {
+        throw new IllegalArgumentException();
+      }
+    } catch (IOException | RuntimeException invalid) {
+      failures.add("missing, stale or incomplete mandatory observation");
     }
   }
 

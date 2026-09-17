@@ -11,9 +11,39 @@ class WavelengthSpikeIT {
 
   @BeforeAll
   static void runMandatoryPreflight() throws IOException {
-    WavelengthSpikeRun.preflight(
+    try {
+      WavelengthSpikeRun.preflight(
+          System.getenv(),
+          requiredPath(WavelengthSpikeRun.MANIFEST_PATH_PROPERTY),
+          requiredPath(WavelengthSpikeRun.RUN_DIRECTORY_PROPERTY),
+          requiredProperty(WavelengthSpikeRun.RUN_ID_PROPERTY),
+          requiredProperty(WavelengthSpikeRun.MANIFEST_SHA256_PROPERTY));
+      T7LiveEnvironment.preflight(System.getenv());
+    } catch (IllegalStateException failure) {
+      var directory = requiredPath(WavelengthSpikeRun.RUN_DIRECTORY_PROPERTY).resolve("preflight");
+      if (!java.nio.file.Files.exists(directory)) java.nio.file.Files.createDirectory(directory);
+      SanitizedEvidenceWriter.write(
+          directory,
+          java.util.Map.of(
+              "run_id",
+              requiredProperty(WavelengthSpikeRun.RUN_ID_PROPERTY),
+              "manifest_sha256",
+              requiredProperty(WavelengthSpikeRun.MANIFEST_SHA256_PROPERTY),
+              "gate",
+              "preflight",
+              "operation",
+              "artifact_write",
+              "outcome",
+              "unavailable"));
+      throw failure;
+    }
+  }
+
+  @Test
+  void directSignetCapabilities() {
+    T7LiveEnvironment.execute(
         System.getenv(),
-        requiredPath(WavelengthSpikeRun.MANIFEST_PATH_PROPERTY),
+        requiredPath("wavelength.spike.browser-directory"),
         requiredPath(WavelengthSpikeRun.RUN_DIRECTORY_PROPERTY),
         requiredProperty(WavelengthSpikeRun.RUN_ID_PROPERTY),
         requiredProperty(WavelengthSpikeRun.MANIFEST_SHA256_PROPERTY));

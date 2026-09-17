@@ -151,10 +151,33 @@ class WavelengthSpikeRunTest {
 
     @Test
     void acceptsExactlyOneSuccessfulMandatoryTestAndCurrentEvidence() throws Exception {
-      writeExecution(MANDATORY_TEST, "SUCCESS");
+      writeExecution(
+          MANDATORY_TEST,
+          "SUCCESS",
+          MANDATORY_TEST.replace("currentRunEvidenceIsBound", "directSignetCapabilities"),
+          "SUCCESS");
       writeEvidence(runDirectory, RUN_ID, MANIFEST_SHA256);
 
       WavelengthSpikeRun.validateAcceptance(runDirectory, RUN_ID, MANIFEST_SHA256);
+    }
+
+    @Test
+    void completionMarkersWithoutObservationsCannotPass() throws Exception {
+      writeExecution(
+          MANDATORY_TEST,
+          "SUCCESS",
+          MANDATORY_TEST.replace("currentRunEvidenceIsBound", "directSignetCapabilities"),
+          "SUCCESS");
+      writeEvidence(runDirectory, RUN_ID, MANIFEST_SHA256);
+      Files.delete(runDirectory.resolve("payer_recovery/observation/evidence.json"));
+      assertAcceptanceFailsWith("missing, stale or incomplete mandatory observation");
+    }
+
+    @Test
+    void integrityOnlyCannotPassEvenWithAllSyntheticArtifacts() throws Exception {
+      writeExecution(MANDATORY_TEST, "SUCCESS");
+      writeEvidence(runDirectory, RUN_ID, MANIFEST_SHA256);
+      assertAcceptanceFailsWith("missing or filtered mandatory test");
     }
 
     @Test
@@ -262,7 +285,33 @@ class WavelengthSpikeRunTest {
 
   private static void writeEvidence(Path directory, String runId, String manifestSha256)
       throws Exception {
-    WavelengthSpikeRun.writeGateEvidence(directory, runId, manifestSha256, "preflight");
-    WavelengthSpikeRun.writeGateEvidence(directory, runId, manifestSha256, "evidence");
+    for (var gate : WavelengthSpikeRun.MANDATORY_GATES) {
+      WavelengthSpikeRun.writeGateEvidence(directory, runId, manifestSha256, gate);
+      if (WavelengthSpikeRun.OBSERVATION_FIELDS.containsKey(gate)) {
+        var fields = new LinkedHashMap<String, Object>();
+        fields.put("run_id", runId);
+        fields.put("manifest_sha256", manifestSha256);
+        fields.put("gate", gate);
+        fields.put("operation", "artifact_write");
+        fields.put("outcome", "passed");
+        for (var field : WavelengthSpikeRun.OBSERVATION_FIELDS.get(gate)) {
+          fields.put(
+              field,
+              switch (field) {
+                case "receive_mode" -> "credit_backed";
+                case "asset_category" -> "server_credits";
+                case "asset_control", "redemption_dependency" -> "server";
+                case "exit_evidence" -> "unknown";
+                case "readiness" -> "ready";
+                case "lookup_path" -> "list";
+                case "unpaid_receives" -> 2;
+                case "principal_sats" -> 10;
+                default -> 1;
+              });
+        }
+        SanitizedEvidenceWriter.write(
+            Files.createDirectory(directory.resolve(gate).resolve("observation")), fields);
+      }
+    }
   }
 }

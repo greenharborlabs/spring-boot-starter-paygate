@@ -10,11 +10,11 @@ import { RUNTIME_ASSETS } from "./runtime-manifest.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = resolve(root, "build/public");
 
-export async function startHarnessServer(runtimeDirectory, port = 0) {
+export async function startHarnessServer(runtimeDirectory, port = 0, live = false) {
   const runtimeRoot = resolve(runtimeDirectory);
   await validateRuntime(runtimeRoot);
   const server = createServer((request, response) => {
-    void serve(request.url ?? "/", response, runtimeRoot);
+    void serve(request.url ?? "/", response, runtimeRoot, live);
   });
   await new Promise((resolveListening, reject) => {
     server.once("error", reject);
@@ -34,10 +34,10 @@ export async function startHarnessServer(runtimeDirectory, port = 0) {
   };
 }
 
-async function serve(rawUrl, response, runtimeRoot) {
+async function serve(rawUrl, response, runtimeRoot, live) {
   try {
     const url = new URL(rawUrl, "http://127.0.0.1");
-    const mapping = mapPath(url.pathname, runtimeRoot);
+    const mapping = mapPath(url.pathname, runtimeRoot, live);
     if (mapping === null) {
       send(response, 404, "text/plain; charset=utf-8", "Not found");
       return;
@@ -47,7 +47,7 @@ async function serve(rawUrl, response, runtimeRoot) {
       send(response, 404, "text/plain; charset=utf-8", "Not found");
       return;
     }
-    setSecurityHeaders(response);
+    setSecurityHeaders(response, live);
     response.setHeader("Content-Type", contentType(mapping.path));
     response.setHeader(
       "Cache-Control",
@@ -61,7 +61,10 @@ async function serve(rawUrl, response, runtimeRoot) {
   }
 }
 
-function mapPath(pathname, runtimeRoot) {
+function mapPath(pathname, runtimeRoot, live) {
+  if (live && pathname === "/live") {
+    return { path: resolve(publicRoot, "live.html"), runtime: false };
+  }
   if (pathname === "/") {
     return { path: resolve(publicRoot, "index.html"), runtime: false };
   }
@@ -89,10 +92,11 @@ function safeMapping(base, relative, runtime) {
   return { path: candidate, runtime };
 }
 
-function setSecurityHeaders(response) {
+function setSecurityHeaders(response, live = false) {
+  const dependencies = live ? " https://signet.wavelength-rest.lightning.finance https://signet.swapd-rest.lightning.finance https://mempool-signet.testnet.lightningcluster.com" : "";
   response.setHeader(
     "Content-Security-Policy",
-    "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'${dependencies}; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
   );
   response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
   response.setHeader("Cross-Origin-Opener-Policy", "same-origin");

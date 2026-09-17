@@ -67,3 +67,18 @@ function assertHeader(response, name, expectedFragment) {
     throw new Error("Harness serving header verification failed");
   }
 }
+
+// Verify the live serving contract without starting/administering a wallet.
+const liveServer = await startHarnessServer(runtimeDirectory, 0, true);
+try {
+  for (const path of ["/live", "/assets/live-entry.js", "/assets/wavelength-worker.js"]) {
+    const response = await fetch(`${liveServer.origin}${path}`);
+    if (response.status !== 200) throw new Error("Live asset is unavailable");
+    assertHeader(response, "content-security-policy", "https://signet.wavelength-rest.lightning.finance");
+    assertHeader(response, "content-security-policy", "https://signet.swapd-rest.lightning.finance");
+    assertHeader(response, "cache-control", "no-store");
+    await response.body?.cancel();
+  }
+} finally {
+  await liveServer.close();
+}

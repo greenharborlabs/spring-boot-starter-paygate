@@ -159,7 +159,8 @@ final class WavelengthWire {
                 requiredText(progress, "phase"),
                 requiredText(progress, "payment_hash"),
                 optionalNonEmptyText(progress, "preimage")),
-            Optional.ofNullable(failureCode));
+            Optional.ofNullable(failureCode),
+            node.has("fee_sat") ? requiredNonNegativeLongString(node, "fee_sat") : null);
     if (!"ENTRY_KIND_RECV".equals(entry.kind())
         || !ENTRY_STATUSES.contains(entry.status())
         || !ENTRY_PHASES.contains(entry.progress().phase())
@@ -301,7 +302,8 @@ final class WavelengthWire {
       String note,
       LightningRequest request,
       EntryProgress progress,
-      Optional<String> failureCode) {}
+      Optional<String> failureCode,
+      Long feeSats) {}
 
   record LightningRequest(String invoice, String paymentHash) {}
 

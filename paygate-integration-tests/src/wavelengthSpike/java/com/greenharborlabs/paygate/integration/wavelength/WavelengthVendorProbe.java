@@ -36,6 +36,12 @@ final class WavelengthVendorProbe {
   }
 
   Invoice lookup(byte[] paymentHash) {
+    return lookupObserved(paymentHash).invoice();
+  }
+
+  record LookupResult(Invoice invoice, String path) {}
+
+  LookupResult lookupObserved(byte[] paymentHash) {
     if (paymentHash == null || paymentHash.length != 32) {
       throw new IllegalArgumentException("paymentHash must be exactly 32 bytes");
     }
@@ -52,9 +58,9 @@ final class WavelengthVendorProbe {
       }
       var invoice = mapper.mapLookup(inspected, paymentHash);
       budget.ensureActive();
-      return invoice;
+      return new LookupResult(invoice, "inspect_activity");
     } catch (WavelengthInspectNotFoundException notFound) {
-      return lookupInActivityHistory(paymentHash, budget);
+      return new LookupResult(lookupInActivityHistory(paymentHash, budget), "list");
     }
   }
 

@@ -30,6 +30,34 @@ class SanitizedEvidenceWriterTest {
 
   @TempDir Path tempDir;
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "principal_sats",
+        "dispatch_count",
+        "credit_delta_sats",
+        "confirmed_delta_sats",
+        "fee_sats",
+        "asset_control",
+        "redemption_dependency",
+        "exit_evidence",
+        "readiness",
+        "history_entries",
+        "history_pages",
+        "target_rank",
+        "target_age_seconds",
+        "unpaid_receives",
+        "lookup_path"
+      })
+  void rejectsCanaryInEveryT7Observation(String field) {
+    var candidate = validCandidate();
+    candidate.put(field, CANARY);
+    assertThatThrownBy(() -> SanitizedEvidenceWriter.write(tempDir, candidate))
+        .hasMessage(SanitizedEvidenceWriter.INVALID_EVIDENCE_MESSAGE)
+        .hasNoCause();
+    assertDirectoryIsEmpty();
+  }
+
   @Test
   void writesOnlyValidatedFieldsInStableOrder() throws Exception {
     var candidate = new LinkedHashMap<String, Object>();
