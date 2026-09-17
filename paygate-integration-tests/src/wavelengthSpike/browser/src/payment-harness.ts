@@ -41,6 +41,8 @@ interface MonitorStart {
 }
 
 export class BrowserPaymentHarness {
+  private dispatchInFlight = false;
+
   constructor(
     private readonly client: PaymentClient,
     private readonly store: RecoveryStore,
@@ -64,6 +66,18 @@ export class BrowserPaymentHarness {
   }
 
   async dispatch(challengeHeader: string, target: string): Promise<HarnessResult> {
+    if (this.dispatchInFlight) {
+      throw new RecoveryBlockedError();
+    }
+    this.dispatchInFlight = true;
+    try {
+      return await this.dispatchOnce(challengeHeader, target);
+    } finally {
+      this.dispatchInFlight = false;
+    }
+  }
+
+  private async dispatchOnce(challengeHeader: string, target: string): Promise<HarnessResult> {
     if (this.store.load() !== null) {
       throw new RecoveryBlockedError();
     }

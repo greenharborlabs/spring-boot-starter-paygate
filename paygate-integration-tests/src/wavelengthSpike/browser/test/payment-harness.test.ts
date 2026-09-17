@@ -41,6 +41,37 @@ describe("single-dispatch browser recovery", () => {
     assert.equal(client.dispatchCount, 0);
   });
 
+  it("rejects overlapping dispatch calls before a second quote or payment", async () => {
+    const client = new FakeClient();
+    client.sendEntry = completeEntry();
+    const originalPrepare = client.prepareSend.bind(client);
+    let prepareCount = 0;
+    let signalPrepareStarted: () => void = () => undefined;
+    let releasePrepare: () => void = () => undefined;
+    const prepareStarted = new Promise<void>((resolve) => {
+      signalPrepareStarted = resolve;
+    });
+    const prepareGate = new Promise<void>((resolve) => {
+      releasePrepare = resolve;
+    });
+    client.prepareSend = async () => {
+      prepareCount += 1;
+      signalPrepareStarted();
+      await prepareGate;
+      return originalPrepare();
+    };
+    const harness = harnessFor(client, new MemoryStorage(), async () => 200);
+
+    const first = harness.dispatch(CHALLENGE, TARGET);
+    await prepareStarted;
+    await assert.rejects(() => harness.dispatch(CHALLENGE, TARGET), RecoveryBlockedError);
+    releasePrepare();
+
+    assert.equal((await first).state, "unlocked");
+    assert.equal(prepareCount, 1);
+    assert.equal(client.dispatchCount, 1);
+  });
+
   it("blocks dispatch when the supported activity snapshot cannot establish prior state", async () => {
     const client = new FakeClient();
     client.listFails = true;
