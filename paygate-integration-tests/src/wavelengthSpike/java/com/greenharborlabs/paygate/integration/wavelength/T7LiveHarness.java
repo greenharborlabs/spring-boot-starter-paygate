@@ -126,7 +126,7 @@ final class T7LiveHarness {
       String readiness;
       try {
         readiness = receiver.status().ready() ? "ready" : "not_ready";
-      } catch (WavelengthException failure) {
+      } catch (WavelengthException | LightningTimeoutException failure) {
         readiness = "unavailable";
       }
       control.faultOff();

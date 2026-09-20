@@ -8,6 +8,7 @@ import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Test;
 @DisplayName("T7 bounded direct-vendor orchestration (synthetic only)")
 class T7LiveHarnessTest {
   private final List<String> events = new ArrayList<>();
+  private final Map<String, Map<String, Object>> observations = new HashMap<>();
   private final FakeReceiver receiver = new FakeReceiver();
   private final FakeControl control = new FakeControl();
   private boolean payerFails;
@@ -66,6 +68,16 @@ class T7LiveHarnessTest {
     assertThatThrownBy(() -> harness().execute())
         .hasMessage("Wavelength direct capability gate failed: outage");
     assertThat(events).contains("fault-on", "failed:outage", "restore");
+  }
+
+  @Test
+  void outageTimeoutIsRecordedAsUnavailableAndFaultIsRemoved() {
+    receiver.timeoutDuringFault = true;
+    harness().execute();
+    assertThat(events)
+        .contains("fault-on", "fault-off", "passed:outage")
+        .doesNotContain("failed:outage");
+    assertThat(observations.get("outage")).containsEntry("readiness", "unavailable");
   }
 
   @Test
@@ -175,6 +187,7 @@ class T7LiveHarnessTest {
         new T7LiveHarness.Evidence() {
           public void passed(String gate, Map<String, Object> observation) {
             events.add("passed:" + gate);
+            observations.put(gate, observation);
           }
 
           public void failed(String gate) {
@@ -207,8 +220,13 @@ class T7LiveHarnessTest {
     private int settlementTimeouts;
     private int temporarySettlementFailures;
     private boolean permanentSettlementFailure;
+    private boolean timeoutDuringFault;
 
     public WavelengthWire.StatusResponse status() {
+      if (control.faultActive && timeoutDuringFault) {
+        timeoutDuringFault = false;
+        throw new WavelengthTimeoutException("Synthetic timeout", new IllegalStateException());
+      }
       if (fresh && statusTimeoutsAfterFresh > 0) {
         statusTimeoutsAfterFresh--;
         throw new WavelengthTimeoutException("Synthetic timeout", new IllegalStateException());
@@ -267,6 +285,7 @@ class T7LiveHarnessTest {
   private final class FakeControl implements T7LiveHarness.Control {
     private boolean faultFails;
     private boolean restoreFails;
+    private boolean faultActive;
 
     public void restart() {
       events.add("restart");
@@ -275,14 +294,17 @@ class T7LiveHarnessTest {
     public void faultOn() {
       events.add("fault-on");
       if (faultFails) throw new IllegalStateException();
+      faultActive = true;
     }
 
     public void faultOff() {
       events.add("fault-off");
+      faultActive = false;
     }
 
     public void close() {
       events.add("restore");
+      faultActive = false;
       if (restoreFails) throw new IllegalStateException();
     }
   }
