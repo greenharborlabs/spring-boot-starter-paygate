@@ -146,3 +146,16 @@ Independent preparation verified 149 Java offline tests with zero failures/error
 Added synthetic coverage includes output-limit/timeout/nonzero subprocess failures; positive process identity/restart with wallet-file preservation; foreign PID and changed-controller rejection; partial fault restoration; ordered gate failure/stop behavior; fresh-client reconstruction; explicit fee versus missing fee; missing observation/integrity-only acceptance rejection; and real-response-drop adapter behavior over a test double. These tests cannot establish upstream persistence, live fee wire presence, actual receive asset, preimage replay, dependency readiness, or real wallet restoration.
 
 The new direct browser flow deliberately uses a synthetic macaroon and an in-memory proof sink, not Paygate HTTP authorization. The live response-drop adapter invokes the real supported `sendPrepared` but withholds its entire result from the payment state machine, then reloads and reconciles through supported APIs; no live execution of that sequence occurred. T8 is untouched. All real receive/decode/payment/preimage/COMPLETE/custody/history/restart/outage/recovery gates, optional second mode and promotion decisions remain unpassed.
+
+## T8 blocked predecessor check — 2026-09-17
+
+**Disposition: T8 did not proceed because the required T7 direct-vendor live gates still have no passed current-run evidence.** A cache-enabled canonical invocation was run only to confirm the hard predecessor state. It failed nonzero at preflight before any daemon API, wallet lifecycle, browser wallet startup, dispatch, payment, restart, dependency outage, Paygate adapter, or protected endpoint operation.
+
+Sanitized current-run partial evidence:
+
+- run ID: `8396a552-e01a-42a7-b263-8b061afd5b28`;
+- manifest SHA-256: `bcb7f3642830dd349e319731f72bccea7042c2c67560b573ee01f37e5a696ab9`;
+- ignored artifact: `paygate-integration-tests/build/wavelength-spike/8396a552-e01a-42a7-b263-8b061afd5b28/preflight/evidence.json`;
+- gate `preflight`, outcome `unavailable`; acceptance rejected missing T7 execution/evidence.
+
+The failure reported missing daemon endpoint, credential file, receiver data directory, fresh browser profile, pinned browser runtime assets, isolated restart executable, and the five explicit readiness/funding/fresh-profile/payment-authorization confirmations. No T8 test-only `LightningBackend` adapter or Spring `@TestConfiguration` harness was added. T4's deferred stopped-daemon/build-cache freshness check still cannot be executed because it requires a prior successful full live invocation.
