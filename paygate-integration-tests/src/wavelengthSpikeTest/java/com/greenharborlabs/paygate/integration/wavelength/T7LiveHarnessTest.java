@@ -86,6 +86,39 @@ class T7LiveHarnessTest {
   }
 
   @Test
+  void readinessPollRetriesTimeoutAfterRestart() {
+    receiver.statusTimeoutsAfterFresh = 1;
+    harness(Duration.ofMillis(600)).execute();
+    assertThat(receiver.statusTimeoutsAfterFresh).isZero();
+    assertThat(events).contains("passed:restart_lookup", "passed:restore");
+  }
+
+  @Test
+  void settlementPollRetriesTimeout() {
+    receiver.settlementTimeouts = 1;
+    harness(Duration.ofMillis(600)).execute();
+    assertThat(receiver.settlementTimeouts).isZero();
+    assertThat(events).contains("passed:receiver_settlement");
+  }
+
+  @Test
+  void settlementPollRetriesTemporaryUnavailability() {
+    receiver.temporarySettlementFailures = 1;
+    harness(Duration.ofMillis(600)).execute();
+    assertThat(receiver.temporarySettlementFailures).isZero();
+    assertThat(events).contains("passed:receiver_settlement");
+  }
+
+  @Test
+  void permanentSettlementFailureStopsWithoutRestart() {
+    receiver.permanentSettlementFailure = true;
+    assertThatThrownBy(() -> harness().execute())
+        .hasMessage("Wavelength direct capability gate failed: receiver_settlement")
+        .hasNoCause();
+    assertThat(events).contains("failed:receiver_settlement", "restore").doesNotContain("restart");
+  }
+
+  @Test
   void lookupReceivesOnlyHashAfterFreshClient() {
     harness().execute();
     assertThat(receiver.fresh).isTrue();
@@ -128,6 +161,10 @@ class T7LiveHarnessTest {
   }
 
   private T7LiveHarness harness() {
+    return harness(Duration.ofMillis(20));
+  }
+
+  private T7LiveHarness harness(Duration wait) {
     return new T7LiveHarness(
         receiver,
         control,
@@ -144,7 +181,7 @@ class T7LiveHarnessTest {
             events.add("failed:" + gate);
           }
         },
-        Duration.ofMillis(20));
+        wait);
   }
 
   private static Invoice invoice(InvoiceStatus status, String memo) {
@@ -166,8 +203,16 @@ class T7LiveHarnessTest {
     private boolean changedAfterRestart;
     private boolean pending;
     private boolean missingFee;
+    private int statusTimeoutsAfterFresh;
+    private int settlementTimeouts;
+    private int temporarySettlementFailures;
+    private boolean permanentSettlementFailure;
 
     public WavelengthWire.StatusResponse status() {
+      if (fresh && statusTimeoutsAfterFresh > 0) {
+        statusTimeoutsAfterFresh--;
+        throw new WavelengthTimeoutException("Synthetic timeout", new IllegalStateException());
+      }
       return new WavelengthWire.StatusResponse(
           true,
           true,
@@ -184,6 +229,17 @@ class T7LiveHarnessTest {
     }
 
     public Invoice lookup(byte[] hash) {
+      if (!fresh && settlementTimeouts > 0) {
+        settlementTimeouts--;
+        throw new WavelengthTimeoutException("Synthetic timeout", new IllegalStateException());
+      }
+      if (!fresh && temporarySettlementFailures > 0) {
+        temporarySettlementFailures--;
+        throw upstream(WavelengthClient.FailureClassification.TEMPORARY_UNAVAILABLE);
+      }
+      if (!fresh && permanentSettlementFailure) {
+        throw upstream(WavelengthClient.FailureClassification.PROTOCOL_FAILURE);
+      }
       if (fresh) freshLookups++;
       return invoice(
           pending ? InvoiceStatus.PENDING : InvoiceStatus.SETTLED,
@@ -199,6 +255,12 @@ class T7LiveHarnessTest {
     public void freshClient() {
       events.add("fresh");
       fresh = true;
+    }
+
+    private WavelengthUpstreamException upstream(
+        WavelengthClient.FailureClassification classification) {
+      return new WavelengthUpstreamException(
+          "Synthetic upstream failure", classification, 503, null, null);
     }
   }
 

@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.integration.wavelength;
 
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
+import com.greenharborlabs.paygate.core.lightning.LightningTimeoutException;
 import java.time.Duration;
 import java.util.Map;
 
@@ -160,7 +161,9 @@ final class T7LiveHarness {
         ready();
         if (System.nanoTime() >= deadline) break;
         return;
-      } catch (WavelengthException | IllegalStateException unavailable) {
+      } catch (WavelengthException
+          | LightningTimeoutException
+          | IllegalStateException unavailable) {
         // Only reads repeat; each RPC keeps its own tighter bound.
       }
       pause(deadline);
@@ -171,9 +174,19 @@ final class T7LiveHarness {
   private Invoice settled(byte[] hash) {
     long deadline = System.nanoTime() + wait.toNanos();
     do {
-      var invoice = receiver.lookup(hash);
-      if (invoice.status() == InvoiceStatus.SETTLED && System.nanoTime() < deadline) return invoice;
-      require(invoice.status() == InvoiceStatus.PENDING);
+      try {
+        var invoice = receiver.lookup(hash);
+        if (invoice.status() == InvoiceStatus.SETTLED && System.nanoTime() < deadline)
+          return invoice;
+        require(invoice.status() == InvoiceStatus.PENDING);
+      } catch (LightningTimeoutException unavailable) {
+        // A bounded read timeout does not establish that settlement failed.
+      } catch (WavelengthUpstreamException unavailable) {
+        if (unavailable.classification()
+            != WavelengthClient.FailureClassification.TEMPORARY_UNAVAILABLE) {
+          throw unavailable;
+        }
+      }
       pause(deadline);
     } while (System.nanoTime() < deadline);
     throw new IllegalStateException("Spike receiver settlement deadline elapsed");
