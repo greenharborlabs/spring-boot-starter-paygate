@@ -104,7 +104,6 @@ def validate(xml_path, md_path, build_path, properties_path, today):
                       "Dependency-Check plugin version in build.gradle.kts")
     project_version = setting(read(properties_path), r"^version=([^\s]+)$", "project version")
     expected_purl = f"pkg:maven/com.greenharborlabs/paygate-lightning-lnbits@{project_version}"
-    template_purl = "pkg:maven/com.greenharborlabs/paygate-lightning-lnbits@PAYGATE_VERSION@"
     records = parse_records(read(md_path))
     try:
         root = ET.fromstring(read(xml_path))
@@ -131,7 +130,7 @@ def validate(xml_path, md_path, build_path, properties_path, today):
         if any(child.tag not in allowed for child in suppression):
             fail(f"{cve}: broad or ambiguous advisory scope")
         purl = only_child(suppression, "packageUrl", cve)
-        if "*" in purl or "?" in purl or purl not in (expected_purl, template_purl):
+        if purl != expected_purl:
             fail(f"{cve}: broad or mismatched package URL; expected {expected_purl}")
         until = suppression.get("until")
         if until is None:

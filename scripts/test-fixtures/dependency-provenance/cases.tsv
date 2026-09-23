@@ -2,6 +2,7 @@
 missing-key	remove the committed keyring
 untrusted-signature	remove a scoped trusted-key entry
 checksum-change	change one SHA-256 value
+source-coordinate-change	point a reviewed exception at another exact artifact URL
 broad-exception	use a wildcard coordinate
 duplicate-exception	duplicate an exact exception coordinate
 orphaned-exception	reference an absent component

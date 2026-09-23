@@ -28,7 +28,7 @@ reviewed decision and an expiry date.
 
 - `integration-tests/docker-compose-lnbits.yml` and `integration-tests/docker-compose-lnbits-lnd.yml` already isolate LNbits to host loopback and share one bootstrap contract.
 - `integration-tests/scripts/setup-lnbits.sh` already supports both older and newer LNbits initialization and wallet APIs; retain this compatibility unless the upgraded image proves a concrete mismatch.
-- `config/dependency-check-suppressions.xml` already scopes CVE-2025-32013 to the exact Paygate Maven package URL and substitutes the current project version during the build.
+- At planning time, `config/dependency-check-suppressions.xml` scoped CVE-2025-32013 to a Paygate Maven package URL template that substituted the current project version during the build. W3-01 replaces that template with the approved literal version.
 - `config/dependency-check-risk-dispositions.md` already records why the Java artifact is distinct from the affected Python server.
 - `scripts/validate-dependency-check-risk-dispositions.sh` and `scripts/test-dependency-check-risk-dispositions.sh` provide the existing policy gate and negative-test entry point.
 - `.github/workflows/dependency-advisory.yml` already runs daily, uploads reports on failure, and is protected by `scripts/test-dependency-advisory-workflow.sh`.
@@ -166,7 +166,7 @@ Extract the enforcement decision into `scripts/validate-container-scan-report.py
 
 ### W3-01: Reapprove the exact Maven suppression and verify all gates
 
-After the real LNbits fixture is upgraded and the validator is enforcing dates, renew only the existing `CVE-2025-32013` suppression for `pkg:maven/com.greenharborlabs/paygate-lightning-lnbits@PAYGATE_VERSION@`. Set a bounded future deadline consistent with the repository's review cadence, update the risk record to `Approved`, cite the September 19 CI report and current reproduced scanner evidence, and record the fixture upgrade. Do not suppress the LNbits Docker image or broaden the rule to a CPE, regex, artifact-name pattern, or all versions.
+After the real LNbits fixture is upgraded and the validator is enforcing dates, renew only the existing `CVE-2025-32013` suppression for `pkg:maven/com.greenharborlabs/paygate-lightning-lnbits@0.1.7-SNAPSHOT`. Remove the old build-time version-template expansion so a later Paygate version cannot inherit this approval; any version bump requires fresh evidence and approval before adding a new exact PURL. Set a bounded future deadline consistent with the repository's review cadence, update the risk record to `Approved`, cite the September 19 CI report and current reproduced scanner evidence, and record the fixture upgrade. Do not suppress the LNbits Docker image or broaden the rule to a CPE, regex, artifact-name pattern, or all versions.
 
 Avoid circular approval evidence with a two-stage PR flow: open the remediation as a draft with the disposition marked pending, obtain explicit maintainer approval, then add a final commit containing the PR number, named approver, approval date, and `Status: Approved` before required checks and merge. A merge commit is not acceptable pre-merge evidence.
 

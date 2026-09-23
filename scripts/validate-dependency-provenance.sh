@@ -68,15 +68,20 @@ awk -F '\t' -v today="$today" '
     if ($1 !~ /^EX-[0-9]{3}$/) fail("exception ID is invalid")
     if ($2 ~ /[*?]/ || $3 ~ /[*?]/ || $4 ~ /[*?]/ || $5 ~ /[*?]/) fail("exception coordinate is broad")
     if ($6 !~ /^[0-9a-f]{64}$/) fail("exception checksum is invalid")
-    if ($7 !~ /^https:\/\// || $7 ~ /(cache|\.gradle)/) fail("exception source is not authoritative")
+    if ($7 !~ /^https:\/\// || $7 ~ /\/(cache|\.gradle)\//) fail("exception source is not authoritative")
     if ($10 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ || $10 < today) fail("exception review is expired")
     coordinate = $2 ":" $3 ":" $4 ":" $5
     if (seenId[$1]++ || seenCoordinate[coordinate]++) fail("exception is duplicate")
   }
 ' "$EXCEPTIONS"
 
-while IFS=$'\t' read -r exception_id group module version filename checksum _; do
+while IFS=$'\t' read -r exception_id group module version filename checksum source _; do
   [[ "$exception_id" == \#* || -z "$exception_id" ]] && continue
+  source_path="${group//.//}/$module/$version/$filename"
+  if [[ "$source" != "https://repo1.maven.org/maven2/$source_path" &&
+        "$source" != "https://plugins.gradle.org/m2/$source_path" ]]; then
+    fail "exception $exception_id source does not match its exact coordinate"
+  fi
   escaped_group="${group//./\\.}"
   escaped_module="${module//./\\.}"
   escaped_version="${version//./\\.}"
