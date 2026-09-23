@@ -86,24 +86,13 @@ nexusPublishing {
 }
 
 val exampleModules = setOf("paygate-example-app", "paygate-example-app-spring-security")
-val dependencyCheckSuppressionTemplate =
-    layout.projectDirectory.file("config/dependency-check-suppressions.xml")
-val generatedDependencyCheckSuppressionFile =
-    layout.buildDirectory.file("dependency-check/dependency-check-suppressions.xml")
-val prepareDependencyCheckSuppressions = tasks.register<Copy>("prepareDependencyCheckSuppressions") {
-    from(dependencyCheckSuppressionTemplate)
-    into(generatedDependencyCheckSuppressionFile.map { it.asFile.parentFile })
-    // The filter replaces its @...@ token delimiters as well, so retain the PURL version separator.
-    filter { line: String -> line.replace("@PAYGATE_VERSION@", "@${version}") }
-}
-
 dependencyCheck {
     autoUpdate = true
     failOnError = true
     failBuildOnCVSS = 0F
     formats = listOf("HTML", "JSON", "JUNIT")
     outputDirectory.set(layout.buildDirectory.dir("reports/dependency-check"))
-    suppressionFile = generatedDependencyCheckSuppressionFile.get().asFile.path
+    suppressionFile = layout.projectDirectory.file("config/dependency-check-suppressions.xml").asFile.path
     failBuildOnUnusedSuppressionRule = true
     nvd.datafeedUrl = "https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"
     nvd.apiKey = providers.environmentVariable("NVD_API_KEY").orNull
@@ -317,7 +306,6 @@ subprojects {
 
 val dependencyCheckArtifactTasks = subprojects.map { it.tasks.named("jar") }
 val dependencyCheckAggregate = tasks.named("dependencyCheckAggregate") {
-    dependsOn(prepareDependencyCheckSuppressions)
     // Aggregate resolves project artifacts dynamically, so Gradle cannot infer their producer tasks.
     dependsOn(dependencyCheckArtifactTasks)
 }

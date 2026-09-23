@@ -38,6 +38,8 @@ for case in \
 done
 expect_failure missing-file 'cannot read' "$validator" "$fixtures/nonexistent.xml" "$fixtures/valid.md"
 expect_failure missing-records 'cannot read' "$validator" "$fixtures/valid.xml" "$fixtures/nonexistent.md"
+expect_failure version-template 'broad or mismatched package URL' \
+  "$validator" "$fixtures/version-template.xml" "$fixtures/valid.md"
 expect_failure missing-plugin-version 'Dependency-Check plugin version' \
   python3 "$root/scripts/validate-dependency-check-risk-dispositions.py" \
   "$fixtures/valid.xml" "$fixtures/valid.md" /dev/null "$root/gradle.properties"
