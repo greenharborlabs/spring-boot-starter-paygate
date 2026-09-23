@@ -36,6 +36,20 @@ If you paste snippets into an interactive `zsh` session, enable comment handling
 
 A short guide to go from zero to a verified **402 -> pay -> 200** flow using LNbits backed by a local payee LND node and a distinct local payer LND node. This path verifies `sha256(preimage) == payment_hash` before presenting the credential to the example app.
 
+The LNbits fixtures use `lnbits/lnbits:v1.6.2` pinned to
+`sha256:284b9c2a0df9a1f867b4c52b694699fccade513c09368879922ff90bc7bf850e`.
+Existing `0.12.11` volumes are unsupported disposable state. Before starting
+the upgraded image, reset the stack you use from `integration-tests/`:
+
+```bash
+docker compose -f docker-compose-lnbits.yml down -v --remove-orphans
+# Or, for the full LNbits-over-LND stack:
+docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans
+```
+
+These commands delete the selected stack's LNbits data and any regtest chain
+and LND wallet state. Rerun setup afterward to generate fresh credentials.
+
 ### Prerequisites
 
 Docker Engine 24+, Docker Compose v2, `curl`, and `jq` must be installed.
@@ -77,7 +91,7 @@ The scripts wait for the app to become healthy, then exercise the full proof flo
 **5. Tear down:**
 
 ```bash
-docker compose -f docker-compose-lnbits-lnd.yml down -v
+docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans
 ```
 
 ### Notes
@@ -318,9 +332,9 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 | 3 | Starts the `lnbits` service with Docker Compose, using `up -d --wait` when available. | Prevents the script from racing ahead before the container is healthy. |
 | 4 | Waits for `${LNBITS_URL}/api/v1/health` to return successfully. | Adds an HTTP-level readiness check before initialization. |
 | 5 | Calls `PUT /api/v1/auth/first_install` with a local setup username and generated owner-only password. | Initializes LNbits on a fresh volume without a reusable repository default. |
-| 6 | Treats `200` as initialized, `401` as already initialized, and `404`/`405` as first-install endpoint unavailable. | Handles multiple LNbits versions and reruns without failing unnecessarily. |
-| 7 | Attempts to log in with `POST /api/v1/auth`. | Newer LNbits flows require a bearer token before creating an account wallet. |
-| 8 | Creates a wallet using `POST /api/v1/account` when login succeeded, otherwise falls back to `POST /api/v1/wallet`. | Supports both authenticated and older unauthenticated wallet creation APIs. |
+| 6 | Treats `200` as initialized and `401` as already initialized; every other first-install status fails setup. | Handles reruns and stops on an incompatible first-install API. |
+| 7 | Logs in with `POST /api/v1/auth` and requires HTTP `200` with an access token. | Stops on bad credentials or an incompatible login response before wallet creation. |
+| 8 | Creates a wallet using authenticated `POST /api/v1/account`. | Obtains the disposable wallet admin key required by the example app without an unauthenticated fallback. |
 | 9 | Parses `adminkey` from the wallet response. | This key is what the example app uses to ask LNbits to create invoices. |
 | 10 | Updates or appends `LNBITS_API_KEY=<adminkey>` in `integration-tests/.env`. | Makes the key available to Docker Compose and the example app after restart. |
 | 11 | Prints a reminder to restart `paygate-example-app`. | The app reads `LNBITS_API_KEY` at startup, so it will not see the new key until restarted. |
@@ -329,8 +343,9 @@ The default setup username is the local-only value `LNBITS_SETUP_USERNAME=paygat
 password is generated with at least 128 bits of CSPRNG entropy once per persisted environment and
 stored only in ignored mode-0600 `.lnbits-setup-secret.json`; it is never printed. Repeated,
 interrupted, and concurrent setup runs reuse that one value. Set a nonblank
-`LNBITS_SETUP_PASSWORD` only to migrate an existing local volume, or reset that disposable volume
-with `docker compose ... down -v`. The Docker health wait timeout defaults to `300` seconds via
+`LNBITS_SETUP_PASSWORD` only to reuse a current local volume whose password you know. Reset
+unsupported `0.12.11` volumes with `docker compose -f <compose-file> down -v --remove-orphans`.
+The Docker health wait timeout defaults to `300` seconds via
 `COMPOSE_WAIT_TIMEOUT_SECONDS`, and the HTTP health wait defaults to `120` attempts via
 `MAX_ATTEMPTS`.
 
@@ -346,7 +361,7 @@ If the script fails, check the printed HTTP status and LNbits logs:
 ```bash
 docker compose -f docker-compose-lnbits-lnd.yml logs --no-log-prefix lnbits
 curl -s http://localhost:15000/api/v1/health
-grep '^LNBITS_API_KEY=' .env
+grep -q '^LNBITS_API_KEY=' .env && echo 'LNbits API key is present in ignored local state'
 ```
 
 ### 3. Start the Example App

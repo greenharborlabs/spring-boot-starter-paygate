@@ -2,7 +2,7 @@
 services:
 
   lnbits:
-    image: lnbits/lnbits:0.12.11
+    image: lnbits/lnbits:v1.6.2@sha256:284b9c2a0df9a1f867b4c52b694699fccade513c09368879922ff90bc7bf850e
     restart: unless-stopped
     environment:
       LNBITS_BACKEND_WALLET_CLASS: "FakeWallet"
