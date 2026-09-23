@@ -404,6 +404,7 @@ val supplyChainNegativeControlTasks = mapOf(
     "verifyDependencyProvenanceNegativeControls" to "scripts/test-dependency-provenance.sh",
     "verifyRepositorySecretIgnoreControls" to "scripts/test-repository-secret-ignore.sh",
     "verifyDependencyAdvisoryWorkflowControls" to "scripts/test-dependency-advisory-workflow.sh",
+    "verifyContainerScanReportNegativeControls" to "scripts/test-container-scan-report.sh",
     "verifyLowSecurityFindingNegativeControls" to "scripts/test-low-security-finding-dispositions.sh",
 ).map { (taskName, scriptPath) ->
     tasks.register<Exec>(taskName) {
@@ -534,6 +535,7 @@ tasks.register("check") {
     dependsOn("verifyDependencyProvenanceNegativeControls")
     dependsOn("verifyRepositorySecretIgnoreControls")
     dependsOn("verifyDependencyAdvisoryWorkflowControls")
+    dependsOn("verifyContainerScanReportNegativeControls")
     dependsOn(verifyDependencyCheckArtifactInputs)
     dependsOn(validateLowSecurityFixtures)
     dependsOn(verifyLowSecurityFixtureNegativeControls)

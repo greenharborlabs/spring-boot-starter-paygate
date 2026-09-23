@@ -35,3 +35,12 @@ updates:
     labels:
       - dependencies
       - github-actions
+
+  - package-ecosystem: docker
+    directory: /integration-tests
+    schedule:
+      interval: weekly
+      day: monday
+    target-branch: main
+    labels:
+      - dependencies
