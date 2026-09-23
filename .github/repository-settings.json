@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "repository": "greenharborlabs/spring-boot-starter-paygate",
   "capabilityConstraints": {
-    "organizationPlan": "free",
+    "organizationPlan": "team",
     "unavailableSecurityAndAnalysis": [
       "secretScanningNonProviderPatterns",
       "secretScanningValidityChecks"

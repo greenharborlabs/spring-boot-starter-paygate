@@ -5,7 +5,7 @@ readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly FIXTURE_DIR='scripts/test-fixtures/secret-ignore-controls'
 
 fail() { printf 'repository secret-ignore test failed: %s\n' "$*" >&2; exit 1; }
-[[ -d "$ROOT/.git" ]] || fail 'must run from a git worktree'
+[[ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" == "$ROOT" ]] || fail 'must run from a git worktree'
 
 for name in private.pem deploy.key server.keystore service.jks client.p12 bundle.pfx invoice.macaroon tls.cert; do
   candidate="$FIXTURE_DIR/$name"
