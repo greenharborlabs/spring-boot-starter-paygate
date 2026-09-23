@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-validator="$root/scripts/validate-dependency-check-risk-dispositions.sh"
 fixtures="$root/scripts/test-fixtures/dependency-check-risk"
+fixture_properties="$fixtures/gradle.properties"
+
+validate_fixture() {
+  python3 "$root/scripts/validate-dependency-check-risk-dispositions.py" "$1" "$2" "$root/build.gradle.kts" "$fixture_properties"
+}
+validate_fixture_at_date() {
+  local date="$1"
+  shift
+  VALIDATION_DATE="$date" validate_fixture "$@"
+}
 export VALIDATION_DATE="${VALIDATION_DATE:-2026-09-20}"
 
 expect_failure() {
@@ -19,7 +28,7 @@ expect_failure() {
   fi
 }
 
-"$validator" "$fixtures/valid.xml" "$fixtures/valid.md" >/dev/null
+validate_fixture "$fixtures/valid.xml" "$fixtures/valid.md" >/dev/null
 for case in \
   'missing-approval:missing Approval' \
   'broad:broad or mismatched package URL' \
@@ -34,18 +43,18 @@ for case in \
   'invalid-date:until is not a valid calendar date'; do
   fixture="${case%%:*}"
   reason="${case#*:}"
-  expect_failure "$fixture" "$reason" "$validator" "$fixtures/$fixture.xml" "$fixtures/$fixture.md"
+  expect_failure "$fixture" "$reason" validate_fixture "$fixtures/$fixture.xml" "$fixtures/$fixture.md"
 done
-expect_failure missing-file 'cannot read' "$validator" "$fixtures/nonexistent.xml" "$fixtures/valid.md"
-expect_failure missing-records 'cannot read' "$validator" "$fixtures/valid.xml" "$fixtures/nonexistent.md"
+expect_failure missing-file 'cannot read' validate_fixture "$fixtures/nonexistent.xml" "$fixtures/valid.md"
+expect_failure missing-records 'cannot read' validate_fixture "$fixtures/valid.xml" "$fixtures/nonexistent.md"
 expect_failure version-template 'broad or mismatched package URL' \
-  "$validator" "$fixtures/version-template.xml" "$fixtures/valid.md"
+  validate_fixture "$fixtures/version-template.xml" "$fixtures/valid.md"
 expect_failure missing-plugin-version 'Dependency-Check plugin version' \
   python3 "$root/scripts/validate-dependency-check-risk-dispositions.py" \
-  "$fixtures/valid.xml" "$fixtures/valid.md" /dev/null "$root/gradle.properties"
+  "$fixtures/valid.xml" "$fixtures/valid.md" /dev/null "$fixture_properties"
 for value in 2026-9-20 2026-02-30 2026-09-20Z; do
   expect_failure "VALIDATION_DATE=$value" 'VALIDATION_DATE' \
-    env VALIDATION_DATE="$value" "$validator" "$fixtures/valid.xml" "$fixtures/valid.md"
+    validate_fixture_at_date "$value" "$fixtures/valid.xml" "$fixtures/valid.md"
 done
 
 python3 - "$root/build.gradle.kts" <<'PY'
