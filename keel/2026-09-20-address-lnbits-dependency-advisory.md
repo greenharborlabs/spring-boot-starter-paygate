@@ -8,6 +8,22 @@ Resolve the September 19 dependency-advisory failure without hiding a real vulne
 
 The plan deliberately spans more than eight files because the failure crossed four existing control surfaces: integration infrastructure, Dependency-Check disposition evidence, validation tests, and dependency automation. Limiting the change to a new suppression date would restore CI but leave the affected fixture and the validator/scanner gaps intact.
 
+## Delivery revision — 2026-09-22
+
+Wave 1 is implemented on the remediation branch. The Wave 2 baseline scan of the
+digest-pinned `v1.6.2` image found five fixable HIGH or CRITICAL findings on each
+supported platform. LNbits `v1.6.2` is still the current supported release, and
+a private report has been submitted upstream. Keep the strict container gate
+and Wave 2 implementation in a separate draft PR; do not merge it with a known
+failing baseline or add a broad exception to make it green.
+
+Proceed with Wave 3's exact Maven false-positive disposition in the Wave 1
+remediation PR after explicit maintainer approval. This delivery decision
+removes Wave 2 as a prerequisite for that PR. It does not approve the Maven
+suppression or accept the LNbits container findings. If a patched supported
+image is delayed, any digest- and CVE-specific exception requires a separate
+reviewed decision and an expiry date.
+
 ## Existing Code Leverage
 
 - `integration-tests/docker-compose-lnbits.yml` and `integration-tests/docker-compose-lnbits-lnd.yml` already isolate LNbits to host loopback and share one bootstrap contract.
@@ -154,7 +170,7 @@ After the real LNbits fixture is upgraded and the validator is enforcing dates, 
 
 Avoid circular approval evidence with a two-stage PR flow: open the remediation as a draft with the disposition marked pending, obtain explicit maintainer approval, then add a final commit containing the PR number, named approver, approval date, and `Status: Approved` before required checks and merge. A merge commit is not acceptable pre-merge evidence.
 
-**Orchestration gate:** Stop after Waves 1-2 and open the draft PR. Do not begin this work unit until a maintainer has approved the exact false-positive disposition. Record that approval in the final commit, then run the complete gate set. This human approval is a one-way security decision and is intentionally excluded from parallel execution.
+**Orchestration gate:** Stop after Wave 1 and open the remediation draft PR. Do not begin this work unit until a maintainer has approved the exact false-positive disposition. Record that approval in the final commit, then run the complete gate set. This human approval is a one-way security decision and is intentionally excluded from parallel execution. Wave 2 proceeds in a separate draft PR under the delivery revision above.
 
 **Files:** `config/dependency-check-suppressions.xml`, `config/dependency-check-risk-dispositions.md`
 
@@ -238,15 +254,16 @@ None.
 
 ## Orchestration Playbook
 
-Expected intermediate state: Waves 1-2 use their targeted verification commands, but root `check` and PR CI remain intentionally red because the repository suppression is expired. Do not weaken the validator to make that state green. Open the draft PR, obtain approval, and complete Wave 3 before requiring the full gate set to pass.
+Expected intermediate state: Wave 1 targeted checks pass, but root `check` and PR CI remain intentionally red because the repository suppression is expired. Do not weaken the validator to make that state green. Open the remediation draft PR, obtain approval, and complete Wave 3 before requiring the full gate set to pass. The original wave-number dependency of `/greenharbor-orchestrate --scope "Wave 3"` includes Wave 2, so use the explicit Wave 3 test and approval procedure above for this revised delivery order.
 
 ```bash
 # Wave 1: remove the affected fixture and repair validation
 /greenharbor-orchestrate keel/2026-09-20-address-lnbits-dependency-advisory.md --scope "Wave 1"
 
-# Wave 2: add Docker update and vulnerability automation
-/greenharbor-orchestrate keel/2026-09-20-address-lnbits-dependency-advisory.md --scope "Wave 2"
+# Open the remediation draft PR after Wave 1, then obtain explicit maintainer
+# approval and execute W3-01's exact suppression and verification steps.
 
-# Open a draft PR and obtain explicit maintainer approval, then run Wave 3
-/greenharbor-orchestrate keel/2026-09-20-address-lnbits-dependency-advisory.md --scope "Wave 3"
+# Develop Wave 2 in a separate draft PR. Merge only after a patched supported
+# digest passes both platform scans or a separate, narrow policy decision.
+/greenharbor-orchestrate keel/2026-09-20-address-lnbits-dependency-advisory.md --scope "Wave 2"
 ```
