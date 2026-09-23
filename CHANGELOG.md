@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-23
+
+### Security
+
+- Upgrade Spring Boot from 4.0.7 to 4.0.8 and Tomcat from 11.0.24 to 11.0.25 to incorporate dependency advisory fixes.
+- Replace both disposable LNbits integration fixtures' affected 0.12.11 image with the supported, digest-pinned v1.6.2 image; keep payment preimages out of LND INFO logs and make first-install failure handling fail closed.
+- Strengthen Dependency-Check risk-disposition validation and negative controls so a false-positive suppression must have an exact package URL, current evidence, bounded expiry, and explicit approval.
+- Recheck all 464 exact dependency-provenance artifact hashes and renew their bounded review date without changing the pinned checksums.
+
+### Fixed
+
+- Build project JARs before the aggregate dependency scan and fail duplicate-class warnings, making clean-checkout security checks more reliable.
+
 ## [0.1.6] - 2026-08-23
 
 ### Security
@@ -236,6 +249,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WWW-Authenticate` header format corrected to `L402 version="0", token=`
 - `MacaroonSerializer` validation for field types and lengths
 
+[0.1.7]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/greenharborlabs/spring-boot-starter-paygate/compare/v0.1.3...v0.1.4
