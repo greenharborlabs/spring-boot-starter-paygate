@@ -56,6 +56,21 @@ curl http://localhost:18080/api/v1/health
 
 ## Quick Start: LNbits
 
+Both LNbits fixtures use the supported `lnbits/lnbits:v1.6.2` release pinned to
+`sha256:284b9c2a0df9a1f867b4c52b694699fccade513c09368879922ff90bc7bf850e`.
+Existing `0.12.11` data volumes are unsupported by these disposable fixtures.
+Before starting the upgraded image, reset the stack you use from this directory:
+
+```bash
+docker compose -f docker-compose-lnbits.yml down -v --remove-orphans
+# For the LNbits-over-LND stack instead:
+docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans
+```
+
+These commands delete local LNbits data and, for the LND-backed stack, regtest
+chain and LND wallet state. Run only the command for the disposable stack you
+are upgrading. Then rerun its setup commands below to create fresh credentials.
+
 Use the two-node LND-backed LNbits stack for end-to-end proof verification. The
 example app creates invoices through LNbits backed by the payee LND node, while
 the smoke scripts pay those invoices through a distinct payer LND node. That
@@ -177,9 +192,9 @@ All host-side ports are configurable via the `.env` file in this directory:
 
 Edit `.env` before starting to avoid port conflicts with services already running on your machine.
 The generated `LNBITS_API_KEY` and `.lnbits-setup-secret.json` are ignored local state and are
-owner-only. A fresh LNbits volume gets a random setup password; reruns reuse it. Existing volumes
-created with the retired stable setup password must be reset with `docker compose ... down -v`, or
-the existing password must be supplied once as `LNBITS_SETUP_PASSWORD`; it is never printed.
+owner-only. A fresh LNbits volume gets a random setup password; reruns reuse it.
+If setup credentials for a current fixture are lost, reset its disposable stack
+with `docker compose -f <compose-file> down -v --remove-orphans`, then rerun setup.
 
 ## Tearing Down
 
@@ -187,8 +202,8 @@ the existing password must be supplied once as `LNBITS_SETUP_PASSWORD`; it is ne
 # Stop and remove containers + volumes for a clean slate
 docker compose -f docker-compose-lnd.yml down -v
 docker compose -f docker-compose-lnd-two-node.yml down -v
-docker compose -f docker-compose-lnbits.yml down -v
-docker compose -f docker-compose-lnbits-lnd.yml down -v
+docker compose -f docker-compose-lnbits.yml down -v --remove-orphans
+docker compose -f docker-compose-lnbits-lnd.yml down -v --remove-orphans
 ```
 
 ## Troubleshooting
@@ -218,13 +233,15 @@ Common causes:
 
 ### LNbits wallet creation fails
 
-LNbits 0.12.x may require a super-user key for API wallet creation. If `setup-lnbits.sh` fails:
-
-1. Open `http://localhost:15000` in a browser
-2. Create a wallet through the UI
-3. Copy the Admin API key from the wallet settings
-4. Add it to `.env`: `LNBITS_API_KEY=<your-key>`
-5. Restart the example app with the compose file you are using, for example: `docker compose -f docker-compose-lnbits-lnd.yml up -d paygate-example-app`
+If `setup-lnbits.sh` fails with a health timeout, first-install, login, or wallet
+creation error, inspect its printed HTTP status and the LNbits container logs
+without sharing credentials. Confirm that `curl -fsS http://localhost:15000/api/v1/health`
+succeeds. For the LND-backed stack, also confirm that the payee LND service is
+healthy and its TLS certificate and admin macaroon are mounted read-only in LNbits.
+If this stack predates the pinned release or its setup password was lost, reset
+the disposable stack with `docker compose -f <compose-file> down -v --remove-orphans`
+and rerun setup. Do not start the example app until setup has written a fresh
+admin key to the ignored `.env` file.
 
 For local Docker testing, `setup-lnbits.sh` initializes the first-install
 superuser automatically when LNbits redirects to `/first_install`, logs in, and

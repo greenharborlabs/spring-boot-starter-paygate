@@ -41,6 +41,8 @@ services:
       - --bitcoind.zmqpubrawblock=tcp://bitcoind:28332
       - --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
       - --noseedbackup
+      # LND logs settled payment preimages at INFO; keep disposable proof values out of container logs.
+      - --debuglevel=warn
       - --tlsextradomain=lnd
       - --tlsextradomain=lnd-payee
       - --tlsextraip=0.0.0.0
@@ -79,6 +81,7 @@ services:
       - --bitcoind.zmqpubrawblock=tcp://bitcoind:28332
       - --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
       - --noseedbackup
+      - --debuglevel=warn
       - --tlsextradomain=lnd-payer
       - --tlsextraip=0.0.0.0
       - --rpclisten=0.0.0.0:10009
@@ -97,7 +100,7 @@ services:
       start_period: 10s
 
   lnbits:
-    image: lnbits/lnbits:0.12.11
+    image: lnbits/lnbits:v1.6.2@sha256:284b9c2a0df9a1f867b4c52b694699fccade513c09368879922ff90bc7bf850e
     restart: unless-stopped
     depends_on:
       lnd-payee:

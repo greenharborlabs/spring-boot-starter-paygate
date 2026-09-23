@@ -82,47 +82,44 @@ echo "    LNbits is ready."
 echo "==> Checking LNbits first-install state..."
 FIRST_INSTALL_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${LNBITS_URL}/api/v1/auth/first_install" \
   -H "Content-Type: application/json" \
-  -d "$(json_request_body)")
+  -d "$(json_request_body)" || true)
 FIRST_INSTALL_HTTP_STATUS=$(printf '%s' "$FIRST_INSTALL_RESPONSE" | tail -1)
-FIRST_INSTALL_BODY=$(printf '%s' "$FIRST_INSTALL_RESPONSE" | sed '$d')
 
 if [ "$FIRST_INSTALL_HTTP_STATUS" = "200" ]; then
   echo "    LNbits first install initialized."
 elif [ "$FIRST_INSTALL_HTTP_STATUS" = "401" ]; then
   echo "    LNbits first install already completed."
-elif [ "$FIRST_INSTALL_HTTP_STATUS" = "404" ] || [ "$FIRST_INSTALL_HTTP_STATUS" = "405" ]; then
-  echo "    LNbits first-install endpoint unavailable; continuing."
 else
   echo "ERROR: Failed to initialize LNbits first install."
   echo "       HTTP $FIRST_INSTALL_HTTP_STATUS"
+  echo "       Check the pinned LNbits service health and its first-install API."
   exit 1
 fi
 
 echo "==> Logging in to LNbits..."
 AUTH_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LNBITS_URL}/api/v1/auth" \
   -H "Content-Type: application/json" \
-  -d "$(json_request_body)")
+  -d "$(json_request_body)" || true)
 AUTH_HTTP_STATUS=$(printf '%s' "$AUTH_RESPONSE" | tail -1)
 AUTH_BODY=$(printf '%s' "$AUTH_RESPONSE" | sed '$d')
 ACCESS_TOKEN=$(printf '%s' "$AUTH_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
 
-if [ "$AUTH_HTTP_STATUS" = "200" ] && [ -n "$ACCESS_TOKEN" ]; then
-  echo "    LNbits login succeeded."
-else
-  echo "    LNbits login skipped or unavailable; falling back to wallet creation endpoint."
+if [ "$AUTH_HTTP_STATUS" != "200" ] || [ -z "$ACCESS_TOKEN" ]; then
+  echo "ERROR: LNbits login failed or returned no access token."
+  echo "       HTTP $AUTH_HTTP_STATUS"
+  echo "       Check the local setup password and LNbits auth logs."
+  echo "       If the disposable volume predates the pinned LNbits release or its password"
+  echo "       was lost, run docker compose -f $COMPOSE_FILE down -v --remove-orphans"
+  echo "       and rerun setup to create fresh credentials."
+  exit 1
 fi
+echo "    LNbits login succeeded."
 
 echo "==> Creating a new wallet..."
-if [ -n "${ACCESS_TOKEN:-}" ]; then
-  RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LNBITS_URL}/api/v1/account" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "paygate-test-wallet"}')
-else
-  RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LNBITS_URL}/api/v1/wallet" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "paygate-test-wallet"}')
-fi
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LNBITS_URL}/api/v1/account" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "paygate-test-wallet"}')
 WALLET_HTTP_STATUS=$(printf '%s' "$RESPONSE" | tail -1)
 WALLET_BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 

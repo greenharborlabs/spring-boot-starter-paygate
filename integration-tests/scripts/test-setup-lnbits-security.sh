@@ -67,4 +67,6 @@ wait
 [[ "$(cat "$workspace/result.1")" == "$(cat "$workspace/result.2")" ]] \
   || fail 'concurrent setup did not converge on one secret'
 
+bash "$SCRIPT_DIRECTORY/test-setup-lnbits-fail-closed.sh"
+
 printf 'LNbits setup-secret controls passed.\n'
