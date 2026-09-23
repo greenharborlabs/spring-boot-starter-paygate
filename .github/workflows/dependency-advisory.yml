@@ -39,3 +39,109 @@ jobs:
           path: build/reports/dependency-check/
           if-no-files-found: error
           retention-days: 7
+
+  lnbits-container-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Resolve identical Compose image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolve_image() {
+            docker compose -f "$1" config --format json |
+              python3 -c 'import json, re, sys
+          image = json.load(sys.stdin)["services"]["lnbits"]["image"]
+          if not isinstance(image, str) or not re.fullmatch(r"lnbits/lnbits:[^@]+@sha256:[0-9a-f]{64}", image):
+              raise SystemExit("LNbits Compose image must have a tag and immutable index digest")
+          print(image)'
+          }
+          fakewallet=$(resolve_image integration-tests/docker-compose-lnbits.yml)
+          lnd=$(resolve_image integration-tests/docker-compose-lnbits-lnd.yml)
+          [[ "$fakewallet" == "$lnd" ]] || { echo 'LNbits Compose images differ' >&2; exit 1; }
+          printf 'image=%s\n' "$fakewallet" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve both platform manifests
+        id: manifests
+        shell: bash
+        env:
+          LNBITS_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "$LNBITS_IMAGE" > "$RUNNER_TEMP/lnbits-index.json"
+          python3 - "$LNBITS_IMAGE" "$RUNNER_TEMP/lnbits-index.json" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import re
+          import sys
+
+          image, index_path, output_path = sys.argv[1:]
+          with open(index_path, encoding="utf-8") as stream:
+              index = json.load(stream)
+          if index.get("schemaVersion") != 2 or not isinstance(index.get("manifests"), list):
+              raise SystemExit("LNbits image did not resolve to a manifest index")
+          manifests = {}
+          for entry in index["manifests"]:
+              platform = entry.get("platform", {})
+              if platform.get("os") != "linux" or platform.get("architecture") not in ("amd64", "arm64"):
+                  continue
+              arch = platform["architecture"]
+              digest = entry.get("digest", "")
+              if arch in manifests or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise SystemExit(f"Missing, duplicate, or invalid linux/{arch} manifest")
+              manifests[arch] = digest
+          if set(manifests) != {"amd64", "arm64"}:
+              raise SystemExit("Both linux/amd64 and linux/arm64 manifests are required")
+          repository = image.split("@", 1)[0].rsplit(":", 1)[0]
+          with open(output_path, "a", encoding="utf-8") as output:
+              for arch in ("amd64", "arm64"):
+                  print(f"{arch}={repository}@{manifests[arch]}", file=output)
+          PY
+
+      - name: Scan linux/amd64
+        if: ${{ !cancelled() && steps.manifests.outcome == 'success' }}
+        shell: bash
+        env:
+          LNBITS_MANIFEST: ${{ steps.manifests.outputs.amd64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p container-reports
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          docker run --rm --pull always --platform linux/amd64 \
+            --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            image --scanners vuln --format json --image-src remote "$LNBITS_MANIFEST" \
+            > container-reports/lnbits-amd64.json
+          python3 scripts/validate-container-scan-report.py --image "$LNBITS_MANIFEST" container-reports/lnbits-amd64.json
+
+      - name: Scan linux/arm64
+        if: ${{ !cancelled() && steps.manifests.outcome == 'success' }}
+        shell: bash
+        env:
+          LNBITS_MANIFEST: ${{ steps.manifests.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p container-reports
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          docker run --rm --pull always --platform linux/amd64 \
+            --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            image --scanners vuln --format json --image-src remote "$LNBITS_MANIFEST" \
+            > container-reports/lnbits-arm64.json
+          python3 scripts/validate-container-scan-report.py --image "$LNBITS_MANIFEST" container-reports/lnbits-arm64.json
+
+      - name: Upload LNbits container scan reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lnbits-container-scan-reports
+          path: container-reports/*.json
+          if-no-files-found: error
+          retention-days: 7
