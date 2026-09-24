@@ -1,6 +1,6 @@
 # Wavelength T7 Live Signet Proof
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 707043545cf3d772cae5006cfaa492030284baf3
 Review scope: paygate-integration-tests/src/wavelengthSpike/, paygate-integration-tests/src/wavelengthSpikeTest/, paygate-integration-tests/build.gradle.kts, docs/wavelength-spike/{setup.md,compatibility.json,contract-appendix.md}, plans/wavelength-phase-0.md
 
 ## Goal
@@ -24,10 +24,10 @@ Complete the still-unpassed [Phase 0 T7](../plans/wavelength-phase-0.md#implemen
 - [ ] On missing prerequisites or failed hard gate, retain only sanitized partial evidence, restore owned state if touched, and report blocked/failed without claiming T7 success. On success, document observed claims/limits and complete only T7's checkbox; run secret scans and commit all scoped changes before review.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Approved; blocked at mandatory preflight before any funded/direct-vendor gate. No implementation is submitted for review.
 
 ## Outcome
-Pending.
+Working, blocked on operator prerequisites. At base `707043545cf3d772cae5006cfaa492030284baf3`, the cache-enabled canonical invocation failed non-zero at preflight and acceptance. Sanitized ignored partial evidence: run `41b6c659-9d82-49f2-b0a0-9eb2b4ed64a7`, manifest `bcb7f3642830dd349e319731f72bccea7042c2c67560b573ee01f37e5a696ab9`, `preflight: unavailable` in `paygate-integration-tests/build/wavelength-spike/41b6c659-9d82-49f2-b0a0-9eb2b4ed64a7/preflight/evidence.json`. No `WAVELENGTH_SPIKE_*` variables or `waved` on PATH were present; this does not exclude an installation elsewhere. No daemon API, wallet, payment, restart, or dependency fault was exercised; no direct-vendor gate passed or was disproved. The checked-in [manifest](../docs/wavelength-spike/compatibility.json) and [contract appendix](../docs/wavelength-spike/contract-appendix.md#t7-preparation-and-blocked-live-attempt--2026-09-16) still describe unpassed live capability. T7, T8, and Phase 1 remain blocked; the incomplete live task stays unchecked.
 
 ## Next action
-Approve or revise this plan and provide the [operator setup prerequisites](../docs/wavelength-spike/setup.md#t7-bounded-direct-live-harness-operator-setup-required) before any live execution.
+Provide the [operator setup prerequisites](../docs/wavelength-spike/setup.md#t7-bounded-direct-live-harness-operator-setup-required) without secret contents; then verify ownership and run the approved live gate.
