@@ -1,4 +1,4 @@
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, readdir, realpath } from "node:fs/promises";
 import { getuid } from "node:process";
 import { resolve, sep } from "node:path";
 import { dirname } from "node:path";
@@ -24,6 +24,8 @@ process.on("SIGTERM", () => { void close(); });
 
 try {
   const port = Number(process.env.WAVELENGTH_SPIKE_BROWSER_PORT);
+  const mode = process.env.WAVELENGTH_SPIKE_SETUP_MODE ?? "fresh";
+  if (mode !== "fresh" && mode !== "existing") throw new Error("Invalid setup mode");
   const profilePath = process.env.WAVELENGTH_SPIKE_BROWSER_PROFILE_DIR;
   const runtimeDirectory = process.env.WAVELENGTH_SPIKE_RUNTIME_DIR;
   if (!Number.isInteger(port) || port < 1024 || port > 65535 || !profilePath || !runtimeDirectory) {
@@ -39,7 +41,14 @@ try {
   if (!metadata.isDirectory() || metadata.isSymbolicLink() || metadata.uid !== getuid() || (metadata.mode & 0o077) !== 0) {
     throw new Error("Profile must be an owned private directory");
   }
+  const entries = await readdir(profile);
+  if ((mode === "fresh" && entries.length !== 0) || (mode === "existing" && entries.length === 0)) {
+    throw new Error("Profile does not match requested mode");
+  }
   server = await startHarnessServer(runtimeDirectory, port, true, true);
+  // Rebuild after acquiring the port, before opening any browser page. Never serve
+  // a stale setup bundle or overwrite assets while a live runner owns this port.
+  await import("./build.mjs");
   context = await chromium.launchPersistentContext(profile, {
     headless: false,
     recordHar: undefined,
@@ -50,8 +59,8 @@ try {
   const page = context.pages()[0] ?? await context.newPage();
   page.on("close", () => { void close(); });
   context.on("page", () => { if (context.pages().length > 1) void close(); });
-  await page.goto(`${server.origin}/setup`, { waitUntil: "domcontentloaded", timeout: 15_000 });
-  process.stdout.write(`Operator-only setup: ${server.origin}/setup\nClose the browser window to end setup. Never share its seed or password.\n`);
+  await page.goto(`${server.origin}/setup?mode=${mode}`, { waitUntil: "domcontentloaded", timeout: 15_000 });
+  process.stdout.write(`Operator-only setup: ${server.origin}/setup?mode=${mode}\nClose the browser window to end setup. Never share its seed or password.\n`);
   await new Promise((done) => context.once("close", done));
 } catch {
   process.exitCode = 1;

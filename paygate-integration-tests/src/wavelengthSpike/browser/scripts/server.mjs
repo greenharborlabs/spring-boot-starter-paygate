@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,9 @@ import { RUNTIME_ASSETS } from "./runtime-manifest.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = resolve(root, "build/public");
+const PUBLIC_ASSETS = new Set([
+  "browser-entry.js", "live-entry.js", "setup-entry.js", "wavelength-worker.js",
+]);
 
 export async function startHarnessServer(runtimeDirectory, port = 0, live = false, setup = false) {
   if (setup && !live) throw new Error("Setup requires the signet-only live CSP");
@@ -49,8 +52,8 @@ async function serve(rawUrl, response, runtimeRoot, live, setup) {
       send(response, 404, "text/plain; charset=utf-8", "Not found");
       return;
     }
-    const details = await stat(mapping.path);
-    if (!details.isFile()) {
+    const details = await lstat(mapping.path);
+    if (!details.isFile() || await realpath(mapping.path) !== mapping.path) {
       send(response, 404, "text/plain; charset=utf-8", "Not found");
       return;
     }
@@ -80,13 +83,16 @@ function mapPath(pathname, runtimeRoot, live, setup) {
   }
   if (pathname.startsWith("/assets/")) {
     const mapping = safeMapping(resolve(publicRoot, "assets"), pathname.slice("/assets/".length), false);
-    if (mapping?.path === resolve(publicRoot, "assets/setup-entry.js") && !setup) return null;
-    if (mapping?.path === resolve(publicRoot, "assets/live-entry.js") && setup) return null;
+    const name = mapping?.path.slice(resolve(publicRoot, "assets").length + 1);
+    if (!PUBLIC_ASSETS.has(name) || (name === "setup-entry.js" && !setup) ||
+        (name === "live-entry.js" && setup)) return null;
     return mapping;
   }
   const prefix = "/runtime/v0.1.1/";
   if (pathname.startsWith(prefix)) {
-    return safeMapping(runtimeRoot, pathname.slice(prefix.length), true);
+    const mapping = safeMapping(runtimeRoot, pathname.slice(prefix.length), true);
+    const name = mapping?.path.slice(runtimeRoot.length + 1);
+    return name && Object.hasOwn(RUNTIME_ASSETS, name) ? mapping : null;
   }
   return null;
 }

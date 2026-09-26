@@ -71,7 +71,7 @@ function assertHeader(response, name, expectedFragment) {
 // Verify the live serving contract without starting/administering a wallet.
 const liveServer = await startHarnessServer(runtimeDirectory, 0, true);
 try {
-  for (const path of ["/setup", "/assets/setup-entry.js", "/assets/%73etup-entry.js", "/assets/..%2fsetup.html"]) {
+  for (const path of ["/setup", "/assets/setup-entry.js", "/assets/%73etup-entry.js", "/assets/..%2fsetup.html", "/assets/not-pinned.js", "/runtime/v0.1.1/not-pinned.js"]) {
     const response = await fetch(`${liveServer.origin}${path}`);
     if (response.status !== 404) throw new Error("Operator setup leaked into the live server");
     await response.body?.cancel();

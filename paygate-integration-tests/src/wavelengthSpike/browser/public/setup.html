@@ -16,7 +16,11 @@
   <h2>Back up the seed offline before doing anything else</h2>
   <p>Write these words down privately in order. The seed is displayed only in this page memory, never logged or sent to the test runner. If you lose it, do not fund this wallet.</p>
   <pre id="seed" aria-live="off"></pre>
-  <button id="backed-up" type="button">I recorded and verified the seed offline; clear it from this page</button>
+  <p>After writing down all 24 words offline, check your copy against word 1 and word 24. Do not copy them from this page into another app.</p>
+  <label>Word 1 from your offline copy <input id="first-word" type="password" autocomplete="off"></label>
+  <label>Word 24 from your offline copy <input id="last-word" type="password" autocomplete="off"></label>
+  <button id="verify-backup" type="button">Check offline backup</button>
+  <button id="backed-up" type="button" hidden>I verified all 24 words; clear the seed from this page</button>
 </section>
 <section id="unlock-section" hidden>
   <h2>Unlock existing wallet</h2>

@@ -1,6 +1,7 @@
 import { createWebClient, defaultConfig } from "@lightninglabs/wavelength-web";
 
 // Operator-only page; never run under Playwright payment automation or retain the seed in storage.
+const creationMode = new URLSearchParams(location.search).get("mode") === "fresh";
 const client = createWebClient({
   runtimeBaseUrl: new URL("/runtime/v0.1.1/", location.origin).href,
   workerURL: "/assets/wavelength-worker.js",
@@ -19,13 +20,17 @@ const createButton = element<HTMLButtonElement>("create");
 const unlockButton = element<HTMLButtonElement>("unlock");
 const seed = element<HTMLElement>("seed");
 const backupButton = element<HTMLButtonElement>("backed-up");
+const verifyBackupButton = element<HTMLButtonElement>("verify-backup");
+const firstWord = element<HTMLInputElement>("first-word");
+const lastWord = element<HTMLInputElement>("last-word");
 const depositButton = element<HTMLButtonElement>("deposit");
 const balanceButton = element<HTMLButtonElement>("balance");
 let backupPending = false;
+let creationUnresolved = false;
 let busy = false;
 
 window.addEventListener("beforeunload", (event) => {
-  if (backupPending) {
+  if (backupPending || creationUnresolved) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -33,13 +38,15 @@ window.addEventListener("beforeunload", (event) => {
 
 async function showWalletState(): Promise<void> {
   const info = await client.getInfo();
-  createSection.hidden = info.network !== "signet" || info.walletState !== "none";
+  createSection.hidden = !creationMode || info.network !== "signet" || info.walletState !== "none";
   unlockSection.hidden = info.network !== "signet" || info.walletState !== "locked";
-  fundSection.hidden = info.network !== "signet" || info.walletState !== "ready" || backupPending;
+  fundSection.hidden = info.network !== "signet" || info.walletState !== "ready" || backupPending || creationUnresolved;
   if (info.network !== "signet") {
     state.textContent = "Wrong network; do not create or fund a wallet";
   } else if (info.walletState === "none") {
-    state.textContent = "No wallet in this profile. Operator may create one.";
+    state.textContent = creationMode
+      ? "No wallet in this fresh profile. Operator may create one."
+      : "No wallet found in existing profile. Stop; do not create or fund.";
   } else if (info.walletState === "locked") {
     state.textContent = "Existing wallet locked. Unlock privately.";
   } else if (info.walletState === "ready") {
@@ -63,6 +70,7 @@ createButton.addEventListener("click", () => {
   }
   confirmation = "";
   busy = true;
+  creationUnresolved = true;
   createButton.disabled = true;
   createSection.hidden = true;
   state.textContent = "Creating wallet. Do not close this page.";
@@ -70,14 +78,16 @@ createButton.addEventListener("click", () => {
     try {
       const result = await client.createWallet({ password });
       password = "";
-      if (result.mnemonic.length !== 24) {
+      if (!Array.isArray(result.mnemonic) || result.mnemonic.length !== 24 ||
+          !result.mnemonic.every((word) => typeof word === "string" && /^[a-z]+$/.test(word))) {
         state.textContent = "Seed backup unavailable; do not fund this wallet. Stop and inspect out of band.";
         return;
       }
       backupPending = true;
       seed.textContent = result.mnemonic.join(" ");
-      result.mnemonic.fill("");
       backupSection.hidden = false;
+      creationUnresolved = false;
+      try { result.mnemonic.fill(""); } catch { /* Backup remains visible; never log mnemonic. */ }
       state.textContent = "Write down and verify the seed offline before clearing it.";
     } catch {
       state.textContent = "Creation result uncertain. Do not retry or fund; inspect wallet and backup state privately.";
@@ -88,8 +98,24 @@ createButton.addEventListener("click", () => {
   })();
 });
 
-backupButton.addEventListener("click", () => {
+verifyBackupButton.addEventListener("click", () => {
   if (!backupPending) return;
+  const words = seed.textContent?.split(" ") ?? [];
+  const match = firstWord.value.trim().toLowerCase() === words[0] &&
+    lastWord.value.trim().toLowerCase() === words[23];
+  firstWord.value = "";
+  lastWord.value = "";
+  if (!match) {
+    state.textContent = "Backup check failed. Recheck your offline copy; do not fund.";
+    return;
+  }
+  verifyBackupButton.disabled = true;
+  backupButton.hidden = false;
+  state.textContent = "Verify all 24 words offline, then clear the seed from this page.";
+});
+
+backupButton.addEventListener("click", () => {
+  if (!backupPending || backupButton.hidden) return;
   seed.textContent = "";
   backupPending = false;
   backupSection.hidden = true;
