@@ -11,6 +11,7 @@
     "build:test": "tsc -p tsconfig.test.json",
     "check": "npm run typecheck && npm run test:unit && npm run build",
     "runtime:fetch": "node scripts/fetch-runtime.mjs",
+    "setup:operator": "node scripts/setup.mjs",
     "test": "npm run check",
     "test:browser": "node test/browser-smoke.mjs",
     "test:unit": "npm run build:test && node --test --test-concurrency=1 build/test/test/*.test.js",

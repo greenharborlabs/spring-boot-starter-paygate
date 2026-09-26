@@ -1,0 +1,152 @@
+import { createWebClient, defaultConfig } from "@lightninglabs/wavelength-web";
+
+// Operator-only page; never run under Playwright payment automation or retain the seed in storage.
+const client = createWebClient({
+  runtimeBaseUrl: new URL("/runtime/v0.1.1/", location.origin).href,
+  workerURL: "/assets/wavelength-worker.js",
+  runtimeCache: false,
+  debug: false,
+});
+const state = element<HTMLElement>("state");
+const createSection = element<HTMLElement>("create-section");
+const backupSection = element<HTMLElement>("backup-section");
+const unlockSection = element<HTMLElement>("unlock-section");
+const fundSection = element<HTMLElement>("fund-section");
+const createPassword = element<HTMLInputElement>("create-password");
+const createConfirm = element<HTMLInputElement>("create-confirm");
+const unlockPassword = element<HTMLInputElement>("unlock-password");
+const createButton = element<HTMLButtonElement>("create");
+const unlockButton = element<HTMLButtonElement>("unlock");
+const seed = element<HTMLElement>("seed");
+const backupButton = element<HTMLButtonElement>("backed-up");
+const depositButton = element<HTMLButtonElement>("deposit");
+const balanceButton = element<HTMLButtonElement>("balance");
+let backupPending = false;
+let busy = false;
+
+window.addEventListener("beforeunload", (event) => {
+  if (backupPending) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+
+async function showWalletState(): Promise<void> {
+  const info = await client.getInfo();
+  createSection.hidden = info.network !== "signet" || info.walletState !== "none";
+  unlockSection.hidden = info.network !== "signet" || info.walletState !== "locked";
+  fundSection.hidden = info.network !== "signet" || info.walletState !== "ready" || backupPending;
+  if (info.network !== "signet") {
+    state.textContent = "Wrong network; do not create or fund a wallet";
+  } else if (info.walletState === "none") {
+    state.textContent = "No wallet in this profile. Operator may create one.";
+  } else if (info.walletState === "locked") {
+    state.textContent = "Existing wallet locked. Unlock privately.";
+  } else if (info.walletState === "ready") {
+    state.textContent = "Signet wallet ready. Verify funding before T7.";
+  } else {
+    state.textContent = "Wallet is not ready; wait for sync or inspect out of band.";
+  }
+}
+
+createButton.addEventListener("click", () => {
+  if (busy || createSection.hidden) return;
+  let password = createPassword.value;
+  let confirmation = createConfirm.value;
+  createPassword.value = "";
+  createConfirm.value = "";
+  if (password.length < 12 || password !== confirmation) {
+    password = "";
+    confirmation = "";
+    state.textContent = "Use matching passwords of at least 12 characters; retry privately.";
+    return;
+  }
+  confirmation = "";
+  busy = true;
+  createButton.disabled = true;
+  createSection.hidden = true;
+  state.textContent = "Creating wallet. Do not close this page.";
+  void (async () => {
+    try {
+      const result = await client.createWallet({ password });
+      password = "";
+      if (result.mnemonic.length !== 24) {
+        state.textContent = "Seed backup unavailable; do not fund this wallet. Stop and inspect out of band.";
+        return;
+      }
+      backupPending = true;
+      seed.textContent = result.mnemonic.join(" ");
+      result.mnemonic.fill("");
+      backupSection.hidden = false;
+      state.textContent = "Write down and verify the seed offline before clearing it.";
+    } catch {
+      state.textContent = "Creation result uncertain. Do not retry or fund; inspect wallet and backup state privately.";
+    } finally {
+      password = "";
+      busy = false;
+    }
+  })();
+});
+
+backupButton.addEventListener("click", () => {
+  if (!backupPending) return;
+  seed.textContent = "";
+  backupPending = false;
+  backupSection.hidden = true;
+  void showWalletState().catch(() => { state.textContent = "Wallet status unavailable; do not fund."; });
+});
+
+unlockButton.addEventListener("click", () => {
+  if (busy || unlockSection.hidden) return;
+  let password = unlockPassword.value;
+  unlockPassword.value = "";
+  busy = true;
+  unlockButton.disabled = true;
+  void client.unlockWallet({ password })
+    .then(showWalletState)
+    .catch(() => { state.textContent = "Unlock unavailable; inspect privately."; })
+    .finally(() => { password = ""; busy = false; unlockButton.disabled = false; });
+});
+
+depositButton.addEventListener("click", () => {
+  if (busy || fundSection.hidden) return;
+  busy = true;
+  depositButton.disabled = true;
+  element<HTMLElement>("address").textContent = "";
+  void client.deposit().then((result) => {
+    if (!/^tb1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{10,100}$/.test(result.address)) {
+      state.textContent = "Unexpected address; do not fund.";
+      return;
+    }
+    element<HTMLElement>("address").textContent = result.address;
+    state.textContent = "Verify the signet address and fund out of band only with explicit operator approval.";
+  }).catch(() => { state.textContent = "Deposit address unavailable; do not fund."; })
+    .finally(() => { busy = false; depositButton.disabled = false; });
+});
+
+balanceButton.addEventListener("click", () => {
+  if (busy || fundSection.hidden) return;
+  busy = true;
+  balanceButton.disabled = true;
+  void client.balance().then((result) => {
+    const { confirmedSat, pendingInSat, pendingOutSat, creditAvailableSat } = result;
+    if (![confirmedSat, pendingInSat, pendingOutSat, creditAvailableSat].every(Number.isSafeInteger)) {
+      state.textContent = "Invalid balance; inspect out of band.";
+      return;
+    }
+    element<HTMLElement>("balance-value").textContent =
+      `Confirmed: ${confirmedSat} sat; pending in: ${pendingInSat} sat; pending out: ${pendingOutSat} sat; credits: ${creditAvailableSat} sat.`;
+  }).catch(() => { state.textContent = "Balance unavailable; inspect out of band."; })
+    .finally(() => { busy = false; balanceButton.disabled = false; });
+});
+
+void client.ready()
+  .then(() => client.start(defaultConfig("signet", { debugLevel: "off" })))
+  .then(showWalletState)
+  .catch(() => { state.textContent = "Pinned runtime unavailable. Do not create or fund a wallet."; });
+
+function element<T extends HTMLElement>(id: string): T {
+  const found = document.getElementById(id);
+  if (found === null) throw new Error("Operator setup element unavailable");
+  return found as T;
+}

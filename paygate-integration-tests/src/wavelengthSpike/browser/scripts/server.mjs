@@ -10,11 +10,18 @@ import { RUNTIME_ASSETS } from "./runtime-manifest.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = resolve(root, "build/public");
 
-export async function startHarnessServer(runtimeDirectory, port = 0, live = false) {
+export async function startHarnessServer(runtimeDirectory, port = 0, live = false, setup = false) {
+  if (setup && !live) throw new Error("Setup requires the signet-only live CSP");
   const runtimeRoot = resolve(runtimeDirectory);
   await validateRuntime(runtimeRoot);
   const server = createServer((request, response) => {
-    void serve(request.url ?? "/", response, runtimeRoot, live);
+    const address = server.address();
+    if (address === null || typeof address === "string" ||
+        request.headers.host !== `127.0.0.1:${address.port}`) {
+      send(response, 404, "text/plain; charset=utf-8", "Not found");
+      return;
+    }
+    void serve(request.url ?? "/", response, runtimeRoot, live, setup);
   });
   await new Promise((resolveListening, reject) => {
     server.once("error", reject);
@@ -34,10 +41,10 @@ export async function startHarnessServer(runtimeDirectory, port = 0, live = fals
   };
 }
 
-async function serve(rawUrl, response, runtimeRoot, live) {
+async function serve(rawUrl, response, runtimeRoot, live, setup) {
   try {
     const url = new URL(rawUrl, "http://127.0.0.1");
-    const mapping = mapPath(url.pathname, runtimeRoot, live);
+    const mapping = mapPath(url.pathname, runtimeRoot, live, setup);
     if (mapping === null) {
       send(response, 404, "text/plain; charset=utf-8", "Not found");
       return;
@@ -61,15 +68,21 @@ async function serve(rawUrl, response, runtimeRoot, live) {
   }
 }
 
-function mapPath(pathname, runtimeRoot, live) {
-  if (live && pathname === "/live") {
+function mapPath(pathname, runtimeRoot, live, setup) {
+  if (setup && pathname === "/setup") {
+    return { path: resolve(publicRoot, "setup.html"), runtime: false };
+  }
+  if (live && !setup && pathname === "/live") {
     return { path: resolve(publicRoot, "live.html"), runtime: false };
   }
   if (pathname === "/") {
     return { path: resolve(publicRoot, "index.html"), runtime: false };
   }
   if (pathname.startsWith("/assets/")) {
-    return safeMapping(publicRoot, pathname.slice(1), false);
+    const mapping = safeMapping(resolve(publicRoot, "assets"), pathname.slice("/assets/".length), false);
+    if (mapping?.path === resolve(publicRoot, "assets/setup-entry.js") && !setup) return null;
+    if (mapping?.path === resolve(publicRoot, "assets/live-entry.js") && setup) return null;
+    return mapping;
   }
   const prefix = "/runtime/v0.1.1/";
   if (pathname.startsWith(prefix)) {

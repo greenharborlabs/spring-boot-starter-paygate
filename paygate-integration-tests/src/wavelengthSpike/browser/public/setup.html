@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Signet payer — operator setup</title></head>
+<body>
+<h1>Operator-only signet payer setup</h1>
+<p>This is a dedicated test wallet at this exact browser origin and profile. No real bitcoin. Do not record, screenshot, open developer tools, share the seed/password, or navigate away before backing up the seed offline.</p>
+<p id="state">Starting pinned runtime…</p>
+<section id="create-section" hidden>
+  <h2>Create new wallet</h2>
+  <p>Only create once. Choose a private password and confirm it. Creation generates a one-time recovery seed on this page. If creation is interrupted, do not retry or fund until wallet/backup state is investigated.</p>
+  <label>Password <input id="create-password" type="password" autocomplete="new-password"></label>
+  <label>Confirm password <input id="create-confirm" type="password" autocomplete="new-password"></label>
+  <button id="create" type="button">Create dedicated signet wallet</button>
+</section>
+<section id="backup-section" hidden>
+  <h2>Back up the seed offline before doing anything else</h2>
+  <p>Write these words down privately in order. The seed is displayed only in this page memory, never logged or sent to the test runner. If you lose it, do not fund this wallet.</p>
+  <pre id="seed" aria-live="off"></pre>
+  <button id="backed-up" type="button">I recorded and verified the seed offline; clear it from this page</button>
+</section>
+<section id="unlock-section" hidden>
+  <h2>Unlock existing wallet</h2>
+  <label>Password <input id="unlock-password" type="password" autocomplete="off"></label>
+  <button id="unlock" type="button">Unlock</button>
+</section>
+<section id="fund-section" hidden>
+  <h2>Prepare funding (no funds move from this page)</h2>
+  <p>Only send signet bitcoin to a generated deposit address after reviewing the funding amount and source out of band. A deposit must confirm and become spendable before T7. This page cannot send payments or board funds manually.</p>
+  <button id="deposit" type="button">Generate signet deposit address</button>
+  <p id="address"></p>
+  <button id="balance" type="button">Refresh balance</button>
+  <p id="balance-value"></p>
+</section>
+<script type="module" src="/assets/setup-entry.js"></script>
+</body></html>
