@@ -41,7 +41,7 @@ try {
     window.syntheticWallet = {
       ready: async () => {},
       start: async () => ({}),
-      getInfo: async () => ({ network: "signet", walletState }),
+      getInfo: async () => ({ network: "signet", walletState, serverConnected: true, blockHeight: 12345 }),
       createWallet: async () => {
         counts.create += 1;
         walletState = "ready";
@@ -56,7 +56,7 @@ try {
           view, activity: { entries: [{ kind: "deposit", status: "pending", id: "synthetic-private-id", progress: { phase: "settling", phaseLabel: "synthetic-private-label" } }], total: 1, hasMore: false, nextCursor: "" },
         };
         if (view === "vtxos") return { view, vtxos: { total: 0, vtxos: [] } };
-        if (view === "onchain") return { view, onchain: { total: 1, txs: [{ txid: "synthetic-private-txid" }], hasMore: false } };
+        if (view === "onchain") return { view, onchain: { total: 1, txs: [{ txid: "synthetic-private-txid", kind: "boarding", status: "boarding", amountSat: 63463, feeSat: 0, description: "synthetic-private-description", confirmationHeight: 12345 }], hasMore: false } };
         throw new Error("unexpected synthetic view");
       },
     };
@@ -101,15 +101,29 @@ try {
     window.syntheticCounts.list === 3 && window.syntheticCounts.send === 0 &&
     document.querySelector("#diagnostic").textContent.includes("pending=1") &&
     document.querySelector("#diagnostic").textContent.includes("settling=1") &&
+    document.querySelector("#diagnostic").textContent.includes("Ledger boarding awaiting round=1") &&
+    document.querySelector("#diagnostic").textContent.includes("Ark connection=connected; wallet tip height=12345") &&
     !document.body.textContent.includes("synthetic-private-"));
   if (!diagnosticSafe) throw new Error("Read-only diagnostics exposed wallet identifiers");
 
-  await page.evaluate(() => { window.syntheticListBase = window.syntheticWallet.list; });
-  for (const scenario of ["unknown-phase", "unknown-status", "oversized-page", "wrong-view", "rejected-call"]) {
+  await page.evaluate(() => {
+    window.syntheticListBase = window.syntheticWallet.list;
+    window.syntheticInfoBase = window.syntheticWallet.getInfo;
+  });
+  for (const scenario of ["unknown-phase", "unknown-status", "oversized-page", "wrong-view", "unknown-chain-kind", "unknown-boarding-status", "bad-info", "rejected-call"]) {
     await page.evaluate((testCase) => {
+      window.syntheticWallet.getInfo = async () => {
+        const result = await window.syntheticInfoBase();
+        if (testCase === "bad-info") result.serverConnected = "synthetic-private-state";
+        return result;
+      };
       window.syntheticWallet.list = async (request) => {
         if (testCase === "rejected-call") throw new Error("synthetic-private-error");
         const result = await window.syntheticListBase(request);
+        if (request.view === "onchain") {
+          if (testCase === "unknown-chain-kind") result.onchain.txs[0].kind = "synthetic-private-kind";
+          if (testCase === "unknown-boarding-status") result.onchain.txs[0].status = "synthetic-private-status";
+        }
         if (request.view === "activity") {
           if (testCase === "unknown-phase") result.activity.entries[0].progress.phase = "synthetic-private-phase";
           if (testCase === "unknown-status") result.activity.entries[0].status = "synthetic-private-status";

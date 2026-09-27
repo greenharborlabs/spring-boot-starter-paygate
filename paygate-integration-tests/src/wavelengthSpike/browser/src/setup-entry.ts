@@ -177,7 +177,8 @@ diagnosticButton.addEventListener("click", () => {
     client.list({ view: "activity", kinds: ["deposit"], limit: 50 }),
     client.list({ view: "vtxos", limit: 50 }),
     client.list({ view: "onchain", limit: 50 }),
-  ]).then(([activity, vtxos, onchain]) => {
+    client.getInfo(),
+  ]).then(([activity, vtxos, onchain, info]) => {
     if (activity.view !== "activity" || !activity.activity ||
         vtxos.view !== "vtxos" || !vtxos.vtxos ||
         onchain.view !== "onchain" || !onchain.onchain) {
@@ -187,7 +188,9 @@ diagnosticButton.addEventListener("click", () => {
     const { vtxos: liveVtxos, total: liveCount } = vtxos.vtxos;
     const { txs: onchainTxs, total: onchainCount, hasMore: onchainMore } = onchain.onchain;
     const validCount = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
-    if (!Array.isArray(entries) || entries.length > 50 || !validCount(total) || total !== entries.length ||
+    if (info.network !== "signet" || info.walletState !== "ready" ||
+        typeof info.serverConnected !== "boolean" || !validCount(info.blockHeight) ||
+        !Array.isArray(entries) || entries.length > 50 || !validCount(total) || total !== entries.length ||
         typeof hasMore !== "boolean" || typeof nextCursor !== "string" ||
         (hasMore && !nextCursor) ||
         !Array.isArray(liveVtxos) || liveVtxos.length > 50 || !validCount(liveCount) || liveCount < liveVtxos.length ||
@@ -195,6 +198,18 @@ diagnosticButton.addEventListener("click", () => {
         !Array.isArray(onchainTxs) || onchainTxs.length > 50 || !validCount(onchainCount) ||
         onchainCount < onchainTxs.length || typeof onchainMore !== "boolean") {
       throw new Error("Unexpected SDK list shape");
+    }
+    const ledger = { boarding: 0, confirmed: 0, recorded: 0, other: 0 };
+    const knownKinds = new Set(["boarding", "round", "oor", "sweep"]);
+    for (const tx of onchainTxs) {
+      if (!knownKinds.has(tx.kind)) throw new Error("Unexpected on-chain kind");
+      if (tx.kind !== "boarding") {
+        ledger.other++;
+      } else if (tx.status === "boarding" || tx.status === "confirmed" || tx.status === "recorded") {
+        ledger[tx.status]++;
+      } else {
+        throw new Error("Unexpected boarding status");
+      }
     }
     const statuses = { pending: 0, complete: 0, failed: 0 };
     const phases = { waiting_for_confirmation: 0, settling: 0, confirmed: 0 };
@@ -216,7 +231,9 @@ diagnosticButton.addEventListener("click", () => {
       `${activity.activity.hasMore ? "; more pages exist" : ""}. ` +
       `Phases: awaiting confirmation=${phases.waiting_for_confirmation}, settling=${phases.settling}, confirmed=${phases.confirmed}, other or absent=${entries.length - phases.waiting_for_confirmation - phases.settling - phases.confirmed}. ` +
       `Live VTXOs=${liveCount}; on-chain history entries (all wallet)=${onchainCount}. ` +
-      "Counts cannot prove this deposit's stage, fee readiness or custody.";
+      `Ledger boarding awaiting round=${ledger.boarding}, boarding confirmed=${ledger.confirmed}, boarding recorded=${ledger.recorded}, other=${ledger.other}. ` +
+      `Ark connection=${info.serverConnected ? "connected" : "disconnected"}; wallet tip height=${info.blockHeight}. ` +
+      "These are wallet-wide aggregates; they cannot prove this deposit's stage, fee readiness or custody.";
   }).catch(() => {
     output.textContent = "Read-only boarding check unavailable; no conclusion. Do not retry or fund again.";
   }).finally(() => { busy = false; diagnosticButton.disabled = false; });
