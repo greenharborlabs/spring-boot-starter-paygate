@@ -36,7 +36,7 @@ try {
   });
   await context.addInitScript(() => {
     let walletState = "none";
-    const counts = { create: 0, deposit: 0, send: 0 };
+    const counts = { create: 0, deposit: 0, list: 0, send: 0 };
     window.syntheticCounts = counts;
     window.syntheticWallet = {
       ready: async () => {},
@@ -50,6 +50,15 @@ try {
       unlockWallet: async () => { walletState = "ready"; return {}; },
       deposit: async () => { counts.deposit += 1; return { address: `tb1q${"q".repeat(39)}` }; },
       balance: async () => ({ confirmedSat: 0, pendingInSat: 0, pendingOutSat: 0, creditAvailableSat: 0 }),
+      list: async ({ view }) => {
+        counts.list += 1;
+        if (view === "activity") return {
+          view, activity: { entries: [{ kind: "deposit", status: "pending", id: "synthetic-private-id", progress: { phase: "settling", phaseLabel: "synthetic-private-label" } }], total: 1, hasMore: false, nextCursor: "" },
+        };
+        if (view === "vtxos") return { view, vtxos: { total: 0, vtxos: [] } };
+        if (view === "onchain") return { view, onchain: { total: 1, txs: [{ txid: "synthetic-private-txid" }], hasMore: false } };
+        throw new Error("unexpected synthetic view");
+      },
     };
   });
   const page = context.pages()[0] ?? await context.newPage();
@@ -85,6 +94,43 @@ try {
   await page.locator("#address").getByText(/^tb1q/).waitFor();
   if (await page.evaluate(() => window.syntheticCounts.deposit !== 1 || window.syntheticCounts.send !== 0)) {
     throw new Error("Unexpected synthetic wallet operation");
+  }
+  await page.locator("#diagnose").click();
+  await page.getByText("Live VTXOs=0", { exact: false }).waitFor();
+  const diagnosticSafe = await page.evaluate(() =>
+    window.syntheticCounts.list === 3 && window.syntheticCounts.send === 0 &&
+    document.querySelector("#diagnostic").textContent.includes("pending=1") &&
+    document.querySelector("#diagnostic").textContent.includes("settling=1") &&
+    !document.body.textContent.includes("synthetic-private-"));
+  if (!diagnosticSafe) throw new Error("Read-only diagnostics exposed wallet identifiers");
+
+  await page.evaluate(() => { window.syntheticListBase = window.syntheticWallet.list; });
+  for (const scenario of ["unknown-phase", "unknown-status", "oversized-page", "wrong-view", "rejected-call"]) {
+    await page.evaluate((testCase) => {
+      window.syntheticWallet.list = async (request) => {
+        if (testCase === "rejected-call") throw new Error("synthetic-private-error");
+        const result = await window.syntheticListBase(request);
+        if (request.view === "activity") {
+          if (testCase === "unknown-phase") result.activity.entries[0].progress.phase = "synthetic-private-phase";
+          if (testCase === "unknown-status") result.activity.entries[0].status = "synthetic-private-status";
+          if (testCase === "oversized-page") {
+            result.activity.entries = Array(51).fill(result.activity.entries[0]);
+            result.activity.total = 51;
+          }
+          if (testCase === "wrong-view") result.view = "vtxos";
+        }
+        return result;
+      };
+    }, scenario);
+    await page.locator("#diagnose").click();
+    await page.getByText("Read-only boarding check unavailable; no conclusion.", { exact: false }).waitFor();
+    if (await page.evaluate(() => document.body.textContent.includes("synthetic-private-"))) {
+      throw new Error("Malformed diagnostic leaked wallet data");
+    }
+    await page.locator("#diagnose:enabled").waitFor();
+  }
+  if (await page.evaluate(() => window.syntheticCounts.send !== 0)) {
+    throw new Error("Diagnostic dispatched a send");
   }
 
   const failedPage = await context.newPage();

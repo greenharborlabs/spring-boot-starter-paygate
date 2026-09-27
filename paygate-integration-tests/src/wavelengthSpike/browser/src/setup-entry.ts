@@ -25,6 +25,7 @@ const firstWord = element<HTMLInputElement>("first-word");
 const lastWord = element<HTMLInputElement>("last-word");
 const depositButton = element<HTMLButtonElement>("deposit");
 const balanceButton = element<HTMLButtonElement>("balance");
+const diagnosticButton = element<HTMLButtonElement>("diagnose");
 let backupPending = false;
 let creationUnresolved = false;
 let busy = false;
@@ -164,6 +165,61 @@ balanceButton.addEventListener("click", () => {
       `Confirmed: ${confirmedSat} sat; pending in: ${pendingInSat} sat; pending out: ${pendingOutSat} sat; credits: ${creditAvailableSat} sat.`;
   }).catch(() => { state.textContent = "Balance unavailable; inspect out of band."; })
     .finally(() => { busy = false; balanceButton.disabled = false; });
+});
+
+diagnosticButton.addEventListener("click", () => {
+  if (busy || fundSection.hidden) return;
+  busy = true;
+  diagnosticButton.disabled = true;
+  const output = element<HTMLElement>("diagnostic");
+  output.textContent = "Checking read-only wallet state. Do not retry while pending.";
+  void Promise.all([
+    client.list({ view: "activity", kinds: ["deposit"], limit: 50 }),
+    client.list({ view: "vtxos", limit: 50 }),
+    client.list({ view: "onchain", limit: 50 }),
+  ]).then(([activity, vtxos, onchain]) => {
+    if (activity.view !== "activity" || !activity.activity ||
+        vtxos.view !== "vtxos" || !vtxos.vtxos ||
+        onchain.view !== "onchain" || !onchain.onchain) {
+      throw new Error("Unexpected SDK list variant");
+    }
+    const { entries, total, hasMore, nextCursor } = activity.activity;
+    const { vtxos: liveVtxos, total: liveCount } = vtxos.vtxos;
+    const { txs: onchainTxs, total: onchainCount, hasMore: onchainMore } = onchain.onchain;
+    const validCount = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
+    if (!Array.isArray(entries) || entries.length > 50 || !validCount(total) || total !== entries.length ||
+        typeof hasMore !== "boolean" || typeof nextCursor !== "string" ||
+        (hasMore && !nextCursor) ||
+        !Array.isArray(liveVtxos) || liveVtxos.length > 50 || !validCount(liveCount) || liveCount < liveVtxos.length ||
+        !liveVtxos.every((v) => v.status === "live" && validCount(v.amountSat)) ||
+        !Array.isArray(onchainTxs) || onchainTxs.length > 50 || !validCount(onchainCount) ||
+        onchainCount < onchainTxs.length || typeof onchainMore !== "boolean") {
+      throw new Error("Unexpected SDK list shape");
+    }
+    const statuses = { pending: 0, complete: 0, failed: 0 };
+    const phases = { waiting_for_confirmation: 0, settling: 0, confirmed: 0 };
+    const knownPhases = new Set([
+      "unspecified", "request_created", "waiting_for_payment", "payment_detected", "settling",
+      "confirmed", "refunding", "refunded", "failed", "waiting_for_confirmation",
+    ]);
+    for (const entry of entries) {
+      if (entry.kind !== "deposit" || !Object.hasOwn(statuses, entry.status)) {
+        throw new Error("Unexpected deposit activity");
+      }
+      statuses[entry.status as keyof typeof statuses]++;
+      const phase = entry.progress?.phase;
+      if (phase !== undefined && !knownPhases.has(phase)) throw new Error("Unexpected deposit phase");
+      if (phase && Object.hasOwn(phases, phase)) phases[phase as keyof typeof phases]++;
+    }
+    // Never render entry IDs, addresses, outpoints, txids, phase labels or errors.
+    output.textContent = `Deposit activity (up to 50): pending=${statuses.pending}, complete=${statuses.complete}, failed=${statuses.failed}` +
+      `${activity.activity.hasMore ? "; more pages exist" : ""}. ` +
+      `Phases: awaiting confirmation=${phases.waiting_for_confirmation}, settling=${phases.settling}, confirmed=${phases.confirmed}, other or absent=${entries.length - phases.waiting_for_confirmation - phases.settling - phases.confirmed}. ` +
+      `Live VTXOs=${liveCount}; on-chain history entries (all wallet)=${onchainCount}. ` +
+      "Counts cannot prove this deposit's stage, fee readiness or custody.";
+  }).catch(() => {
+    output.textContent = "Read-only boarding check unavailable; no conclusion. Do not retry or fund again.";
+  }).finally(() => { busy = false; diagnosticButton.disabled = false; });
 });
 
 void client.ready()
