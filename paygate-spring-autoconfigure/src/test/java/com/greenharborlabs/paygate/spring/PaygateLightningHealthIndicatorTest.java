@@ -4,8 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
+import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -96,36 +100,56 @@ class PaygateLightningHealthIndicatorTest {
     }
 
     @Test
-    @DisplayName("concurrent calls do not stampede the backend")
-    void concurrentCallsDoNotStampede() throws InterruptedException {
-      var backend = new SlowCountingBackend(true, 50);
-      // TTL of 0 means cache is always expired, maximizing stampede potential
+    @DisplayName("concurrent callers use stale UP while one backend refresh is held")
+    void concurrentCallersUseStaleResultDuringRefresh() throws Exception {
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      var backend = new HeldRefreshBackend(deadline);
       var indicator = new PaygateLightningHealthIndicator(backend, 0);
+      assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+      assertThat(backend.callCount.get()).isEqualTo(1);
 
-      int threadCount = 10;
-      var startLatch = new CountDownLatch(1);
-      var doneLatch = new CountDownLatch(threadCount);
+      var workers = new ArrayList<Thread>();
+      var tasks = new ArrayList<FutureTask<Health>>();
+      try {
+        var refresh = new FutureTask<>(indicator::health);
+        tasks.add(refresh);
+        workers.add(Thread.ofVirtual().start(refresh));
+        assertThat(backend.refreshEntered.await(remainingNanos(deadline), TimeUnit.NANOSECONDS))
+            .isTrue();
 
-      for (int i = 0; i < threadCount; i++) {
-        Thread.ofVirtual()
-            .start(
-                () -> {
-                  try {
-                    startLatch.await();
-                    indicator.health();
-                  } catch (InterruptedException _) {
-                    Thread.currentThread().interrupt();
-                  } finally {
-                    doneLatch.countDown();
-                  }
-                });
+        for (int i = 0; i < 10; i++) {
+          var caller = new FutureTask<>(indicator::health);
+          tasks.add(caller);
+          workers.add(Thread.ofVirtual().start(caller));
+        }
+        for (int i = 1; i < tasks.size(); i++) {
+          assertThat(tasks.get(i).get(remainingNanos(deadline), TimeUnit.NANOSECONDS).getStatus())
+              .isEqualTo(Status.UP);
+        }
+        assertThat(backend.callCount.get()).isEqualTo(2);
+        assertThat(refresh.isDone()).isFalse();
+
+        backend.releaseRefresh.countDown();
+        assertThat(refresh.get(remainingNanos(deadline), TimeUnit.NANOSECONDS).getStatus())
+            .isEqualTo(Status.DOWN);
+        assertThat(backend.callCount.get()).isEqualTo(2);
+        assertThat(backend.coordinationFailure.get()).isNull();
+      } finally {
+        backend.releaseRefresh.countDown();
+        long cleanupDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        for (var task : tasks) {
+          if (!task.isDone()) {
+            task.cancel(true);
+          }
+        }
+        for (var worker : workers) {
+          if (worker.isAlive()) {
+            worker.interrupt();
+          }
+          TimeUnit.NANOSECONDS.timedJoin(worker, remainingNanos(cleanupDeadline));
+          assertThat(worker.isAlive()).as("worker must stop within cleanup budget").isFalse();
+        }
       }
-
-      startLatch.countDown();
-      doneLatch.await();
-
-      // With stampede protection, far fewer than 10 threads should hit the backend
-      assertThat(backend.callCount.get()).isLessThan(threadCount);
     }
 
     @Test
@@ -171,25 +195,47 @@ class PaygateLightningHealthIndicatorTest {
     }
   }
 
-  static class SlowCountingBackend extends ControllableBackend {
+  private static long remainingNanos(long deadline) {
+    long remaining = deadline - System.nanoTime();
+    if (remaining <= 0) {
+      throw new AssertionError("coordination or cleanup deadline exceeded");
+    }
+    return remaining;
+  }
+
+  static class HeldRefreshBackend extends ControllableBackend {
 
     final AtomicInteger callCount = new AtomicInteger();
-    private final long delayMillis;
+    final AtomicReference<Throwable> coordinationFailure = new AtomicReference<>();
+    final CountDownLatch refreshEntered = new CountDownLatch(1);
+    final CountDownLatch releaseRefresh = new CountDownLatch(1);
+    private final long deadline;
 
-    SlowCountingBackend(boolean healthy, long delayMillis) {
-      super(healthy);
-      this.delayMillis = delayMillis;
+    HeldRefreshBackend(long deadline) {
+      super(true);
+      this.deadline = deadline;
     }
 
     @Override
     public boolean isHealthy() {
-      callCount.incrementAndGet();
-      try {
-        Thread.sleep(delayMillis);
-      } catch (InterruptedException _) {
-        Thread.currentThread().interrupt();
+      if (callCount.incrementAndGet() == 1) {
+        return true;
       }
-      return super.isHealthy();
+      refreshEntered.countDown();
+      try {
+        if (!releaseRefresh.await(remainingNanos(deadline), TimeUnit.NANOSECONDS)) {
+          throw new AssertionError("backend refresh was never released");
+        }
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        var failure = new AssertionError("backend refresh interrupted", ex);
+        coordinationFailure.compareAndSet(null, failure);
+        throw failure;
+      } catch (AssertionError failure) {
+        coordinationFailure.compareAndSet(null, failure);
+        throw failure;
+      }
+      return false;
     }
   }
 
