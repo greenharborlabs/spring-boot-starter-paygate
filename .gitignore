@@ -5,6 +5,9 @@ target/
 *.class
 *.jar
 
+# Installed Node.js dependencies
+node_modules/
+
 # Keep planning and specification artifacts local-only.
 plans/
 /specs/
