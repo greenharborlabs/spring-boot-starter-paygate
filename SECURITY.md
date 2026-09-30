@@ -38,8 +38,9 @@ Gradle user home after any dependency, checksum, publisher key, or exception cha
 The [September 30 reconciliation](keel/2026-09-28-dependency-provenance-renewal.md) independently
 matched all 464 exception artifacts to their exact HTTPS source bytes and metadata SHA-256.
 Of these, 146 detached signatures verified with keys in the committed keyring, while 318
-could not be verified with that keyring in an isolated GPG home. All 464 signing key IDs
-remain explicitly ignored in Gradle verification metadata. The earlier review's blanket
+could not be verified with that keyring in an isolated GPG home. The signing key ID
+associated with each of the 464 exception artifacts remains explicitly ignored in Gradle
+verification metadata. The earlier review's blanket
 key-unavailability explanation is therefore incomplete: key presence and cryptographic
 validity do not establish independent publisher identity. The 146 rationales now identify
 that trust gap. All exact checksum exceptions and their October 23 UTC deadlines are retained;
