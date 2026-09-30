@@ -1,5 +1,5 @@
 # Renew dependency provenance exceptions
-Status: review
+Status: closed
 Base revision: 4dbdbc7c3c7b4d9cc8540666bcdd0bbd9cc46266
 Review scope: config/dependency-provenance-exceptions.tsv, SECURITY.md
 
@@ -21,10 +21,10 @@ Establish current dependency provenance evidence and run the required Paygate ro
 - [x] Recheck the intended HEAD above at approval, record the full approved base, and confirm Java/Gradle/GPG availability and the current 464-row inventory. Reconcile the September 23 audit and classify each row's trust reason, source, and metadata relationship; resolve ownership, evidence, or deadline-policy gaps before edits.
 - [x] Independently inspect current artifact bytes and publisher evidence for every retained exception, using the existing source-audit script where appropriate; document actual review date, evidence limits, and justified deadline in this record. Retain the current deadline if no approved reason requires renewal. Remove obsolete rows or renew only reviewed exact rows, and clarify the deadline semantics in `SECURITY.md`. Stop for scope approval if keyring, metadata, or another path must change.
 - [x] Run the required provenance, negative-control, clean-home, root aggregate, and whitespace checks from the repository root. Record command, result/exit, actual coverage, tested revision, omissions, and limits; do not call the root gate passed while any required task fails or remains unrun.
-- [ ] Commit only scoped changes, obtain fresh independent review of this record and a valid close, then hand the unblocked root-check evidence to the separate health-refresh pilot. Do not close the pilot in this task.
+- [x] Commit only scoped changes, obtain fresh independent review of this record and a valid close. Evidence handoff to the separate health-refresh pilot remains the Next action; do not close the pilot in this task.
 
 ## Review
-Awaiting fresh-context review of implementation through correction commit `75f1da6ef2058131d76bd041a974be4ef3860eb9` (original implementation `1b516c0d6a4742c541ead7cf7ff0b79c5eeebac5`). Human approval was received and the intended base was unchanged. Implementation scope is exactly the two paths above; the untracked wavelength spike remains untouched.
+Latest authoritative review is Attempt 2: pass at `ba64f29baa744d1a72ca11d0881955912fc52f67`, covering implementation through correction commit `75f1da6ef2058131d76bd041a974be4ef3860eb9` (original implementation `1b516c0d6a4742c541ead7cf7ff0b79c5eeebac5`). Closeout confirmed both scoped paths have no working-tree/index changes and no diff between the reviewed revision and current HEAD. Documentation is complete in the two scoped paths. Human approval and the original base are preserved; the untracked wavelength spike remains untouched. Earlier WORK and review evidence below is historical and retained.
 
 WORK evidence on 2026-09-30 UTC (Java 25.0.1, Gradle 9.4.1, GPG available):
 - `python3 scripts/audit-dependency-provenance-sources.py`: exit 0; all 464 exact HTTPS artifact SHA-256 values matched, 66,182,026 bytes, 462 Maven Central sources and two Plugin Portal sources. Every exact coordinate/checksum also matches metadata; all rows have the maintainer owner, change-trigger, and October 23 deadline.
@@ -64,8 +64,25 @@ Fresh verification on the reviewed HEAD plus exactly these two scoped correction
 
 Implementation is ready for another fresh review, not independently passed or closed. Attempt 1's rework verdict is preserved; the separate pilot has not been closed.
 
+### Attempt 2
+Reviewed revision: `ba64f29baa744d1a72ca11d0881955912fc52f67` (HEAD; `ba64f29` changes only this task record, so the reviewed implementation is correction commit `75f1da6ef2058131d76bd041a974be4ef3860eb9` on top of `1b516c0d6a4742c541ead7cf7ff0b79c5eeebac5`). Base `4dbdbc7c3c7b4d9cc8540666bcdd0bbd9cc46266`. Scoped paths clean; only the record-identified untracked `paygate-integration-tests/src/wavelengthSpike/` directory is dirty and was not inspected or modified.
+Verdict: pass
+Findings and dispositions:
+1. Attempt 1 finding 1 resolved. `SECURITY.md` now states "The signing key ID associated with each of the 464 exception artifacts remains explicitly ignored in Gradle verification metadata." Independent re-parse confirms all 464 artifact signer key IDs fall in the 40-entry `<ignored-key>` set and none in `<trusted-key>`; the unsupported "464 signing key IDs" count is gone and the claim matches evidence.
+2. Attempt 1 finding 2 resolved. The ledger's second header line now reads "Exact temporary checksum exceptions where publisher authentication is unavailable or unresolved; review-date is the inclusive UTC next-review deadline, with actual review dates and evidence recorded separately." It no longer asserts the blanket key-unavailability explanation that `SECURITY.md` labels incomplete, and matches the validator's deadline semantics.
+No new correctness, security, data-loss, or acceptance findings. Data rows are unchanged from the reviewed implementation: exactly 146 rationale-field edits (one value) and the comment/wording changes; IDs, coordinates, checksums, sources, owner, `review-date`, and trigger are byte-identical to base, and no metadata, keyring, or trust behavior changed.
+Verification:
+- `git diff --check 4dbdbc7..HEAD`: exit 0.
+- Independent field-level diff base→HEAD: 146 rationale-only row changes, 0 non-rationale data changes, 2 header lines changed, 464 data rows present.
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls`: BUILD SUCCESSFUL, exit 0, 4 executed (the header clarification preserves the negative-control fixture layout).
+- `python3 scripts/audit-dependency-provenance-sources.py`: exit 0; 464/464 SHA-256 matches, 66,182,026 bytes, `{repo1.maven.org: 462, plugins.gradle.org: 2}`.
+- Fresh empty `GRADLE_USER_HOME=$(mktemp -d) ./gradlew check --no-daemon --rerun-tasks`: BUILD SUCCESSFUL in 2m 10s, exit 0, 120 actionable tasks executed. Default-module test XML totals 2,921 tests, 0 failures/0 errors/0 skipped (integration XML excluded).
+- Attempt 1's independent detached-signature audit (146 `VALIDSIG` / 318 `NO_PUBKEY` / 0 `BADSIG`, 464 SHA matches) remains valid historical evidence: the corrections changed no signature input, and the same HEAD's metadata/keyring are byte-identical to the Attempt 1 inputs.
+
 ## Outcome
-Pending.
+Closed after Attempt 2 passed. The [ledger](../config/dependency-provenance-exceptions.tsv) corrects 146 rationales to distinguish valid signatures from independently authenticated publisher identity; its header now covers unavailable or unresolved authentication. [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials) documents inclusive UTC deadline semantics, evidence requirements, owner-justified renewal intervals without automatic extension, and the superseded blanket key-unavailability explanation. Attempt 1's signer-count and header findings were corrected without changing artifact bytes, coordinates, checksums, sources, deadlines, metadata, keyring, or trust behavior. All 464 exact exceptions retain their October 23 UTC deadline; no renewal was necessary.
+
+Fresh Attempt 2 verification passed the four provenance/repository controls, all 464 HTTPS source SHA-256 matches, whitespace checks, and an empty-home root `check --no-daemon --rerun-tasks` (120 tasks executed; 2,921 default-module tests, zero failures/errors/skips). The historical independently reproduced signature audit found 146 valid signatures and 318 missing usable keys, not authenticated publisher identities; temporary evidence and partial GPG import limitations remain as recorded. Integration tests, live Lightning, advisory freshness, and release readiness were excluded; existing deprecation/Unsafe/CDS warnings remain. Closeout changed only this record and confirmed the reviewed implementation is unchanged. The separate pilot is not closed by this result.
 
 ## Next action
-Obtain fresh-context review of this record and the committed two-file scope; close only after a valid pass, then hand the root-check evidence to the separate pilot.
+Hand the passing root-check evidence to the [health-refresh pilot](2026-09-28-health-refresh-contention.md) so it can resolve its separate rework findings and obtain fresh review.
