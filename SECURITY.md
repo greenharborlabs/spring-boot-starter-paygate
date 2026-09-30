@@ -20,9 +20,32 @@ Gradle verifies both SHA-256 checksums and publisher signatures using the commit
 `gradle/verification-metadata.xml` and `gradle/verification-keyring.keys`. A dependency without
 usable publisher authentication requires one exact, independently reviewed row in
 `config/dependency-provenance-exceptions.tsv`; rows record the coordinate, artifact bytes,
-authoritative source, rationale, owner, review date, and renewal trigger. Never accept generated
-verification metadata or a key-server identity as approval by itself. Re-resolve from an isolated
+authoritative source, rationale, owner, next review deadline, and renewal trigger. The legacy
+`review-date` column is an inclusive UTC deadline, not the date the review was performed;
+validation rejects it when it precedes the current UTC date. Record the actual review date,
+exact source-byte evidence, publisher-authentication limitations, and owner-approved bounded
+next deadline in the accompanying review record. The owner must explicitly justify each
+renewal interval; there is no automatic extension or implied repository-wide cadence. A
+passed validator or matching committed files alone is not a review. The
+[September 23 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-09-23.md) chose 30 days
+for that renewal only. A dependency, key, checksum, or source change requires review before
+the deadline; date changes alone cannot satisfy renewal.
+
+Never accept generated verification metadata, a key-server identity, or a valid signature
+from an unauthenticated key as publisher approval by itself. Re-resolve from an isolated
 Gradle user home after any dependency, checksum, publisher key, or exception change.
+
+The [September 30 reconciliation](keel/2026-09-28-dependency-provenance-renewal.md) independently
+matched all 464 exception artifacts to their exact HTTPS source bytes and metadata SHA-256.
+Of these, 146 detached signatures verified with keys in the committed keyring, while 318
+could not be verified with that keyring in an isolated GPG home. All 464 signing key IDs
+remain explicitly ignored in Gradle verification metadata. The earlier review's blanket
+key-unavailability explanation is therefore incomplete: key presence and cryptographic
+validity do not establish independent publisher identity. The 146 rationales now identify
+that trust gap. All exact checksum exceptions and their October 23 UTC deadlines are retained;
+this reconciliation neither extends them nor authenticates publisher fingerprints. Key recovery,
+independent publisher-identity confirmation, and changes to signature trust require separate
+review before any exception is removed.
 
 The repository ignores common private-key, keystore, macaroon, and TLS credential filenames by
 default. A reviewed non-secret fixture may be force-added deliberately; force-add is a review
