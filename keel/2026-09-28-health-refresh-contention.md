@@ -1,5 +1,5 @@
 # Bound health refresh contention test
-Status: working
+Status: abandoned
 Base revision: e6402b8646f72e21e8003eb7d0e5c90a0a922510
 Review scope: paygate-spring-autoconfigure/src/test/java/com/greenharborlabs/paygate/spring/PaygateLightningHealthIndicatorTest.java
 
@@ -40,7 +40,15 @@ Findings and dispositions:
 Verification: Scoped diff from the base through HEAD reviewed; scoped path clean and no test-design finding identified. Inspected WORK evidence: focused class PASS, seven tests across two nested suites with zero skips/failures/errors; its XML includes the held-refresh case. Module `:check` PASS with tests, coverage verification, and Spotless; synthetic worker, backend-coordination, and nonfinishing-worker fault injections failed as intended in the disposable checkout. Inputs to those results are unchanged by the implementation commit, but they are not fresh REVIEW executions. Fresh REVIEW `git diff --check` and scoped committed-diff whitespace check passed. Fresh direct provenance validator failed as above. Focused Gradle rerun was blocked before test execution; fresh module and aggregate Gradle checks were not run under the same wrapper access obstacle. Coverage remains the fake-backend stale-refresh scenario; cold-start contention, live Lightning, integration tests, and security behavior were not exercised by this pilot.
 
 ## Outcome
-Pending.
+Abandoned on 2026-10-13 without a passing review, so the test was never independently reviewed. The maintainer chose to restart the work under Keel `v0.2.1` instead of resuming this pre-`v0.2.1` pilot record.
+
+What exists: the held-refresh contention test reviewed as `ec255be` reached `main` as `1f6bd07`, and the [test file](../paygate-spring-autoconfigure/src/test/java/com/greenharborlabs/paygate/spring/PaygateLightningHealthIndicatorTest.java) at current `HEAD` matches both commits exactly. The WORK evidence above (focused class, module `:check`, three fault injections) remains historical. The fresh focused, module, and root Gradle checks were never re-run in review, so this record shows no passing required verification.
+
+Attempt 1 found no defect in the test design. Both rework findings came from the environment:
+1. The root check failed on an expired provenance exception. The later [provenance task](2026-09-28-dependency-provenance-renewal.md) found that this expired state no longer described the checkout it reviewed, and it closed after a passing root `check`. That run did not cover this record's reviewed revision.
+2. The reviewer's focused Gradle rerun was blocked because the review sandbox denied access to the wrapper lock under `~/.gradle`.
+
+Keel observation: the recorded base `e6402b8` and reviewed revision `ec255be` exist only on `feature/wavelength-poc`. The change reached `main` as a different commit, so this record could not be reviewed from its recorded base on `main`.
 
 ## Next action
-Resolve Attempt 1 findings, rerun required verification, and return the record to review with a committed scoped implementation revision.
+None.
