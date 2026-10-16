@@ -1,5 +1,5 @@
 # Renew dependency provenance exceptions before the October 23 deadline
-Status: working
+Status: review
 Base revision: ef4777c932ed9abb442a5195c59d7bfc544c51b3
 Review scope: config/dependency-provenance-exceptions.tsv, docs/security/DEPENDENCY-PROVENANCE-REVIEW-<work date>.md, SECURITY.md
 
@@ -35,18 +35,30 @@ The change must merge before 2026-10-24 UTC.
 Approved: 2026-10-15 by Mark at plan revision ef4777c932ed9abb442a5195c59d7bfc544c51b3. Deadline confirmed: 2026-11-22 UTC (30 days).
 
 ## Tasks
-- [ ] At approval, confirm that `gradle/`, the build files, and the ledger match base `4dbdbc7` except for the ledger rationale and header edits in `1b516c0` and `75f1da6`, and that there are 464 unique rows dated `2026-10-23`. Also confirm Java 25 and Gradle 9.4.1 start, and that `./gradlew validateDependencyProvenance` passes before any edit.
-- [ ] Run `python3 scripts/audit-dependency-provenance-sources.py`. It must report 464/464 SHA-256 matches with the expected source split (462 Maven Central, 2 Plugin Portal). If the network is unavailable, record `blocked`; if the run fails partway, record `incomplete`.
-- [ ] Set `review-date` to the approved deadline on all 464 rows. Then show with a field-level diff from the base that `review-date` is the only data field that changed, with 464 changes and no header changes.
-- [ ] Write the dated review document and link it from `SECURITY.md`.
-- [ ] Run the three required checks in Decisions and record the command, exit code, tasks executed, test totals, and omissions for each.
-- [ ] (optional) Re-run the detached-signature audit with only the committed keyring in an isolated GPG home. Skip it if metadata and the keyring are byte-identical to the September 30 inputs, and say so.
+- [x] At approval, confirm that `gradle/`, the build files, and the ledger match base `4dbdbc7` except for the ledger rationale and header edits in `1b516c0` and `75f1da6`, and that there are 464 unique rows dated `2026-10-23`. Also confirm Java 25 and Gradle 9.4.1 start, and that `./gradlew validateDependencyProvenance` passes before any edit.
+- [x] Run `python3 scripts/audit-dependency-provenance-sources.py`. It must report 464/464 SHA-256 matches with the expected source split (462 Maven Central, 2 Plugin Portal). If the network is unavailable, record `blocked`; if the run fails partway, record `incomplete`.
+- [x] Set `review-date` to the approved deadline on all 464 rows. Then show with a field-level diff from the base that `review-date` is the only data field that changed, with 464 changes and no header changes.
+- [x] Write the dated review document and link it from `SECURITY.md`.
+- [x] Run the three required checks in Decisions and record the command, exit code, tasks executed, test totals, and omissions for each.
+- [x] (optional) Re-run the detached-signature audit with only the committed keyring in an isolated GPG home. Skip it if metadata and the keyring are byte-identical to the September 30 inputs, and say so.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation commit `f53941bff1e3e03b73cf5d65aaec52fa2c560be0` on approved base `ef4777c932ed9abb442a5195c59d7bfc544c51b3` (approval record `85f0ff6`). It changes only the three scoped paths.
+
+WORK evidence on 2026-10-15 UTC (Java 25.0.1 Temurin, Gradle 9.4.1):
+- Approval checks: `git log 4dbdbc7..ef4777c` over `gradle/`, `*.gradle.kts`, `gradle.properties`, and the ledger lists only `1b516c0` and `75f1da6`, and the diff is ledger-only. `gradle/verification-metadata.xml` and `gradle/verification-keyring.keys` are byte-identical to `4dbdbc7`. The ledger had 464 unique IDs and rows, all dated `2026-10-23`. Pre-edit `./gradlew validateDependencyProvenance`: exit 0.
+- `python3 scripts/audit-dependency-provenance-sources.py`: exit 0, 464/464 SHA-256 matches, 66,182,026 bytes, `{repo1.maven.org: 462, plugins.gradle.org: 2}`.
+- Ledger edit: a field-level comparison with `ef4777c` found 464 rows, 464 `review-date` changes from `2026-10-23` to `2026-11-22`, no other field changes, and no header changes. Ledger SHA-256 went from `68c43e11…be73be` to `450ba022…612bd8`.
+- Added `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-10-15.md` and a one-sentence current-review link in `SECURITY.md`.
+- Four-control Gradle command from Decisions (`--no-daemon`): exit 0, 4 of 4 tasks executed and passed.
+- `GRADLE_USER_HOME=<new empty scratch dir> ./gradlew check --no-daemon --rerun-tasks`: exit 0 in 2m 23s, 120 of 120 actionable tasks executed. Default-module test XML totals 2,921 tests, 0 failures, 0 errors, 0 skipped (integration XML excluded).
+- `git diff --check` (working tree and staged): exit 0.
+- Optional signature audit skipped: metadata and keyring are byte-identical to the September 30 inputs.
+
+Limits: default `check` omits opt-in integration tests, live Lightning, advisory freshness, and release readiness. No publisher identity was authenticated. No independent review has run yet.
 
 ## Outcome
 Pending.
 
 ## Next action
-Implement the approved plan.
+Run a fresh-context review, then merge before 2026-10-24 UTC.
