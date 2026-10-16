@@ -29,7 +29,9 @@ renewal interval; there is no automatic extension or implied repository-wide cad
 passed validator or matching committed files alone is not a review. The
 [September 23 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-09-23.md) chose 30 days
 for that renewal only. A dependency, key, checksum, or source change requires review before
-the deadline; date changes alone cannot satisfy renewal.
+the deadline; date changes alone cannot satisfy renewal. The current review is the
+[October 15 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-10-15.md), which renewed
+all 464 exceptions through 2026-11-22 UTC on re-verified source bytes.
 
 Never accept generated verification metadata, a key-server identity, or a valid signature
 from an unauthenticated key as publisher approval by itself. Re-resolve from an isolated
