@@ -1,6 +1,6 @@
 # Renew dependency provenance exceptions before the October 23 deadline
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: ef4777c932ed9abb442a5195c59d7bfc544c51b3
 Review scope: config/dependency-provenance-exceptions.tsv, docs/security/DEPENDENCY-PROVENANCE-REVIEW-<work date>.md, SECURITY.md
 
 ## Goal
@@ -32,6 +32,8 @@ The change must merge before 2026-10-24 UTC.
 
   Default `check` excludes `paygate-integration-tests`. `releaseReadiness -Pintegration` is not acceptance for this task.
 
+Approved: 2026-10-15 by Mark at plan revision ef4777c932ed9abb442a5195c59d7bfc544c51b3. Deadline confirmed: 2026-11-22 UTC (30 days).
+
 ## Tasks
 - [ ] At approval, confirm that `gradle/`, the build files, and the ledger match base `4dbdbc7` except for the ledger rationale and header edits in `1b516c0` and `75f1da6`, and that there are 464 unique rows dated `2026-10-23`. Also confirm Java 25 and Gradle 9.4.1 start, and that `./gradlew validateDependencyProvenance` passes before any edit.
 - [ ] Run `python3 scripts/audit-dependency-provenance-sources.py`. It must report 464/464 SHA-256 matches with the expected source split (462 Maven Central, 2 Plugin Portal). If the network is unavailable, record `blocked`; if the run fails partway, record `incomplete`.
@@ -47,4 +49,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise this plan.
+Implement the approved plan.
