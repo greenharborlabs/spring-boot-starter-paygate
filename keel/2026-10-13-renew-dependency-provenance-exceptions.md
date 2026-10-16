@@ -1,5 +1,5 @@
 # Renew dependency provenance exceptions before the October 23 deadline
-Status: review
+Status: closed
 Base revision: ef4777c932ed9abb442a5195c59d7bfc544c51b3
 Review scope: config/dependency-provenance-exceptions.tsv, docs/security/DEPENDENCY-PROVENANCE-REVIEW-<work date>.md, SECURITY.md
 
@@ -57,8 +57,26 @@ WORK evidence on 2026-10-15 UTC (Java 25.0.1 Temurin, Gradle 9.4.1):
 
 Limits: default `check` omits opt-in integration tests, live Lightning, advisory freshness, and release readiness. No publisher identity was authenticated. No independent review has run yet.
 
+### Attempt 1
+Reviewed revision: 0dd85c2c54e5eddc2c681730aa1cfdcc7f2355d2
+Verdict: pass
+Findings and dispositions:
+1. No findings. Scoped diff from `ef4777c` is exactly the three declared paths; `HEAD` (`0dd85c2`) is a record-only commit and every scoped path is clean. An independent field-level comparison of the ledger found 464 changed rows, each with only field 9 (`review-date`) differing (`2026-10-23` to `2026-11-22`), 464 unique IDs, and no header change; no coordinate, checksum, source, rationale, owner, or trigger changed. `gradle/verification-metadata.xml` and `gradle/verification-keyring.keys` are byte-identical to base `4dbdbc7`, so the optional signature-audit skip is justified. Ledger SHA-256s match the record (`68c43e11…be73be` to `450ba022…612bd8`). `SECURITY.md` adds only the current-review link, and the dated review document and its relative links resolve.
+Verification:
+- `git diff --check` (working tree and staged): pass (exit 0).
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls`: pass, exit 0, 4 of 4 tasks executed.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, exit 0, 464/464 SHA-256 matches, 66,182,026 bytes, `{repo1.maven.org: 462, plugins.gradle.org: 2}`.
+- `GRADLE_USER_HOME=<fresh scratch dir> ./gradlew check --no-daemon --rerun-tasks`: pass, exit 0, 120 of 120 actionable tasks executed. Default-module test XML totals 2,921 tests, 0 failures, 0 errors, 0 skipped; `paygate-integration-tests` was not run.
+- Optional detached-signature audit: skipped, correctly, because metadata and keyring are byte-identical to the September 30 inputs.
+- Material limits: default `check` omits opt-in integration tests, live Lightning, advisory freshness, and release readiness; no publisher identity was authenticated or claimed. Reviewed revision recorded on 2026-10-16 UTC before the 2026-10-24 merge deadline.
+
 ## Outcome
-Pending.
+Renewed all 464 exceptions in the [ledger](../config/dependency-provenance-exceptions.tsv) through 2026-11-22 UTC (30 days, owner-confirmed at approval) in implementation commit `f53941b`; review Attempt 1 passed at reviewed revision `0dd85c2`, a record-only commit over it.
+
+- Change: only `review-date` changed (`2026-10-23` to `2026-11-22`) on 464 of 464 rows, with no header, coordinate, checksum, source, rationale, owner, or trigger change. Added the dated [October 15 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-10-15.md) and linked it from the [security policy](../SECURITY.md#dependency-provenance-and-local-credentials) as the current review.
+- Evidence: the source audit re-verified 464/464 SHA-256 matches over HTTPS (462 Maven Central, 2 Plugin Portal). `gradle/verification-metadata.xml` and `gradle/verification-keyring.keys` are byte-identical to base `4dbdbc7`, so the optional signature audit was skipped.
+- Verification (implementation and review both passed): the four provenance controls (exit 0, 4/4 tasks); `check` from an empty Gradle home with `--rerun-tasks` (exit 0, 120/120 tasks, 2,921 default-module tests, 0 failures/errors/skipped); `git diff --check` (exit 0). Review found no issues.
+- Limits: no publisher identity is authenticated; the 318 `NO_PUBKEY` trust gap from the [September 30 reconciliation](2026-09-28-dependency-provenance-renewal.md) remains. Default `check` omits integration tests, live Lightning, advisory freshness, and release readiness. The renewal protects `check` only once merged, and the old dates expire on 2026-10-24 UTC.
 
 ## Next action
-Run a fresh-context review, then merge before 2026-10-24 UTC.
+Merge `chore/renew-dependency-provenance-2026-10` (implementation `f53941b`, record in this file) to `main` before 2026-10-24 UTC.
