@@ -1,7 +1,7 @@
 # Remediate 2026-10-18 security review High and Medium findings
-Status: working
+Status: review
 Base revision: 84239cabe96fa2df6b3d3d27c1604cbcabba32e2
-Review scope: paygate-core/src/main/**, paygate-core/src/test/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/main/**, paygate-integration-tests/src/**, paygate-example-app/src/test/**, paygate-example-app-spring-security/src/test/**, .github/workflows/snapshot.yml, .github/workflows/release.yml, .github/workflows/security-suite.yml, .github/requirements/**, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, docs/AGENT-MACAROON-DELEGATION.md, SECURITY.md, CHANGELOG.md, README.md, PLAYBOOK.md, */README.md
+Review scope: paygate-api/src/**, paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/main/**, paygate-integration-tests/src/**, paygate-integration-tests/build.gradle.kts, paygate-example-app/src/**, paygate-example-app-spring-security/src/test/**, .github/workflows/snapshot.yml, .github/workflows/release.yml, .github/workflows/security-suite.yml, .github/requirements/**, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md, docs/AGENT-MACAROON-DELEGATION.md, integration-tests/PLAYBOOK.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
 ## Goal
 Close the three High and eight Medium findings (SR-01 to SR-11) plus SR-17, which shares SR-01's fix, from the [2026-10-18 security review](../reports/security-review-2026-10-18-claude-opus-5-5.md) on branch `fix/security-review-2026-10-18`. Acceptance evidence:
@@ -63,23 +63,43 @@ Close the three High and eight Medium findings (SR-01 to SR-11) plus SR-17, whic
 Approved: 2026-10-21 by Mark Hammond at plan revision 84239cabe96fa2df6b3d3d27c1604cbcabba32e2.
 
 ## Tasks
-- [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the relevant PoCs into the branch, confirm they still reproduce, then invert them.
-- [ ] SR-01/03/04/17: resolver rejection, manual-route matching on `RequestPath`, and the non-`HandlerMethod` interceptor backstop. Check: real-Tomcat regression for every vector in the review (servlet mode, plus Spring Security with a relaxed firewall), and module tests.
-- [ ] SR-02: opaque route/method/capability binding, the amount check and removal of the capability fallback. Check: the four inverted MPP PoCs, plus equal-price/different-route and capability-cache-miss cases.
-- [ ] SR-05: early body-capture filter and the length-mismatch 400. Check: Spring Security form PUT/POST replay gets 402, oversized forms get 400, pricing sees the real size, and the POST handler still receives its parameters.
-- [ ] SR-06/07: XFF joining and stop-on-unparseable; binding startup guard. Check: inverted resolver and IT PoCs, plus an `ApplicationContextRunner` startup failure.
-- [ ] SR-08/09: chain-guard probe and per-route coverage; bounded method tag. Check: negated lambda/regex chains fail startup, `/api/**` plus catch-all starts, and 1000 random methods give at most 9 tags.
-- [ ] SR-10/11: least-privilege docs and metadata; CI cache removal and hash-locked pip. Check: inspect the workflow diff, and run `zizmor .github/workflows` (optional, needs a local install).
-- [ ] Ledger, SECURITY.md, CHANGELOG and README corrections. Check: by inspection, every SR and I item has a row, and each `implemented` row names its regression test.
-- [ ] Final: `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
+- [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the relevant PoCs into the branch, confirm they still reproduce, then invert them.
+- [x] SR-01/03/04/17: resolver rejection, manual-route matching on `RequestPath`, and the non-`HandlerMethod` interceptor backstop. Check: real-Tomcat regression for every vector in the review (servlet mode, plus Spring Security with a relaxed firewall), and module tests.
+- [x] SR-02: opaque route/method/capability binding, the amount check and removal of the capability fallback. Check: the four inverted MPP PoCs, plus equal-price/different-route and capability-cache-miss cases.
+- [x] SR-05: early body-capture filter and the length-mismatch 400. Check: Spring Security form PUT/POST replay gets 402, oversized forms get 400, pricing sees the real size, and the POST handler still receives its parameters.
+- [x] SR-06/07: XFF joining and stop-on-unparseable; binding startup guard. Check: inverted resolver and IT PoCs, plus an `ApplicationContextRunner` startup failure.
+- [x] SR-08/09: chain-guard probe and per-route coverage; bounded method tag. Check: negated lambda/regex chains fail startup, `/api/**` plus catch-all starts, and 1000 random methods give at most 9 tags.
+- [x] SR-10/11: least-privilege docs and metadata; CI cache removal and hash-locked pip. Check: inspect the workflow diff, and run `zizmor .github/workflows` (optional, needs a local install).
+- [x] Ledger, SECURITY.md, CHANGELOG and README corrections. Check: by inspection, every SR and I item has a row, and each `implemented` row names its regression test.
+- [x] Final: `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
 
 ## Review
-Working. Awaiting implementation and fresh-context review.
+Implementation complete at `add37b7`; awaiting fresh-context review.
 
 Baseline at `84239ca`: pass. `./gradlew check --continue --rerun-tasks` exited 0 with 2,921 default-module tests and no failures or skips. `./gradlew :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` ran 44 tests and `securityTest` ran 31, all passing. An earlier `--offline` run of `check` failed at `:paygate-api:pmdMain` because PMD dependencies were missing from the offline cache, so this was an environment problem rather than a code failure.
+
+WORK results on the merged branch:
+- **Final required checks: pass.**
+  - `./gradlew spotlessCheck check --rerun-tasks --continue` exited 0: 3,141 default-module tests, 0 failures or skips.
+  - `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` 96, `securityTest` 66, 0 failures or skips. The XML timestamps confirm a fresh run.
+  - `git diff --check 84239ca HEAD` was clean.
+- **PoCs.** Each package copied its review PoCs from `/Users/mark/code/greenharborlabs/paygate-secreview` and confirmed they reproduced on its base, except the SR-01 and SR-02 packages, which did not report this. All PoCs were converted into inverted, renamed regression tests. The SR-05 and SR-06 packages also showed their new tests failing against the old code. The PoC files themselves are not committed. The [ledger](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md) maps each finding to its tests.
+- **Interim failure.** Two merged-branch `check -Pintegration` runs failed only at `:paygate-integration-tests:spotlessJavaCheck`. The packages ran `check` without `-Pintegration`, which skips Spotless on new integration tests, so the violations went unnoticed. Fixed in `3f11285` and `299234e`; every test passed in both runs.
+- **SR-11.** zizmor (high) and actionlint passed, and a hash-verified `pip download` of both requirement files succeeded. Workflow behavior on GitHub runners was not exercised.
+
+Points for the reviewer:
+1. **API addition.** `paygate-api` gained the default method `PaymentProtocol.validateAndResolveCapabilities`, so SR-02 can grant MPP capabilities only from the verified binding. This is outside the originally listed scope but within the approved architecture.
+2. **SR-08 filter order.** `PaygateAuthenticationFilter` is required in the first matching chain. The order of `AuthorizationFilter` is checked only when it is present, as before; existing chains without it still start.
+3. **SR-05 side effects.** Paid POST form routes whose mapping uses `params=` conditions, and filters that read form parameters before Paygate, now fail closed with 400 `REQUEST_BODY_INCOMPLETE`. These are listed in the CHANGELOG.
+4. **SR-06 rate limiting.** Behind trusted proxies that append `ip:port`, rate-limit identity now collapses to the proxy address.
+5. **Limits.**
+   - No validator script covers the new ledger.
+   - The publishing-secret scope check (SR-11) remains a manual action.
+   - SR-06(a) was verified only in tests, not through a real HAProxy.
+   - Live LND and LNbits were not exercised.
 
 ## Outcome
 Pending.
 
 ## Next action
-Implement the approved tasks.
+Run the fresh-context `keel-review` of this record.
