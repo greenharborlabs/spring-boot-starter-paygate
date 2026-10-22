@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.spring.PaygateAutoConfiguration;
+import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
@@ -22,6 +23,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -34,9 +36,14 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;
+import org.springframework.security.web.DefaultSecurityFilterChain;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.AnyRequestMatcher;
+import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
 /** Tests nested filter-chain discovery for the Spring Security fail-closed guard. */
@@ -68,7 +75,9 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
     var configuration = new PaygateSpringSecurityFilterChainGuardAutoConfiguration();
 
     assertThatCode(
-            () -> configuration.paygateSpringSecurityFilterChainGuard(filterChainProxyProvider()))
+            () ->
+                configuration.paygateSpringSecurityFilterChainGuard(
+                    filterChainProxyProvider(), registryProvider(paidRegistry())))
         .doesNotThrowAnyException();
   }
 
@@ -316,11 +325,196 @@ class PaygateSpringSecurityFilterChainGuardAutoConfigurationTest {
         .hasMessageContaining("no PaygateAuthenticationFilter");
   }
 
+  @Nested
+  @DisplayName("paid route coverage through the first matching chain")
+  class PaidRouteCoverage {
+
+    @Test
+    @DisplayName("a paid route that no chain matches fails startup and names the route")
+    void paidRouteMatchedByNoChainFailsStartup() {
+      var proxy =
+          new FilterChainProxy(
+              new TestSecurityFilterChain(
+                  request -> !request.getRequestURI().startsWith("/internal/"),
+                  List.of(rateLimitFilter(), paygateFilter())));
+      var registry = paidRegistry("GET", "/internal/report");
+
+      assertThatThrownBy(
+              () -> guard(filterChainProxyProvider(proxy), registry).afterSingletonsInstantiated())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Paid route GET /internal/report")
+          .hasMessageContaining("no Spring Security filter chain matches it")
+          .hasMessageContaining("REQUEST");
+    }
+
+    @Test
+    @DisplayName("a negated regex chain that excludes a paid route prefix fails startup")
+    void negatedRegexChainExcludingPaidRouteFailsStartup() {
+      var proxy =
+          new FilterChainProxy(
+              new DefaultSecurityFilterChain(
+                  new NegatedRequestMatcher(new RegexRequestMatcher("^/internal/.*", null)),
+                  List.of(rateLimitFilter(), paygateFilter())));
+      var registry = paidRegistry("GET", "/report");
+      registry.register(config("GET", "/internal/{report}"));
+
+      assertThatThrownBy(
+              () -> guard(filterChainProxyProvider(proxy), registry).afterSingletonsInstantiated())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Paid route GET /internal/{report}")
+          .hasMessageContaining("sample request GET /internal/x");
+    }
+
+    @Test
+    @DisplayName("a single securityMatcher(\"/**\") path-pattern chain starts")
+    void singleCatchAllPathPatternChainStarts() {
+      var proxy =
+          new FilterChainProxy(
+              new DefaultSecurityFilterChain(
+                  PathPatternRequestMatcher.withDefaults().matcher("/**"),
+                  List.of(rateLimitFilter(), paygateFilter())));
+      var registry = paidRegistry("GET", "/paid");
+      registry.register(config("*", "/items/{id}/**"));
+
+      assertThatCode(
+              () -> guard(filterChainProxyProvider(proxy), registry).afterSingletonsInstantiated())
+          .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("an /api/** chain plus a catch-all chain starts for paid routes in both")
+    void apiChainPlusCatchAllStarts() {
+      var apiChain =
+          new DefaultSecurityFilterChain(
+              PathPatternRequestMatcher.withDefaults().matcher("/api/**"),
+              List.of(rateLimitFilter(), paygateFilter()));
+      var catchAll =
+          new DefaultSecurityFilterChain(
+              AnyRequestMatcher.INSTANCE, List.of(rateLimitFilter(), paygateFilter()));
+      var registry = paidRegistry("GET", "/api/items/{id}");
+      registry.register(config("POST", "/reports/{*rest}"));
+
+      assertThatCode(
+              () ->
+                  guard(
+                          filterChainProxyProvider(
+                              new FilterChainProxy(List.of(apiChain, catchAll))),
+                          registry)
+                      .afterSingletonsInstantiated())
+          .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("a chain matcher that throws becomes an explicit startup failure")
+    void throwingMatcherFailsStartupNamingChainAndRoute() {
+      RequestMatcher throwing =
+          _ -> {
+            throw new IllegalArgumentException("boom");
+          };
+      var proxy =
+          new FilterChainProxy(
+              new DefaultSecurityFilterChain(
+                  throwing, List.of(rateLimitFilter(), paygateFilter())));
+
+      assertThatThrownBy(
+              () ->
+                  guard(filterChainProxyProvider(proxy), paidRegistry("GET", "/paid"))
+                      .afterSingletonsInstantiated())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Spring Security filter chain #0")
+          .hasMessageContaining("paid route GET /paid")
+          .hasMessageContaining("IllegalArgumentException")
+          .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("a nested proxy whose chains do not match the paid route fails startup")
+    void nestedProxyThatDoesNotCoverRouteFailsStartup() {
+      var nestedProxy =
+          new FilterChainProxy(
+              new TestSecurityFilterChain(
+                  requestMatcher("/other"), List.of(rateLimitFilter(), paygateFilter())));
+      var outerProxy = filterChainProxy(nestedProxy);
+
+      assertThatThrownBy(
+              () ->
+                  guard(filterChainProxyProvider(outerProxy), paidRegistry("GET", "/paid"))
+                      .afterSingletonsInstantiated())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining(
+              "the first matching filter chain does not apply PaygateAuthenticationFilter");
+    }
+
+    @Test
+    @DisplayName("an ERROR-only gap is reported for the paid route, not for an arbitrary probe")
+    void dispatcherGapIsReportedPerPaidRoute() {
+      var proxy =
+          new FilterChainProxy(
+              new TestSecurityFilterChain(
+                  request ->
+                      request.getRequestURI().startsWith("/api/")
+                          && request.getDispatcherType() != DispatcherType.ERROR,
+                  List.of(rateLimitFilter(), paygateFilter())));
+
+      assertThatThrownBy(
+              () ->
+                  guard(filterChainProxyProvider(proxy), paidRegistry("*", "/api/{id:\\d+}"))
+                      .afterSingletonsInstantiated())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Paid route * /api/{id:\\d+} (sample request GET /api/0)")
+          .hasMessageContaining("on ERROR dispatches");
+    }
+
+    @Test
+    @DisplayName("no registered paid routes leaves only the per-chain checks")
+    void noPaidRoutesOnlyRunsPerChainChecks() {
+      var proxy =
+          new FilterChainProxy(
+              new TestSecurityFilterChain(
+                  requestMatcher("/somewhere"), List.of(rateLimitFilter(), paygateFilter())));
+
+      assertThatCode(
+              () ->
+                  guard(filterChainProxyProvider(proxy), new PaygateEndpointRegistry())
+                      .afterSingletonsInstantiated())
+          .doesNotThrowAnyException();
+    }
+  }
+
   private static PaygateSpringSecurityFilterChainGuardAutoConfiguration
           .PaygateSpringSecurityFilterChainGuard
       guard(ObjectProvider<FilterChainProxy> filterChainProxies) {
+    return guard(filterChainProxies, paidRegistry());
+  }
+
+  private static PaygateSpringSecurityFilterChainGuardAutoConfiguration
+          .PaygateSpringSecurityFilterChainGuard
+      guard(ObjectProvider<FilterChainProxy> filterChainProxies, PaygateEndpointRegistry registry) {
     return new PaygateSpringSecurityFilterChainGuardAutoConfiguration
-        .PaygateSpringSecurityFilterChainGuard(filterChainProxies);
+        .PaygateSpringSecurityFilterChainGuard(filterChainProxies, () -> registry);
+  }
+
+  /** A registry holding the paid route that the single-chain fixtures protect. */
+  private static PaygateEndpointRegistry paidRegistry() {
+    return paidRegistry("GET", "/paid");
+  }
+
+  private static PaygateEndpointRegistry paidRegistry(String method, String pattern) {
+    var registry = new PaygateEndpointRegistry();
+    registry.register(config(method, pattern));
+    return registry;
+  }
+
+  private static PaygateEndpointConfig config(String method, String pattern) {
+    return new PaygateEndpointConfig(method, pattern, 10, 3600, "", "", "");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ObjectProvider<PaygateEndpointRegistry> registryProvider(
+      PaygateEndpointRegistry registry) {
+    ObjectProvider<PaygateEndpointRegistry> provider = mock(ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(registry);
+    return provider;
   }
 
   private static FilterChainProxy filterChainProxy(Filter... filters) {
