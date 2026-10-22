@@ -113,7 +113,8 @@ class FormBodyBindingIT {
     @DisplayName("form PUT challenge binds the real body; a different body is refused")
     void formPutReplayWithDifferentBodyIsRefused() throws Exception {
       try (var client = HttpClient.newHttpClient()) {
-        assertDifferentBodyRefusedAndSameBodyServed(client, port, backend, calls, "PUT", "/v/put-form");
+        assertDifferentBodyRefusedAndSameBodyServed(
+            client, port, backend, calls, "PUT", "/v/put-form");
       }
     }
 
@@ -370,7 +371,8 @@ class FormBodyBindingIT {
     @DisplayName("form PUT challenge binds the real body; a different body is refused")
     void formPutReplayWithDifferentBodyIsRefused() throws Exception {
       try (var client = HttpClient.newHttpClient()) {
-        assertDifferentBodyRefusedAndSameBodyServed(client, port, backend, calls, "PUT", "/v/put-form");
+        assertDifferentBodyRefusedAndSameBodyServed(
+            client, port, backend, calls, "PUT", "/v/put-form");
       }
     }
 
@@ -460,7 +462,8 @@ class FormBodyBindingIT {
         HttpRequest.newBuilder()
             .uri(URI.create("http://localhost:" + port + path))
             .method(
-                method, HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes)))
+                method,
+                HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes)))
             .header("Content-Type", FORM);
     if (authorization != null) {
       builder.header("Authorization", authorization);
@@ -609,9 +612,11 @@ class FormBodyBindingIT {
     /** paygate-spring-security is only on this source set's runtime classpath. */
     static HttpSecurity paygate(HttpSecurity http, ApplicationContext context) throws Exception {
       String pkg = "com.greenharborlabs.paygate.spring.security.";
-      var paygateFilter = (Filter) context.getBean(Class.forName(pkg + "PaygateAuthenticationFilter"));
+      var paygateFilter =
+          (Filter) context.getBean(Class.forName(pkg + "PaygateAuthenticationFilter"));
       var provider =
-          (AuthenticationProvider) context.getBean(Class.forName(pkg + "PaygateAuthenticationProvider"));
+          (AuthenticationProvider)
+              context.getBean(Class.forName(pkg + "PaygateAuthenticationProvider"));
       var entryPoint =
           (AuthenticationEntryPoint)
               context.getBean(Class.forName(pkg + "PaygateAuthenticationEntryPoint"));
