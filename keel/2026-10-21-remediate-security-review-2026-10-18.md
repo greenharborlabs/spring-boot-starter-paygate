@@ -1,6 +1,6 @@
 # Remediate 2026-10-18 security review High and Medium findings
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 84239cabe96fa2df6b3d3d27c1604cbcabba32e2
 Review scope: paygate-core/src/main/**, paygate-core/src/test/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/main/**, paygate-integration-tests/src/**, paygate-example-app/src/test/**, paygate-example-app-spring-security/src/test/**, .github/workflows/snapshot.yml, .github/workflows/release.yml, .github/workflows/security-suite.yml, .github/requirements/**, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, docs/AGENT-MACAROON-DELEGATION.md, SECURITY.md, CHANGELOG.md, README.md, PLAYBOOK.md, */README.md
 
 ## Goal
@@ -60,7 +60,7 @@ Close the three High and eight Medium findings (SR-01 to SR-11) plus SR-17, whic
   - Record the secret-scope check as a manual ledger action.
 - **Documentation.** Add `docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md` and link it from SECURITY.md. Correct the false statements listed under Constraints. Update CHANGELOG, the MPP/autoconfigure/security READMEs and [docs/AGENT-MACAROON-DELEGATION.md](../docs/AGENT-MACAROON-DELEGATION.md), which needs a path-normalization note.
 
-Approval pending.
+Approved: 2026-10-21 by Mark Hammond at plan revision 84239cabe96fa2df6b3d3d27c1604cbcabba32e2.
 
 ## Tasks
 - [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the relevant PoCs into the branch, confirm they still reproduce, then invert them.
@@ -74,10 +74,10 @@ Approval pending.
 - [ ] Final: `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Working. Awaiting implementation and fresh-context review.
 
 ## Outcome
 Pending.
 
 ## Next action
-Approve or revise this plan.
+Implement the approved tasks.
