@@ -2,10 +2,16 @@ package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.greenharborlabs.paygate.api.SecurityDecision;
+import com.greenharborlabs.paygate.api.SecurityDecisionProtocol;
+import com.greenharborlabs.paygate.api.SecurityDecisionReason;
 import com.greenharborlabs.paygate.spring.PaygateTestSupport.InMemoryTestCredentialStore;
 import com.greenharborlabs.paygate.spring.PaygateTestSupport.StubLightningBackend;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -279,6 +285,31 @@ class PaygateMetricsUnitTest {
       assertThat(meterRegistry.find("paygate.ratelimiter.buckets.active").gauge()).isNull();
       assertThat(meterRegistry.find("paygate.ratelimiter.evictions").counter()).isNull();
       assertThat(meterRegistry.find("paygate.ratelimiter.rejections").counter()).isNull();
+    }
+  }
+
+  @Nested
+  @DisplayName("security decision metrics")
+  class SecurityDecisionMetrics {
+
+    @Test
+    @DisplayName("recordSecurityDecision keeps standard methods and collapses others to _other")
+    void boundsMethodTag() {
+      for (String method : List.of("GET", "POST", "get", "BREW", "X".repeat(4000), "M1", "M2")) {
+        paygateMetrics.recordSecurityDecision(
+            new SecurityDecision(
+                SecurityDecisionReason.COMPRESSED_BODY_REJECTED,
+                SecurityDecisionProtocol.UNKNOWN,
+                method,
+                "/api/dyn"));
+      }
+
+      Set<String> methodTags =
+          meterRegistry.find("paygate.security.decisions").counters().stream()
+              .map(counter -> counter.getId().getTag("method"))
+              .collect(Collectors.toUnmodifiableSet());
+      assertThat(methodTags).containsExactlyInAnyOrder("GET", "POST", "_other");
+      assertThat(counterValue("paygate.security.decisions", "method", "_other")).isEqualTo(5.0);
     }
   }
 

@@ -11,6 +11,9 @@ import java.util.Locale;
  * decision.
  *
  * <p>Only the fixed decision taxonomy and sanitized fields from {@link SecurityDecision} are used.
+ * The request method is mapped to a fixed vocabulary (the eight standard HTTP methods, {@code
+ * _unknown}, or {@code _other}) before it reaches the meter or the log line, because servlet
+ * containers accept arbitrary method tokens and each distinct tag value registers a new meter.
  * Micrometer registration/increment and logger failures are independently isolated so observation
  * cannot influence payment enforcement.
  */
@@ -32,14 +35,14 @@ public final class PaygateSecurityDecisionReporter implements SecurityDecisionOb
   /** Emits the fixed decision counter and structured event without affecting enforcement. */
   @Override
   public void onDecision(SecurityDecision decision) {
-    String sanitizedMethod = sanitizeForLog(decision.method());
+    String boundedMethod = MetricTagValues.httpMethod(decision.method());
     String sanitizedEndpoint = sanitizeForLog(decision.endpoint());
     if (meterRegistry != null) {
       try {
         Counter.builder("paygate.security.decisions")
             .tag("reason", lower(decision.reason().name()))
             .tag("protocol", lower(decision.protocol().name()))
-            .tag("method", sanitizedMethod)
+            .tag("method", boundedMethod)
             .tag("endpoint", sanitizedEndpoint)
             .description("Sanitized payment-gateway security decisions")
             .register(meterRegistry)
@@ -54,7 +57,7 @@ public final class PaygateSecurityDecisionReporter implements SecurityDecisionOb
           "paygate_security_decision reason={0} protocol={1} method={2} endpoint={3}",
           lower(decision.reason().name()),
           lower(decision.protocol().name()),
-          sanitizedMethod,
+          boundedMethod,
           sanitizedEndpoint);
     } catch (RuntimeException ignored) {
       // Logging is likewise best effort.
