@@ -29,9 +29,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * On real Tomcat, any token is accepted as an HTTP method. Sending many distinct (and very long)
- * method tokens with a compressed body to a method-agnostic paid route with a named pricing strategy
- * emits one {@code COMPRESSED_BODY_REJECTED} decision per request; the auto-configured decision
- * reporter must still keep the {@code method} tag of {@code paygate.security.decisions} bounded.
+ * method tokens with a compressed body to a method-agnostic paid route with a named pricing
+ * strategy emits one {@code COMPRESSED_BODY_REJECTED} decision per request; the auto-configured
+ * decision reporter must still keep the {@code method} tag of {@code paygate.security.decisions}
+ * bounded.
  */
 @Tag("integration")
 @SpringBootTest(

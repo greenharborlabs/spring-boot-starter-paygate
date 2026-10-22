@@ -204,10 +204,7 @@ class MppPaidPolicyBindingIT {
 
     var premium =
         send(
-            client,
-            port,
-            mppAuthorization(premiumChallenge, backend),
-            Map.of("X-Tier", "premium"));
+            client, port, mppAuthorization(premiumChallenge, backend), Map.of("X-Tier", "premium"));
 
     assertThat(premium.statusCode()).isEqualTo(200);
     assertThat(served.list()).containsExactly("tiered:premium");

@@ -137,7 +137,8 @@ class ForwardedClientIpCaveatIT {
       builder.header("X-Forwarded-For", line);
     }
     if (credential != null) {
-      builder.header("Authorization", "L402 " + credential.macaroon() + ":" + credential.preimage());
+      builder.header(
+          "Authorization", "L402 " + credential.macaroon() + ":" + credential.preimage());
     }
     return client.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString());
   }
