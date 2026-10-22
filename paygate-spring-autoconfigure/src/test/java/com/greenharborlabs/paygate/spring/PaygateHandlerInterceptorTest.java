@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.context.support.StaticApplicationContext;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -213,6 +216,103 @@ class PaygateHandlerInterceptorTest {
         .isEqualTo(
             "{\"code\": 500, \"error\": \"INTERNAL_ERROR\", \"message\": \"An internal error occurred\"}");
     assertThat(controller.calls).hasValue(0);
+  }
+
+  @Nested
+  @DisplayName("handlers that are not MVC handler methods")
+  class NonMethodHandlers {
+
+    private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
+        "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
+
+    private final Object routerFunctionHandler = new Object();
+
+    private PaygateEndpointRegistry manualRegistry() {
+      var registry = new PaygateEndpointRegistry();
+      registry.register(
+          new PaygateEndpointConfig("GET", "/fn/premium/{name}", 10, 60, "fn", "", ""));
+      registry.register(new PaygateEndpointConfig("GET", "/fn/other/**", 10, 60, "other", "", ""));
+      return registry;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = {
+          "/fn/premium/x",
+          "/fn/premium/x/",
+          "/fn/premium/..",
+          "/fn/premium/%2e%2e",
+          "/fn/premium/%252e%252e",
+          "/fn/premium/..;x=1",
+          "/fn/premium/."
+        })
+    @DisplayName("fails closed for a paid manual route without a successful decision")
+    void failsClosedForPaidManualRouteWithoutDecision(String rawPath) throws Exception {
+      var request = request(rawPath);
+      var response = new MockHttpServletResponse();
+
+      var proceed =
+          interceptor(manualRegistry()).preHandle(request, response, routerFunctionHandler);
+
+      assertThat(proceed).isFalse();
+      assertThat(response.getStatus()).isEqualTo(500);
+    }
+
+    @Test
+    @DisplayName("allows a paid manual route with a successful decision for that route")
+    void allowsPaidManualRouteWithMatchingDecision() throws Exception {
+      var registry = manualRegistry();
+      var request = request("/fn/premium/x");
+      request.setAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, registry.resolve(request));
+      var response = new MockHttpServletResponse();
+
+      var proceed = interceptor(registry).preHandle(request, response, routerFunctionHandler);
+
+      assertThat(proceed).isTrue();
+      assertThat(response.getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("fails closed when the successful decision names another paid route")
+    void failsClosedWhenDecisionNamesAnotherRoute() throws Exception {
+      var registry = manualRegistry();
+      var otherRequest = request("/fn/other/a");
+      var request = request("/fn/premium/x");
+      request.setAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, registry.resolve(otherRequest));
+      var response = new MockHttpServletResponse();
+
+      var proceed = interceptor(registry).preHandle(request, response, routerFunctionHandler);
+
+      assertThat(proceed).isFalse();
+      assertThat(response.getStatus()).isEqualTo(500);
+    }
+
+    @Test
+    @DisplayName("allows an unpaid path")
+    void allowsUnpaidPath() throws Exception {
+      var response = new MockHttpServletResponse();
+
+      var proceed =
+          interceptor(manualRegistry())
+              .preHandle(request("/fn/free/x"), response, routerFunctionHandler);
+
+      assertThat(proceed).isTrue();
+      assertThat(response.getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("fails closed when manual route resolution is ambiguous")
+    void failsClosedWhenManualRouteResolutionIsAmbiguous() throws Exception {
+      var registry = new PaygateEndpointRegistry();
+      registry.register(new PaygateEndpointConfig("GET", "/fn/{a}", 10, 60, "a", "", ""));
+      registry.register(new PaygateEndpointConfig("GET", "/fn/{b}", 20, 60, "b", "", ""));
+      var response = new MockHttpServletResponse();
+
+      var proceed = interceptor(registry).preHandle(request("/fn/x"), response, new Object());
+
+      assertThat(proceed).isFalse();
+      assertThat(response.getStatus()).isEqualTo(500);
+    }
   }
 
   private static HandlerInterceptor interceptor(PaygateEndpointRegistry registry) throws Exception {

@@ -7,6 +7,8 @@ import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.MappingMatch;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.web.MockHttpServletMapping;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.util.ServletRequestPathUtils;
@@ -16,9 +18,9 @@ import org.springframework.web.util.WebUtils;
 class ApplicationRelativeRequestResolverTest {
 
   @Test
-  @DisplayName("removes a context path before normalization")
+  @DisplayName("removes a context path and a single trailing slash")
   void resolvesContextRelativePath() {
-    var request = new MockHttpServletRequest("GET", "/shop/api//orders/");
+    var request = new MockHttpServletRequest("GET", "/shop/api/orders/");
     request.setContextPath("/shop");
 
     assertThat(ApplicationRelativeRequestResolver.resolve(request)).isEqualTo("/api/orders");
@@ -33,10 +35,60 @@ class ApplicationRelativeRequestResolverTest {
     var combined = pathMappedRequest("/shop/gateway/api/orders", "/shop", "/gateway");
     assertThat(ApplicationRelativeRequestResolver.resolve(combined)).isEqualTo("/api/orders");
 
-    var similarAndRepeated = request("/app/app/application//orders/");
+    var similarAndRepeated = request("/app/app/application/orders/");
     similarAndRepeated.setContextPath("/app");
     assertThat(ApplicationRelativeRequestResolver.resolve(similarAndRepeated))
         .isEqualTo("/app/application/orders");
+  }
+
+  @Test
+  @DisplayName("decodes each segment exactly once")
+  void decodesSegmentsExactlyOnce() {
+    assertThat(ApplicationRelativeRequestResolver.resolve(request("/api/a%20b/%C3%A9")))
+        .isEqualTo("/api/a b/é");
+    assertThat(ApplicationRelativeRequestResolver.resolve(request("/api/c++/x.y/..z")))
+        .isEqualTo("/api/c++/x.y/..z");
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @ValueSource(
+      strings = {
+        "/files/private/../public/report",
+        "/files/private/%2e%2e/public/report",
+        "/files/private/%2E%2E/public/report",
+        "/files/private/%252e%252e/public/report",
+        "/files/private/%25252e%25252e/public/report",
+        "/files/private/..;x=1/public/report",
+        "/files/private/x/..;jsessionid=1/../public/report",
+        "/files/./public/report",
+        "/files/%2e/public/report",
+        "/files/%252e/public/report",
+        "/files/..",
+        "/files//public/report",
+        "/files/public//",
+        "//files/public/report",
+        "/files/public/report;tier=premium",
+        "/files/public;x=1/report",
+        "/files/public/a%3Bb",
+        "/files/public/a%5Cb",
+        "/files/public/a%255Cb",
+        "/files/public/a%2578"
+      })
+  @DisplayName("rejects ambiguous once-decoded segments")
+  void rejectsAmbiguousSegments(String requestUri) {
+    assertThatThrownBy(() -> ApplicationRelativeRequestResolver.resolve(request(requestUri)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  @DisplayName("rejects ambiguous segments after context path removal")
+  void rejectsAmbiguousSegmentsAfterContextPathRemoval() {
+    var request = request("/shop/api/%252e%252e/orders");
+    request.setContextPath("/shop");
+
+    assertThatThrownBy(() -> ApplicationRelativeRequestResolver.resolve(request))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Nested percent-encoding");
   }
 
   @Test
@@ -50,7 +102,7 @@ class ApplicationRelativeRequestResolverTest {
   @Test
   @DisplayName("rejects encoded path separators after prefix removal")
   void rejectsEncodedPathSeparators() {
-    var request = request("/shop/api//%2578/%2f/orders/");
+    var request = request("/shop/api/x/%2f/orders/");
     request.setContextPath("/shop");
 
     assertThatThrownBy(() -> ApplicationRelativeRequestResolver.resolve(request))
@@ -64,7 +116,7 @@ class ApplicationRelativeRequestResolverTest {
     var request = request("/shop/original");
     request.setContextPath("/shop");
     var previouslyCachedPath = ServletRequestPathUtils.parseAndCache(request);
-    request.setAttribute(WebUtils.INCLUDE_REQUEST_URI_ATTRIBUTE, "/shop/gateway/api//included/");
+    request.setAttribute(WebUtils.INCLUDE_REQUEST_URI_ATTRIBUTE, "/shop/gateway/api/included/");
     request.setAttribute(WebUtils.INCLUDE_SERVLET_PATH_ATTRIBUTE, "/gateway");
     request.setAttribute(
         RequestDispatcher.INCLUDE_MAPPING,
@@ -78,7 +130,7 @@ class ApplicationRelativeRequestResolverTest {
   @Test
   @DisplayName("uses current getters rather than the original forward attributes")
   void resolvesCurrentForwardRedispatch() {
-    var request = request("/shop/api//forwarded/");
+    var request = request("/shop/api/forwarded/");
     request.setContextPath("/shop");
     request.setAttribute(RequestDispatcher.FORWARD_REQUEST_URI, "/shop/original");
     request.setAttribute(RequestDispatcher.FORWARD_CONTEXT_PATH, "/shop");

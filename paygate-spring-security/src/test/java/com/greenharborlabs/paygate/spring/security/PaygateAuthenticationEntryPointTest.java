@@ -534,25 +534,25 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
-  void normalizesPathBeforeLookup() throws Exception {
+  void rejectsDotSegmentPathBeforeLookup() throws Exception {
     request.setRequestURI("/api/../api/protected");
-    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(endpointRegistry, never()).findConfig(any(), any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
   }
 
   @Test
-  void normalizesPercentEncodedPathBeforeLookup() throws Exception {
+  void rejectsPercentEncodedDotSegmentPathBeforeLookup() throws Exception {
     request.setRequestURI("/api/%2e%2e/api/protected");
-    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(endpointRegistry, never()).findConfig(any(), any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
   }
 
   @Test

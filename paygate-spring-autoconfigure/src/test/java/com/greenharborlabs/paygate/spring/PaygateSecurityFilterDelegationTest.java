@@ -148,12 +148,26 @@ class PaygateSecurityFilterDelegationTest {
   }
 
   @Test
-  @DisplayName("normalizes request path with dot-segments before populating metadata")
-  void filterNormalizesRequestPath() throws Exception {
-    stubProtectedEndpointWithSuccessfulValidation("GET", "/products");
-
+  @DisplayName("rejects dot-segment request path before protocol validation")
+  void filterRejectsDotSegmentRequestPath() throws Exception {
     request.setMethod("GET");
     request.setRequestURI("/api/../products");
+    request.addHeader("Authorization", VALID_AUTH_HEADER);
+
+    filter.doFilter(request, response, chain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(protocol, never()).validate(any(PaymentCredential.class), any());
+    verify(chain, never()).doFilter(request, response);
+  }
+
+  @Test
+  @DisplayName("populates the once-decoded dispatch path without a trailing slash")
+  void filterPopulatesOnceDecodedRequestPath() throws Exception {
+    stubProtectedEndpointWithSuccessfulValidation("GET", "/products/{name}");
+
+    request.setMethod("GET");
+    request.setRequestURI("/products/a%20b/");
     request.addHeader("Authorization", VALID_AUTH_HEADER);
 
     filter.doFilter(request, response, chain);
@@ -161,9 +175,7 @@ class PaygateSecurityFilterDelegationTest {
     verify(protocol).validate(any(PaymentCredential.class), requestContextCaptor.capture());
     Map<String, String> ctx = requestContextCaptor.getValue();
 
-    assertThat(ctx)
-        .as("Request context should contain normalized request.path (dot-segments resolved)")
-        .containsEntry(VerificationContextKeys.REQUEST_PATH, "/products");
+    assertThat(ctx).containsEntry(VerificationContextKeys.REQUEST_PATH, "/products/a b");
   }
 
   @Test

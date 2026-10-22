@@ -58,6 +58,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   private static final String AUTHORIZATION_HEADER = "Authorization";
   private static final String SUCCESSFUL_PAID_HANDLER_ATTRIBUTE =
       "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPaidHandler";
+  private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
 
   private final AuthenticationManager authenticationManager;
   private final List<PaymentProtocol> protocols;
@@ -299,6 +301,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       var securityContext = SecurityContextHolder.createEmptyContext();
       securityContext.setAuthentication(authenticated);
       SecurityContextHolder.setContext(securityContext);
+      authRequest.setAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, resolvedEndpoint);
       authRequest.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, resolvedEndpoint.handlerMethod());
     } catch (AuthenticationException e) {
       SecurityContextHolder.clearContext();

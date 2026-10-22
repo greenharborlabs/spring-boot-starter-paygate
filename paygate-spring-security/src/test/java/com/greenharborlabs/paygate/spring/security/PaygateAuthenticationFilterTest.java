@@ -774,10 +774,34 @@ class PaygateAuthenticationFilterTest {
     verify(filterChain, never()).doFilter(any(), any());
   }
 
-  @Test
-  void normalizesPathTraversalBeforeRegistryLookup() throws ServletException, IOException {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/api/admin/../protected",
+        "/api/admin/%2e%2e/protected",
+        "/api/admin/%252e%252e/protected",
+        "/api/./protected",
+        "/api//protected",
+        "/api/protected;x=1"
+      })
+  void rejectsAmbiguousRequestPathBeforeRegistryLookup(String requestUri)
+      throws ServletException, IOException {
     request.setMethod("GET");
-    request.setRequestURI("/api/admin/../protected");
+    request.setRequestURI(requestUri);
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(endpointRegistry, never()).findConfig(anyString(), anyString());
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void recordsSuccessfulPolicyDecisionForManualRoute() throws ServletException, IOException {
+    request.setMethod("GET");
+    request.setRequestURI("/api/protected");
     request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
 
     var config = new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "desc", "", "read");
@@ -786,41 +810,12 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(endpointRegistry).findConfig("GET", "/api/protected");
-    ArgumentCaptor<PaygateAuthenticationToken> captor =
-        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
-    verify(authenticationManager).authenticate(captor.capture());
+    verify(filterChain).doFilter(any(), any());
     assertThat(
-            captor
-                .getValue()
-                .getRequestMetadata()
-                .get(VerificationContextKeys.REQUESTED_CAPABILITY))
-        .isEqualTo("read");
-  }
-
-  @Test
-  void normalizesPercentEncodedTraversalBeforeRegistryLookup()
-      throws ServletException, IOException {
-    request.setMethod("GET");
-    request.setRequestURI("/api/admin/%2e%2e/protected");
-    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
-
-    var config = new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "desc", "", "write");
-    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
-    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
-
-    filter.doFilter(request, response, filterChain);
-
-    verify(endpointRegistry).findConfig("GET", "/api/protected");
-    ArgumentCaptor<PaygateAuthenticationToken> captor =
-        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
-    verify(authenticationManager).authenticate(captor.capture());
-    assertThat(
-            captor
-                .getValue()
-                .getRequestMetadata()
-                .get(VerificationContextKeys.REQUESTED_CAPABILITY))
-        .isEqualTo("write");
+            request.getAttribute(
+                "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision"))
+        .isInstanceOfSatisfying(
+            ResolvedEndpoint.class, decision -> assertThat(decision.config()).isEqualTo(config));
   }
 
   @Test

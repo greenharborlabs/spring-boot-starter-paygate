@@ -377,7 +377,7 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 
 ### Request Flow
 
-1. **Match**: The filter resolves the application-relative request path and actual HTTP method against `PaygateEndpointRegistry`. The result includes the endpoint policy and canonical route pattern. Context paths and applicable path-prefix servlet mappings are excluded before lookup. If no match, the request passes through untouched.
+1. **Match**: The filter resolves the application-relative request path and actual HTTP method against `PaygateEndpointRegistry`. The result includes the endpoint policy and canonical route pattern. Context paths and applicable path-prefix servlet mappings are excluded before lookup. Before lookup, every request whose once-decoded path has a `.`, `..` or empty segment (a single trailing slash is allowed), residual `%`, `\` or `;` path parameters is rejected with HTTP 400 `MALFORMED_URI`, whether or not it is paid. If no match, the request passes through untouched.
 2. **Credential validation**: If the `Authorization` header contains an `L402` or `LSAT` prefix, the credential is validated locally via `L402Validator` (no Lightning network call needed). Valid credentials pass through; malformed headers get HTTP 400; expired or invalid credentials get the appropriate error status.
 3. **Health check**: If no valid credential is present, the Lightning backend's `isHealthy()` is checked. If the backend is down, the filter returns HTTP 503 (fail-closed).
 4. **Rate limit check**: Before creating an invoice, the filter checks the `PaygateRateLimiter`. If the client IP has exceeded the rate limit, HTTP 429 is returned with a `Retry-After: 1` header.
