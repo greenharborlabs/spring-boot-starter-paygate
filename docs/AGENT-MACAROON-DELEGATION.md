@@ -55,7 +55,7 @@ Attenuation can only preserve or narrow authority:
 - `<service>_capabilities`: the new set must be a subset; named capabilities may narrow to `~`, but `~` cannot expand to a named grant.
 - `<service>_valid_until`: the new epoch second must be no later than the previous value.
 - `route`: an appended value must equal the already-issued canonical route.
-- `path`: an optional holder constraint may narrow request paths with supported glob syntax.
+- `path`: an optional holder constraint may narrow request paths with supported glob syntax. Paygate evaluates it against the once-decoded application-relative path that Spring dispatches on; requests with dot, empty, nested-percent, backslash, or `;` parameter segments are rejected with 400 before evaluation, so encoded traversal cannot move a request outside the delegated path.
 - `client_ip`: an optional holder constraint may narrow use to one literal client IP string. Matching uses exact-string equality, with no DNS, CIDR, or network-range interpretation.
 
 Malformed registered caveats and authority-expanding repetitions fail closed. Delegation-oriented verification skips unregistered caveat keys, so a custom caveat has no enforcement effect until the application registers a matching `CaveatVerifier`. First-party HTTP request validation must use `L402Validator`, which additionally requires Paygate's route, method, capability, identifier-v1, preimage, root-key, and cache policy boundaries.
