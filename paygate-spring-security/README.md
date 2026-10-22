@@ -777,6 +777,50 @@ challengeable with a fresh 402; unavailable or ambiguous evidence fails closed w
 `ROUTE_STABLE` only for genuinely fixed route-and-method pricing; undeclared routes are request
 dependent.
 
+### Request body capture and form content
+
+In Spring Security mode, `paygate-spring-autoconfigure` registers a body-capture servlet filter
+(`PaygateRequestBodyCaptureFilter`, registration bean
+`paygateRequestBodyCaptureFilterRegistration`). It runs at `Ordered.HIGHEST_PRECEDENCE + 10` for
+`REQUEST`, `ASYNC`, `FORWARD`, and `ERROR` dispatches, which is the servlet-mode filter's slot. That
+places it ahead of `FormContentFilter`, `HiddenHttpMethodFilter`, and `springSecurityFilterChain`.
+The filter only captures and performs no authentication. It acts on requests that resolve to a paid
+route whose body Paygate needs: routes with a named pricing strategy, and any paid route while MPP is
+enabled. For those requests it:
+
+- reads the body once and enforces `paygate.request-body.max-bytes`, rejecting an over-limit body
+  with the same `400 REQUEST_BODY_TOO_LARGE` response as other body-bound failures;
+- passes downstream a request that replays the captured bytes. `PaygateAuthenticationFilter`,
+  `PaygateAuthenticationEntryPoint`, and pricing strategies therefore price and digest the real
+  body;
+- exposes `POST application/x-www-form-urlencoded` parameters from the captured bytes, after any
+  query-string parameters. `HiddenHttpMethodFilter`, `CsrfFilter`, and `@RequestParam` handler
+  arguments still see form fields. `FormContentFilter` still parses `PUT`, `PATCH`, and `DELETE`
+  forms from the replayed body.
+
+Every Paygate body capture, in both servlet and Spring Security modes, fails closed with
+`400 REQUEST_BODY_INCOMPLETE` in one case: the request declares a positive `Content-Length` but fewer
+bytes are observed. This means the body was truncated, or another component consumed it before
+Paygate could. Chunked requests without a `Content-Length` are unaffected.
+
+Two cases are rejected with this response rather than processed:
+
+- a filter ordered before `HIGHEST_PRECEDENCE + 10` that reads parameters or the body of a paid
+  request;
+- a `HiddenHttpMethodFilter` `_method` override from a `POST` to a paid route with a different method.
+
+**Defense in depth.** The capture filter closes the form-body gap on its own. As extra hardening,
+operators can still:
+
+- set `spring.mvc.formcontent.filter.enabled=false` unless the application needs `PUT`, `PATCH`,
+  or `DELETE` form parameters;
+- leave `HiddenHttpMethodFilter` disabled (`spring.mvc.hiddenmethod.filter.enabled=false`, the
+  Spring Boot default) for paid routes;
+- send CSRF tokens in a header (for example `X-XSRF-TOKEN`) instead of a `_csrf` form field.
+
+Multipart (`multipart/form-data`) bodies on paid routes whose body Paygate captures are replayed as
+raw bytes only. The container does not parse them into parts after capture.
+
 ### Security decision telemetry and evidence
 
 Spring Security preserves the same fixed, sanitized decision taxonomy as servlet enforcement.

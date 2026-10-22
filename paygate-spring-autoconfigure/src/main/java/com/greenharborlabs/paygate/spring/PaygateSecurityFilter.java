@@ -201,6 +201,9 @@ public class PaygateSecurityFilter implements Filter {
       } catch (RequestBodyTooLargeException e) {
         PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
         return;
+      } catch (RequestBodyIncompleteException e) {
+        PaygateResponseWriter.writeRequestBodyIncomplete(httpResponse);
+        return;
       } catch (IOException e) {
         log.log(System.Logger.Level.WARNING, "Request body observation failed; failing closed");
         PaygateResponseWriter.writeLightningUnavailable(httpResponse);
@@ -242,6 +245,10 @@ public class PaygateSecurityFilter implements Filter {
                   RequestDigestSupport.wrapForDigest(protectedRequest, requestBodyMaxBytes);
             } catch (RequestBodyTooLargeException e) {
               PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
+              recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
+              return;
+            } catch (RequestBodyIncompleteException e) {
+              PaygateResponseWriter.writeRequestBodyIncomplete(httpResponse);
               recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
               return;
             }
@@ -291,6 +298,10 @@ public class PaygateSecurityFilter implements Filter {
         RequestDigestSupport.ensureDigestAttribute(challengeRequest, path, requestBodyMaxBytes);
       } catch (RequestBodyTooLargeException e) {
         PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
+        recordRejected(resolvedEndpoint.routePattern(), "Payment");
+        return;
+      } catch (RequestBodyIncompleteException e) {
+        PaygateResponseWriter.writeRequestBodyIncomplete(httpResponse);
         recordRejected(resolvedEndpoint.routePattern(), "Payment");
         return;
       }
@@ -543,6 +554,10 @@ public class PaygateSecurityFilter implements Filter {
               requestBodyMaxBytes);
         } catch (RequestBodyTooLargeException bodyTooLarge) {
           PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
+          recordRejected(resolvedEndpoint.routePattern(), "Payment");
+          return;
+        } catch (RequestBodyIncompleteException bodyIncomplete) {
+          PaygateResponseWriter.writeRequestBodyIncomplete(httpResponse);
           recordRejected(resolvedEndpoint.routePattern(), "Payment");
           return;
         }

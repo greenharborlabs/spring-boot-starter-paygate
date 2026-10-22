@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
+import com.greenharborlabs.paygate.spring.RequestBodyIncompleteException;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
@@ -213,6 +214,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         SecurityContextHolder.clearContext();
         PaygateResponseWriter.writeRequestBodyTooLarge(response);
         return;
+      } catch (RequestBodyIncompleteException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeRequestBodyIncomplete(response);
+        return;
       } catch (IOException e) {
         SecurityContextHolder.clearContext();
         PaygateResponseWriter.writeLightningUnavailable(response);
@@ -225,6 +230,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       } catch (RequestBodyTooLargeException e) {
         SecurityContextHolder.clearContext();
         PaygateResponseWriter.writeRequestBodyTooLarge(response);
+        return;
+      } catch (RequestBodyIncompleteException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeRequestBodyIncomplete(response);
         return;
       }
     }
@@ -283,6 +292,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     } catch (RequestBodyTooLargeException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
+      return;
+    } catch (RequestBodyIncompleteException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeRequestBodyIncomplete(response);
       return;
     } catch (RuntimeException e) {
       SecurityContextHolder.clearContext();

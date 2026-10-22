@@ -3,16 +3,8 @@ package com.greenharborlabs.paygate.spring;
 import com.greenharborlabs.paygate.api.CanonicalRequestDigest;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.SecurityBounds;
-import jakarta.servlet.ReadListener;
-import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletRequestWrapper;
-import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 /** Utilities for bounded request-body capture and canonical request digest generation. */
@@ -41,18 +33,7 @@ public final class RequestDigestSupport {
       throws IOException {
     Objects.requireNonNull(request, "request must not be null");
     requireValidMaxBytes(maxBytes);
-    if (request instanceof CachedBodyRequestWrapper wrapped) {
-      wrapped.ensureWithinBound(maxBytes);
-      return request;
-    }
-    if (request instanceof BoundedRequestBody wrapped) {
-      if (wrapped.observedLength() > maxBytes) {
-        throw new RequestBodyTooLargeException(
-            "Request body exceeds " + maxBytes + " bytes for digest binding");
-      }
-      return request;
-    }
-    return new CachedBodyRequestWrapper(request, maxBytes);
+    return BoundedRequestBody.capture(request, maxBytes);
   }
 
   public static String computeDigest(HttpServletRequest request, String normalizedPath)
@@ -97,27 +78,7 @@ public final class RequestDigestSupport {
 
   private static byte[] extractBodyBytes(HttpServletRequest request, int maxBytes)
       throws IOException {
-    if (request instanceof CachedBodyRequestWrapper wrapped) {
-      wrapped.ensureWithinBound(maxBytes);
-      return wrapped.cachedBodyBytes();
-    }
-    if (request instanceof BoundedRequestBody wrapped) {
-      if (wrapped.observedLength() > maxBytes) {
-        throw new RequestBodyTooLargeException(
-            "Request body exceeds " + maxBytes + " bytes for digest binding");
-      }
-      return wrapped.observedBytes();
-    }
-    return readBounded(request.getInputStream(), maxBytes);
-  }
-
-  private static byte[] readBounded(InputStream in, int maxBytes) throws IOException {
-    byte[] buffer = in.readNBytes(maxBytes + 1);
-    if (buffer.length > maxBytes) {
-      throw new RequestBodyTooLargeException(
-          "Request body exceeds " + maxBytes + " bytes for digest binding");
-    }
-    return buffer;
+    return BoundedRequestBody.capture(request, maxBytes).observedBytes();
   }
 
   private static void requireValidMaxBytes(int maxBytes) {
@@ -129,64 +90,6 @@ public final class RequestDigestSupport {
               + SecurityBounds.MAX_REQUEST_BODY_SIZE_BYTES
               + ", got: "
               + maxBytes);
-    }
-  }
-
-  private static final class CachedBodyRequestWrapper extends HttpServletRequestWrapper {
-    private final byte[] cachedBody;
-
-    CachedBodyRequestWrapper(HttpServletRequest request, int maxBytes) throws IOException {
-      super(request);
-      this.cachedBody = readBounded(request.getInputStream(), maxBytes);
-    }
-
-    byte[] cachedBodyBytes() {
-      return cachedBody.clone();
-    }
-
-    void ensureWithinBound(int maxBytes) {
-      if (cachedBody.length > maxBytes) {
-        throw new RequestBodyTooLargeException(
-            "Request body exceeds " + maxBytes + " bytes for digest binding");
-      }
-    }
-
-    @Override
-    public ServletInputStream getInputStream() {
-      return new CachedBodyServletInputStream(cachedBody);
-    }
-
-    @Override
-    public BufferedReader getReader() {
-      return new BufferedReader(new InputStreamReader(getInputStream(), StandardCharsets.UTF_8));
-    }
-  }
-
-  private static final class CachedBodyServletInputStream extends ServletInputStream {
-    private final ByteArrayInputStream delegate;
-
-    CachedBodyServletInputStream(byte[] body) {
-      this.delegate = new ByteArrayInputStream(body);
-    }
-
-    @Override
-    public int read() {
-      return delegate.read();
-    }
-
-    @Override
-    public boolean isFinished() {
-      return delegate.available() == 0;
-    }
-
-    @Override
-    public boolean isReady() {
-      return true;
-    }
-
-    @Override
-    public void setReadListener(ReadListener readListener) {
-      // Synchronous request wrappers in tests/runtime do not use async I/O.
     }
   }
 }

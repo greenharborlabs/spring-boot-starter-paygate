@@ -19,6 +19,7 @@ import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
+import com.greenharborlabs.paygate.spring.BoundedRequestBody;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
@@ -26,10 +27,13 @@ import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
@@ -148,6 +152,69 @@ class PaygateAuthenticationFilterTest {
     } else {
       assertThat(response.getStatus()).isNotEqualTo(400);
     }
+  }
+
+  @Test
+  void dynamicPriceBodyShorterThanDeclaredLengthIsRejected() throws ServletException, IOException {
+    var config = new PaygateEndpointConfig("POST", "/body-bound", 10, 60, "body", "dynamic", null);
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod()));
+    var boundedFilter =
+        new PaygateAuthenticationFilter(
+            authenticationManager,
+            List.of(),
+            endpointRegistry,
+            null,
+            null,
+            authenticationEntryPoint,
+            8_192);
+    var consumedRequest =
+        new MockHttpServletRequest("POST", "/body-bound") {
+          @Override
+          public long getContentLengthLong() {
+            return 64;
+          }
+        };
+    consumedRequest.setContent(new byte[0]);
+
+    boundedFilter.doFilter(consumedRequest, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString()).contains("REQUEST_BODY_INCOMPLETE");
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void dynamicPriceReusesBodyCapturedBeforeTheSecurityChain() throws Exception {
+    var config = new PaygateEndpointConfig("POST", "/body-bound", 10, 60, "body", "dynamic", null);
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod()));
+    var boundedFilter =
+        new PaygateAuthenticationFilter(
+            authenticationManager,
+            List.of(),
+            endpointRegistry,
+            null,
+            null,
+            authenticationEntryPoint,
+            8_192);
+    byte[] body = "units=1".getBytes(StandardCharsets.UTF_8);
+    request.setMethod("POST");
+    request.setRequestURI("/body-bound");
+    request.setContent(body);
+    var early = BoundedRequestBody.capture(request, 8_192);
+    var priced = new AtomicReference<HttpServletRequest>();
+    when(authenticationEntryPoint.resolveTrustedPrice(any(HttpServletRequest.class), any()))
+        .thenAnswer(
+            invocation -> {
+              priced.set(invocation.getArgument(0));
+              return null;
+            });
+
+    boundedFilter.doFilter(new HttpServletRequestWrapper(early), response, filterChain);
+
+    assertThat(priced.get()).isInstanceOf(BoundedRequestBody.class);
+    assertThat(((BoundedRequestBody) priced.get()).observedBytes()).isEqualTo(body);
   }
 
   @Test

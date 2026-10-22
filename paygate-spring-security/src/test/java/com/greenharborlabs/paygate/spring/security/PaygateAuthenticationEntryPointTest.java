@@ -158,6 +158,34 @@ class PaygateAuthenticationEntryPointTest {
     assertThat(response.getStatus()).isEqualTo(bodyLength > 8_192 ? 400 : 402);
   }
 
+  @Test
+  void absentCredentialMppChallengeRejectsBodyShorterThanDeclaredLength() throws Exception {
+    when(protocol.scheme()).thenReturn("Payment");
+    var boundedEntryPoint =
+        new PaygateAuthenticationEntryPoint(
+            challengeService, endpointRegistry, List.of(protocol), 8_192);
+    var config = new PaygateEndpointConfig("PUT", "/form-bound", 1, 60, "body", "", null);
+    var resolved = new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+    var consumedRequest =
+        new MockHttpServletRequest("PUT", "/form-bound") {
+          @Override
+          public long getContentLengthLong() {
+            return 32;
+          }
+        };
+    consumedRequest.setContent(new byte[0]);
+
+    boundedEntryPoint.commence(consumedRequest, response, resolved);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString()).contains("REQUEST_BODY_INCOMPLETE");
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
   @ParameterizedTest(name = "replacement MPP body of {0} bytes honors the configured bound")
   @ValueSource(ints = {0, 8191, 8192, 8193})
   void replacementMppChallengeUsesConfiguredBound(int bodyLength) throws Exception {

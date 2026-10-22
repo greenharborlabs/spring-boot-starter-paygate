@@ -368,6 +368,7 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 | `writeInternalError(response)` | 500 | Sanitized response for endpoint-policy resolution failures. |
 | `writeReceipt(response, receipt)` | -- | Sets `Payment-Receipt` header with base64url-nopad encoded JSON receipt. |
 | `writeMethodUnsupported(response, message)` | 400 | Unsupported payment method (RFC 9457 Problem Details). |
+| `writeRequestBodyIncomplete(response)` | 400 | `REQUEST_BODY_INCOMPLETE`: fewer body bytes were observed than the declared `Content-Length`. |
 
 ---
 
@@ -414,6 +415,22 @@ When MPP request-body digest processing is active, `paygate.request-body.max-byt
 captured body. The value must be within the inclusive `SecurityBounds` range of 1 byte through
 16 MiB (16,777,216 bytes). Over-limit requests are rejected before protected handler work. This
 bounded capture does not make arbitrary streaming or upload workloads suitable.
+
+Body capture happens at `Ordered.HIGHEST_PRECEDENCE + 10`. That is ahead of Spring's
+`FormContentFilter`, `HiddenHttpMethodFilter`, and the Spring Security filter chain, which would
+otherwise drain `application/x-www-form-urlencoded` bodies through `getParameter`:
+
+- In servlet mode, `PaygateSecurityFilter` captures at that order.
+- In Spring Security mode, `PaygateRequestBodyCaptureFilter` (registration bean
+  `paygateRequestBodyCaptureFilterRegistration`) captures paid bodies at that order. It covers
+  routes with a named pricing strategy, and every paid route while MPP is enabled.
+
+Downstream components receive a request that replays the captured bytes. For `POST` form bodies,
+the request also exposes the form fields as request parameters.
+
+A capture that observes fewer bytes than a positive declared `Content-Length` fails closed with
+`400 REQUEST_BODY_INCOMPLETE` (body truncated or already consumed). Chunked requests are
+unaffected. See the `paygate-spring-security` README for Spring Security-specific operator guidance.
 
 ### 0.1.5 resolver constructor migration
 

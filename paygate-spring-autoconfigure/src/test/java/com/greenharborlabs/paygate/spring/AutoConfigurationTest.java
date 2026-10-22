@@ -119,6 +119,7 @@ class AutoConfigurationTest {
             context -> {
               assertThat(context).hasBean("paygateSecurityFilterRegistration");
               assertThat(context).doesNotHaveBean("paygateSecurityFilterDisabledRegistration");
+              assertThat(context).doesNotHaveBean("paygateRequestBodyCaptureFilterRegistration");
               Object validator = context.getBean("paygateSecurityModeStartupValidator");
               var method = validator.getClass().getMethod("resolvedMode");
               method.setAccessible(true);
