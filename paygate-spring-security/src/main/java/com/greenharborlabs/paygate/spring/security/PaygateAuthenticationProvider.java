@@ -179,11 +179,16 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
         try {
           PaymentCredential credential = protocol.parseCredential(authorizationHeader);
           try {
-            protocol.validate(credential, token.getRequestMetadata());
+            // Capabilities come from what the credential authenticates, never from the
+            // capability declared by the endpoint the credential is presented to.
             Set<String> capabilities =
+                new LinkedHashSet<>(
+                    protocol.validateAndResolveCapabilities(
+                        credential, token.getRequestMetadata()));
+            capabilities.addAll(
                 resolveCapabilitiesSafely(
                     new CapabilityResolutionContext(
-                        credential.tokenId(), serviceName, null, token.getRequestMetadata()));
+                        credential.tokenId(), serviceName, null, token.getRequestMetadata())));
             PaymentReceipt receipt = createReceipt(protocol, credential, token.getReceiptRequest());
             return PaygateAuthenticationToken.authenticated(
                 credential.tokenId(),

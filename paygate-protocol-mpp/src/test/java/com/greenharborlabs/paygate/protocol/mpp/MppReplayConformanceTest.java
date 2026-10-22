@@ -31,6 +31,12 @@ class MppReplayConformanceTest {
   private static final String REQUEST_DIGEST_B = "sha-256=:dGVzdC1kaWdlc3QtQg==:";
   private static final String BOLT11 = "lnbc100n1p0test";
   private static final byte[] PAYMENT_HASH = sha256(PREIMAGE);
+  private static final String OPAQUE =
+      Base64.getUrlEncoder()
+          .withoutPadding()
+          .encodeToString(
+              "{\"paygate_capability\":\"~\",\"paygate_method\":\"GET\",\"paygate_route\":\"/api/data\"}"
+                  .getBytes(StandardCharsets.UTF_8));
 
   static {
     for (int i = 0; i < SECRET_BYTES.length; i++) {
@@ -156,7 +162,15 @@ class MppReplayConformanceTest {
   }
 
   private static Map<String, String> requestContextWithDigest(String digest) {
-    return Map.of("request.digest", digest);
+    return Map.of(
+        "request.digest",
+        digest,
+        "request.route",
+        "/api/data",
+        "request.method",
+        "GET",
+        "request.current_price_sats",
+        "100");
   }
 
   private static String buildRequestB64() {
@@ -177,7 +191,7 @@ class MppReplayConformanceTest {
 
     String id =
         MppChallengeBinding.createId(
-            realm, "lightning", "charge", requestB64, expires, digest, null, secret());
+            realm, "lightning", "charge", requestB64, expires, digest, OPAQUE, secret());
 
     Map<String, String> echoedChallenge = new LinkedHashMap<>();
     echoedChallenge.put("id", id);
@@ -187,6 +201,7 @@ class MppReplayConformanceTest {
     echoedChallenge.put("request", requestB64);
     echoedChallenge.put("expires", expires);
     echoedChallenge.put("digest", digest);
+    echoedChallenge.put("opaque", OPAQUE);
 
     return new PaymentCredential(
         paymentHash, preimage, id, "Payment", null, new MppMetadata(echoedChallenge, null));

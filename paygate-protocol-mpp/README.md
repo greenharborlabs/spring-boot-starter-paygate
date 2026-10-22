@@ -8,9 +8,12 @@ data.
 
 ## Replay and state-changing operations
 
-MPP credentials are reusable exact-request bearer material until their authenticated expiry. They
-bind the HTTP method, route, exact raw query, body digest where configured, and capability, but do
-not provide a single-use replay ledger. Use short expiries for all paid routes. For state-changing
+MPP credentials are reusable exact-request bearer material until their authenticated expiry. The
+request digest binds the HTTP method, application path, exact raw query, and bounded body. The
+HMAC-bound server `opaque` map binds the canonical route pattern, request method, and capability
+declaration of the paid policy that issued the challenge. The HMAC-bound charge `amount` must cover
+the policy's current trusted price. See [Paid-Policy Binding](#paid-policy-binding). MPP does not
+provide a single-use replay ledger. Use short expiries for all paid routes. For state-changing
 operations, also use application idempotency or transaction-uniqueness controls; deployments that
 need one-time consumption must maintain an application-owned consumed-state record keyed to the
 business operation. Do not treat a payment credential as an authorization substitute for those
@@ -44,7 +47,7 @@ The MPP (Modern Payment Protocol) implementation for the `spring-boot-starter-pa
 - **Zero external dependencies.** The compile classpath contains only `paygate-api` and JDK modules. No Jackson, no Guava, no Apache Commons. JSON parsing and serialization are handled by purpose-built zero-dependency implementations within this module.
 - **Independent from paygate-core.** MPP does not use macaroons, HMAC signature chains, or any L402-specific cryptography. It implements its own HMAC-SHA256 challenge binding scheme, its own constant-time comparison, and its own JSON handling.
 - **Stateless server-side verification.** Challenge state is encoded entirely in the HMAC-bound challenge ID. The server does not need to store pending challenges in a database or in-memory map -- it recomputes the HMAC on validation and compares.
-- **Security-critical validation order.** The `validate()` method checks preimage hash first (before HMAC), then challenge binding, then expiry. This ordering prevents oracle attacks where an attacker could use HMAC verification timing to probe for valid challenge parameters.
+- **Security-critical validation order.** The `validate()` method checks preimage hash first (before HMAC), then the request digest, challenge binding, expiry, and finally the paid-policy binding (route, method, capability, amount), which it trusts only after the HMAC has authenticated it. This ordering prevents oracle attacks where an attacker could use HMAC verification timing to probe for valid challenge parameters.
 - **Constant-time secret comparison.** All HMAC and preimage comparisons use XOR accumulation. `Arrays.equals` is never used for secret data.
 
 ---
@@ -122,8 +125,9 @@ The central class of this module. Implements the `PaymentProtocol` interface fro
 | `scheme()` | Returns `"Payment"` |
 | `canHandle(String)` | Returns `true` if the Authorization header starts with `"Payment "` (case-insensitive) |
 | `parseCredential(String)` | Strips the `"Payment "` prefix, delegates to `MppCredentialParser.parse()`, and validates that the payment method is `"lightning"` |
-| `formatChallenge(ChallengeContext)` | Builds the `WWW-Authenticate: Payment ...` header with HMAC-bound ID, JCS-serialized charge request, required digest binding, RFC 3339 expiry, and optional opaque/description fields |
-| `validate(PaymentCredential, Map)` | Executes the security-critical validation flow: (1) preimage hash check, (2) digest binding check, (3) HMAC binding check, (4) expiry check, (5) method check |
+| `formatChallenge(ChallengeContext)` | Builds the `WWW-Authenticate: Payment ...` header with HMAC-bound ID, JCS-serialized charge request, required digest binding, RFC 3339 expiry, an `opaque` map that always carries the paid-policy binding (plus any caller-supplied entries), and an optional description. Rejects a context without a route pattern or request method |
+| `validate(PaymentCredential, Map)` | Executes the security-critical validation flow: (1) preimage hash check, (2) digest binding check, (3) HMAC binding check, (4) expiry check, (5) paid-policy binding check (opaque route, method, and capability equal `request.route`, `request.method`, and `request.capability`; bound `amount` is at least `request.current_price_sats`), (6) method check |
+| `validateAndResolveCapabilities(PaymentCredential, Map)` | Runs `validate` and returns the capability names from the verified opaque binding (empty when the policy declares none). The Spring Security integration grants `PAYGATE_CAPABILITY_*` authorities only from this result |
 | `createReceipt(PaymentCredential, ChallengeContext)` | Delegates to `MppReceipt.from()` to build a `PaymentReceipt` |
 
 Constructor requires a `byte[] challengeBindingSecret` of at least 32 bytes. The secret is defensively copied.
@@ -137,7 +141,7 @@ Utility class that computes and verifies HMAC-SHA256 challenge IDs for stateless
 | `createId(realm, method, intent, requestB64, expires, digest, opaqueB64, secret)` | Computes HMAC-SHA256 over the pipe-delimited 7-slot input and returns base64url-nopad encoded result |
 | `verify(id, realm, method, intent, requestB64, expires, digest, opaqueB64, secret)` | Recomputes the HMAC and compares against the presented ID using constant-time comparison |
 
-The HMAC input is a pipe-delimited string with 7 slots. For MPP challenges created by `MppProtocol.formatChallenge()`, `digest` is required and is always populated in the header and response body. The low-level binding helper still accepts nullable optional slots for callers that use it directly; null `expires`, `digest`, or `opaque` values map to an empty string in their slot. A fresh `Mac.getInstance("HmacSHA256")` is obtained per call for virtual-thread safety; JCA provider lookups are cached after the first call, so the overhead is negligible.
+The HMAC input is a pipe-delimited string with 7 slots. For MPP challenges created by `MppProtocol.formatChallenge()`, `digest` and `opaque` are required and are always populated in the header and response body. The low-level binding helper still accepts nullable optional slots for callers that use it directly; null `expires`, `digest`, or `opaque` values map to an empty string in their slot. A fresh `Mac.getInstance("HmacSHA256")` is obtained per call for virtual-thread safety; JCA provider lookups are cached after the first call, so the overhead is negligible.
 
 ### Request-digest migration
 
@@ -253,20 +257,41 @@ Client                                  Server (MppProtocol)
   |-------------------------------------->|
   |                                       |
   |                            MppCredentialParser.parse()
-  |                            Validate: preimage, digest binding, HMAC, expiry, method
+  |                            Validate: preimage, digest binding, HMAC, expiry,
+  |                            paid-policy binding, method
   |                                       |
   |  200 OK                               |
   |  Payment-Receipt: <b64url receipt>    |
   |<--------------------------------------|
 ```
 
-**Step 1: Challenge issuance.** When a request arrives without credentials at a protected endpoint, `MppProtocol.formatChallenge()` builds a `WWW-Authenticate: Payment` header. The caller must provide a non-blank request digest in `ChallengeContext.digest()`; missing or blank digest values are rejected before charge request serialization, HMAC ID creation, header construction, or body construction. The charge request (containing the BOLT-11 invoice, payment hash, amount, and network) is JCS-serialized and base64url-encoded into the `request` parameter. All challenge parameters, including the required digest, are HMAC-bound into the `id` field.
+**Step 1: Challenge issuance.** When a request arrives without credentials at a protected endpoint, `MppProtocol.formatChallenge()` builds a `WWW-Authenticate: Payment` header. The caller must provide a non-blank request digest in `ChallengeContext.digest()`; missing or blank digest values are rejected before charge request serialization, HMAC ID creation, header construction, or body construction. The charge request (containing the BOLT-11 invoice, payment hash, amount, and network) is JCS-serialized and base64url-encoded into the `request` parameter. The `opaque` parameter carries the paid-policy binding (see [Paid-Policy Binding](#paid-policy-binding)). All challenge parameters, including the required digest and the opaque binding, are HMAC-bound into the `id` field.
 
 **Step 2: Payment.** The client extracts the BOLT-11 invoice from the decoded `request` parameter and pays it through the Lightning Network.
 
 **Step 3: Credential presentation.** The client echoes back the entire challenge object plus the payment preimage in a base64url-encoded JSON blob in the `Authorization: Payment` header.
 
-**Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, digest binding, HMAC binding, expiry, and method. The echoed challenge digest must be present and must match the request digest from the validation context. On success, a `Payment-Receipt` header is included in the response.
+**Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, digest binding, HMAC binding, expiry, paid-policy binding, and method. The echoed challenge digest must be present and must match the request digest from the validation context. On success, a `Payment-Receipt` header is included in the response.
+
+### Paid-Policy Binding
+
+The request digest cannot tell apart two handlers that Spring MVC selects for the same request line by a `headers` or `produces` condition, nor two prices that a request-dependent pricing strategy computes from headers, identity, or time. Every challenge therefore carries a server `opaque` map, which is one of the seven HMAC-bound slots:
+
+| Opaque key | Value |
+|------------|-------|
+| `paygate_route` | Canonical framework route pattern of the policy that issued the challenge (for example `/api/report/{id}`) |
+| `paygate_method` | HTTP method of the request that received the challenge |
+| `paygate_capability` | The endpoint's capability declaration, or `~` when it declares none (as in the L402 capabilities caveat) |
+
+These keys are reserved: `formatChallenge` rejects a caller-supplied `opaque` that already uses one. The opaque map never carries a client address.
+
+After the HMAC check passes, `validate()` requires the following, comparing strings in constant time:
+
+- `paygate_route` equals `request.route`, and `paygate_method` equals `request.method`. Both metadata values are required.
+- `paygate_capability` equals `request.capability`. An absent or blank value means `~`.
+- The charge request's `currency` is `BTC`. Its `amount` is a canonical unsigned decimal number of satoshis (no sign, fraction, exponent, whitespace, or leading zero, and it must fit in a `long`). That amount must be at least `request.current_price_sats`, which the caller must supply in the same canonical form.
+
+A missing opaque map, missing field, missing metadata value, or mismatch is an `INVALID` failure, returned as HTTP 402. Credentials issued before paid-policy binding existed carry no binding, so they are rejected and the client must obtain a new challenge. MPP expiry is at most 24 hours, so this lasts no longer than that.
 
 ### Request Identity, Reuse, and Migration
 
@@ -311,7 +336,9 @@ Server validates (security-critical order):
   2. echoed digest == request digest           (digest binding)
   3. HMAC-SHA256(secret, fields) == id         (binding check)
   4. Instant.now() < expires                   (expiry check)
-  5. method == "lightning"                     (method check)
+  5. opaque route/method/capability == request (paid-policy binding)
+     request.amount >= current price
+  6. method == "lightning"                     (method check)
 ```
 
 ### HMAC Input Format

@@ -107,7 +107,7 @@ paygate-spring-security/
     PaygateAuthFailureRateLimitFilter.java    Optional auth-failure rate-limiting filter
     PaygateSecurityAutoConfiguration.java     Registers beans when Spring Security is present
     CapabilityResolver.java                   Capability resolution strategy interface
-    DefaultCapabilityResolver.java            Non-L402 resolver backed by cache and request metadata
+    DefaultCapabilityResolver.java            Non-L402 resolver backed by the capability cache
     CapabilityResolutionContext.java          Immutable context for capability resolution
   src/main/resources/META-INF/spring/
     org.springframework.boot.autoconfigure.AutoConfiguration.imports
@@ -211,6 +211,8 @@ The token has two states:
 
 Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
+Non-L402 `PAYGATE_CAPABILITY_*` authorities come from `PaymentProtocol.validateAndResolveCapabilities(...)`, which returns only capabilities that the credential itself authenticates. Any `CapabilityResolver` result is added to them. For MPP, the capability is the one bound into the HMAC-authenticated challenge `opaque` when the challenge was issued, and validation requires it to match the endpoint's declaration. An MPP credential bought for a capability-free or differently scoped endpoint is therefore rejected, not granted the requested endpoint's capability. The requested capability in `requestMetadata` is never itself a source of authorities.
+
 #### Security: Verified Attribute Provenance and Migration
 
 Only `L402Validator.ValidationResult.verifiedAttributes()` can supply caveat-derived attributes to
@@ -261,7 +263,7 @@ It registers up to five beans. A separate auto-configuration supplies the startu
 
 | Bean | Condition | Description |
 |------|-----------|-------------|
-| `CapabilityResolver` (`DefaultCapabilityResolver`) | `@ConditionalOnMissingBean` | Resolves endpoint capability requirements for authority mapping (`PAYGATE_CAPABILITY_*`). |
+| `CapabilityResolver` (`DefaultCapabilityResolver`) | `@ConditionalOnMissingBean` | Supplements non-L402 `PAYGATE_CAPABILITY_*` authorities from the server-side capability cache. It never grants the capability named in request metadata, and it is skipped for L402. |
 | `PaygateAuthenticationProvider` | `@ConditionalOnMissingBean` | Validates L402 and other registered payment tokens using `paygate.service-name` |
 | `PaygateAuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
 | `PaygateAuthFailureRateLimitFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(PaygateRateLimiter.class)` | Rate limits auth attempts with pre-check and post-failure penalty. Only created when rate limiting is enabled. |
@@ -522,7 +524,7 @@ Existing `hasRole('L402')` rules remain usable, but credential compatibility is 
 
 `MacaroonVerifier` accepts attribute provenance only from non-blank, uniquely registered, case-sensitive verifier keys. Each accepted value is captured immutably and is carried by `L402Validator.ValidationResult.verifiedAttributes()` for both fresh and cached validation. Spring Security maps attributes and capability authorities only from that verified result; it does not treat arbitrary caveats as claims.
 
-Payment roles are issued by the server: validated credentials receive `ROLE_PAYMENT`, and L402 credentials also receive `ROLE_L402`. A holder cannot mint Spring Security roles or authorities by adding caveats such as `role=ADMIN`. Capability authorities likewise come only from the verified effective capability ceiling.
+Payment roles are issued by the server: validated credentials receive `ROLE_PAYMENT`, and L402 credentials also receive `ROLE_L402`. A holder cannot mint Spring Security roles or authorities by adding caveats such as `role=ADMIN`. Capability authorities likewise come only from the verified effective capability ceiling for L402, or from the HMAC-bound challenge capability for MPP.
 
 For binary compatibility, credential-only L402 factories remain callable but are deprecated. They
 expose protected metadata and explicit capability authorities only, because parsed caveats are not

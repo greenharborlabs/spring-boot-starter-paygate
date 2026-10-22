@@ -23,13 +23,19 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * MPP (Multi-Part Payment) protocol implementation for HTTP 402 payment challenges.
  *
  * <p>Uses the {@code Payment} authentication scheme with HMAC-SHA256 challenge binding for
  * stateless server-side verification. All validation follows a security-critical order: preimage
- * hash check, then HMAC binding, then expiry.
+ * hash check, request digest, HMAC binding, expiry, then the paid-policy binding (route, method,
+ * capability, and amount; see {@link MppRequestBinding}).
+ *
+ * <p>Every challenge carries a server {@code opaque} map that binds the canonical route pattern,
+ * request method, and capability declaration of the policy that issued it. A {@link
+ * ChallengeContext} without a route pattern or request method is therefore rejected.
  *
  * <p>Zero external dependencies -- JDK only.
  */
@@ -231,15 +237,13 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
           DateTimeFormatter.ISO_INSTANT.format(
               clock.instant().plusSeconds(context.timeoutSeconds()));
 
-      // Handle opaque
-      String opaqueB64 = null;
-      if (context.opaque() != null) {
-        String opaqueJcs = JcsSerializer.serialize(new LinkedHashMap<>(context.opaque()));
-        opaqueB64 =
-            Base64.getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(opaqueJcs.getBytes(StandardCharsets.UTF_8));
-      }
+      // Opaque always carries the paid-policy binding, plus any caller-supplied entries.
+      String opaqueJcs =
+          JcsSerializer.serialize(new LinkedHashMap<>(MppRequestBinding.challengeOpaque(context)));
+      String opaqueB64 =
+          Base64.getUrlEncoder()
+              .withoutPadding()
+              .encodeToString(opaqueJcs.getBytes(StandardCharsets.UTF_8));
 
       // Compute HMAC challenge ID
       String id =
@@ -296,8 +300,22 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
   }
 
   @Override
-  @SuppressWarnings("PMD.CyclomaticComplexity") // Security-critical validation — order matters
   public void validate(PaymentCredential credential, Map<String, String> requestContext)
+      throws PaymentValidationException {
+    validateAndResolveCapabilities(credential, requestContext);
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>The returned capabilities come from the HMAC-authenticated {@code opaque} binding, after it
+   * has been matched against {@code request.capability}. A challenge issued for an endpoint without
+   * a capability grants none.
+   */
+  @Override
+  @SuppressWarnings("PMD.CyclomaticComplexity") // Security-critical validation — order matters
+  public Set<String> validateAndResolveCapabilities(
+      PaymentCredential credential, Map<String, String> requestContext)
       throws PaymentValidationException {
     synchronized (lifecycleLock) {
       requireOpen();
@@ -421,10 +439,18 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
               credential.tokenId());
         }
 
-        // 4. Defense-in-depth: method must be "lightning"
+        // 4. Paid-policy binding. Opaque and request are trusted only because the HMAC above
+        // authenticated them: route, method, and capability must match the policy being
+        // enforced, and the bound amount must cover its current price.
+        Set<String> capabilities =
+            MppRequestBinding.verify(
+                opaque, request, requestContext, parserLimits, credential.tokenId());
+
+        // 5. Defense-in-depth: method must be "lightning"
         if (!"lightning".equals(method)) {
           throw new UnsupportedPaymentMethodException(credential.tokenId());
         }
+        return capabilities;
       } finally {
         CryptoUtils.zeroize(preimage, paymentHash, computedHash);
       }

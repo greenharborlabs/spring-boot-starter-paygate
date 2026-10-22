@@ -1,21 +1,22 @@
 package com.greenharborlabs.paygate.spring.security;
 
-import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.spring.CapabilityCache;
 import com.greenharborlabs.paygate.spring.LogSanitizer;
 import java.util.Set;
 
 /**
- * Default multi-strategy capability resolver that chains:
+ * Default capability resolver backed by the server-side {@link CapabilityCache}.
  *
- * <ol>
- *   <li>Cache lookup (if {@link CapabilityCache} is available)
- *   <li>Request metadata fallback (using {@link VerificationContextKeys#REQUESTED_CAPABILITY})
- * </ol>
+ * <p>This resolver is only a supplement for non-L402 protocols. L402 authorities must be derived
+ * from the validator's verified effective capabilities, so an L402 context always resolves to an
+ * empty set without consulting cache, caveats, or request metadata. MPP capabilities come from the
+ * HMAC-bound challenge via {@link
+ * com.greenharborlabs.paygate.api.PaymentProtocol#validateAndResolveCapabilities}.
  *
- * <p>This resolver is only a fallback for non-L402 protocols. L402 authorities must be derived from
- * the validator's verified effective capabilities, so an L402 context always resolves to an empty
- * set without consulting cache, caveats, or request metadata.
+ * <p>The resolver never grants the capability named in the request metadata ({@code
+ * request.capability}). That value describes the endpoint being requested, not what the credential
+ * paid for, so trusting it would let a credential bought for one endpoint satisfy another
+ * endpoint's capability check.
  */
 public final class DefaultCapabilityResolver implements CapabilityResolver {
 
@@ -41,17 +42,9 @@ public final class DefaultCapabilityResolver implements CapabilityResolver {
       return Set.of();
     }
 
-    // Strategy 1: Cache lookup
     Set<String> result = resolveFromCache(tokenId);
     if (!result.isEmpty()) {
       log.log(System.Logger.Level.DEBUG, "Capabilities resolved via cache");
-      return result;
-    }
-
-    // Strategy 2: Request metadata fallback
-    result = resolveFromMetadata(context);
-    if (!result.isEmpty()) {
-      log.log(System.Logger.Level.DEBUG, "Capabilities resolved via request metadata");
       return result;
     }
 
@@ -73,14 +66,6 @@ public final class DefaultCapabilityResolver implements CapabilityResolver {
           System.Logger.Level.WARNING,
           "Capability cache lookup failed for token correlation {0}; proceeding without cached capability",
           LogSanitizer.sanitizeTokenId(tokenId));
-    }
-    return Set.of();
-  }
-
-  private Set<String> resolveFromMetadata(CapabilityResolutionContext context) {
-    String requested = context.requestMetadata().get(VerificationContextKeys.REQUESTED_CAPABILITY);
-    if (requested != null && !requested.isEmpty()) {
-      return Set.of(requested);
     }
     return Set.of();
   }

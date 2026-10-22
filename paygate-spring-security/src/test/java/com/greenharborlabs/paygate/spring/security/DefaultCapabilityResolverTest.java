@@ -92,7 +92,7 @@ class DefaultCapabilityResolverTest {
     }
 
     @Test
-    @DisplayName("skips cache when CapabilityCache is null")
+    @DisplayName("grants nothing from request metadata when CapabilityCache is null")
     void skipsCacheWhenNull() {
       var resolver = new DefaultCapabilityResolver(null);
       var context =
@@ -104,13 +104,12 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      // Falls through to strategy 3 (request metadata) since no L402 credential
-      assertThat(result).containsExactly("write");
+      assertThat(result).isEmpty();
     }
 
     @Test
-    @DisplayName("falls through when cache returns null")
-    void fallsThroughOnCacheMiss() {
+    @DisplayName("grants nothing from request metadata on a cache miss")
+    void grantsNothingOnCacheMiss() {
       when(capabilityCache.get(TOKEN_ID)).thenReturn(null);
       var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context =
@@ -122,12 +121,12 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactly("write");
+      assertThat(result).isEmpty();
     }
 
     @Test
-    @DisplayName("falls through when cache throws RuntimeException")
-    void fallsThroughOnCacheException() {
+    @DisplayName("grants nothing from request metadata when the cache throws")
+    void grantsNothingOnCacheException() {
       when(capabilityCache.get(TOKEN_ID)).thenThrow(new RuntimeException("cache unavailable"));
       var resolver = new DefaultCapabilityResolver(capabilityCache);
       var context =
@@ -139,7 +138,7 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactly("admin");
+      assertThat(result).isEmpty();
     }
   }
 
@@ -196,8 +195,8 @@ class DefaultCapabilityResolverTest {
     }
 
     @Test
-    @DisplayName("preserves metadata fallback when l402Credential is null")
-    void skipsWhenNoCredential() {
+    @DisplayName("does not use metadata fallback when l402Credential is null")
+    void ignoresMetadataWhenNoCredential() {
       var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(
@@ -208,7 +207,7 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactly("fallback");
+      assertThat(result).isEmpty();
     }
 
     @Test
@@ -271,15 +270,15 @@ class DefaultCapabilityResolverTest {
     }
   }
 
-  // ---- Strategy 2: Request metadata ----
+  // ---- Request metadata is never a capability source ----
 
   @Nested
-  @DisplayName("Strategy 3: Request metadata fallback")
+  @DisplayName("Request metadata")
   class RequestMetadata {
 
     @Test
-    @DisplayName("returns capability from request metadata")
-    void returnsFromMetadata() {
+    @DisplayName("never grants the requested endpoint capability to a non-L402 token")
+    void neverGrantsRequestedCapability() {
       var resolver = new DefaultCapabilityResolver(null);
       var context =
           new CapabilityResolutionContext(
@@ -287,7 +286,7 @@ class DefaultCapabilityResolverTest {
 
       Set<String> result = resolver.resolve(context);
 
-      assertThat(result).containsExactly("search");
+      assertThat(result).isEmpty();
     }
 
     @Test
