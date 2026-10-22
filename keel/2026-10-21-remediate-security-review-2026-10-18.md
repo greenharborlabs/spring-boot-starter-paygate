@@ -76,6 +76,8 @@ Approved: 2026-10-21 by Mark Hammond at plan revision 84239cabe96fa2df6b3d3d27c1
 ## Review
 Working. Awaiting implementation and fresh-context review.
 
+Baseline at `84239ca`: pass. `./gradlew check --continue --rerun-tasks` exited 0 with 2,921 default-module tests and no failures or skips. `./gradlew :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` ran 44 tests and `securityTest` ran 31, all passing. An earlier `--offline` run of `check` failed at `:paygate-api:pmdMain` because PMD dependencies were missing from the offline cache, so this was an environment problem rather than a code failure.
+
 ## Outcome
 Pending.
 
