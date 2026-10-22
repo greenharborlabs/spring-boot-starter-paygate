@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Base64;
+import java.util.List;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -91,6 +92,20 @@ class ClientAddressBindingIT {
       assertThat(request(port, BOUND_CLIENT, authorization).statusCode()).isEqualTo(200);
       assertThat(request(port, "198.51.100.8", authorization).statusCode()).isEqualTo(402);
     }
+
+    @Test
+    @DisplayName("a client-supplied first X-Forwarded-For line cannot claim the bound address")
+    void clientSuppliedFirstForwardedLineCannotClaimBoundAddress() throws Exception {
+      var challenge = requestChallenge(port, BOUND_CLIENT);
+      String authorization = "L402 " + tokenFrom(challenge) + ":" + testPreimageFrom(challenge);
+
+      var replay = request(port, List.of(BOUND_CLIENT, "198.51.100.8"), authorization);
+      var issuance = request(port, List.of(BOUND_CLIENT, "198.51.100.8"), null);
+
+      assertThat(replay.statusCode()).isIn(402, 503);
+      assertThat(issuance.statusCode()).isEqualTo(503);
+      assertThat(issuance.headers().allValues("WWW-Authenticate")).isEmpty();
+    }
   }
 
   private static HttpResponse<String> requestChallenge(int port) throws Exception {
@@ -106,11 +121,17 @@ class ClientAddressBindingIT {
 
   private static HttpResponse<String> request(
       int port, String forwardedClient, String authorization) throws Exception {
+    return request(
+        port, forwardedClient == null ? List.of() : List.of(forwardedClient), authorization);
+  }
+
+  private static HttpResponse<String> request(
+      int port, List<String> forwardedForLines, String authorization) throws Exception {
     try (var client = HttpClient.newHttpClient()) {
       var request =
           HttpRequest.newBuilder().uri(URI.create("http://127.0.0.1:" + port + DATA_PATH));
-      if (forwardedClient != null) {
-        request.header("X-Forwarded-For", forwardedClient);
+      for (String line : forwardedForLines) {
+        request.header("X-Forwarded-For", line);
       }
       if (authorization != null) {
         request.header("Authorization", authorization);

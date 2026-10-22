@@ -15,6 +15,7 @@ import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ClientIpCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
@@ -213,6 +214,42 @@ class L402ValidatorTest {
                       SERVICE_NAME))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining(SERVICE_NAME + "_capabilities");
+    }
+
+    @Test
+    @DisplayName("reports registered optional verifiers so binding callers can fail construction")
+    void reportsRegisteredOptionalVerifiers() {
+      var boundaryOnly =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              List.of(
+                  new ServicesCaveatVerifier(10),
+                  new RouteCaveatVerifier(10),
+                  new MethodCaveatVerifier(10),
+                  new CapabilitiesCaveatVerifier(SERVICE_NAME, 10),
+                  new ValidUntilCaveatVerifier(SERVICE_NAME)),
+              SERVICE_NAME);
+      var withClientIp =
+          new L402Validator(
+              rootKeyStore,
+              credentialStore,
+              List.of(
+                  new ServicesCaveatVerifier(10),
+                  new RouteCaveatVerifier(10),
+                  new MethodCaveatVerifier(10),
+                  new CapabilitiesCaveatVerifier(SERVICE_NAME, 10),
+                  new ValidUntilCaveatVerifier(SERVICE_NAME),
+                  new ClientIpCaveatVerifier(10)),
+              SERVICE_NAME);
+
+      assertThat(boundaryOnly.hasCaveatVerifier("client_ip")).isFalse();
+      assertThat(boundaryOnly.hasCaveatVerifier("route")).isTrue();
+      assertThat(boundaryOnly.hasCaveatVerifier(SERVICE_NAME + "_price_sats")).isTrue();
+      assertThat(withClientIp.hasCaveatVerifier("client_ip")).isTrue();
+      assertThat(withClientIp.hasCaveatVerifier(" client_ip\t")).isTrue();
+      assertThatThrownBy(() -> withClientIp.hasCaveatVerifier(null))
+          .isInstanceOf(NullPointerException.class);
     }
   }
 

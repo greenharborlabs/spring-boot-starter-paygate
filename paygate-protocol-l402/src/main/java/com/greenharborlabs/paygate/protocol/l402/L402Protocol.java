@@ -36,6 +36,7 @@ public class L402Protocol implements PaymentProtocol {
 
   private static final String SCHEME = "L402";
   private static final int MACAROON_IDENTIFIER_VERSION = 1;
+  private static final String CLIENT_IP_CAVEAT_KEY = "client_ip";
 
   private final L402Validator validator;
   private final String serviceName;
@@ -50,7 +51,12 @@ public class L402Protocol implements PaymentProtocol {
     this(validator, serviceName, clock, false);
   }
 
-  /** Creates an L402 adapter with optional exact client-address caveat enforcement. */
+  /**
+   * Creates an L402 adapter with optional exact client-address caveat enforcement.
+   *
+   * @throws IllegalArgumentException if binding is enabled and the validator has no {@code
+   *     client_ip} caveat verifier, because the minted caveat would otherwise be skipped as unknown
+   */
   public L402Protocol(
       L402Validator validator,
       String serviceName,
@@ -59,6 +65,13 @@ public class L402Protocol implements PaymentProtocol {
     this.validator = Objects.requireNonNull(validator, "validator must not be null");
     this.serviceName = Objects.requireNonNull(serviceName, "serviceName must not be null");
     this.clock = Objects.requireNonNull(clock, "clock must not be null");
+    if (clientAddressBindingEnabled && !validator.hasCaveatVerifier(CLIENT_IP_CAVEAT_KEY)) {
+      throw new IllegalArgumentException(
+          "L402 client-address binding is enabled but the L402Validator has no "
+              + "ClientIpCaveatVerifier registered for the client_ip caveat; add "
+              + "ClientIpCaveatVerifier to the caveat verifiers or disable "
+              + "paygate.protocols.l402.client-address-binding-enabled");
+    }
     this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
@@ -128,7 +141,7 @@ public class L402Protocol implements PaymentProtocol {
     if (clientAddressBindingEnabled) {
       String clientAddress =
           requireChallengeBoundary(context.trustedClientAddress(), "client address");
-      caveats.add(new Caveat("client_ip", clientAddress));
+      caveats.add(new Caveat(CLIENT_IP_CAVEAT_KEY, clientAddress));
     }
     // The invoice amount is authenticated by the macaroon HMAC, preventing a lower-priced
     // credential from being reused after a trusted route price increases.
@@ -228,7 +241,9 @@ public class L402Protocol implements PaymentProtocol {
   }
 
   private static long clientAddressCaveatCount(Macaroon macaroon) {
-    return macaroon.caveats().stream().filter(caveat -> "client_ip".equals(caveat.key())).count();
+    return macaroon.caveats().stream()
+        .filter(caveat -> CLIENT_IP_CAVEAT_KEY.equals(caveat.key()))
+        .count();
   }
 
   /**

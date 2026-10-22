@@ -17,6 +17,7 @@ import com.greenharborlabs.paygate.core.lightning.PaymentPreimage;
 import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.ClientIpCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
@@ -33,6 +34,7 @@ import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
 import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +71,36 @@ class PaygateAuthenticationProviderTest {
   void constructorRejectsNullValidator() {
     assertThatThrownBy(() -> new PaygateAuthenticationProvider(null, "svc"))
         .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  void constructorRejectsClientAddressBindingWithoutClientIpVerifier() {
+    var validator =
+        new L402Validator(
+            mock(RootKeyStore.class),
+            mock(CredentialStore.class),
+            boundaryVerifiers(),
+            SERVICE_NAME);
+
+    assertThatThrownBy(
+            () -> new PaygateAuthenticationProvider(validator, List.of(), SERVICE_NAME, null, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("ClientIpCaveatVerifier")
+        .hasMessageContaining("client_ip");
+    assertThat(new PaygateAuthenticationProvider(validator, List.of(), SERVICE_NAME, null, false))
+        .isNotNull();
+  }
+
+  @Test
+  void constructorAcceptsClientAddressBindingWithClientIpVerifier() {
+    var verifiers = new ArrayList<>(boundaryVerifiers());
+    verifiers.add(new ClientIpCaveatVerifier(10));
+    var validator =
+        new L402Validator(
+            mock(RootKeyStore.class), mock(CredentialStore.class), verifiers, SERVICE_NAME);
+
+    assertThat(new PaygateAuthenticationProvider(validator, List.of(), SERVICE_NAME, null, true))
+        .isNotNull();
   }
 
   @Test

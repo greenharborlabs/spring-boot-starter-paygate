@@ -201,12 +201,52 @@ class ClientIpResolverTest {
       }
 
       @Test
-      @DisplayName("skips malformed XFF entries while finding valid untrusted client IP")
-      void skipsMalformedXffEntries() {
+      @DisplayName("returns the untrusted client before reaching malformed entries to its left")
+      void malformedEntriesLeftOfClientAreNeverReached() {
         var resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
         var request = new MockHttpServletRequest();
         request.setRemoteAddr("10.0.0.1");
         request.addHeader("X-Forwarded-For", "not-an-ip, 203.0.113.50, 10.0.0.1");
+
+        String result = resolver.resolve(request);
+
+        assertThat(result).isEqualTo("203.0.113.50");
+      }
+
+      @Test
+      @DisplayName("stops at a malformed entry and returns the nearest trusted hop to its right")
+      void stopsAtMalformedEntryAndReturnsNearestTrustedHop() {
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.1", "10.0.0.2"));
+        var request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.1");
+        request.addHeader("X-Forwarded-For", "203.0.113.5, 198.51.100.7:51234, 10.0.0.2");
+
+        String result = resolver.resolve(request);
+
+        assertThat(result).isEqualTo("10.0.0.2");
+      }
+
+      @Test
+      @DisplayName("stops at an empty entry appended by the direct peer and returns the peer")
+      void stopsAtEmptyEntryAndReturnsPeer() {
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
+        var request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.1");
+        request.addHeader("X-Forwarded-For", "203.0.113.5,");
+
+        String result = resolver.resolve(request);
+
+        assertThat(result).isEqualTo("10.0.0.1");
+      }
+
+      @Test
+      @DisplayName("walks repeated XFF field lines as one ordered list")
+      void walksRepeatedFieldLinesAsOneList() {
+        var resolver = new ClientIpResolver(true, List.of("10.0.0.1", "10.0.0.2"));
+        var request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.1");
+        request.addHeader("X-Forwarded-For", "198.51.100.7, 203.0.113.50");
+        request.addHeader("X-Forwarded-For", "10.0.0.2");
 
         String result = resolver.resolve(request);
 
@@ -352,6 +392,28 @@ class ClientIpResolverTest {
       request.addHeader("X-Forwarded-For", "2001:db8::7, 10.0.0.2");
 
       assertThat(resolver.resolveBindingAddress(request)).contains("2001:db8:0:0:0:0:0:7");
+    }
+
+    @Test
+    @DisplayName("uses a consistent trusted chain split across repeated field lines")
+    void bindsClientFromTrustedChainAcrossRepeatedLines() {
+      var resolver = new ClientIpResolver(true, List.of("10.0.0.1", "10.0.0.2"));
+      var request = requestFrom("10.0.0.1");
+      request.addHeader("X-Forwarded-For", "198.51.100.7");
+      request.addHeader("X-Forwarded-For", "10.0.0.2");
+
+      assertThat(resolver.resolveBindingAddress(request)).contains("198.51.100.7");
+    }
+
+    @Test
+    @DisplayName("rejects repeated field lines that name more than one untrusted address")
+    void rejectsRepeatedLinesNamingSeveralUntrustedAddresses() {
+      var resolver = new ClientIpResolver(true, List.of("10.0.0.1"));
+      var request = requestFrom("10.0.0.1");
+      request.addHeader("X-Forwarded-For", "198.51.100.7");
+      request.addHeader("X-Forwarded-For", "203.0.113.50");
+
+      assertThat(resolver.resolveBindingAddress(request)).isEmpty();
     }
 
     @Test

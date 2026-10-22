@@ -41,6 +41,7 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       System.getLogger(PaygateAuthenticationProvider.class.getName());
 
   private static final CapabilityResolver NOOP_RESOLVER = _ -> Set.of();
+  private static final String CLIENT_IP_CAVEAT_KEY = "client_ip";
 
   private final L402Validator l402Validator;
   private final List<PaymentProtocol> protocols;
@@ -68,6 +69,9 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
   /**
    * Creates a provider with optional enforcement that every L402 credential carries one client IP
    * caveat.
+   *
+   * @throws IllegalArgumentException if binding is enabled and the validator has no {@code
+   *     client_ip} caveat verifier, because the caveat would otherwise be skipped as unknown
    */
   public PaygateAuthenticationProvider(
       L402Validator l402Validator,
@@ -79,6 +83,13 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
     this.protocols = List.copyOf(Objects.requireNonNull(protocols, "protocols must not be null"));
     this.serviceName = serviceName;
     this.capabilityResolver = capabilityResolver != null ? capabilityResolver : NOOP_RESOLVER;
+    if (clientAddressBindingEnabled && !l402Validator.hasCaveatVerifier(CLIENT_IP_CAVEAT_KEY)) {
+      throw new IllegalArgumentException(
+          "L402 client-address binding is enabled but the L402Validator has no "
+              + "ClientIpCaveatVerifier registered for the client_ip caveat; add "
+              + "ClientIpCaveatVerifier to the caveat verifiers or disable "
+              + "paygate.protocols.l402.client-address-binding-enabled");
+    }
     this.clientAddressBindingEnabled = clientAddressBindingEnabled;
   }
 
@@ -140,7 +151,7 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
 
   private static long clientAddressCaveatCount(Macaroon macaroon) {
     return macaroon.caveats().stream()
-        .filter(caveat -> "client_ip".equals(caveat.key().toString()))
+        .filter(caveat -> CLIENT_IP_CAVEAT_KEY.equals(caveat.key()))
         .count();
   }
 
