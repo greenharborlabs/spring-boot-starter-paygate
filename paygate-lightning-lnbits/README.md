@@ -33,7 +33,7 @@ LNbits is a lightweight, account-based Lightning wallet system with a simple RES
 3. Click **API Info** in the wallet sidebar
 4. Copy the **Invoice/read key** -- this is the key you will configure as `paygate.lnbits.api-key`
 
-The Invoice/read key has permission to create invoices and check payment status, which is all this module requires. Do not use the Admin key unless you have a specific reason to do so.
+The Invoice/read key covers every call this module makes: creating incoming invoices (`POST /api/v1/payments` with `"out": false`), looking up payment status (`GET /api/v1/payments/{payment_hash}`), and the wallet health check (`GET /api/v1/wallet`). The Admin key is not required and should be avoided: it can also send outgoing payments and spend the wallet's funds.
 
 ---
 

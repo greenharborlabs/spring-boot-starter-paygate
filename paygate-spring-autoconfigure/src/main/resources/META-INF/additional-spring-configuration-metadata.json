@@ -206,7 +206,7 @@
     {
       "name": "paygate.lnd.macaroon-path",
       "type": "java.lang.String",
-      "description": "File system path to the LND admin macaroon file (admin.macaroon). Required when paygate.backend=lnd for authenticated gRPC calls."
+      "description": "File system path to a least-privilege LND macaroon baked with invoices:read invoices:write info:read (for example: lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read). Required when paygate.backend=lnd for authenticated gRPC calls. The stock invoice.macaroon lacks info:read and fails GetInfo health checks; admin.macaroon is not required and should be avoided."
     },
     {
       "name": "paygate.lnd.keep-alive-time-seconds",

@@ -386,6 +386,11 @@ or a missing key. The created key is held only in a highest-precedence in-memory
 The JVM cannot guarantee erasure of that configuration `String`; use this path only for the
 explicitly opted-in, disposable example lifecycle. It never logs, writes, or echoes the key.
 
+The bootstrap uses the new wallet's `adminkey` from the LNbits account-creation response. That is a
+dev-only convenience for a disposable regtest wallet; Paygate itself does not need it. For any
+non-disposable deployment, supply the wallet's Invoice/read key as `PAYGATE_LNBITS_API_KEY`
+instead -- it covers invoice creation, payment lookup, and the wallet health check.
+
 > **Note:** Test mode is enabled only by `application-dev.yml`. It contains no reusable MPP challenge-binding secret. Activate `dev` explicitly for local Gradle runs. The root Docker Compose file sets `SPRING_PROFILES_ACTIVE=dev`.
 
 ### Dual-Protocol Behavior
@@ -593,8 +598,10 @@ paygate:
     host: localhost
     port: 10009
     tls-cert-path: /path/to/tls.cert
-    macaroon-path: /path/to/invoice.macaroon
+    macaroon-path: /path/to/paygate.macaroon
 ```
+
+`paygate.macaroon` is a least-privilege macaroon baked with `lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read`. LND's stock `invoice.macaroon` lacks `info:read`, so the `GetInfo` health check fails and every protected endpoint returns `503`; `admin.macaroon` is not required and should be avoided.
 
 See [`paygate-lightning-lnd/README.md`](../paygate-lightning-lnd/README.md) for details on configuring the LND backend.
 

@@ -27,7 +27,7 @@ LND (Lightning Network Daemon) is the most widely deployed Lightning Network imp
 - **Java 25** (LTS)
 - **A running LND node** with gRPC enabled. The repository's Docker integration environments currently exercise LND `v0.18.4-beta`.
 - **TLS certificate** (`tls.cert`) -- LND generates this on startup (typically at `~/.lnd/tls.cert`)
-- **Macaroon file** -- an `invoice.macaroon` or `admin.macaroon` (typically at `~/.lnd/data/chain/bitcoin/mainnet/`)
+- **Macaroon file** -- a least-privilege macaroon baked with `invoices:read invoices:write info:read` (see [Required LND Permissions](#required-lnd-permissions))
 
 ### Required LND Permissions
 
@@ -37,7 +37,13 @@ This module only needs permissions to:
 2. **Look up invoices** (`LookupInvoice` RPC)
 3. **Query node info** (`GetInfo` RPC -- used for health checks)
 
-The `invoice.macaroon` provides exactly these permissions. Using `admin.macaroon` works but grants more access than necessary -- prefer `invoice.macaroon` for least-privilege operation.
+These map to the LND macaroon permissions `invoices:write` (`AddInvoice`), `invoices:read` (`LookupInvoice`), and `info:read` (`GetInfo`). Bake a dedicated macaroon with exactly those permissions and point `paygate.lnd.macaroon-path` at it:
+
+```bash
+lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read
+```
+
+This is the recommended credential. Do **not** use LND's stock `invoice.macaroon` on its own: it lacks `info:read`, so the `GetInfo` health check fails with a permission error, `isHealthy()` reports `false`, and every protected endpoint fails closed with `503` instead of issuing a payment challenge. The `admin.macaroon` is not required and should be avoided -- it also grants fund-spending, channel-management and other node-administration rights that this module never uses.
 
 ### Locating LND Credentials
 
@@ -49,7 +55,7 @@ Default LND file paths vary by platform:
 | macOS | `~/Library/Application Support/Lnd/tls.cert` | `~/Library/Application Support/Lnd/data/chain/bitcoin/mainnet/` |
 | Docker | Mounted from container volume | Mounted from container volume |
 
-For remote LND nodes, copy the `tls.cert` and `invoice.macaroon` files to the machine running your Spring Boot application.
+For remote LND nodes, run `lncli bakemacaroon` on the node and copy the `tls.cert` and the baked `paygate.macaroon` files to the machine running your Spring Boot application.
 
 ---
 
@@ -108,7 +114,7 @@ paygate:
     host: 127.0.0.1
     port: 10009
     tls-cert-path: /path/to/tls.cert
-    macaroon-path: /path/to/invoice.macaroon
+    macaroon-path: /path/to/paygate.macaroon
 ```
 
 ### application.yml (Local Development -- Plaintext)
@@ -133,7 +139,7 @@ paygate.service-name=my-api
 paygate.lnd.host=127.0.0.1
 paygate.lnd.port=10009
 paygate.lnd.tls-cert-path=/path/to/tls.cert
-paygate.lnd.macaroon-path=/path/to/invoice.macaroon
+paygate.lnd.macaroon-path=/path/to/paygate.macaroon
 ```
 
 ### Configuration Properties
@@ -144,7 +150,7 @@ paygate.lnd.macaroon-path=/path/to/invoice.macaroon
 | `paygate.lnd.host` | `string` | `localhost` | No | Hostname or IP address of the LND gRPC endpoint. |
 | `paygate.lnd.port` | `int` | `10009` | No | Port number of the LND gRPC endpoint. LND defaults to `10009`. |
 | `paygate.lnd.tls-cert-path` | `string` | `null` | Yes* | Absolute path to the LND TLS certificate file (`tls.cert`). Required unless `allow-plaintext=true`. |
-| `paygate.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file (e.g., `invoice.macaroon`). When set, the macaroon is read at startup and attached to every gRPC call as lower-case hex metadata. |
+| `paygate.lnd.macaroon-path` | `string` | `null` | No | Absolute path to the LND macaroon file -- a baked macaroon with `invoices:read invoices:write info:read` (e.g., `paygate.macaroon`). The stock `invoice.macaroon` lacks `info:read` and fails health checks; `admin.macaroon` is not required. When set, the macaroon is read at startup and attached to every gRPC call as lower-case hex metadata. |
 | `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Enables plaintext (unencrypted) gRPC only with an all-allowed `dev`, `local`, `development`, or `test` profile set and a loopback literal or exact `localhost` resolving entirely to loopback. Other hostnames, Docker service names, private/public addresses, malformed targets, and mixed/empty resolution fail before channel creation. A secret-free warning is logged when active. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | Interval between gRPC keepalive pings. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Timeout for keepalive ping acknowledgement. |
@@ -355,7 +361,7 @@ paygate:
     host: 127.0.0.1
     port: 10009
     tls-cert-path: /home/user/.lnd/tls.cert
-    macaroon-path: /home/user/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon
+    macaroon-path: /home/user/.lnd/paygate.macaroon
 ```
 
 Requests to `GET /api/v1/premium` without credentials receive HTTP 402 with a Lightning invoice. After paying and presenting the L402 credential, the client receives the premium content.
@@ -374,7 +380,7 @@ services:
       PAYGATE_LND_HOST: lnd
       PAYGATE_LND_PORT: "10009"
       PAYGATE_LND_TLS_CERT_PATH: /lnd/tls.cert
-      PAYGATE_LND_MACAROON_PATH: /lnd/invoice.macaroon
+      PAYGATE_LND_MACAROON_PATH: /lnd/paygate.macaroon
     volumes:
       - lnd-data:/lnd:ro
 
@@ -386,6 +392,8 @@ services:
 volumes:
   lnd-data:
 ```
+
+Bake the least-privilege macaroon into the shared volume first, for example `docker compose exec lnd lncli bakemacaroon --save_to /root/.lnd/paygate.macaroon invoices:read invoices:write info:read`. Mounting the whole LND data volume also exposes `admin.macaroon` to the application container; in production, prefer mounting only `tls.cert` and `paygate.macaroon` (for example as Docker secrets).
 
 ---
 

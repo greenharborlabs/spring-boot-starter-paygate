@@ -6,7 +6,9 @@ package com.greenharborlabs.paygate.lightning.lnd;
  * @param host LND gRPC host
  * @param port LND gRPC port
  * @param tlsCertPath path to TLS certificate file, or null when allowPlaintext is true
- * @param macaroonPath path to admin macaroon file, or null for unauthenticated/test channels
+ * @param macaroonPath path to a least-privilege macaroon baked with {@code invoices:read
+ *     invoices:write info:read} (an admin macaroon is not required), or null for
+ *     unauthenticated/test channels
  * @param allowPlaintext if true, permits unencrypted connections (testing only)
  * @param keepAliveTimeSeconds interval between gRPC keepalive pings
  * @param keepAliveTimeoutSeconds timeout waiting for a keepalive ping acknowledgement

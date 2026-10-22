@@ -187,7 +187,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnd.host` | `string` | `"localhost"` | When `paygate.backend=lnd` | Hostname or IP of the LND gRPC endpoint. |
 | `paygate.lnd.port` | `int` | `10009` | When `paygate.backend=lnd` | Port of the LND gRPC endpoint. |
 | `paygate.lnd.tls-cert-path` | `string` | -- | When `paygate.backend=lnd` (unless plaintext) | Path to the LND TLS certificate (`tls.cert`). |
-| `paygate.lnd.macaroon-path` | `string` | -- | No | Path to the LND admin macaroon file (`admin.macaroon`). |
+| `paygate.lnd.macaroon-path` | `string` | -- | No | Path to a least-privilege LND macaroon baked with `invoices:read invoices:write info:read` (for example `lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read`). The stock `invoice.macaroon` lacks `info:read` and fails health checks; `admin.macaroon` is not required. |
 | `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Explicit local-development opt-in for plaintext gRPC. It requires only `dev`, `local`, `development`, or `test` profiles and an exact `localhost` or loopback-IP target. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | gRPC keepalive ping interval. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Keepalive ping ack timeout. |
