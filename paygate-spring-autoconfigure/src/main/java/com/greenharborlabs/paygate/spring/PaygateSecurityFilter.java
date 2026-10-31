@@ -357,8 +357,7 @@ public class PaygateSecurityFilter implements Filter {
       context.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
     TrustedRequestPrice trustedPrice =
-        (TrustedRequestPrice)
-            httpRequest.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+        PaygateRequestPricingService.memoizedPrice(httpRequest, config);
     if (trustedPrice == null) {
       // Some container and unit-test request implementations do not retain attributes. The
       // endpoint's configured price is still trusted for fixed-price policies.

@@ -526,8 +526,6 @@ class PaygateChallengeServiceTest {
       when(lightningBackend.isHealthy()).thenReturn(true);
       when(lightningBackend.createInvoice(anyLong(), anyString()))
           .thenReturn(createStubInvoice(42L, null));
-      request.setAttribute(
-          PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE, new TrustedRequestPrice(42L));
       PaygatePricingStrategy strategy =
           (ignoredRequest, ignoredDefaultPrice) -> {
             throw new AssertionError("memoized trusted price must prevent strategy re-execution");
@@ -537,6 +535,8 @@ class PaygateChallengeServiceTest {
       PaygateEndpointConfig configWithStrategy =
           new PaygateEndpointConfig(
               "GET", "/api/protected", PRICE_SATS, TIMEOUT_SECONDS, DESCRIPTION, "myStrategy", "");
+      PaygateRequestPricingService.memoize(
+          request, configWithStrategy, new TrustedRequestPrice(42L));
 
       ChallengeContext context =
           createService(createTrackingRootKeyStore()).createChallenge(request, configWithStrategy);

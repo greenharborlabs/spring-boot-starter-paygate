@@ -8,12 +8,19 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.ProtocolMetadata;
+import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.context.ApplicationContext;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -67,6 +74,70 @@ class PaygateDispatchEnforcementTest {
           .as("changed target must be reauthorized for %s", dispatcherType)
           .hasValue(2);
       assertThat(fixture.handlerCalls).hasValue(2);
+    }
+  }
+
+  @Test
+  @DisplayName("a FORWARD to another paid endpoint validates against that endpoint's price")
+  void forwardToAnotherEndpointValidatesAgainstItsOwnPrice() throws Exception {
+    var registry = new PaygateEndpointRegistry();
+    registry.register(new PaygateEndpointConfig("GET", FIRST_TARGET, 1, 60, "first", "", ""));
+    registry.register(new PaygateEndpointConfig("GET", SECOND_TARGET, 7, 60, "second", "", ""));
+    var prices = new CopyOnWriteArrayList<String>();
+    try (var pricing =
+        new PaygateRequestPricingService(
+            Mockito.mock(ApplicationContext.class), Duration.ofSeconds(1), 1)) {
+      var challengeService = Mockito.mock(PaygateChallengeService.class);
+      Mockito.when(
+              challengeService.resolveTrustedPrice(
+                  ArgumentMatchers.any(), ArgumentMatchers.any(PaygateEndpointConfig.class)))
+          .thenAnswer(call -> pricing.resolve(call.getArgument(0), call.getArgument(1)));
+      var filter =
+          new PaygateSecurityFilter(
+              registry,
+              List.of(new PriceCapturingProtocol(prices)),
+              challengeService,
+              "test-service",
+              null,
+              null,
+              null,
+              null);
+      var request = request(FIRST_TARGET, DispatcherType.REQUEST);
+
+      filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> {});
+      request.setRequestURI(SECOND_TARGET);
+      request.setDispatcherType(DispatcherType.FORWARD);
+      filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> {});
+
+      assertThat(prices).containsExactly("1", "7");
+    }
+  }
+
+  private record PriceCapturingProtocol(List<String> prices) implements PaymentProtocol {
+    @Override
+    public String scheme() {
+      return "Test";
+    }
+
+    @Override
+    public boolean canHandle(String authorizationHeader) {
+      return true;
+    }
+
+    @Override
+    public PaymentCredential parseCredential(String authorizationHeader) {
+      return new PaymentCredential(
+          new byte[32], new byte[32], "test-token", scheme(), null, new ProtocolMetadata() {});
+    }
+
+    @Override
+    public ChallengeResponse formatChallenge(ChallengeContext context) {
+      throw new AssertionError("a valid credential must not create a challenge");
+    }
+
+    @Override
+    public void validate(PaymentCredential credential, Map<String, String> requestContext) {
+      prices.add(requestContext.get(VerificationContextKeys.CURRENT_PRICE_SATS));
     }
   }
 

@@ -11,6 +11,7 @@ import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.PaygateRequestPricingService;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyIncompleteException;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
@@ -265,8 +266,9 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         PaygateResponseWriter.writeLightningUnavailable(response);
         return;
       } else {
-        authRequest.setAttribute(
-            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE",
+        PaygateRequestPricingService.memoize(
+            authRequest,
+            resolvedEndpoint.config(),
             new TrustedRequestPrice(resolvedEndpoint.config().priceSats()));
       }
     } catch (UnsupportedRequestEncodingException e) {
@@ -487,13 +489,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     if (capability != null && !capability.isBlank()) {
       metadata.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
-    Object resolvedPrice =
-        request.getAttribute(
-            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE");
+    TrustedRequestPrice resolvedPrice =
+        PaygateRequestPricingService.memoizedPrice(request, endpointConfig);
     TrustedRequestPrice trustedPrice =
-        resolvedPrice instanceof TrustedRequestPrice candidate
-            ? candidate
-            : new TrustedRequestPrice(endpointConfig.priceSats());
+        resolvedPrice != null ? resolvedPrice : new TrustedRequestPrice(endpointConfig.priceSats());
     metadata.put(
         VerificationContextKeys.CURRENT_PRICE_SATS, Long.toString(trustedPrice.amountSats()));
     metadata.put(
