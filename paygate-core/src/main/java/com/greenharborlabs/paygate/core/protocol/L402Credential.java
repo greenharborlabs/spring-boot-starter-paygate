@@ -146,6 +146,12 @@ public record L402Credential(
       throw new L402Exception(
           ErrorCode.MALFORMED_HEADER, "Invalid base64 macaroon encoding: " + e.getMessage(), null);
     }
+    // Accept only the canonical padded encoding, so one macaroon has exactly one header form. The
+    // JDK decoder also accepts missing padding and nonzero unused trailing bits.
+    if (!Base64.getEncoder().encodeToString(macaroonBytes).equals(base64Token)) {
+      throw new L402Exception(
+          ErrorCode.MALFORMED_HEADER, "Invalid base64 macaroon encoding: not canonical", null);
+    }
 
     if (macaroonBytes.length > MAX_MACAROON_BYTES) {
       throw new L402Exception(
