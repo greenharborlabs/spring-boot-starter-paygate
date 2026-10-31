@@ -1,6 +1,6 @@
 # Remediate 2026-10-18 security review Low findings
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 817e8b9c8a6612fcd3d8cacf270ee20aba0c54d5
 Review scope: paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, integration-tests/scripts/setup-go-interop.sh, integration-tests/PLAYBOOK.md, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
 ## Goal
@@ -68,6 +68,8 @@ Acceptance evidence:
   - LNbits: plaintext now requires a dev profile, and responses are capped at 1 MiB.
   - Startup or initialisation fails for `@PaymentRequired` in a child dispatcher context.
 
+Approved: 2026-10-31 by Mark Hammond at plan revision 817e8b9c8a6612fcd3d8cacf270ee20aba0c54d5.
+
 ## Tasks
 - [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the in-scope PoCs in, confirm each still reproduces, then invert them.
 - [ ] SR-12/I-02/I-03: issuer-prefix rule and 4-argument constructor fail-closed. Check: the inverted L402Price, HolderAppendedIssuerCaveat and ClientIpLegacySelfBind PoCs; built-in credentials still validate; a custom-issuer credential with price after `valid_until` gets `MISSING_PRICE_EVIDENCE`.
@@ -88,4 +90,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise this plan.
+Implement the approved plan, record each check result, and set `Status: review`.
