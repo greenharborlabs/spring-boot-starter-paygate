@@ -1,6 +1,6 @@
 # Remediate 2026-10-18 security review Info items
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: b1d9c9ed8b04a1afae3141e693c04ea347e1c3c3
 Review scope: paygate-api/src/**, paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, build.gradle.kts, META-INF/**, integration-tests/docker-compose*.yml, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
 ## Goal
@@ -71,6 +71,8 @@ Acceptance evidence:
   - invoice-hash mismatch returning 503;
   - `rootKeyBytes()` after `close()` throwing.
 
+Approved: 2026-10-31 by Mark Hammond at plan revision b1d9c9ed8b04a1afae3141e693c04ea347e1c3c3.
+
 ## Tasks
 - [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the PoCs in and record which still reproduce.
 - [ ] I-01, I-04, I-05, I-06: strict V2 and L402 decoding, cache ordering, preimage zeroization, closed-context throw. Check: inverted V2ParserEdgeCase and L402Price `c2`/`c3`; go-macaroon interop vectors still parse; module tests.
@@ -89,4 +91,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise this plan.
+Implement the approved plan, record each check result, and set `Status: review`.
