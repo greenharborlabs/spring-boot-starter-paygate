@@ -126,11 +126,15 @@ The central class of this module. Implements the `PaymentProtocol` interface fro
 | `canHandle(String)` | Returns `true` if the Authorization header starts with `"Payment "` (case-insensitive) |
 | `parseCredential(String)` | Strips the `"Payment "` prefix, delegates to `MppCredentialParser.parse()`, and validates that the payment method is `"lightning"` |
 | `formatChallenge(ChallengeContext)` | Builds the `WWW-Authenticate: Payment ...` header with HMAC-bound ID, JCS-serialized charge request, required digest binding, RFC 3339 expiry, an `opaque` map that always carries the paid-policy binding (plus any caller-supplied entries), and an optional description. Rejects a context without a route pattern or request method |
-| `validate(PaymentCredential, Map)` | Executes the security-critical validation flow: (1) preimage hash check, (2) digest binding check, (3) HMAC binding check, (4) expiry check, (5) paid-policy binding check (opaque route, method, and capability equal `request.route`, `request.method`, and `request.capability`; bound `amount` is at least `request.current_price_sats`), (6) method check |
+| `validate(PaymentCredential, Map)` | Executes the security-critical validation flow: (1) preimage hash check, (2) digest binding check, (3) HMAC binding check, then the realm check when the instance is realm-bound, (4) expiry check, (5) paid-policy binding check (opaque route, method, and capability equal `request.route`, `request.method`, and `request.capability`; bound `amount` is at least `request.current_price_sats`), (6) method check |
 | `validateAndResolveCapabilities(PaymentCredential, Map)` | Runs `validate` and returns the capability names from the verified opaque binding (empty when the policy declares none). The Spring Security integration grants `PAYGATE_CAPABILITY_*` authorities only from this result |
 | `createReceipt(PaymentCredential, ChallengeContext)` | Delegates to `MppReceipt.from()` to build a `PaymentReceipt` |
 
-Constructor requires a `byte[] challengeBindingSecret` of at least 32 bytes. The secret is defensively copied.
+Every constructor requires a `challengeBindingSecret` of at least 32 bytes. The secret is defensively copied.
+
+Use the realm-bound constructor `MppProtocol(challengeBindingSecret, parserLimits, previousChallengeBindingSecret, clock, serviceName)`. It rejects, as `INVALID`, a credential whose echoed challenge `realm` differs from `serviceName` (compared in constant time). Challenges take their realm from `ChallengeContext.serviceName()`, so issue them with the same service name. Spring Boot auto-configuration uses this constructor with `paygate.service-name` (or `default` when unset), the same name it issues challenges with.
+
+The other constructors keep their earlier behaviour and do not check the realm: they accept a credential issued by any service that shares the binding secret. Whichever constructor you use, give each service its own binding secret (see [One Binding Secret per Service](#one-binding-secret-per-service)).
 
 ### MppChallengeBinding
 
@@ -271,7 +275,7 @@ Client                                  Server (MppProtocol)
 
 **Step 3: Credential presentation.** The client echoes back the entire challenge object plus the payment preimage in a base64url-encoded JSON blob in the `Authorization: Payment` header.
 
-**Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, digest binding, HMAC binding, expiry, paid-policy binding, and method. The echoed challenge digest must be present and must match the request digest from the validation context. On success, a `Payment-Receipt` header is included in the response.
+**Step 4: Validation.** `MppProtocol.validate()` verifies the credential in security-critical order: preimage hash, digest binding, HMAC binding, realm (for a realm-bound instance), expiry, paid-policy binding, and method. The echoed challenge digest must be present and must match the request digest from the validation context. On success, a `Payment-Receipt` header is included in the response.
 
 ### Paid-Policy Binding
 
@@ -335,6 +339,7 @@ Server validates (security-critical order):
   1. SHA-256(preimage) == payment_hash       (preimage check)
   2. echoed digest == request digest           (digest binding)
   3. HMAC-SHA256(secret, fields) == id         (binding check)
+     realm == serviceName                      (realm check, realm-bound instances)
   4. Instant.now() < expires                   (expiry check)
   5. opaque route/method/capability == request (paid-policy binding)
      request.amount >= current price
@@ -385,7 +390,7 @@ The `Authorization: Payment` header carries a base64url-nopad encoded JSON blob:
 |-------|----------|-------------|
 | `challenge` | Yes | Object echoing back the server's challenge parameters |
 | `challenge.id` | Yes | The HMAC-bound challenge ID (used as `tokenId`) |
-| `challenge.realm` | Yes | Service name from the challenge |
+| `challenge.realm` | Yes | Service name from the challenge; a realm-bound `MppProtocol` requires it to equal its own service name |
 | `challenge.method` | Yes | Payment method (must be `"lightning"`) |
 | `challenge.intent` | Yes | Challenge intent (e.g., `"charge"`) |
 | `challenge.request` | Yes | Base64url-nopad encoded JCS charge request |
@@ -453,6 +458,14 @@ The `MppProtocol` constructor defensively clones the `challengeBindingSecret` by
 
 The challenge binding secret must be at least 32 bytes (256 bits). Shorter secrets are rejected at construction time with `IllegalArgumentException`.
 
+### One Binding Secret per Service
+
+Each service must use its own challenge binding secret (`paygate.protocols.mpp.challenge-binding-secret`). Do not reuse one secret across services. The HMAC proves only that *some* holder of the secret issued a challenge, so every service holding the same secret can mint challenges the others would verify.
+
+The `realm` slot is part of the HMAC, so a client cannot change the realm of a challenge. That does not, by itself, separate services. A realm-bound `MppProtocol` (the auto-configured default) also rejects a credential whose realm is not its own service name, which stops cross-service replay between services with distinct names. Services that share both a secret and a service name, or that use a constructor without a service name, accept each other's credentials for matching routes. Replicas of one service may share its secret, because they are the same service.
+
+During rotation, `previous-challenge-binding-secret` is the same service's earlier secret, never another service's current one.
+
 ---
 
 ## Testing
@@ -497,6 +510,17 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions. No external JSON l
 | Security order: preimage checked before HMAC | Oracle attack prevention |
 | `createReceipt()` returns receipt with correct fields | Receipt generation |
 
+#### MppProtocol realm binding (`MppRealmBindingTest`)
+
+| Test Case | What It Verifies |
+|-----------|-----------------|
+| Credential issued by another service sharing the secret is `INVALID` | Cross-realm replay rejection |
+| Credential issued for the same realm validates | Same-service compatibility |
+| Realm differing only by case is `INVALID` | Exact realm comparison |
+| Cross-realm credential signed with the previous secret is `INVALID` | Realm check also applies during rotation |
+| Legacy constructors accept any realm | Existing constructors keep their behaviour |
+| Null or blank service name rejected | Constructor validation |
+
 #### MppChallengeBinding (`MppChallengeBindingTest`)
 
 | Test Case | What It Verifies |
@@ -505,7 +529,7 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions. No external JSON l
 | Round-trip with null optional slots | Absent field handling |
 | Round-trip with only expires null | Partial optional field handling |
 | Tampered ID (one byte flipped) rejected | Integrity detection |
-| Different realm/method/request/secret rejected | Per-field binding isolation |
+| Tampered realm/method/request, or a different secret, rejected | Per-field tamper detection. This does not separate services that share a secret; see `MppRealmBindingTest` |
 | Malformed base64 ID rejected without crash | Graceful error handling |
 | Empty ID rejected | Length mismatch detection |
 | Null required parameters throw NPE | Input validation |
