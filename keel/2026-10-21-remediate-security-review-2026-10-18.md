@@ -1,5 +1,5 @@
 # Remediate 2026-10-18 security review High and Medium findings
-Status: review
+Status: closed
 Base revision: 84239cabe96fa2df6b3d3d27c1604cbcabba32e2
 Review scope: paygate-api/src/**, paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/main/**, paygate-integration-tests/src/**, paygate-integration-tests/build.gradle.kts, paygate-example-app/src/**, paygate-example-app-spring-security/src/test/**, .github/workflows/snapshot.yml, .github/workflows/release.yml, .github/workflows/security-suite.yml, .github/requirements/**, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, docs/security/KIMI-MEDIUM-FINDING-DISPOSITIONS.md, docs/AGENT-MACAROON-DELEGATION.md, integration-tests/PLAYBOOK.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
@@ -98,8 +98,54 @@ Points for the reviewer:
    - SR-06(a) was verified only in tests, not through a real HAProxy.
    - Live LND and LNbits were not exercised.
 
+### Attempt 1
+Reviewed revision: faeae7f1468fc3169b61f01c1e76f093fabe5ae9
+Verdict: pass
+Findings and dispositions:
+1. Non-blocking (documentation wording). The SR-02 decision and [SECURITY.md](../SECURITY.md) line 87 say the opaque binds the "policy method". The code binds the actual HTTP request method instead: both `PaygateChallengeService` and the two validation paths pass `request.getMethod()`. The MPP, root and autoconfigure READMEs, the CHANGELOG and `MppRequestBinding` Javadoc all correctly say "request method". This is stricter than planned, not weaker: a `*` policy cannot be reused across methods, and HEAD/GET already differ through the digest. So no assurance is overstated. The deviation was not noted in the record. Correct the SECURITY.md wording in the follow-up Low/Info record; no rework required here.
+2. Non-blocking (accepted limitations, already in the ledger):
+   - The SR-08 guard probes one sample path per paid route, so a chain whose matcher selects only some concrete paths can still pass startup. For non-`HandlerMethod` manual routes, the interceptor backstop fails these requests closed.
+   - Under SR-05, the capture filter's `registry.resolve` evaluates MVC `params=` conditions. On paid form POSTs this drains the body first, so those requests get 400 `REQUEST_BODY_INCOMPLETE`. The CHANGELOG already lists this.
+
+   Both are recorded as residual risk, so no rework is required.
+
+No correctness, security, data-loss or acceptance failures were found. Every scoped claim was checked against the code:
+- **SR-01/03/04/17.** The resolver rejects the listed segment shapes. Manual routes match the parsed `RequestPath`, and the interceptor backstop compares against the recorded `ResolvedEndpoint` (record equality).
+- **SR-02.** The route/method/capability comparison runs only after the HMAC check and is constant-time. It parses the amount strictly, fails closed when `CURRENT_PRICE_SATS` is missing, and the metadata fallback is removed.
+- **SR-05 to SR-11.** These match the decisions.
+- **Documentation.** The four statements listed under Constraints are corrected. Every High, Medium and Low finding, and every Info item, has a ledger row. Each `implemented` row names regression tests that exist in the tree.
+Verification:
+- `./gradlew spotlessCheck check --rerun-tasks --continue`: pass. Exit 0, with 3,141 default-module tests and 0 failures, errors or skips, summed from the test XML.
+- `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration`: pass. Exit 0: `test` 96 and `securityTest` 66 tests, 0 failures. The XML timestamps (2026-10-22T02:06Z UTC) confirm a fresh run. Integration Spotless was up to date, carrying its earlier successful result.
+- `git diff --check 84239ca HEAD`: pass (clean).
+- Workflow diff inspection: pass. No `actions/cache` or setup-gradle caching remains in `snapshot.yml` or `release.yml`, and both pip installs use `--require-hashes --only-binary :all:`. `actionlint` exited 0.
+- `zizmor .github/workflows` (optional): skipped, because zizmor is not installed locally. The implementer's zizmor (high) run is the only evidence. Workflow behaviour on GitHub runners was not exercised.
+- Limits: the PoCs were not rerun against the base. Reproduction there rests on the review at `ef395bb` and the implementer's report. Live LND, LNbits and a real HAProxy were not exercised, and the publishing-secret scope check remains a manual action.
+
 ## Outcome
-Pending.
+SR-01 to SR-11 and SR-17 are remediated on `fix/security-review-2026-10-18`; review Attempt 1 passed at `faeae7f`.
+- **Path identity (SR-01/03/04/17).** `ApplicationRelativeRequestResolver` returns 400 for dot, empty, `%`-residual, backslash and `;`-parameter segments on every request. Manual routes match the parsed `RequestPath`, and a `PaygateHandlerInterceptor` backstop fails non-`HandlerMethod` paid routes closed.
+- **MPP binding (SR-02).** The HMAC-bound opaque now carries route, actual request method (stricter than the planned policy method) and capability, checked in constant time with a strict amount ≥ current price check. The capability metadata fallback is removed, and `PaymentProtocol.validateAndResolveCapabilities` was added to `paygate-api`. Credentials issued before the upgrade fail closed until expiry.
+- **SR-05 to SR-11.** These were implemented as decided: early form-body capture, X-Forwarded-For joining with a binding startup guard, per-route chain coverage, a bounded method tag, least-privilege Lightning credential docs, and CI cache removal with hash-locked pip installs.
+- **Documentation.** The new [disposition ledger](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md) covers every SR and I item. [SECURITY.md](../SECURITY.md), [CHANGELOG.md](../CHANGELOG.md), the READMEs and [docs/AGENT-MACAROON-DELEGATION.md](../docs/AGENT-MACAROON-DELEGATION.md) were corrected.
+
+Verification passed at `faeae7f`:
+- `./gradlew spotlessCheck check` ran 3,141 tests.
+- The integration suites ran `test` 96 and `securityTest` 66.
+- `git diff --check` and actionlint were clean.
+- The implementer ran zizmor; the reviewer did not rerun it.
+
+Remaining uncertainty:
+- Live LND, LNbits and a real HAProxy were not exercised, and workflow behaviour on GitHub runners is unverified.
+- The publishing-secret scope check remains a manual action.
+- No validator covers the new ledger.
+- Accepted residual risk: the SR-08 guard probes one sample path per route, and paid form POST routes using `params=` conditions get 400 `REQUEST_BODY_INCOMPLETE`.
+
+Deferred to a follow-up record:
+- the SR-12 to SR-16 and SR-18 to SR-24 Lows and the Info items listed as `deferred` in the ledger;
+- the SECURITY.md "policy method" wording from review finding 1.
+
+After review, the CVE-2025-32013 suppression in [config/dependency-check-suppressions.xml](../config/dependency-check-suppressions.xml) expired on 2026-10-31, so root `check` now fails on every branch until it is renewed. This is outside this record's scope.
 
 ## Next action
-Run the fresh-context `keel-review` of this record.
+Open a PR from `fix/security-review-2026-10-18` to `main` once the CVE-2025-32013 renewal in [config/dependency-check-risk-dispositions.md](../config/dependency-check-risk-dispositions.md) restores root `check`.
