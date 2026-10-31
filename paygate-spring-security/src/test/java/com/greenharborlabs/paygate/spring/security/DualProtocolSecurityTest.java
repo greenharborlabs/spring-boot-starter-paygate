@@ -251,12 +251,14 @@ class DualProtocolSecurityTest {
     }
 
     @Test
-    void mppAuthenticatedTokenWithSourceIncludesSourceAttribute() {
+    void mppAuthenticatedTokenWithSourceOmitsUnverifiedSourceAttribute() {
       PaymentCredential cred = createTestPaymentCredential("Payment", "did:key:z6MkTest");
       var token = PaygateAuthenticationToken.authenticated(cred, SERVICE_NAME);
 
+      // source is unauthenticated client input and must never reach the authority path.
       assertThat(token.getAttributes())
-          .containsEntry("source", "did:key:z6MkTest")
+          .doesNotContainKey("source")
+          .doesNotContainValue("did:key:z6MkTest")
           .containsEntry("protocolScheme", "Payment")
           .containsEntry("tokenId", cred.tokenId());
     }

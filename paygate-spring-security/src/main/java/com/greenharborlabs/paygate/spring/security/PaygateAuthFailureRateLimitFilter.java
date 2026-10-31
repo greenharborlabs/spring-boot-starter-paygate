@@ -4,10 +4,10 @@ import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
-import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,10 +24,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * <ol>
  *   <li><strong>Pre-check on entry:</strong> consumes a rate limiter token before downstream
  *       processing. If exhausted, short-circuits with 429.
- *   <li><strong>Post-failure penalty:</strong> after the filter chain returns, if the response
- *       status is 401 or 503 (the statuses {@link PaygateAuthenticationFilter} produces) and the
- *       endpoint is protected, consumes an additional penalty token.
+ *   <li><strong>Post-failure penalty:</strong> after the filter chain returns, if {@link
+ *       PaygateAuthenticationFilter} marked the request as a client-fault failure of a presented
+ *       credential (malformed, invalid, or expired), consumes an additional penalty token. Backend
+ *       outages and other server-side failures are not penalized, whatever their status.
  * </ol>
+ *
+ * <p>The protected endpoint is resolved with {@link PaygateEndpointRegistry#resolve(
+ * HttpServletRequest)}, the same full request-mapping resolution that {@link
+ * PaygateAuthenticationFilter} uses, so a request that the authentication filter treats as paid is
+ * always rate limited here.
  *
  * <p>This filter should be placed <em>before</em> {@link PaygateAuthenticationFilter} in the Spring
  * Security filter chain. Requests without a payment-scheme {@code Authorization} header bypass this
@@ -40,8 +46,6 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
       System.getLogger(PaygateAuthFailureRateLimitFilter.class.getName());
 
   private static final String AUTHORIZATION_HEADER = "Authorization";
-  private static final int HTTP_UNAUTHORIZED = 401;
-  private static final int HTTP_SERVICE_UNAVAILABLE = 503;
 
   private final @Nullable PaygateRateLimiter rateLimiter;
   private final @Nullable ClientIpResolver clientIpResolver;
@@ -82,9 +86,9 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
       return;
     }
 
-    PaygateEndpointConfig endpointConfig;
+    ResolvedEndpoint resolvedEndpoint;
     try {
-      endpointConfig = lookupEndpointConfig(request);
+      resolvedEndpoint = lookupEndpoint(request);
     } catch (MalformedRequestUriException e) {
       PaygateResponseWriter.writeMalformedUri(response);
       return;
@@ -97,7 +101,7 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
       return;
     }
 
-    if (endpointConfig == null) {
+    if (resolvedEndpoint == null) {
       // Not a protected endpoint -- pass through without rate limiting
       filterChain.doFilter(request, response);
       return;
@@ -110,29 +114,26 @@ public final class PaygateAuthFailureRateLimitFilter extends OncePerRequestFilte
 
     filterChain.doFilter(request, response);
 
-    if (isAuthFailureStatus(response.getStatus())) {
+    if (PaygateAuthenticationFilter.isClientFaultFailure(request)) {
       consumeRateLimitPenalty(request);
     }
   }
 
-  private @Nullable PaygateEndpointConfig lookupEndpointConfig(HttpServletRequest request) {
-    String normalizedPath;
+  private @Nullable ResolvedEndpoint lookupEndpoint(HttpServletRequest request) {
     try {
-      normalizedPath = ApplicationRelativeRequestResolver.resolve(request);
+      ApplicationRelativeRequestResolver.resolve(request);
     } catch (RuntimeException e) {
       throw new MalformedRequestUriException(e);
     }
-    return endpointRegistry.findConfig(request.getMethod(), normalizedPath);
+    // Full MVC resolution, identical to PaygateAuthenticationFilter: a path-only lookup can miss a
+    // paid route that a params/headers/produces condition hides from the path alone.
+    return endpointRegistry.resolve(request);
   }
 
   private static final class MalformedRequestUriException extends RuntimeException {
     MalformedRequestUriException(RuntimeException cause) {
       super(cause);
     }
-  }
-
-  private static boolean isAuthFailureStatus(int status) {
-    return status == HTTP_UNAUTHORIZED || status == HTTP_SERVICE_UNAVAILABLE;
   }
 
   /**

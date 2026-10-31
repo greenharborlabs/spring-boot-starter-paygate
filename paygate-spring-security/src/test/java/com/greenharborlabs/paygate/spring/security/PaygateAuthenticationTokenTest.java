@@ -353,8 +353,8 @@ class PaygateAuthenticationTokenTest {
     assertThat(token.getAttributes())
         .containsEntry("tokenId", "tok-999")
         .containsEntry("protocolScheme", "Payment")
-        .containsEntry("source", "did:key:z6Mk...")
-        .containsEntry("serviceName", "my-api");
+        .containsEntry("serviceName", "my-api")
+        .doesNotContainKey("source");
   }
 
   @Test
@@ -440,7 +440,7 @@ class PaygateAuthenticationTokenTest {
 
     assertThatThrownBy(() -> token.getAttributes().put("source", "attacker-controlled"))
         .isInstanceOf(UnsupportedOperationException.class);
-    assertThat(token.getAttributes()).containsEntry("source", "did:key:z6Mk...");
+    assertThat(token.getAttributes()).doesNotContainKey("source");
   }
 
   @Test

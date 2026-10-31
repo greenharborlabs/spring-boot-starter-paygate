@@ -30,8 +30,12 @@ import java.util.Set;
  *
  * <p>Uses the {@code Payment} authentication scheme with HMAC-SHA256 challenge binding for
  * stateless server-side verification. All validation follows a security-critical order: preimage
- * hash check, request digest, HMAC binding, expiry, then the paid-policy binding (route, method,
- * capability, and amount; see {@link MppRequestBinding}).
+ * hash check, request digest, HMAC binding, realm (when configured), expiry, then the paid-policy
+ * binding (route, method, capability, and amount; see {@link MppRequestBinding}).
+ *
+ * <p>When constructed with a service name, validation also requires the echoed challenge {@code
+ * realm} to equal that name, so a credential issued by another service that shares the binding
+ * secret is rejected. Each service should nevertheless use its own binding secret.
  *
  * <p>Every challenge carries a server {@code opaque} map that binds the canonical route pattern,
  * request method, and capability declaration of the policy that issued it. A {@link
@@ -55,11 +59,17 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
   private final SensitiveBytes previousChallengeBindingSecret;
   private final MppParserLimits parserLimits;
   private final Clock clock;
+  private final String expectedRealm;
   private final Object lifecycleLock = new Object();
   private volatile boolean closed;
 
   /**
    * Creates a new MPP protocol instance with default parser limits.
+   *
+   * <p>This constructor does not check the challenge {@code realm}: any service that shares this
+   * binding secret issues challenges this instance accepts. Prefer {@link
+   * #MppProtocol(SensitiveBytes, MppParserLimits, SensitiveBytes, Clock, String)}, which rejects
+   * credentials issued for another realm.
    *
    * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
    * @throws NullPointerException if secret is null
@@ -73,6 +83,11 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    * Creates a new MPP protocol instance with a clock used for challenge creation and expiry
    * validation.
    *
+   * <p>This constructor does not check the challenge {@code realm}: any service that shares this
+   * binding secret issues challenges this instance accepts. Prefer {@link
+   * #MppProtocol(SensitiveBytes, MppParserLimits, SensitiveBytes, Clock, String)}, which rejects
+   * credentials issued for another realm.
+   *
    * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
    * @param clock time source for challenge creation and expiry validation
    */
@@ -82,6 +97,11 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
 
   /**
    * Creates a new MPP protocol instance with custom parser limits.
+   *
+   * <p>This constructor does not check the challenge {@code realm}: any service that shares this
+   * binding secret issues challenges this instance accepts. Prefer {@link
+   * #MppProtocol(SensitiveBytes, MppParserLimits, SensitiveBytes, Clock, String)}, which rejects
+   * credentials issued for another realm.
    *
    * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
    * @param parserLimits limits for JSON parser resource exhaustion protection
@@ -95,6 +115,11 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
   /**
    * Creates a new MPP protocol instance with default parser limits and optional previous secret for
    * key rotation.
+   *
+   * <p>This constructor does not check the challenge {@code realm}: any service that shares this
+   * binding secret issues challenges this instance accepts. Prefer {@link
+   * #MppProtocol(SensitiveBytes, MppParserLimits, SensitiveBytes, Clock, String)}, which rejects
+   * credentials issued for another realm.
    *
    * @param challengeBindingSecret current HMAC secret for challenge binding (minimum 32 bytes)
    * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
@@ -115,6 +140,11 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    * Creates a new MPP protocol instance with custom parser limits and optional previous secret for
    * key rotation.
    *
+   * <p>This constructor does not check the challenge {@code realm}: any service that shares this
+   * binding secret issues challenges this instance accepts. Prefer {@link
+   * #MppProtocol(SensitiveBytes, MppParserLimits, SensitiveBytes, Clock, String)}, which rejects
+   * credentials issued for another realm.
+   *
    * @param challengeBindingSecret current HMAC secret for challenge binding (minimum 32 bytes)
    * @param parserLimits limits for JSON parser resource exhaustion protection
    * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
@@ -133,6 +163,11 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    * Creates a new MPP protocol instance with custom parser limits, optional key rotation, and an
    * explicit time source.
    *
+   * <p>This constructor does not check the challenge {@code realm}: any service that shares this
+   * binding secret issues challenges this instance accepts. Prefer {@link
+   * #MppProtocol(SensitiveBytes, MppParserLimits, SensitiveBytes, Clock, String)}, which rejects
+   * credentials issued for another realm.
+   *
    * @param challengeBindingSecret current HMAC secret for challenge binding (minimum 32 bytes)
    * @param parserLimits limits for JSON parser resource exhaustion protection
    * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
@@ -146,6 +181,52 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
       MppParserLimits parserLimits,
       SensitiveBytes previousChallengeBindingSecret,
       Clock clock) {
+    this(challengeBindingSecret, parserLimits, previousChallengeBindingSecret, clock, null, false);
+  }
+
+  /**
+   * Creates a new MPP protocol instance bound to one service realm.
+   *
+   * <p>Validation rejects, as {@link ErrorCode#INVALID}, a credential whose echoed challenge {@code
+   * realm} differs from {@code serviceName}. Challenges are issued with the realm taken from {@link
+   * ChallengeContext#serviceName()}, so callers must issue them with this same service name.
+   *
+   * @param challengeBindingSecret current HMAC secret for challenge binding (minimum 32 bytes)
+   * @param parserLimits limits for JSON parser resource exhaustion protection
+   * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
+   *     bytes), or null
+   * @param clock time source for challenge creation and expiry validation
+   * @param serviceName the realm this instance accepts credentials for
+   * @throws NullPointerException if challengeBindingSecret, parserLimits, clock, or serviceName is
+   *     null
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes, or
+   *     serviceName is blank
+   */
+  public MppProtocol(
+      SensitiveBytes challengeBindingSecret,
+      MppParserLimits parserLimits,
+      SensitiveBytes previousChallengeBindingSecret,
+      Clock clock,
+      String serviceName) {
+    this(
+        challengeBindingSecret,
+        parserLimits,
+        previousChallengeBindingSecret,
+        clock,
+        Objects.requireNonNull(serviceName, "serviceName must not be null"),
+        true);
+  }
+
+  private MppProtocol(
+      SensitiveBytes challengeBindingSecret,
+      MppParserLimits parserLimits,
+      SensitiveBytes previousChallengeBindingSecret,
+      Clock clock,
+      String expectedRealm,
+      boolean realmRequired) {
+    if (realmRequired && expectedRealm.isBlank()) {
+      throw new IllegalArgumentException("serviceName must not be blank");
+    }
     Objects.requireNonNull(challengeBindingSecret, "challengeBindingSecret must not be null");
     Objects.requireNonNull(parserLimits, "parserLimits must not be null");
     Objects.requireNonNull(clock, "clock must not be null");
@@ -155,6 +236,7 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
     this.previousChallengeBindingSecret = copySecret(previousChallengeBindingSecret);
     this.parserLimits = parserLimits;
     this.clock = clock;
+    this.expectedRealm = expectedRealm;
   }
 
   @Override
@@ -411,6 +493,13 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
         if (!(hmacCurrentSecretValid || hmacPreviousSecretValid)) {
           throw new PaymentValidationException(
               ErrorCode.INVALID, "Challenge binding verification failed", credential.tokenId());
+        }
+
+        // 2a. Realm binding. The realm is HMAC-authenticated above, but another service that
+        // shares the binding secret issues equally authentic challenges for its own realm.
+        if (expectedRealm != null && !MppCryptoUtils.constantTimeEqualsUtf8(expectedRealm, realm)) {
+          throw new PaymentValidationException(
+              ErrorCode.INVALID, "Challenge realm mismatch", credential.tokenId());
         }
 
         // 3. Expiry check. Expiry is HMAC-bound above and is mandatory for replay protection.

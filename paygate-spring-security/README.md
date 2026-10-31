@@ -129,7 +129,9 @@ PaygateAuthFailureRateLimitFilter --> PaygateAuthenticationFilter --> (rest of c
 The rate limit filter is auto-configured only when a `PaygateRateLimiter` bean exists. It applies two phases of protection:
 
 1. **Pre-check:** Consumes a rate limiter token on entry. If exhausted, returns 429 before any downstream processing.
-2. **Post-failure penalty:** After the chain returns, if the response status is 401 or 503 (auth failure), consumes an additional penalty token to penalize brute-force probing.
+2. **Post-failure penalty:** After the chain returns, consumes an additional penalty token when `PaygateAuthenticationFilter` marked the request as a client-fault failure of a presented credential: malformed (400), invalid or expired (402), or an otherwise unclassified authentication failure (401). The penalty follows that marker, not the response status. Backend outages and other server-side failures (503, 500), request-body faults, and the replacement challenge for a re-priced endpoint are never penalized.
+
+The filter resolves the protected endpoint with `PaygateEndpointRegistry.resolve(request)`, the same full Spring MVC resolution (including `params`, `headers`, and `produces` conditions) that `PaygateAuthenticationFilter` uses. A request the authentication filter treats as paid is therefore always rate limited.
 
 Requests without a payment-scheme `Authorization` header bypass this filter entirely (challenge issuance in `PaygateAuthenticationEntryPoint` has its own rate limiting via `PaygateChallengeService`).
 
@@ -146,7 +148,7 @@ PaygateAuthFailureRateLimitFilter (OncePerRequestFilter, optional)
      |-- Rate limit exhausted? --> 429 Too Many Requests
      |-- Rate limit OK? --> continue to next filter
      |       |
-     |       v (after chain returns: 401/503 --> consume penalty token)
+     |       v (after chain returns: client-fault credential failure --> consume penalty token)
      |
      v
 PaygateAuthenticationFilter (OncePerRequestFilter)
@@ -209,7 +211,7 @@ The token has two states:
 | `credentials` | `[REDACTED]`; no raw authorization header, parsed credential components, preimage, `L402Credential`, or `PaymentCredential` is retained |
 | `attributes` | Immutable map of verifier-approved values plus protected `tokenId`, `serviceName`, and `protocolScheme` metadata |
 
-Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
+Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. The optional MPP `source` field is unverified client input (no HMAC slot covers it), so it is not exposed as an attribute; do not base authorization on it. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
 Non-L402 `PAYGATE_CAPABILITY_*` authorities come from `PaymentProtocol.validateAndResolveCapabilities(...)`, which returns only capabilities that the credential itself authenticates. Any `CapabilityResolver` result is added to them. For MPP, the capability is the one bound into the HMAC-authenticated challenge `opaque` when the challenge was issued, and validation requires it to match the endpoint's declaration. An MPP credential bought for a capability-free or differently scoped endpoint is therefore rejected, not granted the requested endpoint's capability. The requested capability in `requestMetadata` is never itself a source of authorities.
 

@@ -14,6 +14,7 @@ import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateRateLimiter;
+import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -39,6 +40,11 @@ class PaygateAuthFailureRateLimitFilterTest {
   private static final String VALID_PREIMAGE =
       "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
   private static final String VALID_L402_HEADER = "L402 " + VALID_MACAROON + ":" + VALID_PREIMAGE;
+  private static final ResolvedEndpoint DATA_ENDPOINT =
+      new ResolvedEndpoint(
+          new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"),
+          "/api/v1/data",
+          "GET");
 
   @Mock private PaygateRateLimiter rateLimiter;
 
@@ -67,9 +73,7 @@ class PaygateAuthFailureRateLimitFilterTest {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolveRateLimitIdentity(any())).thenReturn("192.168.1.1");
     when(rateLimiter.tryAcquire("192.168.1.1")).thenReturn(false);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
@@ -92,9 +96,7 @@ class PaygateAuthFailureRateLimitFilterTest {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolveRateLimitIdentity(request)).thenReturn("192.168.1.1");
     when(rateLimiter.tryAcquire("192.168.1.1")).thenReturn(false);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
@@ -102,28 +104,28 @@ class PaygateAuthFailureRateLimitFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(429);
-    verify(endpointRegistry).findConfig("GET", "/api/v1/data");
+    verify(endpointRegistry).resolve(request);
     verify(rateLimiter).tryAcquire("192.168.1.1");
     verify(filterChain, never()).doFilter(any(), any());
   }
 
   @Test
-  void authFailure401_consumesPenaltyToken() throws ServletException, IOException {
+  void clientFaultFailure_consumesPenaltyToken() throws ServletException, IOException {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolveRateLimitIdentity(any())).thenReturn("192.168.1.1");
     when(rateLimiter.tryAcquire("192.168.1.1")).thenReturn(true);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
             rateLimiter, clientIpResolver, endpointRegistry, protocols);
 
-    // Simulate downstream setting 401
+    // Simulate PaygateAuthenticationFilter rejecting a presented credential (client fault)
     FilterChain failChain =
         (req, res) -> {
-          ((MockHttpServletResponse) res).setStatus(401);
+          req.setAttribute(
+              PaygateAuthenticationFilter.CLIENT_FAULT_FAILURE_ATTRIBUTE, Boolean.TRUE);
+          ((MockHttpServletResponse) res).setStatus(402);
         };
 
     filter.doFilter(request, response, failChain);
@@ -132,18 +134,17 @@ class PaygateAuthFailureRateLimitFilterTest {
   }
 
   @Test
-  void authFailure503_consumesPenaltyToken() throws ServletException, IOException {
+  void unmarked503_doesNotConsumePenaltyToken() throws ServletException, IOException {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolveRateLimitIdentity(any())).thenReturn("192.168.1.1");
     when(rateLimiter.tryAcquire("192.168.1.1")).thenReturn(true);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
             rateLimiter, clientIpResolver, endpointRegistry, protocols);
 
+    // A backend outage is not the client's fault, so no penalty is charged.
     FilterChain failChain =
         (req, res) -> {
           ((MockHttpServletResponse) res).setStatus(503);
@@ -151,7 +152,29 @@ class PaygateAuthFailureRateLimitFilterTest {
 
     filter.doFilter(request, response, failChain);
 
-    verify(rateLimiter, times(2)).tryAcquire("192.168.1.1");
+    verify(rateLimiter, times(1)).tryAcquire("192.168.1.1");
+  }
+
+  @Test
+  void unmarkedFailureStatuses_doNotConsumePenaltyToken() throws ServletException, IOException {
+    request.addHeader("Authorization", VALID_L402_HEADER);
+    when(clientIpResolver.resolveRateLimitIdentity(any())).thenReturn("192.168.1.1");
+    when(rateLimiter.tryAcquire("192.168.1.1")).thenReturn(true);
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
+
+    var filter =
+        new PaygateAuthFailureRateLimitFilter(
+            rateLimiter, clientIpResolver, endpointRegistry, protocols);
+
+    // The status alone never decides the penalty; only the authentication filter's marker does.
+    for (int status : new int[] {400, 401, 402, 500}) {
+      filter.doFilter(
+          protectedL402Request(),
+          new MockHttpServletResponse(),
+          (req, res) -> ((MockHttpServletResponse) res).setStatus(status));
+    }
+
+    verify(rateLimiter, times(4)).tryAcquire("192.168.1.1");
   }
 
   @Test
@@ -159,9 +182,7 @@ class PaygateAuthFailureRateLimitFilterTest {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolveRateLimitIdentity(any())).thenReturn("192.168.1.1");
     when(rateLimiter.tryAcquire("192.168.1.1")).thenReturn(true);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
@@ -180,7 +201,7 @@ class PaygateAuthFailureRateLimitFilterTest {
   @Test
   void nonProtectedEndpoint_passthrough() throws ServletException, IOException {
     request.addHeader("Authorization", VALID_L402_HEADER);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data")).thenReturn(null);
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(null);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
@@ -223,7 +244,7 @@ class PaygateAuthFailureRateLimitFilterTest {
 
     verify(filterChain).doFilter(request, response);
     verify(rateLimiter, never()).tryAcquire(anyString());
-    verify(endpointRegistry, never()).findConfig(anyString(), anyString());
+    verify(endpointRegistry, never()).resolve(any(HttpServletRequest.class));
   }
 
   @Test
@@ -231,9 +252,7 @@ class PaygateAuthFailureRateLimitFilterTest {
     request.addHeader("Authorization", VALID_L402_HEADER);
     when(clientIpResolver.resolveRateLimitIdentity(any())).thenReturn("192.168.1.1");
     when(rateLimiter.tryAcquire("192.168.1.1")).thenThrow(new RuntimeException("limiter error"));
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
@@ -247,7 +266,7 @@ class PaygateAuthFailureRateLimitFilterTest {
   @Test
   void endpointRegistryThrows_failsClosed503() throws ServletException, IOException {
     request.addHeader("Authorization", VALID_L402_HEADER);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
         .thenThrow(new RuntimeException("registry error"));
 
     var filter =
@@ -282,9 +301,7 @@ class PaygateAuthFailureRateLimitFilterTest {
     request.addHeader("Authorization", VALID_L402_HEADER);
     request.setRemoteAddr("10.0.0.1");
     when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(false);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(rateLimiter, null, endpointRegistry, protocols);
@@ -301,9 +318,7 @@ class PaygateAuthFailureRateLimitFilterTest {
     when(clientIpResolver.resolveRateLimitIdentity(request))
         .thenReturn("2001:db8:abcd:1234:0:0:0:0");
     when(rateLimiter.tryAcquire("2001:db8:abcd:1234:0:0:0:0")).thenReturn(false);
-    when(endpointRegistry.findConfig("GET", "/api/v1/data"))
-        .thenReturn(
-            new PaygateEndpointConfig("GET", "/api/v1/data", 10, 3600, "Data access", "", "read"));
+    when(endpointRegistry.resolve(any(HttpServletRequest.class))).thenReturn(DATA_ENDPOINT);
 
     var filter =
         new PaygateAuthFailureRateLimitFilter(
@@ -315,6 +330,13 @@ class PaygateAuthFailureRateLimitFilterTest {
     verify(rateLimiter, never()).tryAcquire("2001:db8:abcd:1234::1");
     verify(clientIpResolver).resolveRateLimitIdentity(request);
     verify(clientIpResolver, never()).resolve(request);
+  }
+
+  private static MockHttpServletRequest protectedL402Request() {
+    var protectedRequest = new MockHttpServletRequest("GET", "/api/v1/data");
+    protectedRequest.setRemoteAddr("192.168.1.1");
+    protectedRequest.addHeader("Authorization", VALID_L402_HEADER);
+    return protectedRequest;
   }
 
   @Test

@@ -34,7 +34,7 @@ public final class PaymentCredential implements AutoCloseable, Destroyable {
    * @param preimage 32-byte preimage proving payment
    * @param tokenId token/challenge identifier
    * @param sourceProtocolScheme protocol that parsed this credential
-   * @param source optional payer identity
+   * @param source optional client-supplied source string; unverified, see {@link #source()}
    * @param metadata protocol-specific metadata
    */
   public PaymentCredential(
@@ -85,6 +85,16 @@ public final class PaymentCredential implements AutoCloseable, Destroyable {
     return sourceProtocolScheme;
   }
 
+  /**
+   * Returns the optional {@code source} string supplied with the credential, or {@code null}.
+   *
+   * <p>This value is <strong>unverified client input</strong>. No protocol authenticates it: for
+   * MPP it sits outside the HMAC-bound challenge, so any holder of the credential can set or change
+   * it. It does not identify the payer. Never use it for authentication, authorization, or
+   * accounting decisions, and treat it as untrusted text when logging or displaying it.
+   *
+   * @return the client-supplied source string, or {@code null} if absent
+   */
   public String source() {
     return source;
   }

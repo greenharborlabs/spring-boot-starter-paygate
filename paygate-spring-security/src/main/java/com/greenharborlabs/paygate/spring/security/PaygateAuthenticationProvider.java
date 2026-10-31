@@ -194,7 +194,9 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
                 credential.tokenId(),
                 serviceName,
                 credential.sourceProtocolScheme(),
-                protocolAttributes(credential),
+                // The credential's optional source is unauthenticated client input (no HMAC slot
+                // covers it), so it is never exposed as an authentication attribute.
+                Map.of(),
                 paymentAuthorities(capabilities),
                 receipt);
           } finally {
@@ -231,13 +233,6 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       }
     }
     return Set.copyOf(authorities);
-  }
-
-  private static Map<String, String> protocolAttributes(PaymentCredential credential) {
-    if (credential.source() == null) {
-      return Map.of();
-    }
-    return Map.of("source", credential.source());
   }
 
   private PaymentReceipt createReceipt(

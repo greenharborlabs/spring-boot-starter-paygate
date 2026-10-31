@@ -319,8 +319,17 @@ public class PaygateAutoConfiguration {
               mpp.getMaxKeysPerObject(),
               mpp.getMaxCredentialBytes());
       var previousSecret = mppPreviousChallengeBindingSecretProvider.getIfAvailable();
+      // Same realm fallback as the challenge service, so issued challenges validate here.
+      String serviceName = properties.getServiceName();
+      if (serviceName == null || serviceName.isBlank()) {
+        serviceName = "default";
+      }
       return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(
-          mppChallengeBindingSecret, limits, previousSecret);
+          mppChallengeBindingSecret,
+          limits,
+          previousSecret,
+          java.time.Clock.systemUTC(),
+          serviceName);
     }
   }
 
