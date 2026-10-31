@@ -1,5 +1,5 @@
 # Remediate 2026-10-18 security review Low findings
-Status: review
+Status: closed
 Base revision: 817e8b9c8a6612fcd3d8cacf270ee20aba0c54d5
 Review scope: paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, integration-tests/scripts/setup-go-interop.sh, integration-tests/scripts/run-go-interop-test.sh, paygate-api/src/main/java/com/greenharborlabs/paygate/api/PaymentCredential.java, integration-tests/PLAYBOOK.md, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
@@ -138,8 +138,73 @@ Rework verification:
 - `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration`: pass, exit 0. `test` 145 and `securityTest` 66, 0 failures, with fresh XML timestamps (2026-10-31T14:09Z).
 - `git diff --check 817e8b9 HEAD`: pass (clean).
 
+### Attempt 2
+Reviewed revision: ba86f7ed44bd4236dbea140e54bdd65033b1f79b
+Verdict: pass
+Findings and dispositions: No findings; no rework required.
+
+Attempt 1 finding 1 (SR-12/I-02 provider bypass) is fixed. `IssuerCaveatPrefix.hasIssuerClientAddressBinding` requires exactly one `client_ip` and that it lies before the first `{svc}_valid_until`; both `L402Protocol` and `PaygateAuthenticationProvider` call it, and the provider fails binding closed without a service name. The exact-key comparison for `client_ip` matches the previous counting semantics and, because verification evaluates the issuer-signed caveat independently, the padded-key case does not create a bypass. `ProviderIssuerClientAddressBindingRegressionTest` covers the legacy-unbound plus holder-appended `client_ip` case, the issuer-bound plus second `client_ip` case, and binding disabled; all three pass. The SECURITY.md, L402 README, CHANGELOG and SR-12/I-02 ledger claims now match both modes.
+
+Attempt 1 finding 2 is fixed. Each deferred, partial or accepted Info row now names the follow-up record *Remediate 2026-10-18 security review Info items* (title only, as the record does not exist yet), satisfying the acceptance clause.
+
+The rework diff since Attempt 1 (`3ce817c..0e9822b`) was reviewed clean: no correctness, security, data-loss, unnecessary-complexity or documentation-drift issues. No changes were made to the reviewed implementation.
+
+Verification:
+- Preconditions (status `review`, full base revision, concrete `Review scope` excluding the record, clean tree, scoped paths clean): pass. `HEAD` changes only this record, so the reviewed implementation is the `817e8b9..0e9822b` history.
+- Scoped diff `817e8b9..HEAD`: pass.
+- `./gradlew spotlessCheck check --rerun-tasks --continue`: pass, exit 0, `BUILD SUCCESSFUL in 1m 24s`; 3,297 default-module tests across 493 result XMLs, 0 failures, errors or skips.
+- `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration`: pass, exit 0; `test` 145 tests and `securityTest` 66 tests, 0 failures, errors or skips, with fresh result XMLs from 2026-10-31T17:20Z.
+- `git diff --check 817e8b9 HEAD`: pass (clean).
+- Docker LNbits stack, live LND and LNbits, and GitHub runners: not exercised, matching the record's stated limits.
+
 ## Outcome
-Pending.
+The 12 deferred Low findings (SR-12 to SR-16, SR-18 to SR-24) and Info items I-02, I-03 and I-15 are remediated on `fix/security-review-2026-10-18-lows`. Review Attempt 2 passed at `ba86f7e`; the implementation is the `817e8b9..0e9822b` history.
+
+**L402 issuer evidence (SR-12, I-02, I-03).** `IssuerCaveatPrefix` counts price evidence, required boundaries and `client_ip` binding only from caveats before the first `{svc}_valid_until`. A holder-appended price is never reported as verified. The 4-argument `L402Validator` rejects price-less credentials.
+- Attempt 1 found that the Spring Security provider still counted every `client_ip`. Both paths now share `hasIssuerClientAddressBinding`, which the provider-level regression test covers.
+
+**Routing and rate limiting (SR-13, SR-14, SR-15, SR-20).**
+- Zero-segment catch-all overlaps are reported.
+- The Spring Security rate limiter resolves endpoints like the authentication filter.
+- The penalty applies only to client-fault failures.
+- In servlet mode, the rate-limit token is acquired before body capture and pricing.
+
+**Child dispatcher contexts (SR-16).** `@PaymentRequired` in a child context now fails closed. `PaygateChildContextGuard` mirrors MVC handler detection, so Spring Cloud child contexts are unaffected.
+
+**MPP (SR-18, SR-19).** The realm is bound to `paygate.service-name` through a new constructor. The unverified `source` is no longer an authentication attribute.
+
+**LNbits (SR-21, I-15, SR-22).**
+- Plaintext requires a dev profile.
+- `*.localhost` names must resolve to loopback.
+- The API key is excluded from `equals` and `hashCode`, and userinfo is masked.
+- Responses are capped at 1 MiB under a single deadline.
+
+**Developer safety (SR-23, SR-24).**
+- Revocation deletes key files whatever their mode and throws for symlinks and special files.
+- The Go interop scripts use a private `mktemp` directory.
+
+**Verification.** All 10 in-scope PoCs reproduced at base and are now inverted regression tests. At Attempt 2:
+- `spotlessCheck check`: 3,297 tests passed.
+- Integration `test` (145) and `securityTest` (66): passed.
+- `git diff --check`: clean.
+- Baseline at `817e8b9`: 3,141 / 96 / 66 tests passed.
+
+**Documentation.**
+- The [ledger](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md) marks every in-scope row `implemented` with its tests.
+- [SECURITY.md](../SECURITY.md) has the "request method" correction, the issuer-prefix rule, and the penalty behaviour stated per mode.
+- [CHANGELOG.md](../CHANGELOG.md) has Security and Changed entries.
+- The module READMEs ([L402](../paygate-protocol-l402/README.md), [MPP](../paygate-protocol-mpp/README.md), [Spring Security](../paygate-spring-security/README.md), [autoconfigure](../paygate-spring-autoconfigure/README.md), [LNbits](../paygate-lightning-lnbits/README.md)) and the [playbook](../integration-tests/PLAYBOOK.md) are updated.
+
+**Limits and remaining uncertainty.**
+- Not exercised: the Docker LNbits stack (optional, skipped), live LND and LNbits, and GitHub runners.
+- SR-24 was checked on macOS only.
+- Accepted residual risks, recorded per row in the ledger:
+  - Spring Security mode still captures bodies before rate limiting.
+  - Servlet mode still penalizes validation-time `UNAVAILABLE` 503s.
+  - The older `MppProtocol` constructors do not check the realm.
+  - LNbits re-resolves DNS on connect.
+  - The slow-body tests depend on timing.
+- Deferred: the other Info items (I-01, I-04 to I-14, I-16 to I-19, and I-20's optional strict mode) go to the follow-up record *Remediate 2026-10-18 security review Info items*, which does not exist yet.
 
 ## Next action
-Run the fresh-context `keel-review` of this record.
+Open a pull request from `fix/security-review-2026-10-18-lows` to `main` with the dispositions in [the ledger](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md).
