@@ -111,12 +111,23 @@ paygate.lnbits.api-key=${LNBITS_API_KEY}
 | `paygate.lnbits.api-key` | `string` | -- | Yes | Invoice/read API key for authentication. Sent as the `X-Api-Key` header on all requests. |
 | `paygate.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout. Overrides default 5s. |
 | `paygate.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout. Overrides default 10s. |
-| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Allows `http://` URLs only for local/test loopback targets. Production LNbits URLs should use HTTPS. |
+| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Allows `http://` URLs only for local/test loopback targets, and only when every active Spring profile is `dev`, `local`, `development`, or `test`. Production LNbits URLs should use HTTPS. |
 
 Plaintext HTTP is rejected by default, including localhost URLs. For local tests
 or Docker Compose stacks, set `paygate.lnbits.allow-plaintext-http=true`; the
-URL host must still be loopback, localhost, or the known local Compose service
-name `lnbits`.
+URL host must still be one of:
+
+- exact `localhost`, or the canonical loopback literals `127.x.x.x` and `[::1]`;
+- a `*.localhost` name that resolves, with **every** resolved address loopback
+  (an unresolvable name, or one with any non-loopback address, is rejected);
+- the known local Compose service name `lnbits`.
+
+Under auto-configuration, setting `paygate.lnbits.allow-plaintext-http=true`
+also requires a nonempty set of active profiles drawn only from `dev`, `local`,
+`development`, and `test`, the same policy as plaintext LND. Any other profile
+set, including none, fails startup. The bundled LNbits Docker Compose stacks
+run with `SPRING_PROFILES_ACTIVE=dev`. Code that constructs `LnbitsConfig`
+directly has no Spring profiles to check and is responsible for its own gate.
 
 ### Security: Handling the API Key
 
@@ -126,7 +137,19 @@ The API key is a secret credential. Do not commit it to source control. Recommen
 - **Spring Cloud Config / Vault**: Inject via external configuration
 - **Docker secrets**: Mount as a file and reference with `spring.config.import`
 
-The `LnbitsConfig` record redacts the API key in its `toString()` output (`apiKey=***REDACTED***`), so it will not leak into logs when the configuration object is printed.
+`LnbitsConfig` redacts the API key in its `toString()` output (`apiKey=***REDACTED***`), so it will not leak into logs when the configuration object is printed. Any userinfo in the base URL (`https://user:pass@host`) is shown as `***@host` in `toString()` and in validation error messages. The API key does not take part in `equals()` or `hashCode()`.
+
+### Backend response bounds
+
+Every LNbits call is bounded in size and time:
+
+- Response bodies are capped at **1 MiB**. A larger body is abandoned while streaming and the call
+  fails as a backend error (`LnbitsException`), which Paygate maps to HTTP 503.
+- One deadline equal to the request timeout covers the whole exchange, headers **and** body. A
+  server that sends headers promptly but trickles the body still fails at the deadline with
+  `LnbitsTimeoutException`, also mapped to HTTP 503.
+
+`isHealthy()` reports `false` in both cases.
 
 ### Backend response validation
 
@@ -155,7 +178,7 @@ paygate-lightning-lnbits/
 
 ### LnbitsConfig
 
-A Java `record` holding the `baseUrl` and `apiKey`. The compact constructor validates that neither field is null or blank. The `toString()` method redacts the API key to prevent accidental exposure in logs.
+An immutable final class holding the `baseUrl`, `apiKey`, timeouts, and the plaintext opt-in. The constructor validates that neither `baseUrl` nor `apiKey` is null or blank. The `toString()` method redacts the API key and any base-URL userinfo to prevent accidental exposure in logs; `equals()` and `hashCode()` ignore the API key.
 
 ```java
 public record LnbitsConfig(
@@ -190,7 +213,7 @@ The constructor accepts three dependencies:
 | `lookupInvoice(byte[] paymentHash)` | `GET /api/v1/payments/{hash}` | Checks payment status by payment hash. Returns `SETTLED` or `PENDING`, with a preimage only when LNbits exposes one. |
 | `isHealthy()` | `GET /api/v1/wallet` | Returns `true` if the LNbits wallet endpoint responds with HTTP 200. |
 
-All API requests include the `X-Api-Key` header and have a configurable per-request timeout (default **5 seconds**, overridable via `paygate.lnbits.request-timeout-seconds`). The connect timeout on the `HttpClient` is configurable as well (default **10 seconds**, overridable via `paygate.lnbits.connect-timeout-seconds`).
+All API requests include the `X-Api-Key` header and have a configurable per-request timeout (default **5 seconds**, overridable via `paygate.lnbits.request-timeout-seconds`). The timeout is an overall deadline covering response headers and body, and response bodies are capped at 1 MiB. The connect timeout on the `HttpClient` is configurable as well (default **10 seconds**, overridable via `paygate.lnbits.connect-timeout-seconds`).
 
 Invoice expiry is set to **1 hour** from creation time by default.
 

@@ -404,7 +404,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.lnbits.api-key` | `string` | -- | LNbits wallet Invoice/read API key (sufficient for invoice creation, payment lookup, and the wallet health check). The Admin key is not required; avoid it. |
 | `paygate.lnbits.request-timeout-seconds` | `int` | -- | HTTP request timeout. Overrides `paygate.lightning.timeout-seconds` when set. |
 | `paygate.lnbits.connect-timeout-seconds` | `int` | `10` | TCP connect timeout in seconds. |
-| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | Allow `http://` LNbits URLs only for local/test loopback targets. Production URLs should use HTTPS. |
+| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | Allow `http://` LNbits URLs only for local/test loopback targets and only under an all-development (`dev`/`local`/`development`/`test`) profile set. Production URLs should use HTTPS. |
 
 ### LND Backend
 
@@ -949,7 +949,7 @@ This library handles payment credentials and cryptographic tokens. The following
 - **Root key storage** defaults to file-based storage at `~/.paygate/keys`. It requires protections equivalent to `0700` directories and `0600` key files, refuses unsafe operation, and does not follow root-key symlinks. LND certificate and macaroon symlink mounts are a separate, documented trusted-orchestrator case; secure their ownership and mount path at the host layer.
 - **Never log full macaroon values** -- diagnostic correlation is restricted to sanitized, truncated identifiers. Logs, metrics, health output, and client errors must not contain authorization headers, preimages, root keys, backend credentials, or binding secrets.
 - **Environment variables** should be used for Lightning backend credentials (`api-key`, `macaroon-path`) and MPP challenge binding secrets, not plaintext in configuration files
-- **LNbits HTTPS by default** -- `http://` LNbits URLs require `paygate.lnbits.allow-plaintext-http=true` and are accepted only for local/test loopback targets
+- **LNbits HTTPS by default** -- `http://` LNbits URLs require `paygate.lnbits.allow-plaintext-http=true`, an all-development profile set, and a local/test loopback target
 - **Supplied Docker fixtures are local-only** -- every example application bind defaults to
   `127.0.0.1`; setting `APP_BIND_ADDRESS` to a non-loopback value is a deliberate development
   override, not a production deployment. Before exposing any service, use TLS, real credentials,

@@ -16,6 +16,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.concurrent.TimeUnit;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
@@ -766,6 +767,110 @@ class LnbitsBackendTest {
     var shortTimeoutBackend = backendWithShortTimeout();
 
     assertThat(shortTimeoutBackend.isHealthy()).isFalse();
+  }
+
+  // --- Response bounds (SR-22) ---
+
+  private static final int TWO_MIB = 2 * 1024 * 1024;
+
+  private static String paddedJson(String prefixJson, int totalBytes) {
+    // prefixJson must end with an open object, e.g. {"a":1, ; padding closes it.
+    String head = prefixJson + "\"pad\":\"";
+    String tail = "\"}";
+    return head + "x".repeat(totalBytes - head.length() - tail.length()) + tail;
+  }
+
+  private static String createInvoiceJson() {
+    return "{\"payment_hash\":\"%s\",\"payment_request\":\"%s\","
+        .formatted(PAYMENT_HASH_HEX, BOLT11);
+  }
+
+  @Test
+  void createInvoice_rejectsTwoMebibyteResponseBody() {
+    server.enqueue(new MockResponse().setBody(paddedJson(createInvoiceJson(), TWO_MIB)));
+
+    assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
+        .isInstanceOf(LnbitsException.class)
+        .isNotInstanceOf(LnbitsTimeoutException.class)
+        .hasMessage("LNbits request failed")
+        .rootCause()
+        .isInstanceOf(LnbitsBackend.ResponseBodyTooLargeException.class);
+  }
+
+  @Test
+  void lookupInvoice_rejectsTwoMebibyteResponseBody() {
+    String prefix =
+        "{\"paid\":false,\"details\":{\"payment_hash\":\"%s\",\"bolt11\":\"%s\",\"amount\":100000},"
+            .formatted(PAYMENT_HASH_HEX, BOLT11);
+    server.enqueue(new MockResponse().setBody(paddedJson(prefix, TWO_MIB)));
+
+    assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
+        .isInstanceOf(LnbitsException.class)
+        .isNotInstanceOf(LnbitsTimeoutException.class)
+        .hasMessage("LNbits request failed");
+  }
+
+  @Test
+  void isHealthy_returnsFalse_whenResponseBodyExceedsLimit() {
+    server.enqueue(new MockResponse().setBody(paddedJson("{", TWO_MIB)));
+
+    assertThat(backend.isHealthy()).isFalse();
+  }
+
+  @Test
+  void createInvoice_acceptsResponseBodyExactlyAtLimit() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setBody(paddedJson(createInvoiceJson(), LnbitsBackend.MAX_RESPONSE_BODY_BYTES)));
+
+    Invoice invoice = backend.createInvoice(100L, "memo");
+
+    assertThat(invoice.paymentHash()).isEqualTo(PAYMENT_HASH);
+  }
+
+  @Test
+  void createInvoice_rejectsResponseBodyOneByteOverLimit() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setBody(paddedJson(createInvoiceJson(), LnbitsBackend.MAX_RESPONSE_BODY_BYTES + 1)));
+
+    assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
+        .isInstanceOf(LnbitsException.class)
+        .hasMessage("LNbits request failed");
+  }
+
+  @Test
+  void createInvoice_slowBodyTimesOutWithinRequestDeadline() {
+    String body = paddedJson(createInvoiceJson(), 600);
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setBody(body)
+            .throttleBody(100, 1, TimeUnit.SECONDS));
+    var shortTimeoutBackend = backendWithShortTimeout();
+
+    long start = System.nanoTime();
+    assertThatThrownBy(() -> shortTimeoutBackend.createInvoice(100L, "memo"))
+        .isInstanceOf(LnbitsTimeoutException.class)
+        .hasMessage("LNbits createInvoice timed out after 1s");
+    long elapsedMillis = Duration.ofNanos(System.nanoTime() - start).toMillis();
+
+    assertThat(elapsedMillis).isGreaterThanOrEqualTo(900).isLessThan(3_000);
+  }
+
+  @Test
+  void isHealthy_returnsFalse_whenBodyIsSlowerThanRequestDeadline() {
+    String body = paddedJson("{", 600);
+    server.enqueue(new MockResponse().setBody(body).throttleBody(100, 1, TimeUnit.SECONDS));
+    var shortTimeoutBackend = backendWithShortTimeout();
+
+    long start = System.nanoTime();
+    assertThat(shortTimeoutBackend.isHealthy()).isFalse();
+    long elapsedMillis = Duration.ofNanos(System.nanoTime() - start).toMillis();
+
+    assertThat(elapsedMillis).isLessThan(3_000);
   }
 
   @Test

@@ -773,8 +773,13 @@ public class PaygateAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(LightningBackend.class)
     LightningBackend lightningBackend(
-        PaygateProperties properties, tools.jackson.databind.json.JsonMapper objectMapper) {
+        PaygateProperties properties,
+        tools.jackson.databind.json.JsonMapper objectMapper,
+        org.springframework.core.env.Environment environment) {
       var lnbits = properties.getLnbits();
+      if (lnbits.isAllowPlaintextHttp()) {
+        DevelopmentSafetyPolicy.validateProfiles(environment);
+      }
       int timeout =
           lnbits.getRequestTimeoutSeconds() != null
               ? lnbits.getRequestTimeoutSeconds()
