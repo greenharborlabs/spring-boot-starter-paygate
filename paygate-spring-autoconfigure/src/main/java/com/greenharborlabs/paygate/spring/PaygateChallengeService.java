@@ -507,9 +507,9 @@ public class PaygateChallengeService {
    * strategy that cannot be resolved fails closed rather than silently undercharging.
    */
   long resolvePrice(HttpServletRequest request, PaygateEndpointConfig config) {
-    Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
-    if (memoized instanceof TrustedRequestPrice(long amountSats)) {
-      return amountSats;
+    TrustedRequestPrice memoized = PaygateRequestPricingService.memoizedPrice(request, config);
+    if (memoized != null) {
+      return memoized.amountSats();
     }
     String strategyName = config.pricingStrategy();
     if (strategyName == null || strategyName.isBlank()) {
@@ -553,12 +553,12 @@ public class PaygateChallengeService {
     if (requestPricingService != null) {
       return requestPricingService.resolve(request, config);
     }
-    Object memoized = request.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
-    if (memoized instanceof TrustedRequestPrice trustedRequestPrice) {
-      return trustedRequestPrice;
+    TrustedRequestPrice memoized = PaygateRequestPricingService.memoizedPrice(request, config);
+    if (memoized != null) {
+      return memoized;
     }
     TrustedRequestPrice resolved = new TrustedRequestPrice(resolvePrice(request, config));
-    request.setAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE, resolved);
+    PaygateRequestPricingService.memoize(request, config, resolved);
     return resolved;
   }
 

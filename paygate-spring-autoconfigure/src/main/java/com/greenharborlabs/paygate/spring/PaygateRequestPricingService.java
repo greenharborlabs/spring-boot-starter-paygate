@@ -25,7 +25,12 @@ import org.springframework.context.ApplicationContext;
  */
 public final class PaygateRequestPricingService implements AutoCloseable {
 
-  /** Request attribute containing the memoized {@link TrustedRequestPrice}. */
+  /**
+   * Request attribute containing the memoized {@link TrustedRequestPrice} together with the
+   * endpoint policy it was resolved for. Read and write it only through {@link
+   * #memoizedPrice(HttpServletRequest, PaygateEndpointConfig)} and {@link
+   * #memoize(HttpServletRequest, PaygateEndpointConfig, TrustedRequestPrice)}.
+   */
   public static final String REQUEST_PRICE_ATTRIBUTE =
       PaygateRequestPricingService.class.getName() + ".TRUSTED_REQUEST_PRICE";
 
@@ -84,18 +89,58 @@ public final class PaygateRequestPricingService implements AutoCloseable {
   public TrustedRequestPrice resolve(HttpServletRequest request, PaygateEndpointConfig endpoint) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(endpoint, "endpoint");
-    Object existing = request.getAttribute(REQUEST_PRICE_ATTRIBUTE);
-    if (existing instanceof TrustedRequestPrice price) {
-      return price;
+    TrustedRequestPrice existing = memoizedPrice(request, endpoint);
+    if (existing != null) {
+      return existing;
     }
 
     TrustedRequestPrice resolved =
         endpoint.pricingStrategy() == null || endpoint.pricingStrategy().isBlank()
             ? new TrustedRequestPrice(endpoint.priceSats())
             : evaluateNamedStrategy(request, endpoint);
-    request.setAttribute(REQUEST_PRICE_ATTRIBUTE, resolved);
+    memoize(request, endpoint, resolved);
     return resolved;
   }
+
+  /**
+   * Returns the price memoized on this request for the given endpoint policy.
+   *
+   * <p>A FORWARD, ASYNC or ERROR redispatch shares the request attributes of the original dispatch.
+   * A price is reused only when it was resolved for an equal endpoint policy, so a redispatch to a
+   * different paid endpoint resolves its own price.
+   *
+   * @param request protected request
+   * @param endpoint endpoint policy the price must belong to
+   * @return the memoized price, or {@code null} when none was resolved for this endpoint
+   */
+  public static TrustedRequestPrice memoizedPrice(
+      HttpServletRequest request, PaygateEndpointConfig endpoint) {
+    Objects.requireNonNull(endpoint, "endpoint");
+    return request.getAttribute(REQUEST_PRICE_ATTRIBUTE)
+                instanceof
+                EndpointPrice(PaygateEndpointConfig resolvedFor, TrustedRequestPrice price)
+            && endpoint.equals(resolvedFor)
+        ? price
+        : null;
+  }
+
+  /**
+   * Memoizes a trusted price on this request, bound to the endpoint policy it was resolved for.
+   *
+   * @param request protected request
+   * @param endpoint endpoint policy the price was resolved for
+   * @param price trusted price
+   */
+  public static void memoize(
+      HttpServletRequest request, PaygateEndpointConfig endpoint, TrustedRequestPrice price) {
+    request.setAttribute(
+        REQUEST_PRICE_ATTRIBUTE,
+        new EndpointPrice(
+            Objects.requireNonNull(endpoint, "endpoint"), Objects.requireNonNull(price, "price")));
+  }
+
+  /** A trusted price and the endpoint policy it was resolved for. */
+  private record EndpointPrice(PaygateEndpointConfig endpoint, TrustedRequestPrice price) {}
 
   private TrustedRequestPrice evaluateNamedStrategy(
       HttpServletRequest request, PaygateEndpointConfig endpoint) {
