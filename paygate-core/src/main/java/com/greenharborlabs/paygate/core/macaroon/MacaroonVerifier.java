@@ -190,7 +190,33 @@ public final class MacaroonVerifier {
       }
     }
 
+    dropHolderOnlyPaidPrice(caveats, context, acceptedValues);
     return Map.copyOf(acceptedValues);
+  }
+
+  /**
+   * Keeps {@code {serviceName}_price_sats} out of the accepted values unless the issuer signed one
+   * in the {@linkplain IssuerCaveatPrefix issuer prefix}. Holders can only append, so a price that
+   * appears only after {@code {serviceName}_valid_until} is unverified holder input and must not
+   * surface as a verified attribute. With an issuer price present, the accepted value is the final,
+   * monotonically narrowed occurrence.
+   */
+  private static void dropHolderOnlyPaidPrice(
+      List<Caveat> caveats, L402VerificationContext context, Map<String, String> acceptedValues) {
+    String serviceName = context.getServiceName();
+    if (serviceName == null || serviceName.isBlank()) {
+      return;
+    }
+    String priceKey = serviceName + "_price_sats";
+    if (!acceptedValues.containsKey(priceKey)) {
+      return;
+    }
+    for (Caveat caveat : IssuerCaveatPrefix.of(caveats, serviceName)) {
+      if (priceKey.equals(CaveatKey.canonicalize(caveat.key()))) {
+        return;
+      }
+    }
+    acceptedValues.remove(priceKey);
   }
 
   private static void requireSupportedCaveatCount(List<Caveat> caveats) {
