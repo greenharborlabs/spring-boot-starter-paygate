@@ -1,7 +1,7 @@
 # Remediate 2026-10-18 security review Low findings
-Status: working
+Status: review
 Base revision: 817e8b9c8a6612fcd3d8cacf270ee20aba0c54d5
-Review scope: paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, integration-tests/scripts/setup-go-interop.sh, integration-tests/PLAYBOOK.md, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
+Review scope: paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, integration-tests/scripts/setup-go-interop.sh, integration-tests/scripts/run-go-interop-test.sh, paygate-api/src/main/java/com/greenharborlabs/paygate/api/PaymentCredential.java, integration-tests/PLAYBOOK.md, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
 ## Goal
 Close the deferred Low findings SR-12 to SR-16 and SR-18 to SR-24 from the [2026-10-18 security review](../reports/security-review-2026-10-18-claude-opus-5-5.md), together with the Info items that share their fixes: I-02 and I-03 (with SR-12), I-15 (with SR-21) and the slow-body part of SR-22. Also correct the [SECURITY.md](../SECURITY.md) "policy method" wording to "request method" ([review finding 1](2026-10-21-remediate-security-review-2026-10-18.md#attempt-1)).
@@ -71,23 +71,46 @@ Acceptance evidence:
 Approved: 2026-10-31 by Mark Hammond at plan revision 817e8b9c8a6612fcd3d8cacf270ee20aba0c54d5.
 
 ## Tasks
-- [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the in-scope PoCs in, confirm each still reproduces, then invert them.
-- [ ] SR-12/I-02/I-03: issuer-prefix rule and 4-argument constructor fail-closed. Check: the inverted L402Price, HolderAppendedIssuerCaveat and ClientIpLegacySelfBind PoCs; built-in credentials still validate; a custom-issuer credential with price after `valid_until` gets `MISSING_PRICE_EVIDENCE`.
-- [ ] SR-13: catch-all overlap. Check: the three shapes from the review WARN by default and fail startup under `FAIL`.
-- [ ] SR-14/SR-15: limiter resolution and penalty attribute. Check: the inverted SpringSecurityRateLimit PoC; invalid credentials reach 429; backend 503s and first challenges are not penalized.
-- [ ] SR-16: child-context guard. Check: the inverted real-Tomcat ServletRouting PoC (no 200 unpaid), and a root-only application still starts.
-- [ ] SR-18/SR-19: realm check and `source` removal. Check: a cross-realm credential is INVALID under a shared secret; same-realm still validates; `source` is absent from the attributes.
-- [ ] SR-20: rate limit before capture and pricing. Check: the inverted PreRateLimitWork PoC (pricing calls equal admitted requests) and no double token consumption.
-- [ ] SR-21/I-15/SR-22: LNbits gate, resolution, config hygiene and response bounds. Check: the inverted LnbitsBoundary PoC; non-dev plaintext fails startup; a 2 MiB body and a slow body each fail within the deadline; `docker-compose-lnbits.yml` still starts (optional, needs Docker).
-- [ ] SR-23/SR-24: revocation and temp directory. Check: the inverted FileRootKeyStore PoC; `shellcheck integration-tests/scripts/setup-go-interop.sh` (optional); an inspection that a pre-planted directory owned by another user is refused.
-- [ ] Ledger, SECURITY.md, CHANGELOG and README updates. Check by inspection: every in-scope row is `implemented` with tests that exist, and the remaining Info rows reference the follow-up record.
-- [ ] Final: run `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
+- [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the in-scope PoCs in, confirm each still reproduces, then invert them.
+- [x] SR-12/I-02/I-03: issuer-prefix rule and 4-argument constructor fail-closed. Check: the inverted L402Price, HolderAppendedIssuerCaveat and ClientIpLegacySelfBind PoCs; built-in credentials still validate; a custom-issuer credential with price after `valid_until` gets `MISSING_PRICE_EVIDENCE`.
+- [x] SR-13: catch-all overlap. Check: the three shapes from the review WARN by default and fail startup under `FAIL`.
+- [x] SR-14/SR-15: limiter resolution and penalty attribute. Check: the inverted SpringSecurityRateLimit PoC; invalid credentials reach 429; backend 503s and first challenges are not penalized.
+- [x] SR-16: child-context guard. Check: the inverted real-Tomcat ServletRouting PoC (no 200 unpaid), and a root-only application still starts.
+- [x] SR-18/SR-19: realm check and `source` removal. Check: a cross-realm credential is INVALID under a shared secret; same-realm still validates; `source` is absent from the attributes.
+- [x] SR-20: rate limit before capture and pricing. Check: the inverted PreRateLimitWork PoC (pricing calls equal admitted requests) and no double token consumption.
+- [x] SR-21/I-15/SR-22: LNbits gate, resolution, config hygiene and response bounds. Check: the inverted LnbitsBoundary PoC; non-dev plaintext fails startup; a 2 MiB body and a slow body each fail within the deadline; `docker-compose-lnbits.yml` still starts (optional, needs Docker).
+- [x] SR-23/SR-24: revocation and temp directory. Check: the inverted FileRootKeyStore PoC; `shellcheck integration-tests/scripts/setup-go-interop.sh` (optional); an inspection that a pre-planted directory owned by another user is refused.
+- [x] Ledger, SECURITY.md, CHANGELOG and README updates. Check by inspection: every in-scope row is `implemented` with tests that exist, and the remaining Info rows reference the follow-up record.
+- [x] Final: run `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation complete at `f4de1ba`; awaiting fresh-context review.
+
+Baseline at `817e8b9`: pass. `./gradlew check --continue --rerun-tasks` exited 0 with 3,141 default-module tests and no failures or skips. `./gradlew :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` ran 96 tests and `securityTest` ran 66, all passing, with fresh XML timestamps from 2026-10-31T13:22Z. A stale 2026-09-24 `wavelengthSpike` result in the build directory was not part of this run and was excluded.
+
+WORK results on the merged branch:
+- **Final required checks: pass.**
+  - `./gradlew spotlessCheck check --rerun-tasks --continue` exited 0: 3,294 default-module tests, 0 failures or skips.
+  - `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` 145, `securityTest` 66, 0 failures or skips. XML timestamps (2026-10-31T13:43Z) confirm a fresh run.
+  - `git diff --check 817e8b9 HEAD` was clean.
+- **PoCs.** Each of the 10 in-scope PoCs reproduced at base before its fix and was converted into an inverted, renamed regression test; no `SecReview*` files remain. The [ledger](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md) maps each finding to its tests. Two L402Price PoC cases cover out-of-scope Info items (I-04 caching, I-01 unpadded base64) and were left out of the regression test; they still reproduce in the PoC worktree.
+- **SR-24.** `shellcheck` on both interop scripts was clean. A scratch run refused group- or world-writable, foreign-owned, symlinked, dangling and non-directory `GO_INTEROP_DIR` targets and accepted an owned 0700 directory; a real Go build succeeded in the default `mktemp` mode. macOS only.
+- **Skipped (optional):** the Docker LNbits stack was not started because parallel work bound the same fixed host ports. A context-runner test starts the `lnbits` host under the `dev` profile instead.
+
+Points for the reviewer:
+1. **Scope additions within the decisions.** `PaymentCredential.source()` gained Javadoc only (SR-19), and `run-go-interop-test.sh` also passed the shared `/tmp` path, so its default moved to `mktemp` (SR-24). Both were added to `Review scope`.
+2. **SR-12.** `IssuerCaveatPrefix` is a new public class in paygate-core. `MacaroonVerifier.verifyCaveats` drops `{svc}_price_sats` from verified attributes unless the issuer prefix contains a price caveat. With no backend, a price-less credential on a `ROUTE_STABLE` route now gets `MISSING_PRICE_EVIDENCE` (402) rather than `EVIDENCE_UNAVAILABLE`. Nineteen existing tests that minted price-less credentials or signed issuer caveats after `valid_until` were updated to sign a price first; no assertion was weakened.
+3. **SR-15 and servlet mode.** Spring Security mode now penalizes 400, 402 and unclassified 401 only. Servlet mode still penalizes every presented-credential `PaymentValidationException`, including a validation-time `UNAVAILABLE` 503. That is pre-existing and outside the SR-15 decision, so SECURITY.md now states the behaviour per mode instead of claiming outages are never penalized.
+4. **SR-16.** In Boot 4 a `load-on-startup` child dispatcher failure fails application startup; a lazy one returns 500. `PaygateChildContextGuard` mirrors `AbstractHandlerMethodMapping` candidate detection, skipping null or unresolvable types (catching `Throwable`, as MVC does) and scoped targets, so Spring Cloud child contexts are unaffected.
+5. **SR-18.** Only the full 5-argument `MppProtocol` constructor binds the realm; a shorter `(secret, serviceName)` overload would make `new MppProtocol(secret, null)` ambiguous.
+6. **SR-20.** Two SR-09 cardinality tests relied on pricing running before rate limiting and now admit their requests; their bounded-tag assertions are unchanged.
+7. **SR-21/SR-22.** A package-private `LnbitsConfig` constructor and `HostResolver` seam make resolution testable. A malformed-URI error no longer carries `URISyntaxException` as its cause, because its message repeats userinfo. Slow-body tests assert elapsed-time bounds.
+8. **Limits.**
+   - Live LND and LNbits, the Docker LNbits stacks and GitHub runners were not exercised.
+   - Residual risks are recorded per row in the ledger, including Spring Security mode capture before rate limiting (SR-20) and LNbits DNS re-resolution on connect (SR-21).
 
 ## Outcome
 Pending.
 
 ## Next action
-Implement the approved plan, record each check result, and set `Status: review`.
+Run the fresh-context `keel-review` of this record.
