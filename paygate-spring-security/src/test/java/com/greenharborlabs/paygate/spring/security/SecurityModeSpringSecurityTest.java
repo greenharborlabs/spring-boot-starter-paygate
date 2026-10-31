@@ -8,7 +8,9 @@ import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import com.greenharborlabs.paygate.spring.PaygateAutoConfiguration;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.PaygateRequestBodyCaptureFilter;
 import com.greenharborlabs.paygate.spring.PaygateSecurityFilter;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.http.HttpServletRequest;
 import java.security.SecureRandom;
@@ -19,7 +21,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
+import org.springframework.core.Ordered;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.security.web.SecurityFilterChain;
 
@@ -54,6 +58,27 @@ class SecurityModeSpringSecurityTest {
   void servletFilterRegistrationNotCreated() {
     contextRunner.run(
         context -> assertThat(context.containsBean("paygateSecurityFilterRegistration")).isFalse());
+  }
+
+  @Test
+  @DisplayName("registers the early body-capture filter ahead of form and security filters")
+  void bodyCaptureFilterRegisteredAtServletFilterOrder() {
+    contextRunner.run(
+        context -> {
+          var registration =
+              context.getBean(
+                  "paygateRequestBodyCaptureFilterRegistration", FilterRegistrationBean.class);
+          assertThat(registration.isEnabled()).isTrue();
+          assertThat(registration.getFilter()).isInstanceOf(PaygateRequestBodyCaptureFilter.class);
+          assertThat(registration.getOrder()).isEqualTo(Ordered.HIGHEST_PRECEDENCE + 10);
+          assertThat(registration.getUrlPatterns()).containsExactly("/*");
+          assertThat(registration.determineDispatcherTypes())
+              .containsExactlyInAnyOrder(
+                  DispatcherType.REQUEST,
+                  DispatcherType.ASYNC,
+                  DispatcherType.FORWARD,
+                  DispatcherType.ERROR);
+        });
   }
 
   @Test

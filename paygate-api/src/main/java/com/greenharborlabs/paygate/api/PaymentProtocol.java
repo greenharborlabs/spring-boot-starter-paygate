@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.api;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Primary extension point for adding payment protocols to the paygate framework.
@@ -68,6 +69,31 @@ public interface PaymentProtocol {
    */
   void validate(PaymentCredential credential, Map<String, String> requestContext)
       throws PaymentValidationException;
+
+  /**
+   * Validates a parsed credential and returns the capabilities that the credential itself
+   * authenticates for this request.
+   *
+   * <p>Integrations that map capabilities to authorities, such as the Spring Security module, call
+   * this method instead of {@link #validate(PaymentCredential, Map)}. Implementations must return
+   * only capabilities proven by server-authenticated credential data. They must never copy a
+   * capability from {@code requestContext}, which describes the endpoint being requested rather
+   * than what was paid for.
+   *
+   * <p>The default implementation delegates to {@link #validate(PaymentCredential, Map)} and grants
+   * no capabilities.
+   *
+   * @param credential the parsed credential to validate
+   * @param requestContext per-request context; see {@link #validate(PaymentCredential, Map)}
+   * @return an immutable, possibly empty set of verified capability names
+   * @throws PaymentValidationException if the credential is invalid
+   */
+  default Set<String> validateAndResolveCapabilities(
+      PaymentCredential credential, Map<String, String> requestContext)
+      throws PaymentValidationException {
+    validate(credential, requestContext);
+    return Set.of();
+  }
 
   /**
    * Creates a receipt after successful validation.

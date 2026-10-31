@@ -107,7 +107,7 @@ paygate-spring-security/
     PaygateAuthFailureRateLimitFilter.java    Optional auth-failure rate-limiting filter
     PaygateSecurityAutoConfiguration.java     Registers beans when Spring Security is present
     CapabilityResolver.java                   Capability resolution strategy interface
-    DefaultCapabilityResolver.java            Non-L402 resolver backed by cache and request metadata
+    DefaultCapabilityResolver.java            Non-L402 resolver backed by the capability cache
     CapabilityResolutionContext.java          Immutable context for capability resolution
   src/main/resources/META-INF/spring/
     org.springframework.boot.autoconfigure.AutoConfiguration.imports
@@ -211,6 +211,8 @@ The token has two states:
 
 Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
+Non-L402 `PAYGATE_CAPABILITY_*` authorities come from `PaymentProtocol.validateAndResolveCapabilities(...)`, which returns only capabilities that the credential itself authenticates. Any `CapabilityResolver` result is added to them. For MPP, the capability is the one bound into the HMAC-authenticated challenge `opaque` when the challenge was issued, and validation requires it to match the endpoint's declaration. An MPP credential bought for a capability-free or differently scoped endpoint is therefore rejected, not granted the requested endpoint's capability. The requested capability in `requestMetadata` is never itself a source of authorities.
+
 #### Security: Verified Attribute Provenance and Migration
 
 Only `L402Validator.ValidationResult.verifiedAttributes()` can supply caveat-derived attributes to
@@ -261,14 +263,23 @@ It registers up to five beans. A separate auto-configuration supplies the startu
 
 | Bean | Condition | Description |
 |------|-----------|-------------|
-| `CapabilityResolver` (`DefaultCapabilityResolver`) | `@ConditionalOnMissingBean` | Resolves endpoint capability requirements for authority mapping (`PAYGATE_CAPABILITY_*`). |
+| `CapabilityResolver` (`DefaultCapabilityResolver`) | `@ConditionalOnMissingBean` | Supplements non-L402 `PAYGATE_CAPABILITY_*` authorities from the server-side capability cache. It never grants the capability named in request metadata, and it is skipped for L402. |
 | `PaygateAuthenticationProvider` | `@ConditionalOnMissingBean` | Validates L402 and other registered payment tokens using `paygate.service-name` |
 | `PaygateAuthenticationFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(AuthenticationManager.class)` | Extracts credentials from the Authorization header |
 | `PaygateAuthFailureRateLimitFilter` | `@ConditionalOnMissingBean` + `@ConditionalOnBean(PaygateRateLimiter.class)` | Rate limits auth attempts with pre-check and post-failure penalty. Only created when rate limiting is enabled. |
 | `PaygateAuthenticationEntryPoint` | `@ConditionalOnMissingBean` | Issues HTTP 402 challenges with Lightning invoices for unauthenticated requests. Uses `PaygateChallengeService` and `PaygateEndpointRegistry` from `paygate-spring-autoconfigure`. |
-| `PaygateSpringSecurityFilterChainGuard` | Spring Security mode + `FilterChainProxy` on classpath | Fails startup if no `PaygateAuthenticationFilter` is present in the effective filter chain. |
+| `PaygateSpringSecurityFilterChainGuard` | Spring Security mode + `FilterChainProxy` on classpath | Fails startup if any effective filter chain lacks or misorders the Paygate filters, or if a registered paid route is not first matched by a chain that applies `PaygateAuthenticationFilter`. |
 
-The auto-configuration provides the beans but does **not** register the filters in the security filter chain. You must place `PaygateAuthFailureRateLimitFilter` before `PaygateAuthenticationFilter` in every effective `SecurityFilterChain` (see Usage below). Startup verifies both controls, their order, and REQUEST/ASYNC/FORWARD/ERROR coverage; it also prevents the security-chain-owned filter from being registered a second time as a container servlet filter. These checks are fail-closed. The custom-chain acknowledgement property is retained for configuration compatibility but cannot waive these minimum controls.
+The auto-configuration provides the beans but does **not** register the filters in the security filter chain. You must place `PaygateAuthFailureRateLimitFilter` before `PaygateAuthenticationFilter` in every effective `SecurityFilterChain` (see Usage below). The guard also prevents the security-chain-owned filter from being registered a second time as a container servlet filter. At startup it checks the following, and every check is fail-closed:
+
+1. **Every chain.** Each chain contains `PaygateAuthFailureRateLimitFilter`, then `PaygateAuthenticationFilter`, then any `AuthorizationFilter`, in that order. A `web.ignoring()` entry is a chain with no filters, so it fails this check.
+2. **Every paid route.** The guard builds a sample request for each paid route in `PaygateEndpointRegistry`. That covers `@PaymentRequired` handlers and manual `register(...)` calls made before the guard runs, such as from a `SmartInitializingSingleton`. To build the sample:
+   - It turns the route pattern into a concrete application-relative path. For example, `/api/items/{id}` becomes `/api/items/x`, and `/files/**` or `/files/{*rest}` becomes `/files/x`. A route registered for any method (`*`) is probed with `GET`.
+   - It gives the request the default `DispatcherServlet` mapping (`/`) and a parsed `RequestPath`, so `PathPatternRequestMatcher`s such as `securityMatcher("/api/**")` evaluate as they do at runtime.
+
+   For each of the REQUEST, ASYNC, FORWARD and ERROR dispatcher types, the **first** chain that matches the sample request must exist, and it must apply `PaygateAuthenticationFilter`. A nested `FilterChainProxy` is followed through its own first matching chain. If no chain matches, startup fails and the error names the route. This catches a chain whose matcher excludes a prefix, such as a lambda matcher or `NegatedRequestMatcher(new RegexRequestMatcher("^/internal/.*", null))`, while a paid route sits under that prefix. If a chain's request matcher throws while the guard evaluates it, startup fails and the error names that chain and the route.
+
+The sample request covers one concrete path per route. It also cannot see paid routes registered after startup. At request time, the final `PaygateHandlerInterceptor` backstops both gaps. It returns 500 for a paid manual route, including a `RouterFunction` route, that was not authorized by a Paygate decision. It does the same for an annotated MVC handler that was not authorized. Such a request is never served unpaid. The custom-chain acknowledgement property is retained for configuration compatibility but cannot waive these minimum controls.
 
 ### Overriding Auto-Configured Beans
 
@@ -522,7 +533,7 @@ Existing `hasRole('L402')` rules remain usable, but credential compatibility is 
 
 `MacaroonVerifier` accepts attribute provenance only from non-blank, uniquely registered, case-sensitive verifier keys. Each accepted value is captured immutably and is carried by `L402Validator.ValidationResult.verifiedAttributes()` for both fresh and cached validation. Spring Security maps attributes and capability authorities only from that verified result; it does not treat arbitrary caveats as claims.
 
-Payment roles are issued by the server: validated credentials receive `ROLE_PAYMENT`, and L402 credentials also receive `ROLE_L402`. A holder cannot mint Spring Security roles or authorities by adding caveats such as `role=ADMIN`. Capability authorities likewise come only from the verified effective capability ceiling.
+Payment roles are issued by the server: validated credentials receive `ROLE_PAYMENT`, and L402 credentials also receive `ROLE_L402`. A holder cannot mint Spring Security roles or authorities by adding caveats such as `role=ADMIN`. Capability authorities likewise come only from the verified effective capability ceiling for L402, or from the HMAC-bound challenge capability for MPP.
 
 For binary compatibility, credential-only L402 factories remain callable but are deprecated. They
 expose protected metadata and explicit capability authorities only, because parsed caveats are not
@@ -575,7 +586,7 @@ The servlet filter and Spring Security paths are mutually exclusive. The `paygat
 
 Only one documented enforcement path is active per deployment. Servlet mode uses the container `PaygateSecurityFilter` and its final MVC interceptor; Spring Security mode uses `PaygateAuthenticationFilter` and the configured security chain. This prevents both paths from processing the same request.
 
-When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthFailureRateLimitFilter` before `PaygateAuthenticationFilter` in every effective `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. Missing or misordered filters and incomplete dispatcher coverage fail startup; `paygate.spring-security.custom-filter-chain-acknowledged` cannot waive these minimum protections.
+When using `spring-security` mode, the `PaygateAuthenticationEntryPoint` replaces the servlet filter's built-in 402 challenge generation. Configure the entry point and add `PaygateAuthFailureRateLimitFilter` before `PaygateAuthenticationFilter` in every effective `SecurityFilterChain` to get the full payment flow (challenge issuance + credential validation) through Spring Security. Startup fails if filters are missing or misordered. It also fails if a paid route is not first matched by a Paygate-protected chain on every required dispatcher type; `paygate.spring-security.custom-filter-chain-acknowledged` cannot waive these minimum protections.
 
 `PaygateAuthenticationFilter` constructors without a `PaygateAuthenticationEntryPoint` are retained
 for source compatibility but deprecated. They fail closed (503) for an absent `Authorization`
@@ -765,6 +776,50 @@ the L402 validation context. Price strategies run once per request. Insufficient
 challengeable with a fresh 402; unavailable or ambiguous evidence fails closed with 503. Declare
 `ROUTE_STABLE` only for genuinely fixed route-and-method pricing; undeclared routes are request
 dependent.
+
+### Request body capture and form content
+
+In Spring Security mode, `paygate-spring-autoconfigure` registers a body-capture servlet filter
+(`PaygateRequestBodyCaptureFilter`, registration bean
+`paygateRequestBodyCaptureFilterRegistration`). It runs at `Ordered.HIGHEST_PRECEDENCE + 10` for
+`REQUEST`, `ASYNC`, `FORWARD`, and `ERROR` dispatches, which is the servlet-mode filter's slot. That
+places it ahead of `FormContentFilter`, `HiddenHttpMethodFilter`, and `springSecurityFilterChain`.
+The filter only captures and performs no authentication. It acts on requests that resolve to a paid
+route whose body Paygate needs: routes with a named pricing strategy, and any paid route while MPP is
+enabled. For those requests it:
+
+- reads the body once and enforces `paygate.request-body.max-bytes`, rejecting an over-limit body
+  with the same `400 REQUEST_BODY_TOO_LARGE` response as other body-bound failures;
+- passes downstream a request that replays the captured bytes. `PaygateAuthenticationFilter`,
+  `PaygateAuthenticationEntryPoint`, and pricing strategies therefore price and digest the real
+  body;
+- exposes `POST application/x-www-form-urlencoded` parameters from the captured bytes, after any
+  query-string parameters. `HiddenHttpMethodFilter`, `CsrfFilter`, and `@RequestParam` handler
+  arguments still see form fields. `FormContentFilter` still parses `PUT`, `PATCH`, and `DELETE`
+  forms from the replayed body.
+
+Every Paygate body capture, in both servlet and Spring Security modes, fails closed with
+`400 REQUEST_BODY_INCOMPLETE` in one case: the request declares a positive `Content-Length` but fewer
+bytes are observed. This means the body was truncated, or another component consumed it before
+Paygate could. Chunked requests without a `Content-Length` are unaffected.
+
+Two cases are rejected with this response rather than processed:
+
+- a filter ordered before `HIGHEST_PRECEDENCE + 10` that reads parameters or the body of a paid
+  request;
+- a `HiddenHttpMethodFilter` `_method` override from a `POST` to a paid route with a different method.
+
+**Defense in depth.** The capture filter closes the form-body gap on its own. As extra hardening,
+operators can still:
+
+- set `spring.mvc.formcontent.filter.enabled=false` unless the application needs `PUT`, `PATCH`,
+  or `DELETE` form parameters;
+- leave `HiddenHttpMethodFilter` disabled (`spring.mvc.hiddenmethod.filter.enabled=false`, the
+  Spring Boot default) for paid routes;
+- send CSRF tokens in a header (for example `X-XSRF-TOKEN`) instead of a `_csrf` form field.
+
+Multipart (`multipart/form-data`) bodies on paid routes whose body Paygate captures are replayed as
+raw bytes only. The container does not parse them into parts after capture.
 
 ### Security decision telemetry and evidence
 

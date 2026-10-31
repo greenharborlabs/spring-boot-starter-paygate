@@ -14,6 +14,7 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.util.ServletRequestPathUtils;
 import org.springframework.web.util.pattern.PathPattern;
 import org.springframework.web.util.pattern.PathPatternParser;
 
@@ -195,13 +196,22 @@ public class PaygateEndpointRegistry {
   }
 
   /**
-   * Resolves a policy using the original servlet request for MVC conditions and an already
-   * normalized application-relative path for manual registrations.
+   * Resolves a policy using the original servlet request for MVC conditions and for manual
+   * registrations.
+   *
+   * <p>Manual registrations match the parsed application-relative dispatch path, which is what
+   * Spring's {@code RouterFunction} and URL handler mappings dispatch on. They also match the
+   * canonical path produced by {@link ApplicationRelativeRequestResolver}, so a trailing-slash
+   * variant of a paid route stays paid.
+   *
+   * @param request the inbound servlet request
+   * @param applicationRelativePath the canonical path from {@link
+   *     ApplicationRelativeRequestResolver#resolve(HttpServletRequest)}
    */
   ResolvedEndpoint resolve(HttpServletRequest request, String applicationRelativePath) {
     // Filters can run before DispatcherServlet has cached this state. MVC's path-pattern
     // condition requires the parsed path to be present on the request.
-    org.springframework.web.util.ServletRequestPathUtils.parseAndCache(request);
+    var requestPath = ServletRequestPathUtils.parseAndCache(request);
     var mvcMatches = new ArrayList<RegisteredEndpoint>();
     for (RegisteredEndpoint candidate : registrations) {
       var mappingInfo = candidate.mappingInfo();
@@ -227,17 +237,42 @@ public class PaygateEndpointRegistry {
 
     // Do not match manual routes against the container URI: deployments commonly add a context
     // path or servlet mapping. Reuse the established method-bucket and specificity semantics.
-    return resolveManual(normalizeMethod(request.getMethod()), applicationRelativePath);
+    return resolveManual(
+        normalizeMethod(request.getMethod()),
+        List.of(
+            requestPath.pathWithinApplication(), PathContainer.parsePath(applicationRelativePath)));
   }
 
-  private ResolvedEndpoint resolveManual(String method, String path) {
+  /**
+   * Resolves only manually registered routes against the raw application-relative dispatch path,
+   * without validating or canonicalizing it. MVC mappings are ignored.
+   *
+   * <p>This is the final enforcement lookup for handlers that are not MVC handler methods, such as
+   * {@code RouterFunction} or URL-mapped handlers. A trailing-slash variant of a paid route also
+   * matches, mirroring the servlet filter.
+   *
+   * @param request the dispatched servlet request
+   * @return the paid manual route matching the dispatch path, or {@code null}
+   * @throws IllegalStateException if distinct matching route patterns are equally specific
+   */
+  ResolvedEndpoint resolveManualRoute(HttpServletRequest request) {
+    var dispatchPath = ServletRequestPathUtils.parse(request).pathWithinApplication();
+    var paths = new ArrayList<PathContainer>(2);
+    paths.add(dispatchPath);
+    String value = dispatchPath.value();
+    if (value.length() > 1 && value.endsWith("/")) {
+      paths.add(PathContainer.parsePath(value.substring(0, value.length() - 1)));
+    }
+    return resolveManual(normalizeMethod(request.getMethod()), paths);
+  }
+
+  private ResolvedEndpoint resolveManual(String method, List<PathContainer> paths) {
     var buckets =
         "HEAD".equals(method)
             ? List.of("HEAD", "GET", "*")
             : "*".equals(method) ? List.of("*") : List.of(method, "*");
-    var pathContainer = PathContainer.parsePath(path);
     for (String bucket : buckets) {
-      var resolved = resolveManualBucket(bucket, path, pathContainer);
+      var resolved = resolveManualBucket(bucket, paths);
       if (resolved != null) {
         return resolved;
       }
@@ -245,13 +280,12 @@ public class PaygateEndpointRegistry {
     return null;
   }
 
-  private ResolvedEndpoint resolveManualBucket(
-      String method, String path, PathContainer pathContainer) {
+  private ResolvedEndpoint resolveManualBucket(String method, List<PathContainer> paths) {
     var matches = new ArrayList<RegisteredEndpoint>();
     for (RegisteredEndpoint candidate : registrations) {
       if (candidate.mappingInfo() == null
           && method.equals(candidate.policyMethod())
-          && candidate.pattern().matches(pathContainer)) {
+          && matchesAny(candidate.pattern(), paths)) {
         matches.add(candidate);
       }
     }
@@ -274,6 +308,15 @@ public class PaygateEndpointRegistry {
               + matches.get(1).pattern().getPatternString());
     }
     return toResolvedEndpoint(method, selected);
+  }
+
+  private static boolean matchesAny(PathPattern pattern, List<PathContainer> paths) {
+    for (PathContainer path : paths) {
+      if (pattern.matches(path)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static int compareMvcForRequest(

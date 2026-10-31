@@ -73,6 +73,8 @@ class MppProtocolTest {
   private static final byte[] PAYMENT_HASH = sha256(PREIMAGE);
   private static final String PREIMAGE_HEX = HEX.formatHex(PREIMAGE);
   private static final String REQUEST_DIGEST = "sha-256=:dGVzdC1kaWdlc3Q=:";
+  private static final String ROUTE = "/api/test";
+  private static final String METHOD = "GET";
 
   private MppProtocol protocol;
 
@@ -431,15 +433,21 @@ class MppProtocolTest {
       String json = new String(decoded, StandardCharsets.UTF_8);
       assertThat(json).contains("\"session\":\"abc123\"");
       assertThat(json).contains("\"tier\":\"premium\"");
+      assertThat(json).contains("\"paygate_route\":\"/api/test\"");
     }
 
     @Test
-    void omitsOpaqueWhenNull() {
+    void alwaysBindsRouteMethodAndNoCapabilityInOpaque() {
       ChallengeContext ctx = challengeContext("test", null);
 
       ChallengeResponse response = protocol.formatChallenge(ctx);
 
-      assertThat(response.wwwAuthenticateHeader()).doesNotContain("opaque=");
+      String opaqueB64 = extractParam(response.wwwAuthenticateHeader(), "opaque");
+      String json = new String(Base64.getUrlDecoder().decode(opaqueB64), StandardCharsets.UTF_8);
+      assertThat(json)
+          .isEqualTo(
+              "{\"paygate_capability\":\"~\",\"paygate_method\":\"GET\","
+                  + "\"paygate_route\":\"/api/test\"}");
     }
 
     @Test
@@ -480,12 +488,13 @@ class MppProtocolTest {
     }
 
     @Test
-    void bodyDataOmitsOpaqueWhenNull() {
+    void bodyDataCarriesOpaqueBindingWhenCallerSuppliesNone() {
       ChallengeContext ctx = challengeContext("test", null);
 
       ChallengeResponse response = protocol.formatChallenge(ctx);
 
-      assertThat(response.bodyData()).doesNotContainKey("opaque");
+      assertThat(response.bodyData())
+          .containsEntry("opaque", extractParam(response.wwwAuthenticateHeader(), "opaque"));
     }
   }
 
@@ -869,12 +878,31 @@ class MppProtocolTest {
         null, // capability
         null, // rootKeyBytes
         opaque,
-        digest // digest
-        );
+        digest,
+        ROUTE,
+        METHOD);
   }
 
   private static Map<String, String> requestContextWithDigest(String digest) {
-    return Map.of("request.digest", digest);
+    return Map.of(
+        "request.digest",
+        digest,
+        "request.route",
+        ROUTE,
+        "request.method",
+        METHOD,
+        "request.current_price_sats",
+        String.valueOf(PRICE_SATS));
+  }
+
+  /** Opaque binding that formatChallenge emits for ROUTE, METHOD and no capability. */
+  private static String boundOpaqueB64() {
+    String json =
+        JcsSerializer.serialize(
+            Map.of("paygate_route", ROUTE, "paygate_method", METHOD, "paygate_capability", "~"));
+    return Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(json.getBytes(StandardCharsets.UTF_8));
   }
 
   /** Builds a complete "Payment <base64url>" authorization header with the given method. */
@@ -917,9 +945,18 @@ class MppProtocolTest {
     String expires = DateTimeFormatter.ISO_INSTANT.format(expiresAt);
     String requestB64 = buildRequestB64();
 
+    String opaqueB64 = boundOpaqueB64();
+
     String id =
         MppChallengeBinding.createId(
-            REALM, "lightning", "charge", requestB64, expires, REQUEST_DIGEST, null, signingSecret);
+            REALM,
+            "lightning",
+            "charge",
+            requestB64,
+            expires,
+            REQUEST_DIGEST,
+            opaqueB64,
+            signingSecret);
 
     Map<String, String> echoedChallenge = new LinkedHashMap<>();
     echoedChallenge.put("id", id);
@@ -929,6 +966,7 @@ class MppProtocolTest {
     echoedChallenge.put("request", requestB64);
     echoedChallenge.put("expires", expires);
     echoedChallenge.put("digest", REQUEST_DIGEST);
+    echoedChallenge.put("opaque", opaqueB64);
 
     MppMetadata metadata = new MppMetadata(echoedChallenge, null);
     return new PaymentCredential(paymentHash, preimage, id, "Payment", null, metadata);

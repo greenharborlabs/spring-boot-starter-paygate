@@ -678,6 +678,29 @@ public class PaygateAutoConfiguration {
     return registration;
   }
 
+  /**
+   * In spring-security mode, captures paid request bodies at the servlet-mode filter's early order,
+   * ahead of {@code FormContentFilter}, {@code HiddenHttpMethodFilter}, and the security filter
+   * chain, so pricing, the request-body bound, and MPP digest binding see the real body.
+   */
+  @Bean
+  @Conditional(PaygateSpringSecurityModeCondition.class)
+  public FilterRegistrationBean<PaygateRequestBodyCaptureFilter>
+      paygateRequestBodyCaptureFilterRegistration(
+          PaygateEndpointRegistry registry,
+          List<PaymentProtocol> protocols,
+          PaygateProperties properties) {
+    var registration =
+        new FilterRegistrationBean<>(
+            new PaygateRequestBodyCaptureFilter(
+                registry, protocols, properties.getRequestBody().getMaxBytes()));
+    registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
+    registration.addUrlPatterns("/*");
+    registration.setDispatcherTypes(
+        DispatcherType.REQUEST, DispatcherType.ASYNC, DispatcherType.FORWARD, DispatcherType.ERROR);
+    return registration;
+  }
+
   @Bean
   @ConditionalOnMissingBean
   public PaygateEarningsTracker paygateEarningsTracker() {

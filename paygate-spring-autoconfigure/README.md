@@ -187,7 +187,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnd.host` | `string` | `"localhost"` | When `paygate.backend=lnd` | Hostname or IP of the LND gRPC endpoint. |
 | `paygate.lnd.port` | `int` | `10009` | When `paygate.backend=lnd` | Port of the LND gRPC endpoint. |
 | `paygate.lnd.tls-cert-path` | `string` | -- | When `paygate.backend=lnd` (unless plaintext) | Path to the LND TLS certificate (`tls.cert`). |
-| `paygate.lnd.macaroon-path` | `string` | -- | No | Path to the LND admin macaroon file (`admin.macaroon`). |
+| `paygate.lnd.macaroon-path` | `string` | -- | No | Path to a least-privilege LND macaroon baked with `invoices:read invoices:write info:read` (for example `lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read`). The stock `invoice.macaroon` lacks `info:read` and fails health checks; `admin.macaroon` is not required. |
 | `paygate.lnd.allow-plaintext` | `boolean` | `false` | No | Explicit local-development opt-in for plaintext gRPC. It requires only `dev`, `local`, `development`, or `test` profiles and an exact `localhost` or loopback-IP target. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | No | gRPC keepalive ping interval. |
 | `paygate.lnd.keep-alive-timeout-seconds` | `int` | `20` | No | Keepalive ping ack timeout. |
@@ -238,7 +238,7 @@ The following table shows every bean created by `PaygateAutoConfiguration`, the 
 |------|------|-----------|-------|
 | `rootKeyStore` | `RootKeyStore` | `@ConditionalOnMissingBean` | `InMemoryRootKeyStore` when `paygate.root-key-store=memory`; `FileBasedRootKeyStore` otherwise |
 | `credentialStore` | `CredentialStore` | `@ConditionalOnMissingBean` + Caffeine class check | `CaffeineCredentialStore` if Caffeine is on the classpath; `InMemoryCredentialStore` otherwise |
-| `caveatVerifiers` | `List<CaveatVerifier>` | `@ConditionalOnMissingBean(name="caveatVerifiers")` | `[ServicesCaveatVerifier, ValidUntilCaveatVerifier, CapabilitiesCaveatVerifier, PathCaveatVerifier, MethodCaveatVerifier, ClientIpCaveatVerifier]` |
+| `caveatVerifiers` | `List<CaveatVerifier>` | `@ConditionalOnMissingBean(name="caveatVerifiers")` | `[ServicesCaveatVerifier, ValidUntilCaveatVerifier, CapabilitiesCaveatVerifier, PathCaveatVerifier, RouteCaveatVerifier, MethodCaveatVerifier, ClientIpCaveatVerifier]` |
 | `l402Validator` | `L402Validator` | `@ConditionalOnMissingBean` | Wires root key store, credential store, caveat verifiers, and service name |
 | `l402Protocol` | `PaymentProtocol` | `L402Protocol` on classpath + `paygate.protocols.l402.enabled=true` + `@ConditionalOnMissingBean(name="l402Protocol")` | L402 protocol implementation wrapping `L402Validator` |
 | `mppProtocol` | `PaymentProtocol` | `MppProtocol` on classpath + `MppEnabledCondition` + `@ConditionalOnMissingBean(name="mppProtocol")` | MPP protocol implementation with HMAC challenge binding secret |
@@ -368,6 +368,7 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 | `writeInternalError(response)` | 500 | Sanitized response for endpoint-policy resolution failures. |
 | `writeReceipt(response, receipt)` | -- | Sets `Payment-Receipt` header with base64url-nopad encoded JSON receipt. |
 | `writeMethodUnsupported(response, message)` | 400 | Unsupported payment method (RFC 9457 Problem Details). |
+| `writeRequestBodyIncomplete(response)` | 400 | `REQUEST_BODY_INCOMPLETE`: fewer body bytes were observed than the declared `Content-Length`. |
 
 ---
 
@@ -377,7 +378,7 @@ Static utility class for writing HTTP error responses in a consistent JSON forma
 
 ### Request Flow
 
-1. **Match**: The filter resolves the application-relative request path and actual HTTP method against `PaygateEndpointRegistry`. The result includes the endpoint policy and canonical route pattern. Context paths and applicable path-prefix servlet mappings are excluded before lookup. If no match, the request passes through untouched.
+1. **Match**: The filter resolves the application-relative request path and actual HTTP method against `PaygateEndpointRegistry`. The result includes the endpoint policy and canonical route pattern. Context paths and applicable path-prefix servlet mappings are excluded before lookup. Before lookup, every request whose once-decoded path has a `.`, `..` or empty segment (a single trailing slash is allowed), residual `%`, `\` or `;` path parameters is rejected with HTTP 400 `MALFORMED_URI`, whether or not it is paid. If no match, the request passes through untouched.
 2. **Credential validation**: If the `Authorization` header contains an `L402` or `LSAT` prefix, the credential is validated locally via `L402Validator` (no Lightning network call needed). Valid credentials pass through; malformed headers get HTTP 400; expired or invalid credentials get the appropriate error status.
 3. **Health check**: If no valid credential is present, the Lightning backend's `isHealthy()` is checked. If the backend is down, the filter returns HTTP 503 (fail-closed).
 4. **Rate limit check**: Before creating an invoice, the filter checks the `PaygateRateLimiter`. If the client IP has exceeded the rate limit, HTTP 429 is returned with a `Retry-After: 1` header.
@@ -414,6 +415,22 @@ When MPP request-body digest processing is active, `paygate.request-body.max-byt
 captured body. The value must be within the inclusive `SecurityBounds` range of 1 byte through
 16 MiB (16,777,216 bytes). Over-limit requests are rejected before protected handler work. This
 bounded capture does not make arbitrary streaming or upload workloads suitable.
+
+Body capture happens at `Ordered.HIGHEST_PRECEDENCE + 10`. That is ahead of Spring's
+`FormContentFilter`, `HiddenHttpMethodFilter`, and the Spring Security filter chain, which would
+otherwise drain `application/x-www-form-urlencoded` bodies through `getParameter`:
+
+- In servlet mode, `PaygateSecurityFilter` captures at that order.
+- In Spring Security mode, `PaygateRequestBodyCaptureFilter` (registration bean
+  `paygateRequestBodyCaptureFilterRegistration`) captures paid bodies at that order. It covers
+  routes with a named pricing strategy, and every paid route while MPP is enabled.
+
+Downstream components receive a request that replays the captured bytes. For `POST` form bodies,
+the request also exposes the form fields as request parameters.
+
+A capture that observes fewer bytes than a positive declared `Content-Length` fails closed with
+`400 REQUEST_BODY_INCOMPLETE` (body truncated or already consumed). Chunked requests are
+unaffected. See the `paygate-spring-security` README for Spring Security-specific operator guidance.
 
 ### 0.1.5 resolver constructor migration
 
@@ -470,7 +487,7 @@ Rate limiting prevents invoice flooding attacks by throttling 402 challenge issu
 
 By default, the filter uses `request.getRemoteAddr()` for rate limiting. If the service runs behind a reverse proxy:
 
-- Set `paygate.trust-forwarded-headers=true` to read the client IP from the `X-Forwarded-For` header (leftmost value).
+- Set `paygate.trust-forwarded-headers=true` to read the client IP from `X-Forwarded-For` when the direct peer is listed in `paygate.trusted-proxy-addresses`. All `X-Forwarded-For` field lines are joined in order and walked right to left past trusted proxies; the first untrusted IP literal is the client. The walk stops at an entry that is not an IP literal (such as `ip:port` or `unknown`) and uses the nearest trusted hop instead, so a client-supplied entry further left is never selected.
 - When an `X-Forwarded-For` header is detected but `trust-forwarded-headers` is `false`, the filter logs a one-time warning suggesting you enable it.
 - When `trust-forwarded-headers` is `false`, spoofed `X-Forwarded-For` headers are ignored, preventing rate limit bypass.
 
@@ -486,9 +503,11 @@ Set `paygate.protocols.l402.client-address-binding-enabled=true` to bind newly i
 credentials to the exact canonical IPv4 or IPv6 address of the request. It is intentionally off by
 default: mobile clients, NAT changes, and proxy reconfiguration invalidate bound credentials.
 When the direct peer is configured as a trusted forwarding proxy, issuance and validation require a
-complete unambiguous `X-Forwarded-For` chain; unavailable provenance fails with 503 before invoice
-or root-key creation. Existing unbound L402 credentials become invalid after enablement. This
-control reduces replay exposure but does not eliminate it, and it never changes MPP challenges.
+complete unambiguous `X-Forwarded-For` chain (across all field lines, exactly one untrusted IP
+literal, leftmost); unavailable provenance fails with 503 before invoice or root-key creation.
+Binding requires a `ClientIpCaveatVerifier` in the `caveatVerifiers` list; startup fails without
+one. Existing unbound L402 credentials become invalid after enablement. This control reduces
+replay exposure but does not eliminate it, and it never changes MPP challenges.
 
 ### Overriding the Rate Limiter
 
@@ -789,13 +808,25 @@ public class CustomCaveatConfig {
     @Bean("caveatVerifiers")
     public List<CaveatVerifier> caveatVerifiers() {
         return List.of(
+                // Required by L402Validator: startup fails if any of these is missing.
                 new ServicesCaveatVerifier(50),
+                new RouteCaveatVerifier(50),
+                new MethodCaveatVerifier(50),
+                new CapabilitiesCaveatVerifier("my-service", 50),
                 new ValidUntilCaveatVerifier("my-service"),
+                // Required when paygate.protocols.l402.client-address-binding-enabled=true;
+                // also enforces holder-added client_ip delegation caveats.
+                new ClientIpCaveatVerifier(50),
+                new PathCaveatVerifier(50),
                 new MyCustomCaveatVerifier()
         );
     }
 }
 ```
+
+Caveats without a registered verifier are skipped during verification, so omitting an optional
+verifier such as `PathCaveatVerifier` or `ClientIpCaveatVerifier` silently disables enforcement of
+holder-added `path` or `client_ip` caveats.
 
 ### Override the LND gRPC Channel
 

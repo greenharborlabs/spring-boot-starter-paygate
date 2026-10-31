@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+Remediates SR-2026-10-18-01 through -11 and -17 from the 2026-10-18 security review. Dispositions
+for every finding are tracked in `docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md`.
+
+- **Request path identity (SR-01, SR-03, SR-04, SR-17).** Paygate now authorizes the once-decoded
+  path that Spring dispatches on. Every request whose path has a `.`, `..` or empty segment (a
+  single trailing slash is allowed), residual `%`, `\` or `;` path parameters is rejected with 400
+  `MALFORMED_URI` before policy lookup, whether or not it is paid. Manual routes match Spring's
+  parsed `RequestPath`. Paid manual routes served by non-`@RequestMapping` handlers fail closed with
+  500 when no Paygate decision was recorded. Previously, manual paid `RouterFunction` routes could be
+  reached unpaid through dot segments in servlet mode, and delegated `path` caveats and MPP digests
+  could be escaped the same way.
+- **MPP binding (SR-02).** MPP challenges now bind the route pattern, request method and capability
+  in the HMAC-bound `opaque`. Validation requires the bound amount to cover the current price.
+  MPP credentials issued before this release are rejected until they expire (at most 24 hours). In
+  Spring Security mode, MPP `PAYGATE_CAPABILITY_*` authorities come only from the verified binding.
+  `DefaultCapabilityResolver` no longer grants the requested endpoint's capability.
+- **Form bodies in Spring Security mode (SR-05).** A new `paygateRequestBodyCaptureFilterRegistration`
+  captures paid request bodies at `HIGHEST_PRECEDENCE + 10`, before `FormContentFilter`,
+  `HiddenHttpMethodFilter` and `CsrfFilter`, and replays them downstream. A body shorter than its
+  declared `Content-Length` is rejected with 400 `REQUEST_BODY_INCOMPLETE` in both modes.
+- **Forwarded addresses (SR-06).** All `X-Forwarded-For` lines are joined in order. The right-to-left
+  walk stops at the first entry that is not an IP literal and uses the nearest trusted hop, and
+  client-address binding fails closed when the lines are ambiguous.
+- **Client-address binding guard (SR-07).** Startup fails when
+  `paygate.protocols.l402.client-address-binding-enabled=true` and no `client_ip` caveat verifier is
+  registered.
+- **Spring Security chain guard (SR-08).** Startup now checks that every paid route is first matched,
+  for REQUEST, ASYNC, FORWARD and ERROR dispatch, by a chain that applies Paygate enforcement.
+  Chains using `PathPatternRequestMatcher` no longer crash startup with an NPE.
+- **Meter cardinality (SR-09).** The `method` tag on `paygate.security.decisions` is limited to the
+  standard HTTP methods, `_unknown` and `_other`.
+- **Lightning credentials (SR-10).** The docs now recommend a baked LND macaroon with
+  `invoices:read invoices:write info:read` and the LNbits Invoice/read key instead of admin
+  credentials. LND's `invoice.macaroon` alone lacks `info:read`, which fails health checks.
+- **CI supply chain (SR-11).** Snapshot and release publishing jobs no longer restore the Gradle
+  Actions cache. Semgrep and zizmor install from hash-locked requirement files.
+
+### Changed
+
+- Servlet-mode applications that used matrix variables or dot segments in request paths now receive
+  400.
+- These setups now fail closed with 400 instead of passing an unbound body:
+  - a paid POST form route whose mapping uses `params=` conditions;
+  - a filter ordered before Paygate that reads the parameters of a paid form request;
+  - a hidden-method override onto a paid route with a different method.
+- Paid POST form handlers on MPP or named-pricing routes now receive their form parameters.
+- With trusted `ip:port` proxies, rate-limit identity now groups clients under the proxy address.
+- New public API:
+  - `PaymentProtocol.validateAndResolveCapabilities` (default method);
+  - `L402Validator.hasCaveatVerifier`;
+  - `PaygateResponseWriter.writeRequestBodyIncomplete`;
+  - `RequestBodyIncompleteException`.
+- `new L402Protocol(..., true)` and the binding-enabled `PaygateAuthenticationProvider` constructor
+  throw when the validator has no `client_ip` verifier.
+
 ## [0.1.7] - 2026-09-23
 
 ### Security

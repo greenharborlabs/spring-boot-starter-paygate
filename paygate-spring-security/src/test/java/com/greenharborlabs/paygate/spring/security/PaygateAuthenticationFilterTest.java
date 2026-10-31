@@ -19,6 +19,7 @@ import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.PriceValidationException;
 import com.greenharborlabs.paygate.spring.ApplicationRelativeRequestResolver;
+import com.greenharborlabs.paygate.spring.BoundedRequestBody;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
@@ -26,10 +27,13 @@ import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
@@ -148,6 +152,69 @@ class PaygateAuthenticationFilterTest {
     } else {
       assertThat(response.getStatus()).isNotEqualTo(400);
     }
+  }
+
+  @Test
+  void dynamicPriceBodyShorterThanDeclaredLengthIsRejected() throws ServletException, IOException {
+    var config = new PaygateEndpointConfig("POST", "/body-bound", 10, 60, "body", "dynamic", null);
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod()));
+    var boundedFilter =
+        new PaygateAuthenticationFilter(
+            authenticationManager,
+            List.of(),
+            endpointRegistry,
+            null,
+            null,
+            authenticationEntryPoint,
+            8_192);
+    var consumedRequest =
+        new MockHttpServletRequest("POST", "/body-bound") {
+          @Override
+          public long getContentLengthLong() {
+            return 64;
+          }
+        };
+    consumedRequest.setContent(new byte[0]);
+
+    boundedFilter.doFilter(consumedRequest, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString()).contains("REQUEST_BODY_INCOMPLETE");
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void dynamicPriceReusesBodyCapturedBeforeTheSecurityChain() throws Exception {
+    var config = new PaygateEndpointConfig("POST", "/body-bound", 10, 60, "body", "dynamic", null);
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod()));
+    var boundedFilter =
+        new PaygateAuthenticationFilter(
+            authenticationManager,
+            List.of(),
+            endpointRegistry,
+            null,
+            null,
+            authenticationEntryPoint,
+            8_192);
+    byte[] body = "units=1".getBytes(StandardCharsets.UTF_8);
+    request.setMethod("POST");
+    request.setRequestURI("/body-bound");
+    request.setContent(body);
+    var early = BoundedRequestBody.capture(request, 8_192);
+    var priced = new AtomicReference<HttpServletRequest>();
+    when(authenticationEntryPoint.resolveTrustedPrice(any(HttpServletRequest.class), any()))
+        .thenAnswer(
+            invocation -> {
+              priced.set(invocation.getArgument(0));
+              return null;
+            });
+
+    boundedFilter.doFilter(new HttpServletRequestWrapper(early), response, filterChain);
+
+    assertThat(priced.get()).isInstanceOf(BoundedRequestBody.class);
+    assertThat(((BoundedRequestBody) priced.get()).observedBytes()).isEqualTo(body);
   }
 
   @Test
@@ -774,10 +841,34 @@ class PaygateAuthenticationFilterTest {
     verify(filterChain, never()).doFilter(any(), any());
   }
 
-  @Test
-  void normalizesPathTraversalBeforeRegistryLookup() throws ServletException, IOException {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/api/admin/../protected",
+        "/api/admin/%2e%2e/protected",
+        "/api/admin/%252e%252e/protected",
+        "/api/./protected",
+        "/api//protected",
+        "/api/protected;x=1"
+      })
+  void rejectsAmbiguousRequestPathBeforeRegistryLookup(String requestUri)
+      throws ServletException, IOException {
     request.setMethod("GET");
-    request.setRequestURI("/api/admin/../protected");
+    request.setRequestURI(requestUri);
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(endpointRegistry, never()).findConfig(anyString(), anyString());
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void recordsSuccessfulPolicyDecisionForManualRoute() throws ServletException, IOException {
+    request.setMethod("GET");
+    request.setRequestURI("/api/protected");
     request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
 
     var config = new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "desc", "", "read");
@@ -786,41 +877,12 @@ class PaygateAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    verify(endpointRegistry).findConfig("GET", "/api/protected");
-    ArgumentCaptor<PaygateAuthenticationToken> captor =
-        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
-    verify(authenticationManager).authenticate(captor.capture());
+    verify(filterChain).doFilter(any(), any());
     assertThat(
-            captor
-                .getValue()
-                .getRequestMetadata()
-                .get(VerificationContextKeys.REQUESTED_CAPABILITY))
-        .isEqualTo("read");
-  }
-
-  @Test
-  void normalizesPercentEncodedTraversalBeforeRegistryLookup()
-      throws ServletException, IOException {
-    request.setMethod("GET");
-    request.setRequestURI("/api/admin/%2e%2e/protected");
-    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
-
-    var config = new PaygateEndpointConfig("GET", "/api/protected", 10, 3600, "desc", "", "write");
-    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(config);
-    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
-
-    filter.doFilter(request, response, filterChain);
-
-    verify(endpointRegistry).findConfig("GET", "/api/protected");
-    ArgumentCaptor<PaygateAuthenticationToken> captor =
-        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
-    verify(authenticationManager).authenticate(captor.capture());
-    assertThat(
-            captor
-                .getValue()
-                .getRequestMetadata()
-                .get(VerificationContextKeys.REQUESTED_CAPABILITY))
-        .isEqualTo("write");
+            request.getAttribute(
+                "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision"))
+        .isInstanceOfSatisfying(
+            ResolvedEndpoint.class, decision -> assertThat(decision.config()).isEqualTo(config));
   }
 
   @Test

@@ -23,7 +23,7 @@ import java.util.function.Supplier;
  * available before any requests.
  */
 public class PaygateMetrics {
-  private static final String CAVEAT_TYPE_OTHER = "_other";
+  private static final String CAVEAT_TYPE_OTHER = MetricTagValues.OTHER;
   private static final Set<String> KNOWN_CAVEAT_TYPES =
       Set.of(
           "path", "method", "client_ip", "services", "capabilities", "valid_until", "escalation");
@@ -174,7 +174,8 @@ public class PaygateMetrics {
   public void recordSecurityDecision(SecurityDecision decision) {
     String reason = decision.reason().name().toLowerCase(java.util.Locale.ROOT);
     String protocol = decision.protocol().name().toLowerCase(java.util.Locale.ROOT);
-    String key = reason + '\0' + protocol + '\0' + decision.method() + '\0' + decision.endpoint();
+    String method = MetricTagValues.httpMethod(decision.method());
+    String key = reason + '\0' + protocol + '\0' + method + '\0' + decision.endpoint();
     securityDecisionCounters
         .computeIfAbsent(
             key,
@@ -182,7 +183,7 @@ public class PaygateMetrics {
                 Counter.builder("paygate.security.decisions")
                     .tag("reason", reason)
                     .tag("protocol", protocol)
-                    .tag("method", decision.method())
+                    .tag("method", method)
                     .tag("endpoint", decision.endpoint())
                     .description("Sanitized payment-gateway security decisions")
                     .register(registry))

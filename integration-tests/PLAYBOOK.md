@@ -315,15 +315,15 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 - `setup-lnbits.sh` starts LNbits with `LndRestWallet`, using LND's REST endpoint, TLS cert, and admin macaroon from the shared Docker volume.
 - The script waits for Docker health checks when supported by Docker Compose, then waits for the LNbits HTTP health endpoint.
 - It initializes LNbits first-install state if needed, logs in, creates a wallet, and writes `LNBITS_API_KEY` to `.env`.
-- That API key is the wallet admin key used by the example app configuration. Local proof smoke tests pay via `lnd-payer`, not via this LNbits wallet.
+- That API key is the disposable wallet's admin key, used by the example app configuration as a dev-only convenience. Local proof smoke tests pay via `lnd-payer`, not via this LNbits wallet.
 
-**Why this is required:** the example app talks to LNbits to create invoices. It needs a wallet admin key so invoice creation succeeds.
+**Why this is required:** the example app talks to LNbits to create invoices, so it needs a wallet key. Paygate only needs the wallet's Invoice/read key (invoice creation, payment lookup, wallet health check); the local script stores the admin key only because this regtest wallet is disposable. Never use an admin key outside this local stack.
 
 **How to verify:** `.env` contains `LNBITS_API_KEY=...`, and `curl http://localhost:15000/api/v1/health` returns successfully.
 
 ### What `setup-lnbits.sh` Does
 
-`integration-tests/scripts/setup-lnbits.sh` bootstraps LNbits for the local integration stack. It starts the LNbits Docker Compose service if needed, waits for LNbits, performs first-install setup when the instance is fresh, creates a wallet, extracts that wallet's Admin API key, and writes it to `integration-tests/.env` as `LNBITS_API_KEY`.
+`integration-tests/scripts/setup-lnbits.sh` bootstraps LNbits for the local integration stack. It starts the LNbits Docker Compose service if needed, waits for LNbits, performs first-install setup when the instance is fresh, creates a wallet, extracts that wallet's Admin API key, and writes it to `integration-tests/.env` as `LNBITS_API_KEY`. Using the admin key is a dev-only shortcut for this disposable regtest wallet; production deployments should configure the wallet's Invoice/read key instead.
 
 | Step | What the script does | Why it matters |
 | --- | --- | --- |
@@ -334,8 +334,8 @@ COMPOSE_FILE=docker-compose-lnbits-lnd.yml bash scripts/setup-lnbits.sh
 | 5 | Calls `PUT /api/v1/auth/first_install` with a local setup username and generated owner-only password. | Initializes LNbits on a fresh volume without a reusable repository default. |
 | 6 | Treats `200` as initialized and `401` as already initialized; every other first-install status fails setup. | Handles reruns and stops on an incompatible first-install API. |
 | 7 | Logs in with `POST /api/v1/auth` and requires HTTP `200` with an access token. | Stops on bad credentials or an incompatible login response before wallet creation. |
-| 8 | Creates a wallet using authenticated `POST /api/v1/account`. | Obtains the disposable wallet admin key required by the example app without an unauthenticated fallback. |
-| 9 | Parses `adminkey` from the wallet response. | This key is what the example app uses to ask LNbits to create invoices. |
+| 8 | Creates a wallet using authenticated `POST /api/v1/account`. | Obtains a disposable wallet key for the example app without an unauthenticated fallback. |
+| 9 | Parses `adminkey` from the wallet response. | This key is what the example app uses to ask LNbits to create invoices. The Invoice/read key (`inkey`) would suffice; the admin key is a dev-only shortcut. |
 | 10 | Updates or appends `LNBITS_API_KEY=<adminkey>` in `integration-tests/.env`. | Makes the key available to Docker Compose and the example app after restart. |
 | 11 | Prints a reminder to restart `paygate-example-app`. | The app reads `LNBITS_API_KEY` at startup, so it will not see the new key until restarted. |
 
@@ -706,7 +706,7 @@ PROTECTED_ENDPOINT="$APP_URL/api/v1/data"
 HEALTH_ENDPOINT="$APP_URL/api/v1/health"
 ```
 
-`scripts/setup-lnd-channel.sh` starts `bitcoind`, `lnd-payee`, and `lnd-payer`, opens a real regtest channel, and makes the payee LND TLS cert plus admin macaroon readable through the app mount. The separate `lnd-payer` node is required because LND rejects self-payments; the app-created invoice cannot be paid by the same payee node that created it. Start the app after that with `scripts/start-example-app.sh`; it removes any stale app container before starting the LND-backed app.
+`scripts/setup-lnd-channel.sh` starts `bitcoind`, `lnd-payee`, and `lnd-payer`, opens a real regtest channel, and makes the payee LND TLS cert plus admin macaroon readable through the app mount. The admin macaroon is a regtest-only convenience; outside this disposable stack, bake a least-privilege macaroon with `lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read` (see `paygate-lightning-lnd/README.md`). The separate `lnd-payer` node is required because LND rejects self-payments; the app-created invoice cannot be paid by the same payee node that created it. Start the app after that with `scripts/start-example-app.sh`; it removes any stale app container before starting the LND-backed app.
 
 ### 1.2 Request the protected endpoint (expect 402)
 

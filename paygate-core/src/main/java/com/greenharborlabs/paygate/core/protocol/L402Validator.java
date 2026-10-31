@@ -249,6 +249,22 @@ public final class L402Validator {
   }
 
   /**
+   * Returns whether a caveat verifier is registered for a caveat key.
+   *
+   * <p>Caveats without a registered verifier are skipped during verification, so components that
+   * mint a caveat and rely on it for authorization use this to fail construction rather than
+   * silently issue an unenforced restriction.
+   *
+   * @param caveatKey the caveat key, such as {@code client_ip}; edge whitespace is ignored as it is
+   *     during verification
+   * @return {@code true} when a verifier is registered for the key
+   */
+  public boolean hasCaveatVerifier(String caveatKey) {
+    Objects.requireNonNull(caveatKey, "caveatKey must not be null");
+    return caveatVerifiersByKey.containsKey(CaveatKey.canonicalize(caveatKey));
+  }
+
+  /**
    * Validates an L402 Authorization header using a default verification context built from the
    * configured service name and the current time. This compatibility overload does not provide the
    * mandatory request route and method, so an otherwise valid credential fails with {@link

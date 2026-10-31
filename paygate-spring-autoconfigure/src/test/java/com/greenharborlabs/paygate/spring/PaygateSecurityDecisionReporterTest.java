@@ -5,9 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.greenharborlabs.paygate.api.SecurityDecision;
 import com.greenharborlabs.paygate.api.SecurityDecisionProtocol;
 import com.greenharborlabs.paygate.api.SecurityDecisionReason;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.config.MeterFilter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.Random;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class PaygateSecurityDecisionReporterTest {
 
@@ -42,7 +48,7 @@ class PaygateSecurityDecisionReporterTest {
   }
 
   @Test
-  void replacesControlCharactersBeforeRecordingMetricTags() {
+  void replacesControlCharactersAndBoundsMethodBeforeRecordingMetricTags() {
     var registry = new SimpleMeterRegistry();
     var reporter = new PaygateSecurityDecisionReporter(registry);
 
@@ -56,10 +62,65 @@ class PaygateSecurityDecisionReporterTest {
     assertThat(
             registry
                 .find("paygate.security.decisions")
-                .tags("method", "POST__forged-entry", "endpoint", "/api/analyze_")
+                .tags("method", "_other", "endpoint", "/api/analyze_")
                 .counter()
                 .count())
         .isEqualTo(1.0);
+  }
+
+  @Test
+  void randomMethodTokensProduceAtMostNineDistinctMethodTags() {
+    var registry = new SimpleMeterRegistry();
+    var reporter = new PaygateSecurityDecisionReporter(registry);
+    var random = new Random(20261018L);
+    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+-.^_`|~";
+
+    for (int i = 0; i < 1000; i++) {
+      var method = new StringBuilder();
+      int length = 1 + random.nextInt(i % 100 == 0 ? 4000 : 12);
+      for (int j = 0; j < length; j++) {
+        method.append(alphabet.charAt(random.nextInt(alphabet.length())));
+      }
+      reporter.onDecision(decision(method.toString()));
+    }
+
+    assertThat(methodTags(registry))
+        .hasSizeLessThanOrEqualTo(9)
+        .isSubsetOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "_other");
+    assertThat(
+            registry.find("paygate.security.decisions").counters().stream()
+                .mapToDouble(Counter::count)
+                .sum())
+        .isEqualTo(1000.0);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"})
+  void standardMethodsKeepTheirOwnTag(String method) {
+    var registry = new SimpleMeterRegistry();
+
+    new PaygateSecurityDecisionReporter(registry).onDecision(decision(method));
+
+    assertThat(methodTags(registry)).containsExactly(method);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"get", "Post", "CONNECT", "PROPFIND", " GET", "GET "})
+  void nonStandardOrDifferentlyCasedMethodsCollapseToOther(String method) {
+    var registry = new SimpleMeterRegistry();
+
+    new PaygateSecurityDecisionReporter(registry).onDecision(decision(method));
+
+    assertThat(methodTags(registry)).containsExactly("_other");
+  }
+
+  @Test
+  void unknownMethodSentinelIsPreserved() {
+    var registry = new SimpleMeterRegistry();
+
+    new PaygateSecurityDecisionReporter(registry).onDecision(decision("_unknown"));
+
+    assertThat(methodTags(registry)).containsExactly("_unknown");
   }
 
   @Test
@@ -120,5 +181,19 @@ class PaygateSecurityDecisionReporterTest {
                 SecurityDecisionProtocol.L402,
                 "GET",
                 "/api/widgets/{id}"));
+  }
+
+  private static SecurityDecision decision(String method) {
+    return new SecurityDecision(
+        SecurityDecisionReason.COMPRESSED_BODY_REJECTED,
+        SecurityDecisionProtocol.UNKNOWN,
+        method,
+        "/api/dyn");
+  }
+
+  private static Set<String> methodTags(SimpleMeterRegistry registry) {
+    return registry.find("paygate.security.decisions").counters().stream()
+        .map(counter -> counter.getId().getTag("method"))
+        .collect(Collectors.toUnmodifiableSet());
   }
 }

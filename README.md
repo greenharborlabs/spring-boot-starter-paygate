@@ -170,7 +170,7 @@ Both protocols share the same Lightning invoice -- the client pays once regardle
 
 ### MPP Request Binding and Replay Limitations
 
-An MPP credential is a reusable bearer credential for one exact request identity: HTTP method, application-relative UTF-8 path, raw-query presence and value, and a bounded request-body digest. The raw query is binding-sensitive; it is not parsed, decoded, sorted, or normalized, so differently encoded equivalent queries are different requests. An absent query and a present-but-empty query are also different identities. The echoed expiry is authenticated by the challenge binding and must be present, unexpired, and within the supported lifetime.
+An MPP credential is a reusable bearer credential for one exact request identity: HTTP method, application-relative UTF-8 path, raw-query presence and value, and a bounded request-body digest. The raw query is binding-sensitive; it is not parsed, decoded, sorted, or normalized, so differently encoded equivalent queries are different requests. An absent query and a present-but-empty query are also different identities. The echoed expiry is authenticated by the challenge binding and must be present, unexpired, and within the supported lifetime. The challenge also binds the paid policy that issued it: the canonical route pattern, request method, and capability declaration (in the HMAC-bound `opaque`), and the charged amount, which must cover the endpoint's current price. A credential bought for one handler therefore cannot unlock another handler that Spring MVC selects for the same request line by headers or content negotiation, or a higher request-dependent price. See `paygate-protocol-mpp/README.md`.
 
 MPP challenge validation is stateless. A credential may be presented repeatedly until expiry for that same bound request; there is no server-side single-use or replay ledger. Treat the credential and payment preimage as transferable bearer material: anyone who obtains them can use them within those binding and expiry constraints. A request with any different bound component must obtain a new challenge.
 
@@ -401,7 +401,7 @@ All properties are under the `paygate.*` prefix.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `paygate.lnbits.url` | `string` | -- | LNbits instance URL. |
-| `paygate.lnbits.api-key` | `string` | -- | LNbits admin API key. |
+| `paygate.lnbits.api-key` | `string` | -- | LNbits wallet Invoice/read API key (sufficient for invoice creation, payment lookup, and the wallet health check). The Admin key is not required; avoid it. |
 | `paygate.lnbits.request-timeout-seconds` | `int` | -- | HTTP request timeout. Overrides `paygate.lightning.timeout-seconds` when set. |
 | `paygate.lnbits.connect-timeout-seconds` | `int` | `10` | TCP connect timeout in seconds. |
 | `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | Allow `http://` LNbits URLs only for local/test loopback targets. Production URLs should use HTTPS. |
@@ -413,7 +413,7 @@ All properties are under the `paygate.*` prefix.
 | `paygate.lnd.host` | `string` | `localhost` | LND gRPC host. |
 | `paygate.lnd.port` | `int` | `10009` | LND gRPC port. |
 | `paygate.lnd.tls-cert-path` | `string` | -- | Path to LND TLS certificate. Omit for plaintext (dev only). |
-| `paygate.lnd.macaroon-path` | `string` | -- | Path to LND admin macaroon file. |
+| `paygate.lnd.macaroon-path` | `string` | -- | Path to a least-privilege LND macaroon baked with `invoices:read invoices:write info:read`. The stock `invoice.macaroon` lacks `info:read` and fails health checks; `admin.macaroon` is not required. |
 | `paygate.lnd.allow-plaintext` | `boolean` | `false` | Allow plaintext gRPC only for an all-allowed development profile set and a loopback literal or exact `localhost` resolving entirely to loopback; unsafe targets fail before a channel is created. |
 | `paygate.lnd.rpc-deadline-seconds` | `int` | -- | Per-call gRPC deadline. Overrides `paygate.lightning.timeout-seconds` when set. |
 | `paygate.lnd.keep-alive-time-seconds` | `int` | `60` | Interval between gRPC keepalive pings. |
@@ -438,7 +438,7 @@ All properties are under the `paygate.*` prefix.
 [LNbits](https://lnbits.com/) is a lightweight Lightning wallet with a REST API. It is the simplest backend to get started with.
 
 1. Deploy or use a hosted LNbits instance
-2. Create a wallet and note the admin API key
+2. Create a wallet and note its **Invoice/read** API key (under the wallet's API info). This key covers everything the backend calls -- creating incoming invoices, looking up payments, and the `GET /api/v1/wallet` health check. Do not use the Admin key; it can also spend wallet funds.
 3. Configure:
 
 ```yaml
@@ -463,7 +463,13 @@ implementation("com.greenharborlabs:paygate-lightning-lnbits:0.1.4")
 [LND](https://github.com/lightningnetwork/lnd) is a full Lightning Network node implementation. Use this for production deployments where you operate your own node.
 
 1. Ensure your LND node is running and accessible via gRPC
-2. Locate the TLS certificate and admin macaroon files
+2. Locate the TLS certificate and bake a least-privilege macaroon. The backend calls only `AddInvoice`, `LookupInvoice`, and `GetInfo`, which need `invoices:write`, `invoices:read`, and `info:read`:
+
+   ```bash
+   lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read
+   ```
+
+   Do not use the stock `invoice.macaroon` on its own: it lacks `info:read`, so the `GetInfo` health check fails and every protected endpoint returns `503`. `admin.macaroon` is not required and should be avoided.
 3. Configure:
 
 ```yaml
@@ -474,7 +480,7 @@ paygate:
     host: your-lnd-host
     port: 10009
     tls-cert-path: /path/to/tls.cert
-    macaroon-path: /path/to/admin.macaroon
+    macaroon-path: /path/to/paygate.macaroon
 ```
 
 **Dependency:**

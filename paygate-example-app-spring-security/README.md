@@ -635,11 +635,13 @@ paygate:
     host: localhost
     port: 10009
     tls-cert-path: /path/to/tls.cert
-    macaroon-path: /path/to/invoice.macaroon
+    macaroon-path: /path/to/paygate.macaroon
   protocols:
     mpp:
       challenge-binding-secret: ${PAYGATE_MPP_SECRET}
 ```
+
+`paygate.macaroon` is a least-privilege macaroon baked with `lncli bakemacaroon --save_to paygate.macaroon invoices:read invoices:write info:read`. LND's stock `invoice.macaroon` lacks `info:read`, so the `GetInfo` health check fails and every protected endpoint returns `503`; `admin.macaroon` is not required and should be avoided.
 
 See [`paygate-lightning-lnbits/README.md`](../paygate-lightning-lnbits/README.md) and [`paygate-lightning-lnd/README.md`](../paygate-lightning-lnd/README.md) for backend-specific details.
 

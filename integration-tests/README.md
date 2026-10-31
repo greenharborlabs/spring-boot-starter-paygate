@@ -245,7 +245,8 @@ admin key to the ignored `.env` file.
 
 For local Docker testing, `setup-lnbits.sh` initializes the first-install
 superuser automatically when LNbits redirects to `/first_install`, logs in, and
-stores a fresh disposable wallet admin key in ignored `.env`. The example entrypoint only launches
+stores a fresh disposable wallet admin key in ignored `.env` (a dev-only shortcut; Paygate needs only
+the wallet's Invoice/read key, which is what non-local deployments should use). The example entrypoint only launches
 the JVM; it never provisions through the nonlocal `lnbits` Compose hostname. Compose injects a
 pre-provisioned key and explicitly disables the example auto-provision setting. Starting it without
 that injected key fails safely.

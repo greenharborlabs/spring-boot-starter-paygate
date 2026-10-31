@@ -12,6 +12,7 @@ import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
+import com.greenharborlabs.paygate.spring.RequestBodyIncompleteException;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
@@ -58,6 +59,8 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
   private static final String AUTHORIZATION_HEADER = "Authorization";
   private static final String SUCCESSFUL_PAID_HANDLER_ATTRIBUTE =
       "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPaidHandler";
+  private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
 
   private final AuthenticationManager authenticationManager;
   private final List<PaymentProtocol> protocols;
@@ -211,6 +214,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         SecurityContextHolder.clearContext();
         PaygateResponseWriter.writeRequestBodyTooLarge(response);
         return;
+      } catch (RequestBodyIncompleteException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeRequestBodyIncomplete(response);
+        return;
       } catch (IOException e) {
         SecurityContextHolder.clearContext();
         PaygateResponseWriter.writeLightningUnavailable(response);
@@ -223,6 +230,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       } catch (RequestBodyTooLargeException e) {
         SecurityContextHolder.clearContext();
         PaygateResponseWriter.writeRequestBodyTooLarge(response);
+        return;
+      } catch (RequestBodyIncompleteException e) {
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeRequestBodyIncomplete(response);
         return;
       }
     }
@@ -282,6 +293,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
       return;
+    } catch (RequestBodyIncompleteException e) {
+      SecurityContextHolder.clearContext();
+      PaygateResponseWriter.writeRequestBodyIncomplete(response);
+      return;
     } catch (RuntimeException e) {
       SecurityContextHolder.clearContext();
       PaygateResponseWriter.writeLightningUnavailable(response);
@@ -299,6 +314,7 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       var securityContext = SecurityContextHolder.createEmptyContext();
       securityContext.setAuthentication(authenticated);
       SecurityContextHolder.setContext(securityContext);
+      authRequest.setAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, resolvedEndpoint);
       authRequest.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, resolvedEndpoint.handlerMethod());
     } catch (AuthenticationException e) {
       SecurityContextHolder.clearContext();

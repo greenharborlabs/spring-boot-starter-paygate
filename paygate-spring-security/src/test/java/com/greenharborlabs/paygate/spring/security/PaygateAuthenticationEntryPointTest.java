@@ -158,6 +158,34 @@ class PaygateAuthenticationEntryPointTest {
     assertThat(response.getStatus()).isEqualTo(bodyLength > 8_192 ? 400 : 402);
   }
 
+  @Test
+  void absentCredentialMppChallengeRejectsBodyShorterThanDeclaredLength() throws Exception {
+    when(protocol.scheme()).thenReturn("Payment");
+    var boundedEntryPoint =
+        new PaygateAuthenticationEntryPoint(
+            challengeService, endpointRegistry, List.of(protocol), 8_192);
+    var config = new PaygateEndpointConfig("PUT", "/form-bound", 1, 60, "body", "", null);
+    var resolved = new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod());
+    var consumedRequest =
+        new MockHttpServletRequest("PUT", "/form-bound") {
+          @Override
+          public long getContentLengthLong() {
+            return 32;
+          }
+        };
+    consumedRequest.setContent(new byte[0]);
+
+    boundedEntryPoint.commence(consumedRequest, response, resolved);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString()).contains("REQUEST_BODY_INCOMPLETE");
+    verify(challengeService, never())
+        .createChallenge(
+            any(HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            any(PaygateChallengeService.ChallengeOptions.class));
+  }
+
   @ParameterizedTest(name = "replacement MPP body of {0} bytes honors the configured bound")
   @ValueSource(ints = {0, 8191, 8192, 8193})
   void replacementMppChallengeUsesConfiguredBound(int bodyLength) throws Exception {
@@ -534,25 +562,25 @@ class PaygateAuthenticationEntryPointTest {
   }
 
   @Test
-  void normalizesPathBeforeLookup() throws Exception {
+  void rejectsDotSegmentPathBeforeLookup() throws Exception {
     request.setRequestURI("/api/../api/protected");
-    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(endpointRegistry, never()).findConfig(any(), any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
   }
 
   @Test
-  void normalizesPercentEncodedPathBeforeLookup() throws Exception {
+  void rejectsPercentEncodedDotSegmentPathBeforeLookup() throws Exception {
     request.setRequestURI("/api/%2e%2e/api/protected");
-    when(endpointRegistry.findConfig("GET", "/api/protected")).thenReturn(TEST_CONFIG);
-    when(challengeService.createChallenge(any(), eq(TEST_CONFIG), any())).thenReturn(TEST_CONTEXT);
 
     entryPoint.commence(request, response, new BadCredentialsException("test"));
 
-    assertThat(response.getStatus()).isEqualTo(402);
+    assertThat(response.getStatus()).isEqualTo(400);
+    verify(endpointRegistry, never()).findConfig(any(), any());
+    verify(challengeService, never()).createChallenge(any(), any(ResolvedEndpoint.class), any());
   }
 
   @Test

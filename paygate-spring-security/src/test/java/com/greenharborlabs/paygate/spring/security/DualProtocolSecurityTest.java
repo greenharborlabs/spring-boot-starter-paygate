@@ -378,7 +378,7 @@ class DualProtocolSecurityTest {
 
       @SuppressWarnings("unchecked")
       ArgumentCaptor<Map<String, String>> metadataCaptor = ArgumentCaptor.forClass(Map.class);
-      verify(mppProtocol).validate(eq(credential), metadataCaptor.capture());
+      verify(mppProtocol).validateAndResolveCapabilities(eq(credential), metadataCaptor.capture());
 
       Map<String, String> metadata = metadataCaptor.getValue();
       assertThat(metadata)
@@ -412,7 +412,7 @@ class DualProtocolSecurityTest {
 
       @SuppressWarnings("unchecked")
       ArgumentCaptor<Map<String, String>> metadataCaptor = ArgumentCaptor.forClass(Map.class);
-      verify(mppProtocol).validate(eq(credential), metadataCaptor.capture());
+      verify(mppProtocol).validateAndResolveCapabilities(eq(credential), metadataCaptor.capture());
 
       assertThat(metadataCaptor.getValue())
           .containsEntry(VerificationContextKeys.REQUEST_CLIENT_IP, "192.168.1.100");

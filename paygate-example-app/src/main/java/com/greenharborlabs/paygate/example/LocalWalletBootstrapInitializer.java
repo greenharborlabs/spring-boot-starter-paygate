@@ -26,6 +26,10 @@ import tools.jackson.databind.json.JsonMapper;
  * development target and publishes a complete key only after the direct, bounded health and wallet
  * requests both succeed. Configuration strings cannot be reliably erased by the JVM; this bounded
  * residual risk is limited to the opted-in example process.
+ *
+ * <p>It publishes the new wallet's {@code adminkey}, a dev-only convenience for a disposable
+ * wallet. Paygate needs only the wallet's Invoice/read key; real deployments should supply that key
+ * and never an admin key.
  */
 final class LocalWalletBootstrapInitializer
     implements ApplicationContextInitializer<ConfigurableApplicationContext> {

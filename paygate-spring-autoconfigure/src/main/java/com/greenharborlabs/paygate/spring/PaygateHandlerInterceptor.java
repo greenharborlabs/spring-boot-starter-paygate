@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.spring;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.util.Objects;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -12,11 +13,17 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * <p>The servlet filter authorizes a policy before MVC selects a handler. This interceptor closes
  * that gap by requiring the selected paid handler to be the handler marked by that successful
  * authorization.
+ *
+ * <p>For handlers that are not MVC handler methods, such as {@code RouterFunction} or URL-mapped
+ * handlers, a manually registered paid route that matches the raw dispatch path requires a
+ * successful decision for that route. Otherwise the request fails closed with 500.
  */
 public final class PaygateHandlerInterceptor implements HandlerInterceptor {
 
   private static final String SUCCESSFUL_PAID_HANDLER_ATTRIBUTE =
       "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPaidHandler";
+  private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
 
   private final PaygateEndpointRegistry registry;
 
@@ -28,7 +35,7 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
   public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
       throws Exception {
     if (!(handler instanceof HandlerMethod handlerMethod)) {
-      return true;
+      return preHandleNonMethodHandler(request, response);
     }
 
     boolean paid;
@@ -49,6 +56,29 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
       return true;
     }
 
+    PaygateResponseWriter.writeInternalError(response);
+    return false;
+  }
+
+  /**
+   * Final enforcement for handlers that are not MVC handler methods, such as {@code RouterFunction}
+   * or URL-mapped handlers. Manual routes are matched against the raw dispatch path, independently
+   * of the filter's canonical path. A paid match without a successful Paygate decision for that
+   * same policy fails closed.
+   */
+  private boolean preHandleNonMethodHandler(
+      HttpServletRequest request, HttpServletResponse response) throws IOException {
+    ResolvedEndpoint paidRoute;
+    try {
+      paidRoute = registry.resolveManualRoute(request);
+    } catch (RuntimeException _) {
+      PaygateResponseWriter.writeInternalError(response);
+      return false;
+    }
+    if (paidRoute == null
+        || paidRoute.equals(request.getAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE))) {
+      return true;
+    }
     PaygateResponseWriter.writeInternalError(response);
     return false;
   }

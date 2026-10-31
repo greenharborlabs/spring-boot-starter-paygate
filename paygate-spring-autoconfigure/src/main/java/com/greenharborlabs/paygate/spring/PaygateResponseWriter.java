@@ -124,6 +124,20 @@ public final class PaygateResponseWriter {
                 {"code": 400, "error": "REQUEST_BODY_TOO_LARGE", "message": "Request body exceeds 8192 bytes for digest binding"}""");
   }
 
+  /**
+   * Writes a 400 response when fewer body bytes were observed than the request's declared {@code
+   * Content-Length}, meaning the body was truncated or already consumed before Paygate saw it.
+   */
+  public static void writeRequestBodyIncomplete(HttpServletResponse response) throws IOException {
+    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    setSafeErrorHeaders(response, "application/json");
+    response
+        .getWriter()
+        .write(
+            """
+                {"code": 400, "error": "REQUEST_BODY_INCOMPLETE", "message": "Request body does not match its declared length"}""");
+  }
+
   /** Writes a stable 400 response for an unsupported content encoding on a size-priced route. */
   public static void writeUnsupportedRequestEncoding(HttpServletResponse response)
       throws IOException {

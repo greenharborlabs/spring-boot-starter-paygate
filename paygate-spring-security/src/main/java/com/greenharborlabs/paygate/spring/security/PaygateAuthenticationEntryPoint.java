@@ -9,6 +9,7 @@ import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.PaygateLightningUnavailableException;
 import com.greenharborlabs.paygate.spring.PaygateRateLimitedException;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
+import com.greenharborlabs.paygate.spring.RequestBodyIncompleteException;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
 import com.greenharborlabs.paygate.spring.RequestDigestSupport;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
@@ -189,6 +190,9 @@ public final class PaygateAuthenticationEntryPoint implements AuthenticationEntr
     } catch (RequestBodyTooLargeException e) {
       log.log(System.Logger.Level.WARNING, "Rejected request: {0}", e.getMessage());
       PaygateResponseWriter.writeRequestBodyTooLarge(response);
+    } catch (RequestBodyIncompleteException e) {
+      log.log(System.Logger.Level.WARNING, "Rejected request: {0}", e.getMessage());
+      PaygateResponseWriter.writeRequestBodyIncomplete(response);
     } catch (PaygateRateLimitedException _) {
       PaygateResponseWriter.writeRateLimited(response);
     } catch (PaygateLightningUnavailableException e) {

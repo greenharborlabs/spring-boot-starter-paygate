@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -22,6 +23,7 @@ import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
 import com.greenharborlabs.paygate.core.protocol.L402HeaderComponents;
 import com.greenharborlabs.paygate.core.protocol.L402Validator;
+import com.greenharborlabs.paygate.spring.CapabilityCache;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
@@ -217,8 +219,29 @@ class PaygateAuthenticationProviderDelegationTest {
       assertThat(authToken.getServiceName()).isEqualTo(SERVICE_NAME);
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
-          .contains("ROLE_PAYMENT");
+          .containsExactly("ROLE_PAYMENT");
       assertThat(credential.isDestroyed()).isTrue();
+    }
+
+    @Test
+    void grantsOnlyCapabilitiesVerifiedByProtocol() {
+      String authHeader = "Payment token123";
+      PaymentCredential credential = createPaymentCredential("Payment");
+
+      when(mppProtocol.canHandle(authHeader)).thenReturn(true);
+      when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
+      when(mppProtocol.validateAndResolveCapabilities(eq(credential), any()))
+          .thenReturn(Set.of("premium"));
+
+      var unauthToken =
+          PaygateAuthenticationToken.unauthenticated(
+              authHeader, Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "admin"));
+
+      Authentication result = provider.authenticate(unauthToken);
+
+      assertThat(result.getAuthorities())
+          .extracting(GrantedAuthority::getAuthority)
+          .containsExactlyInAnyOrder("ROLE_PAYMENT", "PAYGATE_CAPABILITY_premium");
     }
 
     @Test
@@ -239,7 +262,7 @@ class PaygateAuthenticationProviderDelegationTest {
 
       @SuppressWarnings("unchecked")
       ArgumentCaptor<Map<String, String>> metadataCaptor = ArgumentCaptor.forClass(Map.class);
-      verify(mppProtocol).validate(eq(credential), metadataCaptor.capture());
+      verify(mppProtocol).validateAndResolveCapabilities(eq(credential), metadataCaptor.capture());
 
       assertThat(metadataCaptor.getValue())
           .containsEntry(VerificationContextKeys.REQUEST_PATH, TEST_PATH)
@@ -257,7 +280,7 @@ class PaygateAuthenticationProviderDelegationTest {
               new PaymentValidationException(
                   PaymentValidationException.ErrorCode.INVALID, "bad preimage"))
           .when(mppProtocol)
-          .validate(eq(credential), any());
+          .validateAndResolveCapabilities(eq(credential), any());
 
       var unauthToken = PaygateAuthenticationToken.unauthenticated(authHeader, Map.of());
 
@@ -359,6 +382,35 @@ class PaygateAuthenticationProviderDelegationTest {
       assertThat(authToken.getAuthorities())
           .extracting(GrantedAuthority::getAuthority)
           .containsExactlyInAnyOrder("ROLE_PAYMENT", "PAYGATE_CAPABILITY_analyze");
+    }
+
+    @Test
+    void defaultResolverCacheMissGrantsNoCapabilityFromRequestMetadata() {
+      String authHeader = "Payment token123";
+      PaymentCredential credential = createPaymentCredential("Payment");
+      CapabilityCache cache = mock(CapabilityCache.class);
+      when(cache.get(any())).thenReturn(null);
+
+      when(mppProtocol.canHandle(authHeader)).thenReturn(true);
+      when(mppProtocol.parseCredential(authHeader)).thenReturn(credential);
+      when(mppProtocol.validateAndResolveCapabilities(eq(credential), any())).thenReturn(Set.of());
+
+      var provider =
+          new PaygateAuthenticationProvider(
+              l402Validator,
+              List.of(mppProtocol),
+              SERVICE_NAME,
+              new DefaultCapabilityResolver(cache));
+
+      var unauthToken =
+          PaygateAuthenticationToken.unauthenticated(
+              authHeader, Map.of(VerificationContextKeys.REQUESTED_CAPABILITY, "premium"));
+
+      Authentication result = provider.authenticate(unauthToken);
+
+      assertThat(result.getAuthorities())
+          .extracting(GrantedAuthority::getAuthority)
+          .containsExactly("ROLE_PAYMENT");
     }
 
     @Test

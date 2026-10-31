@@ -34,9 +34,11 @@ dependencies {
     testImplementation(project(":paygate-spring-autoconfigure"))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-web")
+    testImplementation("io.micrometer:micrometer-core")
 
     securityTestImplementation(project(":paygate-example-app-spring-security"))
     securityTestImplementation(project(":paygate-spring-autoconfigure"))
+    securityTestImplementation(project(":paygate-spring-security"))
     securityTestImplementation(project(":paygate-lightning-lnbits"))
     securityTestImplementation(project(":paygate-lightning-lnd"))
     securityTestImplementation("org.springframework.boot:spring-boot-starter-test")

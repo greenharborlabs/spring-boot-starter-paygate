@@ -24,6 +24,12 @@ class MppProtocolExpiryTest {
   private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
   private static final String REALM = "expiry-test";
   private static final String DIGEST = "sha-256=:ZXhwaXJ5LXRlc3Q=:";
+  private static final String OPAQUE =
+      Base64.getUrlEncoder()
+          .withoutPadding()
+          .encodeToString(
+              "{\"paygate_capability\":\"~\",\"paygate_method\":\"GET\",\"paygate_route\":\"/expiry\"}"
+                  .getBytes(StandardCharsets.UTF_8));
   private static final byte[] SECRET_BYTES = new byte[32];
   private static final byte[] PREIMAGE = new byte[32];
 
@@ -88,7 +94,7 @@ class MppProtocolExpiryTest {
     String request = request();
     String id =
         MppChallengeBinding.createId(
-            REALM, "lightning", "charge", request, expires, DIGEST, null, secret());
+            REALM, "lightning", "charge", request, expires, DIGEST, OPAQUE, secret());
     Map<String, String> challenge = new LinkedHashMap<>();
     challenge.put("id", id);
     challenge.put("realm", REALM);
@@ -99,18 +105,27 @@ class MppProtocolExpiryTest {
       challenge.put("expires", expires);
     }
     challenge.put("digest", DIGEST);
+    challenge.put("opaque", OPAQUE);
     return new PaymentCredential(
         paymentHash, PREIMAGE, id, "Payment", null, new MppMetadata(challenge, null));
   }
 
   private static Map<String, String> requestContext() {
-    return Map.of("request.digest", DIGEST);
+    return Map.of(
+        "request.digest",
+        DIGEST,
+        "request.route",
+        "/expiry",
+        "request.method",
+        "GET",
+        "request.current_price_sats",
+        "1");
   }
 
   private static String request() {
     return Base64.getUrlEncoder()
         .withoutPadding()
-        .encodeToString("{\"amount\":\"1\"}".getBytes(StandardCharsets.UTF_8));
+        .encodeToString("{\"amount\":\"1\",\"currency\":\"BTC\"}".getBytes(StandardCharsets.UTF_8));
   }
 
   private static String timestamp(Instant instant) {

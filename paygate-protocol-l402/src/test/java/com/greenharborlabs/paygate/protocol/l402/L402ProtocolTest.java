@@ -334,6 +334,7 @@ class L402ProtocolTest {
 
     @Test
     void enabledAddressBindingMintsExactlyOneCanonicalClientIpCaveat() {
+      when(validator.hasCaveatVerifier("client_ip")).thenReturn(true);
       protocol =
           new L402Protocol(
               validator,
@@ -388,6 +389,7 @@ class L402ProtocolTest {
 
     @Test
     void enabledAddressBindingRejectsContextWithoutTrustedAddress() {
+      when(validator.hasCaveatVerifier("client_ip")).thenReturn(true);
       protocol = new L402Protocol(validator, SERVICE_NAME, Clock.systemUTC(), true);
 
       assertThatThrownBy(
@@ -858,6 +860,7 @@ class L402ProtocolTest {
 
     @Test
     void enabledAddressBindingRejectsAStillLiveLegacyCredentialWithoutClientIpCaveat() {
+      when(validator.hasCaveatVerifier("client_ip")).thenReturn(true);
       protocol = new L402Protocol(validator, SERVICE_NAME, Clock.systemUTC(), true);
       String authHeader = buildValidAuthHeader("L402");
       PaymentCredential credential = protocol.parseCredential(authHeader);
