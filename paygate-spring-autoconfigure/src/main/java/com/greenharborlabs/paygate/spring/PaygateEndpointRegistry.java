@@ -10,6 +10,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.springframework.http.server.PathContainer;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
@@ -214,12 +215,7 @@ public class PaygateEndpointRegistry {
     var requestPath = ServletRequestPathUtils.parseAndCache(request);
     var mvcMatches = new ArrayList<RegisteredEndpoint>();
     for (RegisteredEndpoint candidate : registrations) {
-      var mappingInfo = candidate.mappingInfo();
-      if (mappingInfo == null) {
-        continue;
-      }
-      var matched = mappingInfo.getMatchingCondition(request);
-      if (matched != null && matchesPolicyMethod(candidate, matched)) {
+      if (candidate.matchesMvcRequest(request)) {
         mvcMatches.add(candidate);
       }
     }
@@ -323,24 +319,6 @@ public class PaygateEndpointRegistry {
     return false;
   }
 
-  /**
-   * A mapping that declares several HTTP methods is registered once per method. Only the
-   * registration for the method MVC actually matched (for example {@code GET} for an inherited
-   * {@code HEAD}) applies to this request, so each mapped method enforces its own policy.
-   */
-  private static boolean matchesPolicyMethod(
-      RegisteredEndpoint candidate, RequestMappingInfo matched) {
-    if ("*".equals(candidate.policyMethod())) {
-      return true;
-    }
-    for (var method : matched.getMethodsCondition().getMethods()) {
-      if (method.name().equals(candidate.policyMethod())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   private static int compareMvcForRequest(
       RegisteredEndpoint left, RegisteredEndpoint right, HttpServletRequest request) {
     int sourceOrder = Integer.compare(left.sourceOrder(), right.sourceOrder());
@@ -372,8 +350,7 @@ public class PaygateEndpointRegistry {
         patterns = mappingInfo.getPatternValues();
       }
 
-      Set<org.springframework.web.bind.annotation.RequestMethod> httpMethods =
-          mappingInfo.getMethodsCondition().getMethods();
+      Set<RequestMethod> httpMethods = mappingInfo.getMethodsCondition().getMethods();
 
       for (String pattern : patterns) {
         PathPattern parsedPattern = patternFrom(mappingInfo, pattern);
@@ -388,7 +365,7 @@ public class PaygateEndpointRegistry {
               sourceOrder,
               parsedPattern);
         } else {
-          for (org.springframework.web.bind.annotation.RequestMethod httpMethod : httpMethods) {
+          for (RequestMethod httpMethod : httpMethods) {
             registerMappedEndpoint(
                 paymentRequired == null
                     ? null
@@ -533,5 +510,25 @@ public class PaygateEndpointRegistry {
       RequestMappingInfo mappingInfo,
       HandlerMethod handlerMethod,
       HandlerMapping sourceMapping,
-      int sourceOrder) {}
+      int sourceOrder) {
+
+    /**
+     * Returns whether this MVC registration applies to the request. A mapping that declares several
+     * HTTP methods is registered once per method, and only the registration for the method MVC
+     * matched (for example {@code GET} for an inherited {@code HEAD}) applies, so each mapped
+     * method enforces its own policy.
+     */
+    boolean matchesMvcRequest(HttpServletRequest request) {
+      if (mappingInfo == null) {
+        return false;
+      }
+      var matched = mappingInfo.getMatchingCondition(request);
+      return matched != null
+          && ("*".equals(policyMethod)
+              || matched
+                  .getMethodsCondition()
+                  .getMethods()
+                  .contains(RequestMethod.valueOf(policyMethod)));
+    }
+  }
 }
