@@ -17,7 +17,9 @@ import com.greenharborlabs.paygate.core.macaroon.MacaroonCrypto;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonIdentifier;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonMinter;
 import com.greenharborlabs.paygate.core.macaroon.MacaroonSerializer;
+import com.greenharborlabs.paygate.core.macaroon.MacaroonVerifier;
 import com.greenharborlabs.paygate.core.macaroon.MethodCaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.PaidPriceCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.RootKeyStore;
 import com.greenharborlabs.paygate.core.macaroon.RouteCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.ServicesCaveatVerifier;
@@ -185,6 +187,63 @@ class L402PriceEvidenceRegressionTest {
 
     assertMissingPriceEvidence(validator, header(legacy), context("1", stability));
     assertMissingPriceEvidence(validator, header(legacy), context("1000000", stability));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // A holder-appended price never surfaces as verified, even without a current price.
+  // ---------------------------------------------------------------------------------------------
+
+  @Test
+  void holderAppendedPriceIsNotVerifiedWhenNoCurrentPriceIsSupplied() {
+    Macaroon legacy = mintWithoutPrice();
+    Macaroon forged = attenuate(legacy, new Caveat(PRICE_KEY, "1000000"));
+    L402Validator validator = validator(failingBackend(new AtomicInteger()));
+
+    // Fresh validation, then the exact-variant cache hit.
+    for (boolean expectFresh : new boolean[] {true, false}) {
+      L402Validator.ValidationResult result = validator.validate(header(forged), unpricedContext());
+      try {
+        assertThat(result.freshValidation()).isEqualTo(expectFresh);
+        assertThat(result.verifiedAttributes()).doesNotContainKey(PRICE_KEY);
+        assertThat(result.verifiedAttributes()).containsKeys("route", "method");
+        assertThat(result.paidPriceEvidence().coveredAmountSats()).isEmpty();
+      } finally {
+        result.credential().destroy();
+      }
+    }
+  }
+
+  @Test
+  void holderAppendedPriceIsNotVerifiedByGenericCaveatVerification() {
+    List<Caveat> caveats = new ArrayList<>(boundaries());
+    caveats.add(new Caveat(PRICE_KEY, "1000000"));
+    List<CaveatVerifier> withPrice = new ArrayList<>(verifiers());
+    withPrice.add(new PaidPriceCaveatVerifier(SERVICE));
+
+    assertThat(MacaroonVerifier.verifyCaveats(caveats, withPrice, unpricedContext()))
+        .doesNotContainKey(PRICE_KEY)
+        .containsKeys("route", "method");
+  }
+
+  @Test
+  void issuerSignedPriceIsVerifiedWithoutCurrentPriceAndReflectsHolderNarrowing() {
+    Macaroon issued = mint(new Caveat(PRICE_KEY, "10"));
+    Macaroon narrowed = attenuate(issued, new Caveat(PRICE_KEY, "5"));
+    L402Validator validator = validator(failingBackend(new AtomicInteger()));
+
+    L402Validator.ValidationResult result = validator.validate(header(issued), unpricedContext());
+    try {
+      assertThat(result.verifiedAttributes()).containsEntry(PRICE_KEY, "10");
+    } finally {
+      result.credential().destroy();
+    }
+    L402Validator.ValidationResult narrowedResult =
+        validator.validate(header(narrowed), unpricedContext());
+    try {
+      assertThat(narrowedResult.verifiedAttributes()).containsEntry(PRICE_KEY, "5");
+    } finally {
+      narrowedResult.credential().destroy();
+    }
   }
 
   @Test
@@ -382,6 +441,18 @@ class L402PriceEvidenceRegressionTest {
         + Base64.getEncoder().encodeToString(MacaroonSerializer.serializeV2(macaroon))
         + ":"
         + HEX.formatHex(proof);
+  }
+
+  /** Request context without a current price, as compatibility callers supply it. */
+  private static L402VerificationContext unpricedContext() {
+    return L402VerificationContext.builder()
+        .serviceName(SERVICE)
+        .currentTime(Instant.now())
+        .requestMetadata(
+            Map.of(
+                VerificationContextKeys.REQUEST_ROUTE, ROUTE,
+                VerificationContextKeys.REQUEST_METHOD, METHOD))
+        .build();
   }
 
   private static L402VerificationContext context(String price, String stability) {

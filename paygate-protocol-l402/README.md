@@ -333,7 +333,8 @@ A caveat that appears only after that point counts as absent, even when it is co
 
 - a `{serviceName}_price_sats` caveat outside the prefix is not price evidence, so the credential
   fails with `MISSING_PRICE_EVIDENCE` or, on a `ROUTE_STABLE` route with a Lightning backend, needs
-  the settled-invoice lookup;
+  the settled-invoice lookup. It is also never reported as a verified attribute or covered amount,
+  even when the request carries no current price;
 - a `services`, `route`, `method`, or `{serviceName}_capabilities` boundary outside the prefix is
   a missing boundary;
 - with client-address binding enabled, a `client_ip` caveat outside the prefix does not bind the
