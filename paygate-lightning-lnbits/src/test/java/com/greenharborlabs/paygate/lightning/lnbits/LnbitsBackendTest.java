@@ -7,6 +7,7 @@ import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
+import com.greenharborlabs.paygate.core.lightning.LightningException;
 import com.greenharborlabs.paygate.core.lightning.LightningTimeoutException;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
@@ -31,12 +32,16 @@ class LnbitsBackendTest {
   private static final String API_KEY = "test-api-key-abc123";
   private static final HexFormat HEX = HexFormat.of();
 
-  // A valid 32-byte payment hash (hex-encoded = 64 chars)
+  // BOLT #11 specification example: BOLT11 commits to PAYMENT_HASH_HEX.
   private static final String PAYMENT_HASH_HEX =
-      "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+      "0001020304050607080900010203040506070809000102030405060708090102";
   private static final byte[] PAYMENT_HASH = HEX.parseHex(PAYMENT_HASH_HEX);
 
-  private static final String BOLT11 = "lnbc100n1pjexamplefakedatafortesting";
+  private static final String BOLT11 =
+      "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq9qrsgq357wnc5r2ueh7ck6q93dj32dlqnls087fxdwk8qakdyafkq3yap9us6v52vjjsrvywa6rt52cm9r9zqt8r2t7mlcwspyetp5h2tztugp9lfyql";
+
+  private static final String OTHER_PAYMENT_HASH_HEX =
+      "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
 
   private MockWebServer server;
   private LnbitsBackend backend;
@@ -492,6 +497,63 @@ class LnbitsBackendTest {
             .setBody(
                 """
                         {"payment_hash": "%s"}
+                        """
+                    .formatted(PAYMENT_HASH_HEX)));
+
+    assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
+        .isInstanceOf(LnbitsException.class)
+        .hasMessage("LNbits returned invalid backend data");
+  }
+
+  @Test
+  void createInvoice_throws_whenBolt11CommitsToDifferentPaymentHash() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"payment_hash": "%s", "payment_request": "%s"}
+                        """
+                    .formatted(OTHER_PAYMENT_HASH_HEX, BOLT11)));
+
+    assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
+        .isInstanceOf(LnbitsException.class)
+        .isInstanceOf(LightningException.class)
+        .hasMessage("LNbits returned invalid backend data")
+        .hasNoCause();
+  }
+
+  @Test
+  void createInvoice_throws_whenBolt11IsNotAValidInvoice() {
+    String corrupted = BOLT11.substring(0, BOLT11.length() - 1) + "q";
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"payment_hash": "%s", "payment_request": "%s"}
+                        """
+                    .formatted(PAYMENT_HASH_HEX, corrupted)));
+
+    assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
+        .isInstanceOf(LnbitsException.class)
+        .hasMessage("LNbits returned invalid backend data")
+        .hasCauseInstanceOf(IllegalArgumentException.class)
+        .message()
+        .doesNotContain(corrupted);
+  }
+
+  @Test
+  void createInvoice_throws_whenBolt11IsPlaceholderText() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(201)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                """
+                        {"payment_hash": "%s", "payment_request": "lnbc100n1pjexamplefake"}
                         """
                     .formatted(PAYMENT_HASH_HEX)));
 

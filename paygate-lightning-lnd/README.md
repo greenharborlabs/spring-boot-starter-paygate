@@ -413,7 +413,7 @@ This ensures that infrastructure failures do not accidentally grant free access 
 
 | Method | Failure Behavior |
 |--------|-----------------|
-| `createInvoice()` | Throws `LndException` on gRPC failures, or `LndTimeoutException` on deadline exceeded. The filter translates this to HTTP 503. |
+| `createInvoice()` | Throws `LndException` on gRPC failures, or `LndTimeoutException` on deadline exceeded. Also throws `LndException` when the returned `payment_request` is not a well-formed BOLT11 invoice (bech32 checksum, single 52-word `p` field) or commits to a payment hash other than `r_hash`; the node signature is not verified. The filter translates this to HTTP 503. |
 | `lookupInvoice()` | Throws `LndException` on gRPC failures (including `NOT_FOUND` for unknown payment hashes), or `LndTimeoutException` on deadline exceeded. |
 | `isHealthy()` | Returns `false` on any `StatusRuntimeException` (never throws). Also returns `false` when LND reports `synced_to_chain=false`, indicating the node is still syncing. |
 
