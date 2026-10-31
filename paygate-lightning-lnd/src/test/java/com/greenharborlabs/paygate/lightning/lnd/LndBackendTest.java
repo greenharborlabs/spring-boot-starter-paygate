@@ -18,6 +18,7 @@ import io.grpc.stub.StreamObserver;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicInteger;
 import lnrpc.LightningGrpc;
 import lnrpc.Lnrpc;
@@ -25,6 +26,13 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class LndBackendTest {
+
+  /** BOLT #11 specification example invoice and the payment hash it commits to. */
+  private static final String SPEC_BOLT11 =
+      "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq9qrsgq357wnc5r2ueh7ck6q93dj32dlqnls087fxdwk8qakdyafkq3yap9us6v52vjjsrvywa6rt52cm9r9zqt8r2t7mlcwspyetp5h2tztugp9lfyql";
+
+  private static final byte[] SPEC_PAYMENT_HASH =
+      HexFormat.of().parseHex("0001020304050607080900010203040506070809000102030405060708090102");
 
   private io.grpc.Server grpcServer;
   private ManagedChannel channel;
@@ -39,6 +47,22 @@ class LndBackendTest {
             .start();
     channel = InProcessChannelBuilder.forName(serverName).directExecutor().build();
     return new LndBackend(channel);
+  }
+
+  private LndBackend startBackendReturning(byte[] rHash, String paymentRequest) throws Exception {
+    return startBackendWith(
+        new LightningGrpc.LightningImplBase() {
+          @Override
+          public void addInvoice(
+              Lnrpc.Invoice request, StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
+            responseObserver.onNext(
+                Lnrpc.AddInvoiceResponse.newBuilder()
+                    .setRHash(ByteString.copyFrom(rHash))
+                    .setPaymentRequest(paymentRequest)
+                    .build());
+            responseObserver.onCompleted();
+          }
+        });
   }
 
   @AfterEach
@@ -267,32 +291,65 @@ class LndBackendTest {
 
   @Test
   void createInvoice_returnsInvoiceOnSuccess() throws Exception {
-    byte[] rHash = new byte[32];
-    rHash[0] = 1;
+    byte[] rHash = SPEC_PAYMENT_HASH.clone();
 
-    var backend =
-        startBackendWith(
-            new LightningGrpc.LightningImplBase() {
-              @Override
-              public void addInvoice(
-                  Lnrpc.Invoice request,
-                  StreamObserver<Lnrpc.AddInvoiceResponse> responseObserver) {
-                responseObserver.onNext(
-                    Lnrpc.AddInvoiceResponse.newBuilder()
-                        .setRHash(ByteString.copyFrom(rHash))
-                        .setPaymentRequest("lnbc100n1test")
-                        .build());
-                responseObserver.onCompleted();
-              }
-            });
+    var backend = startBackendReturning(rHash, SPEC_BOLT11);
 
     Invoice invoice = backend.createInvoice(100, "test memo");
 
     assertThat(invoice.paymentHash()).isEqualTo(rHash);
-    assertThat(invoice.bolt11()).isEqualTo("lnbc100n1test");
+    assertThat(invoice.bolt11()).isEqualTo(SPEC_BOLT11);
     assertThat(invoice.amountSats()).isEqualTo(100);
     assertThat(invoice.memo()).isEqualTo("test memo");
     assertThat(invoice.status()).isEqualTo(InvoiceStatus.PENDING);
+  }
+
+  @Test
+  void createInvoice_rejectsPaymentRequestCommittingToDifferentHash() throws Exception {
+    byte[] otherHash = SPEC_PAYMENT_HASH.clone();
+    otherHash[31] ^= 1;
+
+    var backend = startBackendReturning(otherHash, SPEC_BOLT11);
+
+    assertThatThrownBy(() -> backend.createInvoice(100, "memo"))
+        .isInstanceOf(LndException.class)
+        .isInstanceOf(LightningException.class)
+        .isNotInstanceOf(LndTimeoutException.class)
+        .hasMessage("LND returned invalid backend data")
+        .hasNoCause();
+  }
+
+  @Test
+  void createInvoice_rejectsPaymentRequestWithCorruptedChecksum() throws Exception {
+    String corrupted = SPEC_BOLT11.substring(0, SPEC_BOLT11.length() - 1) + "q";
+
+    var backend = startBackendReturning(SPEC_PAYMENT_HASH.clone(), corrupted);
+
+    assertThatThrownBy(() -> backend.createInvoice(100, "memo"))
+        .isInstanceOf(LndException.class)
+        .hasMessage("LND returned invalid backend data")
+        .hasCauseInstanceOf(IllegalArgumentException.class)
+        .message()
+        .doesNotContain(corrupted);
+  }
+
+  @Test
+  void createInvoice_rejectsEmptyPaymentRequest() throws Exception {
+    var backend = startBackendReturning(SPEC_PAYMENT_HASH.clone(), "");
+
+    assertThatThrownBy(() -> backend.createInvoice(100, "memo"))
+        .isInstanceOf(LndException.class)
+        .hasMessage("LND returned invalid backend data");
+  }
+
+  @Test
+  void createInvoice_rejectsWrongLengthHashBeforeParsingPaymentRequest() throws Exception {
+    var backend = startBackendReturning(new byte[31], SPEC_BOLT11);
+
+    assertThatThrownBy(() -> backend.createInvoice(100, "memo"))
+        .isInstanceOf(LndException.class)
+        .hasMessage("LND returned invalid backend data")
+        .hasNoCause();
   }
 
   @Test

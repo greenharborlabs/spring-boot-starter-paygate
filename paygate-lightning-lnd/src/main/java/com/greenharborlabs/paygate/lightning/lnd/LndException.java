@@ -20,6 +20,10 @@ public class LndException extends LightningException {
     return new LndException(INVALID_BACKEND_DATA);
   }
 
+  static LndException invalidBackendData(Throwable cause) {
+    return new LndException(INVALID_BACKEND_DATA, cause);
+  }
+
   static LndException requestFailed(Throwable cause) {
     return new LndException(REQUEST_FAILED, cause);
   }
