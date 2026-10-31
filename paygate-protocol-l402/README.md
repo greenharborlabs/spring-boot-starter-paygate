@@ -150,8 +150,10 @@ The method:
    - `services` caveat: `"{serviceName}:0"` (always present)
    - `route` caveat: the canonical registered route pattern
    - `method` caveat: the actual request method
+   - `client_ip` caveat: the trusted client address (only when client-address binding is enabled)
+   - `{serviceName}_price_sats` caveat: the settled invoice amount in satoshis
    - `{serviceName}_capabilities` caveat: the declared capability ceiling, or `~` for no capability
-   - `{serviceName}_valid_until` caveat: Unix epoch timestamp of `now + timeoutSeconds`
+   - `{serviceName}_valid_until` caveat: Unix epoch timestamp of `now + timeoutSeconds`, always last
 3. Mints the macaroon via `MacaroonMinter.mint()` using the root key from the context
 4. Serializes to V2 binary format via `MacaroonSerializer.serializeV2()` and encodes with **standard base64 with padding** (not base64url)
 5. Sanitizes the BOLT11 invoice string against header injection (see [Header Injection Defense](#header-injection-defense))
@@ -320,15 +322,45 @@ The capability caveat is an authenticated ceiling, not an additive grant. `~` me
 
 Previously issued L402 credentials without `route`, `method`, or the capability ceiling are intentionally rejected, including cached credentials. Accepting the legacy `LSAT` scheme name does not grandfather those unbound credentials; clients must obtain a new challenge.
 
-Built-in issuance always uses identifier version 1 and the five caveats listed above, in that
-sequence. This sequence is a guarantee of the built-in issuer, not a universal caveat-position
-requirement for custom issuers. A custom issuer must begin with
-`new MacaroonIdentifier(1, paymentHash, tokenId)` and sign a canonical `route`, the actual `method`,
-the active service's `{serviceName}_capabilities` ceiling, and every caveat required by the
-verifiers registered with its validator. For applications that construct an `L402Validator`
-directly, `ServicesCaveatVerifier` and `ValidUntilCaveatVerifier` are caller-selected; include their
-caveats when those verifiers are registered. Registered verifiers determine required caveats, not
-a universal caveat position. A correctly signed identifier-v0 credential is rejected even if its holder appends matching route, method, and capability caveats; clients must obtain and pay a new challenge.
+Built-in issuance always uses identifier version 1 and the caveats listed above, in that
+sequence, with `{serviceName}_valid_until` last.
+
+#### Issuer prefix
+
+Macaroon holders can only append caveats. Paygate therefore treats the caveats before the first
+`{serviceName}_valid_until` as the **issuer prefix**: only caveats there count as issuer evidence.
+A caveat that appears only after that point counts as absent, even when it is correctly signed:
+
+- a `{serviceName}_price_sats` caveat outside the prefix is not price evidence, so the credential
+  fails with `MISSING_PRICE_EVIDENCE` or, on a `ROUTE_STABLE` route with a Lightning backend, needs
+  the settled-invoice lookup;
+- a `services`, `route`, `method`, or `{serviceName}_capabilities` boundary outside the prefix is
+  a missing boundary;
+- with client-address binding enabled, a `client_ip` caveat outside the prefix does not bind the
+  credential, so a legacy unbound credential stays rejected after its holder appends one.
+
+Holder-appended caveats are still verified and may narrow the issued grant, for example lowering
+the covered price or the capability ceiling. They can never supply evidence the issuer omitted.
+
+#### Custom issuers
+
+A custom issuer must:
+
+1. begin with `new MacaroonIdentifier(1, paymentHash, tokenId)`;
+2. sign `services`, a canonical `route`, the actual `method`, a `{serviceName}_price_sats` caveat
+   with the settled invoice amount, the active service's `{serviceName}_capabilities` ceiling, any
+   `client_ip` binding, and every other caveat required by the verifiers registered with its
+   validator;
+3. sign `{serviceName}_valid_until` **after every other issuer caveat**.
+
+Caveats an issuer signs after `{serviceName}_valid_until` are indistinguishable from
+holder-appended caveats and are ignored as issuer evidence. A credential without a price caveat in
+the issuer prefix fails paid-price validation: `L402Validator` instances without a Lightning backend
+(the 4-argument constructor) reject it with `MISSING_PRICE_EVIDENCE` at any price.
+
+`L402Validator` requires `ServicesCaveatVerifier`, `RouteCaveatVerifier`, `MethodCaveatVerifier`,
+`CapabilitiesCaveatVerifier`, and `ValidUntilCaveatVerifier` for its service and fails construction
+without them. A correctly signed identifier-v0 credential is rejected even if its holder appends matching route, method, and capability caveats; clients must obtain and pay a new challenge.
 
 This migration changes only the signed identifier version. The identifier remains 66 bytes (`[version:2 BE][paymentHash:32][tokenId:32]`), the HTTP challenge still advertises `version="0"`, and the macaroon still uses V2 binary encoding compatible with Go `go-macaroon` parsers.
 
@@ -465,9 +497,12 @@ This module depends on:
 ## Signed price evidence
 
 `L402Protocol` mints exactly one `${serviceName}_price_sats` first-party caveat using the settled
-invoice amount. Because the caveat is part of the macaroon signature, clients cannot raise its
-coverage after issuance. Integrations should treat an `INSUFFICIENT` result as a request for a
-fresh current-price challenge and an `UNAVAILABLE` result as a 503 fail-closed outcome.
+invoice amount, before `${serviceName}_valid_until`. Because the caveat is part of the macaroon
+signature, clients cannot raise its coverage after issuance. Only a price caveat in the
+[issuer prefix](#issuer-prefix) is evidence; one appended after `${serviceName}_valid_until` cannot
+make a price-less credential acceptable. Integrations should treat an `INSUFFICIENT` result as a
+request for a fresh current-price challenge and an `UNAVAILABLE` result as a 503 fail-closed
+outcome.
 
 This project is licensed under the [MIT License](../LICENSE).
 

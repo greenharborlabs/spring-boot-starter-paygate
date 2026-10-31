@@ -6,6 +6,7 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
+import com.greenharborlabs.paygate.core.macaroon.IssuerCaveatPrefix;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
@@ -210,7 +211,7 @@ public class L402Protocol implements PaymentProtocol {
     try {
       result = validator.validate(metadata.rawAuthorizationHeader(), context);
       if (clientAddressBindingEnabled
-          && clientAddressCaveatCount(result.credential().macaroon()) != 1) {
+          && !hasIssuerClientAddressBinding(result.credential().macaroon())) {
         throw new PaymentValidationException(
             PaymentValidationException.ErrorCode.INVALID,
             "L402 credential validation failed",
@@ -240,10 +241,19 @@ public class L402Protocol implements PaymentProtocol {
     return value;
   }
 
-  private static long clientAddressCaveatCount(Macaroon macaroon) {
-    return macaroon.caveats().stream()
-        .filter(caveat -> CLIENT_IP_CAVEAT_KEY.equals(caveat.key()))
-        .count();
+  /**
+   * Returns whether the credential carries exactly one {@code client_ip} caveat and the issuer
+   * signed it. Only the {@linkplain IssuerCaveatPrefix issuer prefix} counts, so a holder cannot
+   * self-bind a legacy unbound credential by appending {@code client_ip} after {@code
+   * {serviceName}_valid_until}.
+   */
+  private boolean hasIssuerClientAddressBinding(Macaroon macaroon) {
+    return clientAddressCaveatCount(macaroon.caveats()) == 1
+        && clientAddressCaveatCount(IssuerCaveatPrefix.of(macaroon.caveats(), serviceName)) == 1;
+  }
+
+  private static long clientAddressCaveatCount(List<Caveat> caveats) {
+    return caveats.stream().filter(caveat -> CLIENT_IP_CAVEAT_KEY.equals(caveat.key())).count();
   }
 
   /**

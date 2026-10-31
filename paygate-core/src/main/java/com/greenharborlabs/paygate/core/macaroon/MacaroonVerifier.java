@@ -204,6 +204,10 @@ public final class MacaroonVerifier {
    * Requires every issuer boundary when the caller has configured the complete first-party L402
    * verifier profile. Generic macaroon consumers remain free to register only their own caveat
    * schema, while L402 callers cannot turn an omitted caveat into an unconstrained grant.
+   *
+   * <p>Only the {@linkplain IssuerCaveatPrefix issuer prefix} counts as boundary evidence, so a
+   * holder cannot supply a boundary the issuer omitted by appending it after {@code
+   * {serviceName}_valid_until}.
    */
   private static void requireMandatoryL402Boundaries(
       List<Caveat> caveats,
@@ -220,25 +224,7 @@ public final class MacaroonVerifier {
       return;
     }
 
-    boolean hasServices = false;
-    boolean hasRoute = false;
-    boolean hasMethod = false;
-    boolean hasCapabilities = false;
-    boolean hasValidUntil = false;
-    for (Caveat caveat : caveats) {
-      String canonicalKey = CaveatKey.canonicalize(caveat.key());
-      hasServices |= SERVICES_CAVEAT_KEY.equals(canonicalKey);
-      hasRoute |= ROUTE_CAVEAT_KEY.equals(canonicalKey);
-      hasMethod |= METHOD_CAVEAT_KEY.equals(canonicalKey);
-      hasCapabilities |= capabilitiesKey.equals(canonicalKey);
-      hasValidUntil |= validUntilKey.equals(canonicalKey);
-    }
-
-    if (!hasServices || !hasRoute || !hasMethod || !hasCapabilities || !hasValidUntil) {
-      throw new MacaroonVerificationException(
-          VerificationFailureReason.CAVEAT_NOT_MET,
-          "Credential is missing a required issuer boundary caveat");
-    }
+    IssuerCaveatPrefix.requireBoundaries(caveats, serviceName);
   }
 
   private static boolean hasCompleteFirstPartyL402Profile(

@@ -119,7 +119,7 @@ class PaygateSecurityFilterRealStoreTest {
   @Test
   @DisplayName("credential paid for a cheap route cannot replay on a more expensive route")
   void rejectsCredentialOnDifferentRegisteredRouteBeforeHandler() throws Exception {
-    String credential = mintCredential(CHEAP_PATH, "GET", true);
+    String credential = mintCredential(CHEAP_PATH, "GET", true, 1);
 
     mockMvc.perform(get(CHEAP_PATH).header("Authorization", credential)).andExpect(status().isOk());
     mockMvc
@@ -384,6 +384,11 @@ class PaygateSecurityFilterRealStoreTest {
 
   private String mintCredential(
       String routePattern, String requestMethod, boolean includeBoundary) {
+    return mintCredential(routePattern, requestMethod, includeBoundary, PRICE_SATS);
+  }
+
+  private String mintCredential(
+      String routePattern, String requestMethod, boolean includeBoundary, long priceSats) {
     byte[] preimage = new byte[32];
     new SecureRandom().nextBytes(preimage);
     byte[] paymentHash = sha256(preimage);
@@ -397,6 +402,7 @@ class PaygateSecurityFilterRealStoreTest {
         if (includeBoundary) {
           caveats.add(new Caveat("route", routePattern));
           caveats.add(new Caveat("method", requestMethod));
+          caveats.add(new Caveat(SERVICE_NAME + "_price_sats", Long.toString(priceSats)));
           caveats.add(new Caveat(SERVICE_NAME + "_capabilities", "~"));
         }
         caveats.add(

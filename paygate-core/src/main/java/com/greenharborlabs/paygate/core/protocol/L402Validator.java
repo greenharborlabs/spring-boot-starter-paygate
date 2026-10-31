@@ -14,6 +14,7 @@ import com.greenharborlabs.paygate.core.macaroon.CapabilitiesCaveatVerifier;
 import com.greenharborlabs.paygate.core.macaroon.Caveat;
 import com.greenharborlabs.paygate.core.macaroon.CaveatKey;
 import com.greenharborlabs.paygate.core.macaroon.CaveatVerifier;
+import com.greenharborlabs.paygate.core.macaroon.IssuerCaveatPrefix;
 import com.greenharborlabs.paygate.core.macaroon.KeyMaterial;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
@@ -65,6 +66,19 @@ public final class L402Validator {
   private final PaidPriceCaveatVerifier paidPriceCaveatVerifier;
   private final SecurityDecisionObserver decisionObserver;
 
+  /**
+   * Creates a validator without an invoice-evidence source.
+   *
+   * <p>A credential without an issuer-signed {@code {serviceName}_price_sats} caveat fails with
+   * {@link PriceValidationException.Kind#MISSING_PRICE_EVIDENCE} whenever the request carries a
+   * current price, because nothing can prove what it paid. Issuers used with this constructor must
+   * sign a price caveat before {@code {serviceName}_valid_until}.
+   *
+   * @param rootKeyStore authoritative root-key store
+   * @param credentialStore credential cache
+   * @param caveatVerifiers registered caveat verifiers
+   * @param serviceName first-party L402 service name
+   */
   public L402Validator(
       RootKeyStore rootKeyStore,
       CredentialStore credentialStore,
@@ -87,8 +101,9 @@ public final class L402Validator {
    * @param credentialStore credential cache
    * @param caveatVerifiers registered caveat verifiers
    * @param serviceName first-party L402 service name
-   * @param lightningBackend optional invoice lookup backend; a missing backend makes legacy lookup
-   *     unavailable rather than accepting the credential
+   * @param lightningBackend optional invoice lookup backend; when {@code null}, a credential
+   *     without an issuer-signed price caveat fails with {@link
+   *     PriceValidationException.Kind#MISSING_PRICE_EVIDENCE} instead of being accepted
    */
   public L402Validator(
       RootKeyStore rootKeyStore,
@@ -530,15 +545,17 @@ public final class L402Validator {
         throw new PriceValidationException(
             PriceValidationException.Kind.EVIDENCE_UNAVAILABLE, tokenId);
       }
-      Long coveredPrice = null;
+      // Only a price caveat in the issuer prefix is issuer evidence. A price caveat that appears
+      // only after the first valid_until may be holder-appended, so the credential is price-less.
+      if (!hasIssuerPriceCaveat(macaroon.caveats())) {
+        return verifyLegacyPaidPrice(macaroon, currentPrice, context, tokenId);
+      }
+      // Every occurrence narrows coverage: a holder may attenuate the price down, never up.
+      long coveredPrice = Long.MAX_VALUE;
       for (Caveat caveat : macaroon.caveats()) {
         if (paidPriceCaveatVerifier.getKey().equals(CaveatKey.canonicalize(caveat.key()))) {
-          long parsed = PaidPriceCaveatVerifier.parse(caveat.value());
-          coveredPrice = coveredPrice == null ? parsed : Math.min(coveredPrice, parsed);
+          coveredPrice = Math.min(coveredPrice, PaidPriceCaveatVerifier.parse(caveat.value()));
         }
-      }
-      if (coveredPrice == null) {
-        return verifyLegacyPaidPrice(macaroon, currentPrice, context, tokenId);
       }
       if (coveredPrice < currentPrice) {
         throw new PriceValidationException(
@@ -580,17 +597,11 @@ public final class L402Validator {
 
   private PaidPriceEvidence verifyLegacyPaidPrice(
       Macaroon macaroon, long currentPrice, L402VerificationContext context, String tokenId) {
-    if (lightningBackend == null) {
-      // The legacy public constructor predates invoice-evidence lookup. Preserve its core-only
-      // compatibility semantics; Spring production wiring uses the backend-aware constructor and
-      // therefore takes the strict lookup branch below.
-      return new PaidPriceEvidence(
-          java.util.OptionalLong.empty(),
-          java.util.OptionalLong.of(currentPrice),
-          pricingStability(context));
-    }
-    if (!"ROUTE_STABLE"
-        .equals(context.getRequestMetadata().get(VerificationContextKeys.PRICING_STABILITY))) {
+    // Without an invoice-evidence source, nothing proves what a price-less credential paid, so it
+    // fails closed at every price. Request-dependent routes never accept legacy evidence.
+    if (lightningBackend == null
+        || !"ROUTE_STABLE"
+            .equals(context.getRequestMetadata().get(VerificationContextKeys.PRICING_STABILITY))) {
       throw new PriceValidationException(
           PriceValidationException.Kind.MISSING_PRICE_EVIDENCE, tokenId);
     }
@@ -620,6 +631,15 @@ public final class L402Validator {
     } finally {
       KeyMaterial.zeroize(paymentHash);
     }
+  }
+
+  private boolean hasIssuerPriceCaveat(List<Caveat> caveats) {
+    for (Caveat caveat : IssuerCaveatPrefix.of(caveats, serviceName)) {
+      if (paidPriceCaveatVerifier.getKey().equals(CaveatKey.canonicalize(caveat.key()))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static java.util.Optional<String> pricingStability(L402VerificationContext context) {
@@ -658,25 +678,8 @@ public final class L402Validator {
   }
 
   private void verifyRequiredBoundaryCaveats(List<Caveat> caveats) {
-    boolean hasServices = false;
-    boolean hasRoute = false;
-    boolean hasMethod = false;
-    boolean hasCapabilityCeiling = false;
-    boolean hasValidUntil = false;
-    String validUntilCaveatKey = serviceName + "_valid_until";
-    for (Caveat caveat : caveats) {
-      String canonicalKey = CaveatKey.canonicalize(caveat.key());
-      hasServices |= SERVICES_CAVEAT_KEY.equals(canonicalKey);
-      hasRoute |= ROUTE_CAVEAT_KEY.equals(canonicalKey);
-      hasMethod |= METHOD_CAVEAT_KEY.equals(canonicalKey);
-      hasCapabilityCeiling |= capabilityCaveatKey.equals(canonicalKey);
-      hasValidUntil |= validUntilCaveatKey.equals(canonicalKey);
-    }
-    if (!hasServices || !hasRoute || !hasMethod || !hasCapabilityCeiling || !hasValidUntil) {
-      throw new MacaroonVerificationException(
-          VerificationFailureReason.CAVEAT_NOT_MET,
-          "Credential is missing a required issuer boundary caveat");
-    }
+    // Only the issuer prefix (before the first valid_until) counts: holders can only append.
+    IssuerCaveatPrefix.requireBoundaries(caveats, serviceName);
   }
 
   private Set<String> extractFinalEffectiveCapabilities(Macaroon macaroon) {
