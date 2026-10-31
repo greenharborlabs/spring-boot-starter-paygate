@@ -5,16 +5,26 @@ import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -22,12 +32,22 @@ import tools.jackson.databind.node.ObjectNode;
 /**
  * LNbits implementation of {@link LightningBackend}. Uses {@link java.net.http.HttpClient} for HTTP
  * and Jackson for JSON.
+ *
+ * <p>Each call is bounded twice: response bodies larger than {@value #MAX_RESPONSE_BODY_BYTES}
+ * bytes are rejected while streaming, and one deadline equal to the configured request timeout
+ * covers the whole exchange, headers and body together. Exceeding either is a backend failure.
  */
 public class LnbitsBackend implements LightningBackend {
 
   private static final System.Logger log = System.getLogger(LnbitsBackend.class.getName());
   private static final HexFormat HEX = HexFormat.of();
   private static final Duration DEFAULT_INVOICE_EXPIRY = Duration.ofHours(1);
+
+  /** Maximum accepted LNbits response body size: 1 MiB. */
+  static final int MAX_RESPONSE_BODY_BYTES = 1024 * 1024;
+
+  private static final HttpResponse.BodyHandler<byte[]> BOUNDED_BODY_HANDLER =
+      responseInfo -> new BoundedBodySubscriber(MAX_RESPONSE_BODY_BYTES);
 
   private final LnbitsConfig config;
   private final JsonMapper objectMapper;
@@ -70,8 +90,7 @@ public class LnbitsBackend implements LightningBackend {
               .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
               .build();
 
-      HttpResponse<String> response =
-          httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+      HttpResponse<byte[]> response = send(request);
       checkResponseStatus(response, "createInvoice");
       JsonNode json = objectMapper.readTree(response.body());
 
@@ -131,8 +150,7 @@ public class LnbitsBackend implements LightningBackend {
               .GET()
               .build();
 
-      HttpResponse<String> response =
-          httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+      HttpResponse<byte[]> response = send(request);
       checkResponseStatus(response, "lookupInvoice");
       JsonNode json = objectMapper.readTree(response.body());
       return parseLookupResponse(json, paymentHash);
@@ -165,8 +183,7 @@ public class LnbitsBackend implements LightningBackend {
               .GET()
               .build();
 
-      HttpResponse<String> response =
-          httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+      HttpResponse<byte[]> response = send(request);
       boolean healthy = response.statusCode() == 200;
       log.log(System.Logger.Level.DEBUG, "LNbits health check result={0}", healthy);
       return healthy;
@@ -179,6 +196,102 @@ public class LnbitsBackend implements LightningBackend {
     } catch (Exception e) {
       log.log(System.Logger.Level.WARNING, "LNbits health check failed", e);
       return false;
+    }
+  }
+
+  /**
+   * Sends {@code request} with a bounded body and one overall deadline covering headers and body.
+   * On deadline expiry or interruption the in-flight exchange is cancelled.
+   *
+   * @throws HttpTimeoutException if the exchange does not complete within the request timeout
+   * @throws IOException if the exchange fails, including an oversized response body
+   */
+  private HttpResponse<byte[]> send(HttpRequest request) throws IOException, InterruptedException {
+    CompletableFuture<HttpResponse<byte[]>> exchange =
+        httpClient.sendAsync(request, BOUNDED_BODY_HANDLER);
+    try {
+      return exchange.get(requestTimeout.toNanos(), TimeUnit.NANOSECONDS);
+    } catch (TimeoutException e) {
+      exchange.cancel(true);
+      throw new HttpTimeoutException("LNbits response deadline exceeded");
+    } catch (InterruptedException e) {
+      exchange.cancel(true);
+      throw e;
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof IOException ioException) {
+        throw ioException;
+      }
+      throw new IOException("LNbits exchange failed", cause);
+    }
+  }
+
+  /**
+   * Collects a response body into memory and fails as soon as more than {@code maxBytes} bytes
+   * arrive, cancelling the upstream subscription so the remainder is never read.
+   */
+  static final class BoundedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+
+    private final int maxBytes;
+    private final CompletableFuture<byte[]> body = new CompletableFuture<>();
+    private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+    private Flow.Subscription subscription;
+    private long received;
+
+    BoundedBodySubscriber(int maxBytes) {
+      this.maxBytes = maxBytes;
+    }
+
+    @Override
+    public CompletionStage<byte[]> getBody() {
+      return body;
+    }
+
+    @Override
+    public void onSubscribe(Flow.Subscription subscription) {
+      if (this.subscription != null) {
+        subscription.cancel();
+        return;
+      }
+      this.subscription = subscription;
+      subscription.request(Long.MAX_VALUE);
+    }
+
+    @Override
+    public void onNext(List<ByteBuffer> items) {
+      if (body.isDone()) {
+        return;
+      }
+      for (ByteBuffer item : items) {
+        received += item.remaining();
+        if (received > maxBytes) {
+          subscription.cancel();
+          body.completeExceptionally(new ResponseBodyTooLargeException());
+          return;
+        }
+        byte[] chunk = new byte[item.remaining()];
+        item.get(chunk);
+        buffer.writeBytes(chunk);
+      }
+    }
+
+    @Override
+    public void onError(Throwable throwable) {
+      body.completeExceptionally(throwable);
+    }
+
+    @Override
+    public void onComplete() {
+      body.complete(buffer.toByteArray());
+    }
+  }
+
+  /** Signals an LNbits response body above {@link #MAX_RESPONSE_BODY_BYTES}. */
+  static final class ResponseBodyTooLargeException extends IOException {
+    private static final long serialVersionUID = 1L;
+
+    ResponseBodyTooLargeException() {
+      super("LNbits response body exceeds " + MAX_RESPONSE_BODY_BYTES + " bytes");
     }
   }
 
@@ -299,7 +412,7 @@ public class LnbitsBackend implements LightningBackend {
    * Validates the HTTP response status code and throws {@link LnbitsException} on non-2xx
    * responses.
    */
-  private static void checkResponseStatus(HttpResponse<String> response, String operation) {
+  private static void checkResponseStatus(HttpResponse<byte[]> response, String operation) {
     if (response.statusCode() < 200 || response.statusCode() >= 300) {
       log.log(
           System.Logger.Level.WARNING,

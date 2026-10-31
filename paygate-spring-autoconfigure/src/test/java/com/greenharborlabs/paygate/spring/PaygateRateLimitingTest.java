@@ -968,6 +968,7 @@ class PaygateRateLimitingTest {
               new Caveat("services", SERVICE_NAME + ":0"),
               new Caveat("route", PROTECTED_PATH),
               new Caveat("method", "GET"),
+              new Caveat(SERVICE_NAME + "_price_sats", "10"),
               new Caveat(SERVICE_NAME + "_capabilities", "~"),
               new Caveat(
                   SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));

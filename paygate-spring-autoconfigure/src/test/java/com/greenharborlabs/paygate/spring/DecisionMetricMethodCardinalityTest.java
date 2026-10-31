@@ -21,8 +21,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 /**
  * Client-chosen HTTP method tokens must not create unbounded {@code paygate.security.decisions}
- * meters. The compressed-body rejection is emitted before rate limiting, so it is the cheapest path
- * for an unauthenticated client to drive the method tag.
+ * meters. The compressed-body rejection is emitted after rate-limit admission but before any
+ * invoice work, so it is the cheapest path for an unauthenticated client to drive the method tag.
  */
 class DecisionMetricMethodCardinalityTest {
 
@@ -36,7 +36,7 @@ class DecisionMetricMethodCardinalityTest {
     var context = mock(ApplicationContext.class);
     when(context.getBean("dynamic", PaygatePricingStrategy.class))
         .thenReturn((request, defaultPrice) -> defaultPrice);
-    PaygateRateLimiter limiter = key -> false;
+    PaygateRateLimiter limiter = key -> true;
     var backend = mock(LightningBackend.class);
 
     try (var pricing =

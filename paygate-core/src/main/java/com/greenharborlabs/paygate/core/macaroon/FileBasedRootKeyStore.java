@@ -151,6 +151,18 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     }
   }
 
+  /**
+   * Revokes a root key by evicting it from memory and deleting its key file.
+   *
+   * <p>A regular key file is deleted whatever its POSIX mode, so a hardened ({@code 0400}) or
+   * restored ({@code 0640}) file cannot survive revocation and be served again after its mode is
+   * normalized. A link or other special filesystem object at the key path is left in place for
+   * investigation, and revocation throws instead of reporting success. Revoking an unknown key is a
+   * no-op.
+   *
+   * @throws IllegalStateException if the key path is a link or another non-regular file
+   * @throws UncheckedIOException if the key file cannot be inspected or deleted
+   */
   @Override
   public void revokeRootKey(byte[] keyId) {
     Objects.requireNonNull(keyId, "keyId must not be null");
@@ -165,13 +177,20 @@ public final class FileBasedRootKeyStore implements RootKeyStore {
     writeLock.lock();
     try {
       ensureOpen();
-      // Do not delete a link or another special filesystem object. Besides avoiding link
-      // traversal, this leaves suspicious state available for investigation.
-      if (isSecureKeyFile(keyFile)) {
-        Files.delete(keyFile);
-      }
+      // Evict first so this instance never serves the key again, even when revocation fails.
       byte[] removed = cache.remove(hexKeyId);
       KeyMaterial.zeroize(removed);
+      if (!Files.exists(keyFile, LinkOption.NOFOLLOW_LINKS)) {
+        return;
+      }
+      // Never delete a link or another special filesystem object. Besides avoiding link traversal,
+      // this leaves suspicious state available for investigation.
+      if (!Files.readAttributes(keyFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
+          .isRegularFile()) {
+        throw new IllegalStateException(
+            "Refusing to revoke root key " + hexKeyId + ": key path is not a regular file");
+      }
+      Files.delete(keyFile);
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to revoke root key: " + hexKeyId, e);
     } finally {

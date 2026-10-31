@@ -49,6 +49,12 @@ public final class RouteOverlapAnalyzer {
       paidIndex++;
       freeIndex++;
     }
+    // A trailing catch-all also matches zero segments, so "/api/**" addresses "/api" and
+    // "/reports" is addressed by "/reports/**". Spring allows a catch-all only as the last segment.
+    if (zeroSegmentCatchAll(paidSegments, paidIndex)
+        || zeroSegmentCatchAll(freeSegments, freeIndex)) {
+      return new Finding(method, paid, unprotected, Classification.POSSIBLE_OVERLAP);
+    }
     if (paidIndex != paidSegments.size() || freeIndex != freeSegments.size()) return null;
     return new Finding(
         method,
@@ -88,5 +94,10 @@ public final class RouteOverlapAnalyzer {
 
   private static boolean catchAll(String segment) {
     return segment.equals("**") || segment.startsWith("{*");
+  }
+
+  /** True when exactly one segment remains at {@code index} and it is a catch-all. */
+  private static boolean zeroSegmentCatchAll(List<String> segments, int index) {
+    return segments.size() - index == 1 && catchAll(segments.get(index));
   }
 }

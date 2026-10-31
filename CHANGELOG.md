@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-Remediates SR-2026-10-18-01 through -11 and -17 from the 2026-10-18 security review. Dispositions
-for every finding are tracked in `docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md`.
+Remediates SR-2026-10-18-01 through -24 from the 2026-10-18 security review, plus Info items I-02,
+I-03 and I-15. Dispositions for every finding are tracked in `docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md`.
 
 - **Request path identity (SR-01, SR-03, SR-04, SR-17).** Paygate now authorizes the once-decoded
   path that Spring dispatches on. Every request whose path has a `.`, `..` or empty segment (a
@@ -45,6 +45,43 @@ for every finding are tracked in `docs/security/OPUS-2026-10-18-FINDING-DISPOSIT
   credentials. LND's `invoice.macaroon` alone lacks `info:read`, which fails health checks.
 - **CI supply chain (SR-11).** Snapshot and release publishing jobs no longer restore the Gradle
   Actions cache. Semgrep and zizmor install from hash-locked requirement files.
+- **L402 issuer evidence (SR-12, I-02, I-03).** Holders can only append caveats, so price evidence,
+  the required boundaries and the `client_ip` binding now count only from caveats before the first
+  `{service}_valid_until`. A holder-appended `{service}_price_sats` no longer satisfies price
+  evidence or appears as a verified attribute, and a holder cannot self-bind a legacy unbound
+  credential with `client_ip`. The 4-argument `L402Validator` (no Lightning backend) rejects
+  credentials without a signed price with `MISSING_PRICE_EVIDENCE`.
+- **Route overlap analysis (SR-13).** Zero-segment catch-all overlaps (paid `/api/**` vs free
+  `/api`, paid `/reports` vs free `/reports/**`, paid `/a/b/**` vs free `/a/{x}`) now produce the
+  `paygate.routing.overlap-policy` warning and fail startup under `FAIL`.
+- **Auth-failure rate limiting (SR-14, SR-15).** In Spring Security mode, the limiter resolves the
+  protected endpoint the same way as the authentication filter, so a paid route behind a narrower
+  unpaid mapping is still limited. The penalty token is charged for malformed (400), invalid or
+  expired (402) and unclassified (401) credential failures, and no longer for backend 503s, first
+  challenges or re-price replacement challenges.
+- **Child dispatcher contexts (SR-16).** `@PaymentRequired` in a `DispatcherServlet` context other
+  than the root context is unsupported and now fails closed: startup fails for `load-on-startup`
+  servlets, and the servlet otherwise fails to initialise (500) instead of serving the paid route
+  unpaid.
+- **MPP realm (SR-18).** MPP validation rejects a credential whose challenge `realm` differs from
+  `paygate.service-name` (or `default`), so services that share a binding secret no longer accept
+  each other's credentials. Use one binding secret per service.
+- **MPP `source` (SR-19).** MPP authentication tokens no longer carry the unauthenticated `source`
+  attribute. `PaymentCredential.source()` remains and is documented as unverified client input.
+- **Rate limit before work (SR-20).** In servlet mode, a paid request acquires its rate-limit token
+  before body capture and named pricing strategies run, so a rate-limited request does no such work.
+- **LNbits transport (SR-21, I-15).** `paygate.lnbits.allow-plaintext-http=true` now fails startup
+  unless every active profile is `dev`, `local`, `development` or `test`, matching plaintext LND.
+  A `*.localhost` plaintext host is accepted only when every resolved address is loopback.
+  `LnbitsConfig.equals`/`hashCode` ignore the API key, and `toString()` and validation errors mask
+  base-URL userinfo.
+- **LNbits response bounds (SR-22).** LNbits response bodies are capped at 1 MiB, and one deadline
+  equal to the request timeout covers headers and body. Exceeding either fails the call with 503.
+- **Root-key revocation (SR-23).** `FileBasedRootKeyStore.revokeRootKey` deletes a regular key file
+  whatever its permissions, and throws for a symlink or special file instead of returning silently.
+- **Go interop helper (SR-24).** `setup-go-interop.sh` and `run-go-interop-test.sh` build in a fresh
+  `mktemp -d` directory. An explicit `GO_INTEROP_DIR` must be owned by the current user and must not
+  be group- or world-writable.
 
 ### Changed
 
@@ -63,6 +100,13 @@ for every finding are tracked in `docs/security/OPUS-2026-10-18-FINDING-DISPOSIT
   - `RequestBodyIncompleteException`.
 - `new L402Protocol(..., true)` and the binding-enabled `PaygateAuthenticationProvider` constructor
   throw when the validator has no `client_ip` verifier.
+- Custom L402 issuers must sign `{service}_price_sats` and must sign `{service}_valid_until` after
+  every other issuer caveat; caveats signed after it are not issuer evidence.
+- New public API: `IssuerCaveatPrefix` (paygate-core) and the realm-binding
+  `MppProtocol(secret, parserLimits, previousSecret, clock, serviceName)` constructor. The existing
+  `MppProtocol` constructors do not check the realm.
+- Plaintext LNbits setups outside a development profile, and applications with `@PaymentRequired`
+  in a child dispatcher context, now fail instead of starting.
 
 ## [0.1.7] - 2026-09-23
 

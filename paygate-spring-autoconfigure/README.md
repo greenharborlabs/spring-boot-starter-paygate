@@ -178,7 +178,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnbits.api-key` | `string` | -- | When `paygate.backend=lnbits` | LNbits Invoice/read API key. Keep this value secret. |
 | `paygate.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout override. |
 | `paygate.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout override. |
-| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Explicit local/test opt-in for `http://` LNbits URLs. Accepted only for loopback, localhost, or the known local Compose service host. |
+| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Explicit local/test opt-in for `http://` LNbits URLs. It requires only `dev`, `local`, `development`, or `test` profiles, and accepts only loopback literals, exact `localhost`, `*.localhost` names resolving entirely to loopback, or the known local Compose service host `lnbits`. |
 
 ### LND Backend Properties
 
@@ -432,6 +432,22 @@ A capture that observes fewer bytes than a positive declared `Content-Length` fa
 `400 REQUEST_BODY_INCOMPLETE` (body truncated or already consumed). Chunked requests are
 unaffected. See the `paygate-spring-security` README for Spring Security-specific operator guidance.
 
+### Additional DispatcherServlet contexts are unsupported for paid handlers
+
+Paygate discovers and enforces `@PaymentRequired` handlers only in the application context where
+it is auto-configured (normally the root context). An additional `DispatcherServlet` registered
+with its own child context has handler mappings that Paygate never scans, so `@PaymentRequired` in
+that child context is **unsupported and fails**:
+
+- When a child context refreshes, Paygate inspects the child's own beans (not its ancestors'). If
+  any bean class declares `@PaymentRequired` on the class or on a method, including interface
+  methods and proxied beans, the refresh fails with an `IllegalStateException`.
+- A child dispatcher with `load-on-startup` therefore fails application startup. A lazily
+  initialised one fails on each dispatch (HTTP 500) and never serves the paid route.
+
+Child contexts without `@PaymentRequired` are unaffected. Declare paid handlers in the root
+context's `DispatcherServlet`.
+
 ### 0.1.5 resolver constructor migration
 
 The unused service-name constructor argument has been removed from the Spring Security fallback resolver:
@@ -480,6 +496,7 @@ Rate limiting prevents invoice flooding attacks by throttling 402 challenge issu
 
 - Each client IP gets an independent token bucket with `paygate.rate-limit.burst-size` maximum tokens and a refill rate of `paygate.rate-limit.requests-per-second` tokens per second.
 - New buckets start full. Each challenge request consumes one token.
+- In servlet mode, every request to a paid endpoint consumes its one token before `PaygateSecurityFilter` captures the request body or runs a named pricing strategy, whether or not it presents a credential. A rate-limited request gets 429 without that work. A failed credential validation still consumes one additional penalty token.
 - When a bucket is empty, the client receives HTTP 429 until tokens refill.
 - The total number of tracked IPs is capped at `paygate.rate-limit.max-buckets` (default 100,000) to prevent memory exhaustion. When the Caffeine implementation is active, Caffeine handles LRU eviction and idle-entry expiry automatically. The JDK fallback cleans up stale entries lazily and evicts a sampled oldest entry at capacity.
 
@@ -791,13 +808,29 @@ public class CustomValidatorConfig {
 
     @Bean
     public L402Validator l402Validator(RootKeyStore rootKeyStore,
-                                       CredentialStore credentialStore) {
+                                       CredentialStore credentialStore,
+                                       LightningBackend lightningBackend) {
         return new L402Validator(rootKeyStore, credentialStore,
-                List.of(new ServicesCaveatVerifier(50), new MyCustomCaveatVerifier()),
-                "my-service");
+                List.of(
+                        // Required by L402Validator: construction fails if any is missing.
+                        new ServicesCaveatVerifier(50),
+                        new RouteCaveatVerifier(50),
+                        new MethodCaveatVerifier(50),
+                        new CapabilitiesCaveatVerifier("my-service", 50),
+                        new ValidUntilCaveatVerifier("my-service"),
+                        new MyCustomCaveatVerifier()),
+                "my-service",
+                lightningBackend);
     }
 }
 ```
+
+Pass the `LightningBackend` so that `ROUTE_STABLE` routes can verify legacy credentials without a
+signed price caveat against the settled invoice. The 4-argument constructor has no evidence source
+and rejects every credential that lacks an issuer-signed `{serviceName}_price_sats` caveat with
+`MISSING_PRICE_EVIDENCE`. Price, boundary, and `client_ip` binding caveats count only when the
+issuer signed them before `{serviceName}_valid_until`; see the
+[L402 protocol README](../paygate-protocol-l402/README.md#issuer-prefix).
 
 ### Override Caveat Verifiers
 

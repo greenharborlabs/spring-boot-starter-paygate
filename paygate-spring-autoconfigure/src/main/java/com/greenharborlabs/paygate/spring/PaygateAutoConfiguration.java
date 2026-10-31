@@ -319,8 +319,17 @@ public class PaygateAutoConfiguration {
               mpp.getMaxKeysPerObject(),
               mpp.getMaxCredentialBytes());
       var previousSecret = mppPreviousChallengeBindingSecretProvider.getIfAvailable();
+      // Same realm fallback as the challenge service, so issued challenges validate here.
+      String serviceName = properties.getServiceName();
+      if (serviceName == null || serviceName.isBlank()) {
+        serviceName = "default";
+      }
       return new com.greenharborlabs.paygate.protocol.mpp.MppProtocol(
-          mppChallengeBindingSecret, limits, previousSecret);
+          mppChallengeBindingSecret,
+          limits,
+          previousSecret,
+          java.time.Clock.systemUTC(),
+          serviceName);
     }
   }
 
@@ -493,6 +502,15 @@ public class PaygateAutoConfiguration {
       }
       registry.validateManualRouteOverlaps();
     };
+  }
+
+  /**
+   * Fails a child context, such as an additional {@code DispatcherServlet}'s, that declares
+   * {@code @PaymentRequired} handlers this registry cannot discover. Not overridable.
+   */
+  @Bean
+  PaygateChildContextGuard paygateChildContextGuard(ApplicationContext applicationContext) {
+    return new PaygateChildContextGuard(applicationContext);
   }
 
   private static void rejectUnsupportedPaidHandlerSource(
@@ -773,8 +791,13 @@ public class PaygateAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(LightningBackend.class)
     LightningBackend lightningBackend(
-        PaygateProperties properties, tools.jackson.databind.json.JsonMapper objectMapper) {
+        PaygateProperties properties,
+        tools.jackson.databind.json.JsonMapper objectMapper,
+        org.springframework.core.env.Environment environment) {
       var lnbits = properties.getLnbits();
+      if (lnbits.isAllowPlaintextHttp()) {
+        DevelopmentSafetyPolicy.validateProfiles(environment);
+      }
       int timeout =
           lnbits.getRequestTimeoutSeconds() != null
               ? lnbits.getRequestTimeoutSeconds()

@@ -579,14 +579,16 @@ Orchestrates the full credential validation pipeline:
 5. **Fall back for attenuation** -- a different macaroon variant with the same token ID reuses the loaded root key for full signature and caveat validation instead of failing solely because another variant is cached
 6. **Cache after complete validation** with a TTL derived from `valid_until` caveats, then return with `freshValidation=true`
 
-Custom issuers should construct the identifier explicitly:
+Custom issuers should construct the identifier explicitly, sign a `${serviceName}_price_sats`
+caveat, and sign `${serviceName}_valid_until` after every other issuer caveat. Mandatory boundaries
+and price evidence count only before the first `${serviceName}_valid_until`:
 
 ```java
 var identifier = new MacaroonIdentifier(1, paymentHash, tokenId);
 var macaroon = MacaroonMinter.mint(rootKey, identifier, location, caveats);
 ```
 
-Public direct-validator callers choose which service and expiry verifiers to register; `L402Validator` does not universally add `ServicesCaveatVerifier` or `ValidUntilCaveatVerifier` for them. They must register the verifiers required by their issuer contract. Identifier v0 is rejected after proof-of-payment and signature checks even when a holder has appended otherwise valid boundaries.
+Public direct-validator callers must register `ServicesCaveatVerifier`, `RouteCaveatVerifier`, `MethodCaveatVerifier`, `CapabilitiesCaveatVerifier`, and `ValidUntilCaveatVerifier` for the service; construction fails without them. Identifier v0 is rejected after proof-of-payment and signature checks even when a holder has appended otherwise valid boundaries.
 
 The `ValidationResult` record wraps the credential, a `freshValidation` flag, and the immutable final `effectiveCapabilities` set. Its two-argument compatibility constructor supplies an empty set.
 
@@ -902,8 +904,11 @@ Most modules depend on `paygate-core` for:
 L402 validators re-evaluate the trusted current request price on every use, including cache hits.
 New credentials carry a signed `${serviceName}_price_sats` caveat. A credential is insufficient when
 its authenticated covered amount is below the current price; malformed or unavailable evidence
-fails closed. Legacy credentials without this caveat require an explicitly route-stable policy and
-an authoritative, settled invoice lookup.
+fails closed. Only a price caveat before the first `${serviceName}_valid_until` (the issuer prefix,
+see `IssuerCaveatPrefix`) is evidence: holders can only append caveats, so a price caveat after that
+point cannot make a price-less credential acceptable. Credentials without issuer price evidence
+require an explicitly route-stable policy and an authoritative, settled invoice lookup. A validator
+built without a `LightningBackend` rejects them with `MISSING_PRICE_EVIDENCE` at any price.
 
 This project is licensed under the [MIT License](../LICENSE).
 

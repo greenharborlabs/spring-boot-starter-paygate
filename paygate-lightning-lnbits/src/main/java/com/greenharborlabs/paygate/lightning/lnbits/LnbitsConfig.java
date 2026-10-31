@@ -1,7 +1,9 @@
 package com.greenharborlabs.paygate.lightning.lnbits;
 
+import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.UnknownHostException;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -11,13 +13,25 @@ import java.util.Set;
  *
  * <p>LNbits connections require HTTPS by default. Plain HTTP is only accepted for loopback,
  * localhost, or known Docker Compose service endpoints when explicitly enabled through the
- * five-argument constructor or {@code paygate.lnbits.allow-plaintext-http}.
+ * five-argument constructor or {@code paygate.lnbits.allow-plaintext-http}. A {@code *.localhost}
+ * name is accepted only when it resolves and every resolved address is loopback.
+ *
+ * <p>The API key takes no part in {@link #equals(Object)} or {@link #hashCode()}, and {@link
+ * #toString()} and validation messages redact any userinfo carried in the base URL.
  */
 public final class LnbitsConfig {
 
   private static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 5;
   private static final int DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
   private static final Set<String> LOCAL_DOCKER_DEVELOPMENT_HOSTS = Set.of("lnbits");
+  private static final String LOCALHOST_SUFFIX = ".localhost";
+  private static final HostResolver SYSTEM_RESOLVER = InetAddress::getAllByName;
+
+  /** Resolution seam for {@code *.localhost} plaintext targets. */
+  @FunctionalInterface
+  interface HostResolver {
+    InetAddress[] resolve(String host) throws UnknownHostException;
+  }
 
   private final String baseUrl;
   private final String apiKey;
@@ -31,7 +45,24 @@ public final class LnbitsConfig {
       int requestTimeoutSeconds,
       int connectTimeoutSeconds,
       boolean allowPlaintextHttp) {
-    validateBaseUrl(baseUrl, allowPlaintextHttp);
+    this(
+        baseUrl,
+        apiKey,
+        requestTimeoutSeconds,
+        connectTimeoutSeconds,
+        allowPlaintextHttp,
+        SYSTEM_RESOLVER);
+  }
+
+  LnbitsConfig(
+      String baseUrl,
+      String apiKey,
+      int requestTimeoutSeconds,
+      int connectTimeoutSeconds,
+      boolean allowPlaintextHttp,
+      HostResolver resolver) {
+    Objects.requireNonNull(resolver, "resolver");
+    validateBaseUrl(baseUrl, allowPlaintextHttp, resolver);
     requireNonBlankApiKey(apiKey);
     requirePositive("requestTimeoutSeconds", requestTimeoutSeconds);
     requirePositive("connectTimeoutSeconds", connectTimeoutSeconds);
@@ -80,7 +111,8 @@ public final class LnbitsConfig {
     return allowPlaintextHttp;
   }
 
-  private static void validateBaseUrl(String baseUrl, boolean allowPlaintextHttp) {
+  private static void validateBaseUrl(
+      String baseUrl, boolean allowPlaintextHttp, HostResolver resolver) {
     if (baseUrl == null || baseUrl.isBlank()) {
       throw new IllegalArgumentException("baseUrl must not be null or blank");
     }
@@ -88,18 +120,27 @@ public final class LnbitsConfig {
     String scheme = parsed.getScheme();
     if (scheme == null) {
       throw new IllegalArgumentException(
-          "baseUrl must have an http or https scheme, but has no scheme: " + baseUrl);
+          "baseUrl must have an http or https scheme, but has no scheme: "
+              + LnbitsUrlRedaction.redactUserInfo(baseUrl));
     }
     String normalizedScheme = scheme.toLowerCase(Locale.ROOT);
     validateSupportedScheme(scheme, normalizedScheme);
-    validatePlaintextHttp(baseUrl, parsed, normalizedScheme, allowPlaintextHttp);
+    validatePlaintextHttp(baseUrl, parsed, normalizedScheme, allowPlaintextHttp, resolver);
   }
 
   private static URI parseBaseUrl(String baseUrl) {
     try {
       return new URI(baseUrl);
     } catch (URISyntaxException e) {
-      throw new IllegalArgumentException("baseUrl is not a valid URI: " + baseUrl, e);
+      // The cause is dropped on purpose: its message echoes the raw input, including userinfo.
+      throw new IllegalArgumentException(
+          "baseUrl is not a valid URI: "
+              + LnbitsUrlRedaction.redactUserInfo(baseUrl)
+              + " ("
+              + e.getReason()
+              + " at index "
+              + e.getIndex()
+              + ")");
     }
   }
 
@@ -120,16 +161,20 @@ public final class LnbitsConfig {
   }
 
   private static void validatePlaintextHttp(
-      String baseUrl, URI parsed, String normalizedScheme, boolean allowPlaintextHttp) {
+      String baseUrl,
+      URI parsed,
+      String normalizedScheme,
+      boolean allowPlaintextHttp,
+      HostResolver resolver) {
     if (!"http".equals(normalizedScheme)) {
       return;
     }
-    if (allowPlaintextHttp && isLocalHttpTarget(parsed)) {
+    if (allowPlaintextHttp && isLocalHttpTarget(parsed, resolver)) {
       return;
     }
     throw new IllegalArgumentException(
         "LNbits baseUrl requires HTTPS; unsafe URL scheme 'http' for "
-            + baseUrl
+            + LnbitsUrlRedaction.redactUserInfo(baseUrl)
             + ". Plain HTTP is allowed only for local/test loopback URLs with explicit opt-in "
             + "via paygate.lnbits.allow-plaintext-http=true or constructor "
             + "allowPlaintextHttp=true.");
@@ -147,17 +192,43 @@ public final class LnbitsConfig {
     }
   }
 
-  private static boolean isLocalHttpTarget(URI uri) {
+  private static boolean isLocalHttpTarget(URI uri, HostResolver resolver) {
     String host = uri.getHost();
     if (host == null || host.isBlank()) {
       return false;
     }
     String normalizedHost = host.toLowerCase(Locale.ROOT);
-    return "localhost".equals(normalizedHost)
-        || normalizedHost.endsWith(".localhost")
+    if ("localhost".equals(normalizedHost)
         || LOCAL_DOCKER_DEVELOPMENT_HOSTS.contains(normalizedHost)
         || isCanonicalIpv4Loopback(normalizedHost)
-        || isCanonicalIpv6Loopback(normalizedHost);
+        || isCanonicalIpv6Loopback(normalizedHost)) {
+      return true;
+    }
+    return normalizedHost.length() > LOCALHOST_SUFFIX.length()
+        && normalizedHost.endsWith(LOCALHOST_SUFFIX)
+        && resolvesOnlyToLoopback(normalizedHost, resolver);
+  }
+
+  /**
+   * Accepts a {@code *.localhost} name only when it resolves and every resolved address is
+   * loopback. Resolution failure, an empty answer, or any non-loopback address rejects the name.
+   */
+  private static boolean resolvesOnlyToLoopback(String host, HostResolver resolver) {
+    InetAddress[] addresses;
+    try {
+      addresses = resolver.resolve(host);
+    } catch (UnknownHostException | SecurityException e) {
+      return false;
+    }
+    if (addresses == null || addresses.length == 0) {
+      return false;
+    }
+    for (InetAddress address : addresses) {
+      if (address == null || !address.isLoopbackAddress()) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static boolean isCanonicalIpv4Loopback(String host) {
@@ -274,21 +345,21 @@ public final class LnbitsConfig {
     if (!(other instanceof LnbitsConfig that)) {
       return false;
     }
+    // The API key is deliberately excluded so the secret never feeds equality or hashing.
     return requestTimeoutSeconds == that.requestTimeoutSeconds
         && connectTimeoutSeconds == that.connectTimeoutSeconds
-        && Objects.equals(baseUrl, that.baseUrl)
-        && Objects.equals(apiKey, that.apiKey);
+        && Objects.equals(baseUrl, that.baseUrl);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(baseUrl, apiKey, requestTimeoutSeconds, connectTimeoutSeconds);
+    return Objects.hash(baseUrl, requestTimeoutSeconds, connectTimeoutSeconds);
   }
 
   @Override
   public String toString() {
     return "LnbitsConfig[baseUrl="
-        + baseUrl
+        + LnbitsUrlRedaction.redactUserInfo(baseUrl)
         + ", apiKey=***REDACTED***"
         + ", requestTimeoutSeconds="
         + requestTimeoutSeconds

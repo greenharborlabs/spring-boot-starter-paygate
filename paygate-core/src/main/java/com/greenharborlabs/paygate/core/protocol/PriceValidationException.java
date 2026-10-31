@@ -12,7 +12,11 @@ public final class PriceValidationException extends L402Exception {
   public enum Kind {
     /** The credential contains authenticated paid-price evidence below the current price. */
     INSUFFICIENT_PRICE,
-    /** A request-dependent policy received a legacy credential without signed price evidence. */
+    /**
+     * A credential without issuer-signed price evidence was presented to a request-dependent
+     * policy, or to a validator that has no invoice-evidence source. A price caveat that appears
+     * only after the first {@code {serviceName}_valid_until} is not issuer evidence.
+     */
     MISSING_PRICE_EVIDENCE,
     /** A route-stable legacy credential was issued below the configured current price. */
     ROUTE_STABLE_PRICE_INCREASE,

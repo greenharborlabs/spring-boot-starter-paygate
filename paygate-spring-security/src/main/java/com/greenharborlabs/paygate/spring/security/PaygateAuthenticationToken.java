@@ -267,6 +267,9 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
    * <p>For L402 credentials, grants {@code ROLE_L402} and {@code ROLE_PAYMENT} authorities. For MPP
    * credentials, grants {@code ROLE_PAYMENT} authority with simpler attributes.
    *
+   * <p>The credential's {@link PaymentCredential#source()} is unverified client input and is never
+   * copied into the token's attributes.
+   *
    * @param paymentCredential validated payment credential, must not be null
    * @param serviceName service name, may be null
    * @param capabilities explicit capabilities to grant as {@code PAYGATE_CAPABILITY_*} authorities,
@@ -281,9 +284,7 @@ public final class PaygateAuthenticationToken extends AbstractAuthenticationToke
     Map<String, String> attrs = new HashMap<>();
     attrs.put("tokenId", paymentCredential.tokenId());
     attrs.put("protocolScheme", paymentCredential.sourceProtocolScheme());
-    if (paymentCredential.source() != null) {
-      attrs.put("source", paymentCredential.source());
-    }
+    // PaymentCredential.source() is unverified client input and is deliberately not an attribute.
     if (serviceName != null) {
       attrs.put("serviceName", serviceName);
     }

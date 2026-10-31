@@ -142,7 +142,7 @@ The `PaymentProtocol` interface is the primary extension point. Protocol impleme
 | `PaymentProtocol` | interface | SPI for payment protocol implementations. Defines the full lifecycle: header detection, credential parsing, challenge formatting, validation, and receipt creation. |
 | `ChallengeContext` | record | Protocol-agnostic data carrying all information needed to create a payment challenge, including canonical route and actual request method boundary metadata. Produced by `PaygateChallengeService`, consumed by `PaymentProtocol.formatChallenge()`. |
 | `ChallengeResponse` | record | A protocol's formatted challenge output containing the `WWW-Authenticate` header value, the protocol scheme that produced it, and optional body data for the JSON response. |
-| `PaymentCredential` | final class | Protocol-agnostic parsed credential with owned payment-hash and preimage copies, token ID, source protocol scheme, optional payer identity (DID format from MPP), and protocol-specific metadata. It implements `AutoCloseable` and `Destroyable`. |
+| `PaymentCredential` | final class | Protocol-agnostic parsed credential with owned payment-hash and preimage copies, token ID, source protocol scheme, an optional unverified client-supplied `source` string, and protocol-specific metadata. It implements `AutoCloseable` and `Destroyable`. |
 | `PaymentReceipt` | record | Data for the `Payment-Receipt` response header: status, HMAC-bound challenge ID, payment method, method-specific reference, amount in satoshis, RFC 3339 timestamp, and protocol scheme. |
 | `ProtocolMetadata` | marker interface | Carried by `PaymentCredential` to hold protocol-specific fields that the core framework does not need to understand. Each protocol module provides its own implementation (e.g., `L402Metadata`, `MppMetadata`). Consumers that know the concrete protocol can cast to the expected subtype. |
 | `PaymentValidationException` | class | Runtime exception thrown when credential validation fails. Carries an `ErrorCode` that determines the HTTP status code and RFC 9457 problem type URI. It may carry a token ID for internal correlation; production logs should use only a short token-ID prefix. |
@@ -177,7 +177,7 @@ The original eleven-argument `ChallengeContext` constructor remains available fo
 | `preimage` | `byte[]` | yes | 32-byte preimage proving payment (defensively copied) |
 | `tokenId` | `String` | yes | Token/challenge identifier |
 | `sourceProtocolScheme` | `String` | yes | Protocol that parsed this credential (`"L402"` or `"Payment"`) |
-| `source` | `String` | no | Optional payer identity (DID format from MPP) |
+| `source` | `String` | no | Optional client-supplied string (for example the MPP `source` field). Unverified: no protocol authenticates it, so it is not payer identity and must not drive authentication or authorization |
 | `metadata` | `ProtocolMetadata` | yes | Protocol-specific metadata |
 
 ### PaymentReceipt Fields
@@ -332,7 +332,7 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions. Each public type h
 | Test Case | What It Verifies |
 |-----------|-----------------|
 | Construct with all valid fields | All fields round-trip correctly |
-| Construct with null source | Optional payer identity accepts null |
+| Construct with null source | Optional unverified `source` accepts null |
 | Null required fields throw | `paymentHash`, `preimage`, `tokenId`, `sourceProtocolScheme`, `metadata` reject null |
 | Defensive copy of paymentHash on construction and access | Mutation isolation |
 | Defensive copy of preimage on construction and access | Mutation isolation |

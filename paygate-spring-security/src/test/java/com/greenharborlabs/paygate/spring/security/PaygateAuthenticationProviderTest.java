@@ -483,6 +483,37 @@ class PaygateAuthenticationProviderTest {
                               "ROLE_ADMIN")))
           .isInstanceOf(UnsupportedOperationException.class);
     }
+
+    @Test
+    void unverifiedMppSourceIsNotExposedAsAuthenticationAttribute() {
+      byte[] paymentHash = new byte[32];
+      byte[] preimage = new byte[32];
+      RNG.nextBytes(paymentHash);
+      RNG.nextBytes(preimage);
+      PaymentCredential credential =
+          new PaymentCredential(
+              paymentHash,
+              preimage,
+              HexFormat.of().formatHex(preimage),
+              "Payment",
+              "did:key:attacker-chosen",
+              new ProtocolMetadata() {});
+      var mppProvider =
+          new PaygateAuthenticationProvider(
+              l402Validator, List.of(paymentProtocolFor(credential)), SERVICE_NAME);
+
+      var authenticated =
+          (PaygateAuthenticationToken)
+              mppProvider.authenticate(
+                  PaygateAuthenticationToken.unauthenticated("Payment dGVzdA==", Map.of()));
+
+      assertThat(authenticated.isAuthenticated()).isTrue();
+      assertThat(authenticated.getAttributes())
+          .doesNotContainKey("source")
+          .doesNotContainValue("did:key:attacker-chosen")
+          .containsEntry("protocolScheme", "Payment");
+      assertThat(authenticated.getAttribute("source")).isNull();
+    }
   }
 
   // ========== CapabilityResolver integration tests ==========

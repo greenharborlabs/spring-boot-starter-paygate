@@ -3,8 +3,12 @@ package com.greenharborlabs.paygate.lightning.lnbits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class LnbitsConfigTest {
@@ -326,5 +330,194 @@ class LnbitsConfigTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new LnbitsConfig("http://localhost:5000", API_KEY, 5, 10))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  // --- *.localhost resolution (SR-21) ---
+
+  private static LnbitsConfig.HostResolver resolvingTo(String... literals) {
+    return host -> {
+      var addresses = new InetAddress[literals.length];
+      for (int index = 0; index < literals.length; index++) {
+        addresses[index] = InetAddress.ofLiteral(literals[index]);
+      }
+      return addresses;
+    };
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"203.0.113.7", "10.0.0.1", "0.0.0.0", "::", "2001:db8::1"})
+  void shouldRejectLocalhostSubdomainResolvingToNonLoopback(String resolvedAddress) {
+    assertThatThrownBy(
+            () ->
+                new LnbitsConfig(
+                    "http://lnbits.localhost:5000",
+                    API_KEY,
+                    5,
+                    10,
+                    true,
+                    resolvingTo(resolvedAddress)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsafe URL scheme 'http'");
+  }
+
+  @Test
+  void shouldRejectLocalhostSubdomainWhenAnyResolvedAddressIsNotLoopback() {
+    assertThatThrownBy(
+            () ->
+                new LnbitsConfig(
+                    "http://lnbits.localhost:5000",
+                    API_KEY,
+                    5,
+                    10,
+                    true,
+                    resolvingTo("127.0.0.1", "198.51.100.4")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsafe URL scheme 'http'");
+  }
+
+  @Test
+  void shouldRejectLocalhostSubdomainThatDoesNotResolve() {
+    LnbitsConfig.HostResolver unresolvable =
+        host -> {
+          throw new UnknownHostException(host);
+        };
+    assertThatThrownBy(
+            () ->
+                new LnbitsConfig(
+                    "http://lnbits.localhost:5000", API_KEY, 5, 10, true, unresolvable))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsafe URL scheme 'http'");
+  }
+
+  @Test
+  void shouldRejectLocalhostSubdomainWithEmptyResolution() {
+    assertThatThrownBy(
+            () ->
+                new LnbitsConfig(
+                    "http://lnbits.localhost:5000",
+                    API_KEY,
+                    5,
+                    10,
+                    true,
+                    host -> new InetAddress[0]))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void shouldAcceptLocalhostSubdomainResolvingOnlyToLoopback() {
+    var config =
+        new LnbitsConfig(
+            "http://lnbits.localhost:5000",
+            API_KEY,
+            5,
+            10,
+            true,
+            resolvingTo("127.0.0.1", "::1", "127.0.0.2"));
+    assertThat(config.allowPlaintextHttp()).isTrue();
+  }
+
+  @Test
+  void localhostSubdomainIsNotResolvedWithoutPlaintextOptIn() {
+    var lookups = new AtomicInteger();
+    LnbitsConfig.HostResolver counting =
+        host -> {
+          lookups.incrementAndGet();
+          return new InetAddress[] {InetAddress.getLoopbackAddress()};
+        };
+    assertThatThrownBy(
+            () -> new LnbitsConfig("http://lnbits.localhost:5000", API_KEY, 5, 10, false, counting))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(lookups).hasValue(0);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
+        "http://[::1]:5000",
+        "http://lnbits:5000"
+      })
+  void literalLocalTargetsAreAcceptedWithoutResolution(String baseUrl) {
+    LnbitsConfig.HostResolver failing =
+        host -> {
+          throw new AssertionError("unexpected resolution of " + host);
+        };
+    assertThat(new LnbitsConfig(baseUrl, API_KEY, 5, 10, true, failing).allowPlaintextHttp())
+        .isTrue();
+  }
+
+  // --- Equality and string hygiene (I-15) ---
+
+  @Test
+  void equalsAndHashCodeShouldIgnoreApiKey() {
+    var first = new LnbitsConfig(BASE_URL, API_KEY, 5, 10);
+    var second = new LnbitsConfig(BASE_URL, "a-completely-different-key", 5, 10);
+
+    assertThat(first).isEqualTo(second);
+    assertThat(first.hashCode()).isEqualTo(second.hashCode());
+  }
+
+  @Test
+  void equalsShouldStillDistinguishBaseUrlAndTimeouts() {
+    var config = new LnbitsConfig(BASE_URL, API_KEY, 5, 10);
+
+    assertThat(config).isNotEqualTo(new LnbitsConfig("https://other.example.com", API_KEY, 5, 10));
+    assertThat(config).isNotEqualTo(new LnbitsConfig(BASE_URL, API_KEY, 6, 10));
+    assertThat(config).isNotEqualTo(new LnbitsConfig(BASE_URL, API_KEY, 5, 11));
+  }
+
+  @Test
+  void toStringShouldRedactUserInfoInBaseUrl() {
+    var config = new LnbitsConfig("https://alice:hunter2@lnbits.example.com:8443/base", API_KEY);
+
+    assertThat(config.toString())
+        .contains("baseUrl=https://***@lnbits.example.com:8443/base")
+        .doesNotContain("alice")
+        .doesNotContain("hunter2")
+        .doesNotContain(API_KEY);
+    assertThat(config.baseUrl()).isEqualTo("https://alice:hunter2@lnbits.example.com:8443/base");
+  }
+
+  @Test
+  void plaintextRejectionMessageShouldRedactUserInfo() {
+    assertThatThrownBy(
+            () -> new LnbitsConfig("http://alice:hunter2@lnbits.example.com", API_KEY, 5, 10, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("http://***@lnbits.example.com")
+        .hasMessageNotContaining("hunter2")
+        .hasMessageNotContaining("alice");
+  }
+
+  @Test
+  void malformedUriMessageAndCauseChainShouldNotExposeUserInfo() {
+    assertThatThrownBy(() -> new LnbitsConfig("http://alice:hun ter2@lnbits.example.com", API_KEY))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not a valid URI")
+        .hasMessageNotContaining("hun ter2")
+        .hasNoCause();
+  }
+
+  @Test
+  void missingSchemeMessageShouldNotExposeUserInfo() {
+    assertThatThrownBy(() -> new LnbitsConfig("//alice:hunter2@lnbits.example.com", API_KEY))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("no scheme")
+        .hasMessageNotContaining("hunter2");
+  }
+
+  @ParameterizedTest
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "https://lnbits.example.com|https://lnbits.example.com",
+        "https://u:p@h.example/p?q=a@b#f@g|https://***@h.example/p?q=a@b#f@g",
+        "https://u@p@h.example:1|https://***@h.example:1",
+        "http://[::1]:5000/x|http://[::1]:5000/x",
+        "not-a-url|not-a-url",
+        "mailto:u:p@h|[redacted-url]"
+      })
+  void redactUserInfoShouldStripOnlyAuthorityUserInfo(String input, String expected) {
+    assertThat(LnbitsUrlRedaction.redactUserInfo(input)).isEqualTo(expected);
   }
 }

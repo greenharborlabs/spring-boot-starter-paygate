@@ -49,6 +49,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * authentication mechanisms. For every registered paid route, however, this filter always runs: a
  * missing or unrelated credential is rejected before downstream authorization can apply a {@code
  * permitAll} rule.
+ *
+ * <p>When a presented credential is rejected for a client fault (malformed: 400; invalid or
+ * expired: 402; or an otherwise unclassified authentication failure: 401), the filter marks the
+ * request so that {@link PaygateAuthFailureRateLimitFilter} charges a penalty token. Backend
+ * outages, server errors, request-body faults, and first challenges are never marked.
  */
 @SuppressWarnings("PMD.CyclomaticComplexity") // Security response classification must stay explicit
 public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
@@ -61,6 +66,14 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPaidHandler";
   private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
       "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
+
+  /**
+   * Request attribute set to {@link Boolean#TRUE} when a presented credential fails for a reason
+   * attributable to the client, read by {@link PaygateAuthFailureRateLimitFilter} to charge its
+   * post-failure penalty.
+   */
+  static final String CLIENT_FAULT_FAILURE_ATTRIBUTE =
+      "com.greenharborlabs.paygate.spring.security.PaygateAuthenticationFilter.clientFaultFailure";
 
   private final AuthenticationManager authenticationManager;
   private final List<PaymentProtocol> protocols;
@@ -333,9 +346,14 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
         return;
       }
       if (priceFailure != null) {
+        if (isClientFault(priceFailure.getErrorCode())) {
+          markClientFaultFailure(request);
+        }
         PaygateResponseWriter.writeMppError(response, priceFailure, List.of());
         return;
       }
+      // A presented credential was rejected without a protocol classification.
+      markClientFaultFailure(request);
       PaygateResponseWriter.writeAuthenticationFailed(response);
       return;
     } catch (RuntimeException e) {
@@ -350,6 +368,27 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     writeReceipt(authenticated, response);
 
     filterChain.doFilter(authRequest, response);
+  }
+
+  /**
+   * Returns whether {@link PaygateAuthenticationFilter} marked this request as a client-fault
+   * failure of a presented credential.
+   */
+  static boolean isClientFaultFailure(HttpServletRequest request) {
+    return Boolean.TRUE.equals(request.getAttribute(CLIENT_FAULT_FAILURE_ATTRIBUTE));
+  }
+
+  private static void markClientFaultFailure(HttpServletRequest request) {
+    request.setAttribute(CLIENT_FAULT_FAILURE_ATTRIBUTE, Boolean.TRUE);
+  }
+
+  /**
+   * Malformed (400) and invalid or expired (402) credentials are the client's fault. Insufficient
+   * payment for a re-priced endpoint and backend unavailability are not.
+   */
+  private static boolean isClientFault(PaymentValidationException.ErrorCode errorCode) {
+    return errorCode == PaymentValidationException.ErrorCode.MALFORMED
+        || errorCode == PaymentValidationException.ErrorCode.INVALID;
   }
 
   private static PaymentValidationException findPaymentValidationFailure(Throwable failure) {
