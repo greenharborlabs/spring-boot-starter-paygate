@@ -2,7 +2,7 @@
 services:
 
   bitcoind:
-    image: lncm/bitcoind:v27.0
+    image: lncm/bitcoind:v27.0@sha256:324fec72192e8a1c7b79e7ab91003e47678b808d46da2c1943e72ec212ab348f
     restart: unless-stopped
     command:
       - -regtest
@@ -26,7 +26,7 @@ services:
       retries: 30
 
   lnd-payee:
-    image: lightninglabs/lnd:v0.18.4-beta
+    image: lightninglabs/lnd:v0.18.4-beta@sha256:e44e6296611cb60c5d8382c69ab959281f4f9b96e2249949829d90752bc0df99
     restart: unless-stopped
     depends_on:
       bitcoind:
@@ -64,7 +64,7 @@ services:
       start_period: 10s
 
   lnd-payer:
-    image: lightninglabs/lnd:v0.18.4-beta
+    image: lightninglabs/lnd:v0.18.4-beta@sha256:e44e6296611cb60c5d8382c69ab959281f4f9b96e2249949829d90752bc0df99
     restart: unless-stopped
     depends_on:
       bitcoind:

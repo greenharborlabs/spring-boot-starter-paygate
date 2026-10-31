@@ -246,7 +246,7 @@ subprojects {
                         pom {
                             name.set(project.name)
                             description.set("Paygate payment gateway for Spring Boot - ${project.name}")
-                            url.set("https://github.com/greenharborlabs/spring-boot-starter-l402")
+                            url.set("https://github.com/greenharborlabs/spring-boot-starter-paygate")
                             licenses {
                                 license {
                                     name.set("MIT License")
@@ -261,9 +261,9 @@ subprojects {
                                 }
                             }
                             scm {
-                                connection.set("scm:git:git://github.com/greenharborlabs/spring-boot-starter-l402.git")
-                                developerConnection.set("scm:git:ssh://github.com/greenharborlabs/spring-boot-starter-l402.git")
-                                url.set("https://github.com/greenharborlabs/spring-boot-starter-l402")
+                                connection.set("scm:git:https://github.com/greenharborlabs/spring-boot-starter-paygate.git")
+                                developerConnection.set("scm:git:ssh://git@github.com/greenharborlabs/spring-boot-starter-paygate.git")
+                                url.set("https://github.com/greenharborlabs/spring-boot-starter-paygate")
                             }
                         }
                     }
@@ -343,11 +343,18 @@ tasks.register("installGitHook") {
             """
             |#!/bin/sh
             |# Auto-installed by Gradle — runs spotlessApply before each commit
+            |set -e
+            |staged_list=${'$'}(mktemp)
+            |trap 'rm -f "${'$'}staged_list"' EXIT
+            |git diff --cached --name-only -z --diff-filter=ACMR > "${'$'}staged_list"
+            |
             |echo "Running spotlessApply..."
             |./gradlew spotlessApply --daemon -q
             |
-            |# Re-stage any files that were reformatted
-            |git diff --name-only | xargs -r git add
+            |# Re-stage only files that were already staged; unrelated changes stay unstaged
+            |if [ -s "${'$'}staged_list" ]; then
+            |  xargs -0 git add -- < "${'$'}staged_list"
+            |fi
             |
             """.trimMargin()
         )
