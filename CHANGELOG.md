@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-Remediates SR-2026-10-18-01 through -24 from the 2026-10-18 security review, plus Info items I-02,
-I-03 and I-15. Dispositions for every finding are tracked in `docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md`.
+Remediates SR-2026-10-18-01 through -24 and Info items I-01 through I-19 from the 2026-10-18
+security review; I-20 remains an accepted limitation. Dispositions for every finding are tracked in `docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md`.
 
 - **Request path identity (SR-01, SR-03, SR-04, SR-17).** Paygate now authorizes the once-decoded
   path that Spring dispatches on. Every request whose path has a `.`, `..` or empty segment (a
@@ -82,6 +82,33 @@ I-03 and I-15. Dispositions for every finding are tracked in `docs/security/OPUS
 - **Go interop helper (SR-24).** `setup-go-interop.sh` and `run-go-interop-test.sh` build in a fresh
   `mktemp -d` directory. An explicit `GO_INTEROP_DIR` must be owned by the current user and must not
   be group- or world-writable.
+- **Canonical credential encodings (I-01, I-13).** V2 macaroons with duplicate identifiers,
+  out-of-order header fields or unknown header field types are rejected, matching go-macaroon. An
+  L402 macaroon must be canonical padded standard base64; missing padding or nonzero trailing bits
+  is a malformed header. MPP base64url fields must be unpadded with zero trailing bits, so a padded
+  or re-spelled challenge `id` is rejected as `INVALID`, and MPP JSON `\u` escapes need exactly four
+  ASCII hex digits.
+- **L402 validation hygiene (I-04, I-05).** A credential that fails the paid-price check is no
+  longer cached, and the preimage is zeroized when the price check throws.
+- **Spring Security filter (I-07, I-08).** A `PaygateAuthenticationFilter` built without an entry
+  point returns 503 for endpoints with a named pricing strategy instead of charging the static
+  price. An `AuthenticationManager` result that is not an authenticated `PaygateAuthenticationToken`
+  returns 503 and leaves the security context unset.
+- **Switch spelling (I-10).** Startup fails when `paygate.enabled` or
+  `paygate.protocols.l402.enabled` is anything other than `true` or `false` (any case), even when
+  Paygate is disabled. Previously `on` or `yes` silently disabled Paygate or started it without a
+  payment protocol.
+- **Multi-method paid handlers (I-12).** Paid handlers mapping several HTTP methods now enforce each
+  method separately instead of returning 500. A credential paid for one method cannot run another,
+  including through `HiddenHttpMethodFilter` `_method` overrides.
+- **Invoice consistency (I-16).** The LND and LNbits backends reject a created invoice whose BOLT11
+  `payment_request` is malformed or commits to a different payment hash than the backend reported,
+  failing closed with 503 instead of issuing an unusable challenge.
+- **Redispatch pricing (I-18).** A FORWARD, ASYNC or ERROR redispatch to a different paid endpoint
+  re-resolves that endpoint's price instead of reusing the original request's price.
+- **Build and fixtures (I-19).** LND and bitcoind integration images are pinned by digest,
+  `installGitHook` re-stages only previously staged files, the POM points at the https
+  `spring-boot-starter-paygate` repository, and a stray root `META-INF` file is removed.
 
 ### Changed
 
@@ -107,6 +134,17 @@ I-03 and I-15. Dispositions for every finding are tracked in `docs/security/OPUS
   `MppProtocol` constructors do not check the realm.
 - Plaintext LNbits setups outside a development profile, and applications with `@PaymentRequired`
   in a child dispatcher context, now fail instead of starting.
+- In servlet mode, an exception thrown by the application after a successful payment reaches the
+  container's error handling (normally 500) instead of being reported as 503 "Lightning
+  unavailable". Spring Security chains that authenticate `/error` must permit it or the ERROR
+  dispatch. The caveat verify-duration metric now measures validation only.
+- MPP credentials are accepted through their expiry instant, including the final second.
+- An MPP challenge-binding secret, current or previous, consisting of one repeated byte fails
+  startup.
+- `ChallengeContext.rootKeyBytes()` throws `IllegalStateException` after `close()`.
+- The `PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE` value is no longer a bare
+  `TrustedRequestPrice`; use the new `PaygateRequestPricingService.memoizedPrice` and `memoize`.
+- The autoconfigure README's validator and caveat-verifier override examples now start as written.
 
 ## [0.1.7] - 2026-09-23
 
