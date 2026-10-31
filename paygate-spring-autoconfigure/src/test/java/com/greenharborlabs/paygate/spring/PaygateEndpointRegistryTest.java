@@ -374,6 +374,33 @@ class PaygateEndpointRegistryTest {
   }
 
   @Test
+  @DisplayName("a mapping with several methods resolves the policy of the matched method only")
+  void multiMethodMappingResolvesMatchedMethodPolicy() {
+    var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);
+    var handlerMapping = mock(RequestMappingHandlerMapping.class);
+    var mappings = new LinkedHashMap<RequestMappingInfo, HandlerMethod>();
+    mappings.put(
+        RequestMappingInfo.paths("/records/{id}")
+            .methods(RequestMethod.GET, RequestMethod.POST, RequestMethod.DELETE)
+            .build(),
+        paidHandler("mutate"));
+    when(handlerMapping.getHandlerMethods()).thenReturn(mappings);
+    registry.scanAnnotatedEndpoints(handlerMapping);
+
+    var post = registry.resolve(new MockHttpServletRequest("POST", "/records/1"));
+    var delete = registry.resolve(new MockHttpServletRequest("DELETE", "/records/1"));
+    var head = registry.resolve(new MockHttpServletRequest("HEAD", "/records/1"));
+
+    assertThat(post.policyMethod()).isEqualTo("POST");
+    assertThat(post.config().httpMethod()).isEqualTo("POST");
+    assertThat(delete.policyMethod()).isEqualTo("DELETE");
+    assertThat(delete.config().httpMethod()).isEqualTo("DELETE");
+    assertThat(head.policyMethod()).isEqualTo("GET");
+    assertThat(post).isNotEqualTo(delete);
+    assertThat(registry.resolve(new MockHttpServletRequest("PUT", "/records/1"))).isNull();
+  }
+
+  @Test
   @DisplayName("explicit HEAD policy takes precedence and remains distinct from GET")
   void prefersExplicitHeadAndFailsEqualSpecificityAmbiguityClosed() {
     var registry = new PaygateEndpointRegistry(CUSTOM_DEFAULT_TIMEOUT);

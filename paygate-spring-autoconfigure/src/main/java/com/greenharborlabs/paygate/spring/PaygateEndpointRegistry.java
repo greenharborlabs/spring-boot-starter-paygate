@@ -215,7 +215,11 @@ public class PaygateEndpointRegistry {
     var mvcMatches = new ArrayList<RegisteredEndpoint>();
     for (RegisteredEndpoint candidate : registrations) {
       var mappingInfo = candidate.mappingInfo();
-      if (mappingInfo != null && mappingInfo.getMatchingCondition(request) != null) {
+      if (mappingInfo == null) {
+        continue;
+      }
+      var matched = mappingInfo.getMatchingCondition(request);
+      if (matched != null && matchesPolicyMethod(candidate, matched)) {
         mvcMatches.add(candidate);
       }
     }
@@ -313,6 +317,24 @@ public class PaygateEndpointRegistry {
   private static boolean matchesAny(PathPattern pattern, List<PathContainer> paths) {
     for (PathContainer path : paths) {
       if (pattern.matches(path)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * A mapping that declares several HTTP methods is registered once per method. Only the
+   * registration for the method MVC actually matched (for example {@code GET} for an inherited
+   * {@code HEAD}) applies to this request, so each mapped method enforces its own policy.
+   */
+  private static boolean matchesPolicyMethod(
+      RegisteredEndpoint candidate, RequestMappingInfo matched) {
+    if ("*".equals(candidate.policyMethod())) {
+      return true;
+    }
+    for (var method : matched.getMethodsCondition().getMethods()) {
+      if (method.name().equals(candidate.policyMethod())) {
         return true;
       }
     }
