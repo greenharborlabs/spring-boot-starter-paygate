@@ -796,6 +796,7 @@ class PaygateSecurityFilterTest {
               new Caveat("services", SERVICE_NAME + ":0"),
               new Caveat("route", PROTECTED_PATH),
               new Caveat("method", "GET"),
+              new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)),
               new Caveat(SERVICE_NAME + "_capabilities", "~"),
               new Caveat("\t" + SERVICE_NAME + "_valid_until\t", String.valueOf(validUntilEpoch)));
 
@@ -878,6 +879,7 @@ class PaygateSecurityFilterTest {
               new Caveat("services", SERVICE_NAME + ":0"),
               new Caveat("route", PROTECTED_PATH),
               new Caveat("method", "GET"),
+              new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)),
               new Caveat(SERVICE_NAME + "_capabilities", "~"),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(laterEpoch)),
               new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(earlierEpoch)));
@@ -1367,6 +1369,7 @@ class PaygateSecurityFilterTest {
         new Caveat("services", SERVICE_NAME + ":0"),
         new Caveat("route", PROTECTED_PATH),
         new Caveat("method", "GET"),
+        new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)),
         new Caveat(SERVICE_NAME + "_capabilities", "~"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
@@ -1377,6 +1380,7 @@ class PaygateSecurityFilterTest {
         new Caveat("services", SERVICE_NAME + ":0"),
         new Caveat("route", route),
         new Caveat("method", method),
+        new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)),
         new Caveat(SERVICE_NAME + "_capabilities", "~"),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
@@ -1387,6 +1391,7 @@ class PaygateSecurityFilterTest {
         new Caveat("services", SERVICE_NAME + ":0"),
         new Caveat("route", PROTECTED_PATH),
         new Caveat("method", "GET"),
+        new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)),
         new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
 
@@ -1416,8 +1421,9 @@ class PaygateSecurityFilterTest {
         new Caveat("services", SERVICE_NAME + ":0"),
         new Caveat("route", CAPABILITY_PROTECTED_PATH),
         new Caveat("method", "GET"),
-        new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())),
-        new Caveat(SERVICE_NAME + "_capabilities", capabilities));
+        new Caveat(SERVICE_NAME + "_price_sats", Long.toString(PRICE_SATS)),
+        new Caveat(SERVICE_NAME + "_capabilities", capabilities),
+        new Caveat(SERVICE_NAME + "_valid_until", String.valueOf(validUntil.getEpochSecond())));
   }
 
   private static String mintCredentialWithCaveats(List<Caveat> caveats) {

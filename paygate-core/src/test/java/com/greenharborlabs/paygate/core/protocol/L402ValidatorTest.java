@@ -2129,6 +2129,8 @@ class L402ValidatorTest {
         .noneMatch(caveat -> (SERVICE_NAME + "_capabilities").equals(caveat.key()))) {
       caveats.add(new Caveat(SERVICE_NAME + "_capabilities", "~"));
     }
+    // Issuer caveats precede the default expiry, as built-in issuance emits valid_until last.
+    caveats.addAll(List.of(additionalCaveats));
     if (List.of(additionalCaveats).stream()
         .noneMatch(caveat -> (SERVICE_NAME + "_valid_until").equals(caveat.key()))) {
       caveats.add(
@@ -2136,7 +2138,6 @@ class L402ValidatorTest {
               SERVICE_NAME + "_valid_until",
               Long.toString(Instant.now().plusSeconds(3600).getEpochSecond())));
     }
-    caveats.addAll(List.of(additionalCaveats));
     return List.copyOf(caveats);
   }
 
@@ -2267,7 +2268,9 @@ class L402ValidatorTest {
               "https://example.com",
               boundaryCaveats(new Caveat(SERVICE_NAME + "_price_sats", "10")));
       List<Caveat> editedCaveats = new ArrayList<>(signed.caveats());
-      editedCaveats.set(3, new Caveat(SERVICE_NAME + "_price_sats", "11"));
+      editedCaveats.set(
+          editedCaveats.indexOf(new Caveat(SERVICE_NAME + "_price_sats", "10")),
+          new Caveat(SERVICE_NAME + "_price_sats", "11"));
       Macaroon edited =
           new Macaroon(signed.identifier(), signed.location(), editedCaveats, signed.signature());
       L402Validator validator =

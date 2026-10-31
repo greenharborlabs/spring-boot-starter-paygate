@@ -791,13 +791,29 @@ public class CustomValidatorConfig {
 
     @Bean
     public L402Validator l402Validator(RootKeyStore rootKeyStore,
-                                       CredentialStore credentialStore) {
+                                       CredentialStore credentialStore,
+                                       LightningBackend lightningBackend) {
         return new L402Validator(rootKeyStore, credentialStore,
-                List.of(new ServicesCaveatVerifier(50), new MyCustomCaveatVerifier()),
-                "my-service");
+                List.of(
+                        // Required by L402Validator: construction fails if any is missing.
+                        new ServicesCaveatVerifier(50),
+                        new RouteCaveatVerifier(50),
+                        new MethodCaveatVerifier(50),
+                        new CapabilitiesCaveatVerifier("my-service", 50),
+                        new ValidUntilCaveatVerifier("my-service"),
+                        new MyCustomCaveatVerifier()),
+                "my-service",
+                lightningBackend);
     }
 }
 ```
+
+Pass the `LightningBackend` so that `ROUTE_STABLE` routes can verify legacy credentials without a
+signed price caveat against the settled invoice. The 4-argument constructor has no evidence source
+and rejects every credential that lacks an issuer-signed `{serviceName}_price_sats` caveat with
+`MISSING_PRICE_EVIDENCE`. Price, boundary, and `client_ip` binding caveats count only when the
+issuer signed them before `{serviceName}_valid_until`; see the
+[L402 protocol README](../paygate-protocol-l402/README.md#issuer-prefix).
 
 ### Override Caveat Verifiers
 

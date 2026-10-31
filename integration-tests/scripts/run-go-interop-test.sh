@@ -7,7 +7,8 @@ set -euo pipefail
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-lnbits-lnd.yml}"
 RESET_STACK="${RESET_STACK:-true}"
 BUILD_APP="${BUILD_APP:-true}"
-GO_INTEROP_DIR="${GO_INTEROP_DIR:-/tmp/paygate-go-interop}"
+# A fresh private directory by default; setup-go-interop.sh checks an explicit GO_INTEROP_DIR.
+GO_INTEROP_DIR="${GO_INTEROP_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/paygate-go-interop.XXXXXX")}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

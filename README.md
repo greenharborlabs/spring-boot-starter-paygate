@@ -1092,7 +1092,8 @@ trusted current price once and permits the credential only when its signed cover
 
 `REQUEST_DEPENDENT` is the default stability declaration and requires signed price evidence.
 Select `ROUTE_STABLE` only for a route-and-method whose price never depends on request input; it
-enables bounded compatibility lookup for a legacy credential that lacks signed evidence. Insufficient
+enables bounded compatibility lookup for a legacy credential that lacks signed evidence. Only a
+price caveat signed before `${serviceName}_valid_until` counts as evidence. Insufficient
 evidence produces a fresh 402 for the current price. Missing, invalid, unavailable, or ambiguous
 evidence produces 503 without executing protected behavior.
 
