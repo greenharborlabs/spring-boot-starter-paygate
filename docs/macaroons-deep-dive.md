@@ -849,9 +849,12 @@ services are comma-separated:
 services = lightning_loop:0,lightning_pool:1
 ```
 
-Whether `services` is mandatory belongs to the issuer schema. Paygate's direct
-`L402Validator` callers choose whether to register and require service/expiry
-policy, while the Spring configuration registers its first-party policy.
+Whether `services` is mandatory belongs to the issuer schema. For Paygate's
+first-party schema it is not optional: the `L402Validator` constructor fails
+unless `services` and `{service_name}_valid_until` verifiers (with the route,
+method and capabilities verifiers) are registered for its service name, and
+validation rejects a credential whose issuer-signed caveats lack them. The
+Spring configuration registers this policy by default.
 
 ### Capabilities Caveat
 
