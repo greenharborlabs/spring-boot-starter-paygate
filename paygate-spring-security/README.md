@@ -211,7 +211,7 @@ The token has two states:
 | `credentials` | `[REDACTED]`; no raw authorization header, parsed credential components, preimage, `L402Credential`, or `PaymentCredential` is retained |
 | `attributes` | Immutable map of verifier-approved values plus protected `tokenId`, `serviceName`, and `protocolScheme` metadata |
 
-Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
+Authenticated non-L402 protocols always receive `ROLE_PAYMENT` and expose `protocolScheme` plus any safe protocol attributes, but do not retain a `PaymentCredential`. The optional MPP `source` field is unverified client input (no HMAC slot covers it), so it is not exposed as an attribute; do not base authorization on it. They receive `ROLE_L402` only when the validated credential's source scheme is `L402`.
 
 Non-L402 `PAYGATE_CAPABILITY_*` authorities come from `PaymentProtocol.validateAndResolveCapabilities(...)`, which returns only capabilities that the credential itself authenticates. Any `CapabilityResolver` result is added to them. For MPP, the capability is the one bound into the HMAC-authenticated challenge `opaque` when the challenge was issued, and validation requires it to match the endpoint's declaration. An MPP credential bought for a capability-free or differently scoped endpoint is therefore rejected, not granted the requested endpoint's capability. The requested capability in `requestMetadata` is never itself a source of authorities.
 

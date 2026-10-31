@@ -179,7 +179,7 @@ An immutable `record` implementing `ProtocolMetadata` that carries MPP-specific 
 | Field | Type | Description |
 |-------|------|-------------|
 | `echoedChallenge` | `Map<String, String>` | The challenge parameters echoed back by the client (defensively copied via `Map.copyOf()`) |
-| `source` | `String` | Optional identifier for the credential source (may be `null`) |
+| `source` | `String` | Optional client-supplied string (may be `null`). Unverified: no HMAC slot covers it |
 
 `MppMetadata` intentionally does not expose raw credential JSON. The decoded credential contains `payload.preimage`, so retaining it in metadata would keep payment preimage material alive beyond parsing.
 
@@ -379,7 +379,7 @@ The `Authorization: Payment` header carries a base64url-nopad encoded JSON blob:
     "expires": "2026-12-31T23:59:59Z",
     "digest": "sha-256=:..."
   },
-  "source": "optional-payer-identity",
+  "source": "optional-unverified-client-string",
   "payload": {
     "preimage": "<64-character-lowercase-hex>"
   }
@@ -396,7 +396,7 @@ The `Authorization: Payment` header carries a base64url-nopad encoded JSON blob:
 | `challenge.request` | Yes | Base64url-nopad encoded JCS charge request |
 | `challenge.digest` | Yes | Digest for the protected request; must match validation request context |
 | `challenge.expires` | No | RFC 3339 expiry timestamp |
-| `source` | No | Optional payer identity string (may be null or absent) |
+| `source` | No | Optional client-supplied string (may be null or absent). It is **not** payer identity: no HMAC slot covers it, so any holder of the credential can set or change it. Paygate does not expose it as a Spring Security authentication attribute |
 | `payload.preimage` | Yes | 64-character lowercase hex string (32 bytes) |
 
 The preimage must be exactly 64 lowercase hex characters (`[0-9a-f]`). Uppercase hex is rejected.

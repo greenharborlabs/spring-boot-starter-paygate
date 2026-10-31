@@ -19,7 +19,7 @@ import java.util.Map;
  * <pre>{@code
  * {
  *   "challenge": { "id": "...", "realm": "...", ... },
- *   "source": "optional-payer-identity",
+ *   "source": "optional-unverified-client-string",
  *   "payload": { "preimage": "<64-char-lowercase-hex>" }
  * }
  * }</pre>
