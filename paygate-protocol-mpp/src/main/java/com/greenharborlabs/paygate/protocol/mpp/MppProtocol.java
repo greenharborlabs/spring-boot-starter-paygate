@@ -48,9 +48,6 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
   private static final String SCHEME = "Payment";
   private static final String SCHEME_PREFIX = "payment ";
   private static final String REQUEST_DIGEST_KEY = "request.digest";
-  private static final int MIN_SECRET_LENGTH = 32;
-  private static final Duration MIN_CHALLENGE_LIFETIME =
-      Duration.ofSeconds(SecurityBounds.MIN_LIFETIME_SECONDS);
   private static final Duration MAX_CHALLENGE_LIFETIME =
       Duration.ofSeconds(SecurityBounds.MAX_LIFETIME_SECONDS);
   private static final HexFormat HEX = HexFormat.of();
@@ -73,7 +70,8 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    *
    * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
    * @throws NullPointerException if secret is null
-   * @throws IllegalArgumentException if secret is shorter than 32 bytes
+   * @throws IllegalArgumentException if secret is shorter than 32 bytes or is a single repeated
+   *     byte
    */
   public MppProtocol(SensitiveBytes challengeBindingSecret) {
     this(challengeBindingSecret, MppParserLimits.defaults(), null, Clock.systemUTC());
@@ -106,7 +104,8 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    * @param challengeBindingSecret HMAC secret for challenge binding (minimum 32 bytes)
    * @param parserLimits limits for JSON parser resource exhaustion protection
    * @throws NullPointerException if secret or parserLimits is null
-   * @throws IllegalArgumentException if secret is shorter than 32 bytes
+   * @throws IllegalArgumentException if secret is shorter than 32 bytes or is a single repeated
+   *     byte
    */
   public MppProtocol(SensitiveBytes challengeBindingSecret, MppParserLimits parserLimits) {
     this(challengeBindingSecret, parserLimits, null, Clock.systemUTC());
@@ -125,7 +124,8 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
    *     bytes), or null
    * @throws NullPointerException if challengeBindingSecret is null
-   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes or is a single
+   *     repeated byte
    */
   public MppProtocol(
       SensitiveBytes challengeBindingSecret, SensitiveBytes previousChallengeBindingSecret) {
@@ -150,7 +150,8 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    * @param previousChallengeBindingSecret previous HMAC secret accepted during rotation (minimum 32
    *     bytes), or null
    * @throws NullPointerException if challengeBindingSecret or parserLimits is null
-   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes or is a single
+   *     repeated byte
    */
   public MppProtocol(
       SensitiveBytes challengeBindingSecret,
@@ -174,7 +175,8 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    *     bytes), or null
    * @param clock time source for challenge creation and expiry validation
    * @throws NullPointerException if challengeBindingSecret, parserLimits, or clock is null
-   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes or is a single
+   *     repeated byte
    */
   public MppProtocol(
       SensitiveBytes challengeBindingSecret,
@@ -199,8 +201,8 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    * @param serviceName the realm this instance accepts credentials for
    * @throws NullPointerException if challengeBindingSecret, parserLimits, clock, or serviceName is
    *     null
-   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes, or
-   *     serviceName is blank
+   * @throws IllegalArgumentException if any provided secret is shorter than 32 bytes or is a single
+   *     repeated byte, or serviceName is blank
    */
   public MppProtocol(
       SensitiveBytes challengeBindingSecret,
@@ -230,10 +232,10 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
     Objects.requireNonNull(challengeBindingSecret, "challengeBindingSecret must not be null");
     Objects.requireNonNull(parserLimits, "parserLimits must not be null");
     Objects.requireNonNull(clock, "clock must not be null");
-    validateSecretLength("challengeBindingSecret", challengeBindingSecret);
-    validateSecretLength("previousChallengeBindingSecret", previousChallengeBindingSecret);
-    this.challengeBindingSecret = copySecret(challengeBindingSecret);
-    this.previousChallengeBindingSecret = copySecret(previousChallengeBindingSecret);
+    MppBindingSecrets.validate("challengeBindingSecret", challengeBindingSecret);
+    MppBindingSecrets.validate("previousChallengeBindingSecret", previousChallengeBindingSecret);
+    this.challengeBindingSecret = MppBindingSecrets.copy(challengeBindingSecret);
+    this.previousChallengeBindingSecret = MppBindingSecrets.copy(previousChallengeBindingSecret);
     this.parserLimits = parserLimits;
     this.clock = clock;
     this.expectedRealm = expectedRealm;
@@ -514,14 +516,14 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
           throw new PaymentValidationException(
               ErrorCode.INVALID, "Invalid expires timestamp format", credential.tokenId());
         }
+        // A credential is valid up to and including its expiry instant. No minimum remaining
+        // lifetime applies, because it shrinks to zero as a valid credential ages.
         Instant now = clock.instant();
         if (expiresInstant.isBefore(now)) {
           throw new PaymentValidationException(
               ErrorCode.INVALID, "Credential has expired", credential.tokenId());
         }
-        Duration lifetime = Duration.between(now, expiresInstant);
-        if (lifetime.compareTo(MIN_CHALLENGE_LIFETIME) < 0
-            || lifetime.compareTo(MAX_CHALLENGE_LIFETIME) > 0) {
+        if (Duration.between(now, expiresInstant).compareTo(MAX_CHALLENGE_LIFETIME) > 0) {
           throw new PaymentValidationException(
               ErrorCode.INVALID,
               "Credential expiry is outside supported lifetime",
@@ -602,29 +604,6 @@ public final class MppProtocol implements PaymentProtocol, AutoCloseable {
    */
   private static PaymentValidationException mapFailure(ErrorCode errorCode, String tokenId) {
     return new PaymentValidationException(errorCode, "MPP credential validation failed", tokenId);
-  }
-
-  private static void validateSecretLength(String fieldName, SensitiveBytes secret) {
-    if (secret == null) {
-      return;
-    }
-    byte[] temp = secret.value();
-    try {
-      if (temp.length < MIN_SECRET_LENGTH) {
-        throw new IllegalArgumentException(
-            fieldName + " must be at least " + MIN_SECRET_LENGTH + " bytes, got " + temp.length);
-      }
-    } finally {
-      CryptoUtils.zeroize(temp);
-    }
-  }
-
-  private static SensitiveBytes copySecret(SensitiveBytes secret) {
-    if (secret == null) {
-      return null;
-    }
-    byte[] secretCopy = secret.value();
-    return new SensitiveBytes(secretCopy);
   }
 
   private void requireOpen() {

@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class MinimalJsonParserTest {
 
@@ -162,6 +164,27 @@ class MinimalJsonParserTest {
   void acceptsPairedSurrogateUnicodeEscape() {
     assertThat(parse("{\"key\": \"" + '\\' + "uD83D" + '\\' + "uDE00\"}"))
         .containsEntry("key", "\uD83D\uDE00");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "+041", // Integer.parseInt accepted a leading plus sign as "A"
+        "-001", // ... and a minus sign, as U+FFFF
+        " 041",
+        "004", // too few digits before the closing quote
+        "00g1",
+        "\u0660\u0660\u0664\u0661" // Arabic-Indic digits, which Character.digit accepts
+      })
+  void rejectsUnicodeEscapeWithoutExactlyFourAsciiHexDigits(String digits) {
+    assertThatThrownBy(() -> parse("{\"key\": \"" + '\\' + "u" + digits + "\"}"))
+        .isInstanceOf(MinimalJsonParser.JsonParseException.class);
+  }
+
+  @Test
+  void acceptsUnicodeEscapeWithMixedCaseHexDigits() {
+    assertThat(parse("{\"key\": \"" + '\\' + "u00e9" + '\\' + "u00C9" + '\\' + "uaBcD\"}"))
+        .containsEntry("key", "\u00E9\u00C9\uABCD");
   }
 
   @Test

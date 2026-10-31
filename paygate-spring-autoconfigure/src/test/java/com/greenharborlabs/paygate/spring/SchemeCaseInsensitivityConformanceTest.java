@@ -47,6 +47,15 @@ class SchemeCaseInsensitivityConformanceTest {
   private MockHttpServletRequest request;
   private MockHttpServletResponse response;
 
+  /** A synthetic MPP binding secret; a single repeated byte would be rejected as a placeholder. */
+  private static byte[] mppSecret() {
+    byte[] secret = new byte[32];
+    for (int i = 0; i < secret.length; i++) {
+      secret[i] = (byte) (i + 1);
+    }
+    return secret;
+  }
+
   @BeforeEach
   void setUp() {
     registry = new PaygateEndpointRegistry();
@@ -71,7 +80,7 @@ class SchemeCaseInsensitivityConformanceTest {
   void dispatchesToExpectedProtocolRegardlessOfSchemeCase(
       String authorization, String expectedScheme) throws Exception {
     var l402Delegate = new L402Protocol(mock(L402Validator.class), SERVICE_NAME);
-    var mppDelegate = new MppProtocol(new SensitiveBytes(new byte[32]));
+    var mppDelegate = new MppProtocol(new SensitiveBytes(mppSecret()));
 
     var l402Counter = new AtomicInteger();
     var mppCounter = new AtomicInteger();
