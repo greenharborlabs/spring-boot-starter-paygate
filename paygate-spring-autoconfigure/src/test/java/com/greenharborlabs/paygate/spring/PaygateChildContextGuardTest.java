@@ -3,18 +3,25 @@ package com.greenharborlabs.paygate.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.beans.factory.BeanCreationException;
+import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.config.BeanPostProcessor;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.context.ApplicationContext;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.annotation.RequestScope;
 import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
 
 /**
@@ -128,6 +135,77 @@ class PaygateChildContextGuardTest {
             });
   }
 
+  @Test
+  @DisplayName(
+      "a child context with an uninitialisable lazy factory bean and no paid handlers refreshes")
+  void childContextWithUninitialisableLazyFactoryBeanRefreshes() {
+    rootRunner.run(
+        root -> {
+          var child = childOf(root.getSourceApplicationContext(), FreeController.class);
+          child.addBeanFactoryPostProcessor(
+              beanFactory -> {
+                var definition = new GenericBeanDefinition();
+                definition.setBeanClass(FailingFactoryBean.class);
+                definition.setLazyInit(true);
+                ((BeanDefinitionRegistry) beanFactory)
+                    .registerBeanDefinition("unresolvableClient", definition);
+              });
+
+          assertThatCode(child::refresh).doesNotThrowAnyException();
+          assertThat(PaygateChildContextGuard.findPaidBeans(child)).isEmpty();
+          child.close();
+        });
+  }
+
+  @Test
+  @DisplayName("a child context with a lazy factory bean of unknown type refreshes")
+  void childContextWithLazyUnknownTypeFactoryBeanRefreshes() {
+    rootRunner.run(
+        root -> {
+          var child = childOf(root.getSourceApplicationContext(), FreeController.class);
+          child.addBeanFactoryPostProcessor(
+              beanFactory -> {
+                var definition = new GenericBeanDefinition();
+                definition.setBeanClass(UnknownTypeFactoryBean.class);
+                definition.setLazyInit(true);
+                ((BeanDefinitionRegistry) beanFactory)
+                    .registerBeanDefinition("lazyClientFactory", definition);
+              });
+
+          assertThatCode(child::refresh).doesNotThrowAnyException();
+          assertThat(PaygateChildContextGuard.findPaidBeans(child)).isEmpty();
+          child.close();
+        });
+  }
+
+  @Test
+  @DisplayName("beans whose type is null or cannot be resolved are skipped, paid beans still found")
+  void unresolvableAndUnknownTypesAreSkipped() {
+    var context = mock(ApplicationContext.class);
+    when(context.getBeanNamesForType(Object.class))
+        .thenReturn(new String[] {"broken", "unknown", "paid"});
+    when(context.getType("broken"))
+        .thenThrow(new BeanCreationException("broken", "type cannot be resolved"));
+    when(context.getType("unknown")).thenReturn(null);
+    doReturn(PaidController.class).when(context).getType("paid");
+
+    assertThat(PaygateChildContextGuard.findPaidBeans(context)).containsExactly("paid");
+  }
+
+  @Test
+  @DisplayName("a scoped-proxy paid bean fails once, through its proxy and not its target")
+  void scopedProxyPaidBeanIsDetectedThroughItsProxy() {
+    rootRunner.run(
+        root -> {
+          var child =
+              childOf(root.getSourceApplicationContext(), RequestScopedPaidController.class);
+
+          assertThatThrownBy(child::refresh)
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("[paygateChildContextGuardTest.RequestScopedPaidController]");
+        });
+  }
+
   private static AnnotationConfigWebApplicationContext childOf(
       ApplicationContext parent, Class<?> component) {
     var child = new AnnotationConfigWebApplicationContext();
@@ -170,6 +248,48 @@ class PaygateChildContextGuardTest {
     @Override
     public String paid() {
       return "PAID";
+    }
+  }
+
+  @RestController
+  @RequestScope
+  static class RequestScopedPaidController {
+    @PaymentRequired(priceSats = 10)
+    @GetMapping("/child/scoped")
+    public String paid() {
+      return "PAID";
+    }
+  }
+
+  /** A client-style factory bean whose product type is unknown until it is initialised. */
+  @SuppressWarnings("rawtypes")
+  static class UnknownTypeFactoryBean implements FactoryBean {
+    @Override
+    public Object getObject() {
+      throw new IllegalStateException("client is not available");
+    }
+
+    @Override
+    public Class<?> getObjectType() {
+      return null;
+    }
+  }
+
+  /** A raw factory bean whose type is unknowable without initialising it, which always fails. */
+  @SuppressWarnings("rawtypes")
+  static class FailingFactoryBean implements FactoryBean {
+    FailingFactoryBean() {
+      throw new IllegalStateException("client configuration is not available");
+    }
+
+    @Override
+    public Object getObject() {
+      throw new IllegalStateException("unreachable");
+    }
+
+    @Override
+    public Class<?> getObjectType() {
+      return null;
     }
   }
 

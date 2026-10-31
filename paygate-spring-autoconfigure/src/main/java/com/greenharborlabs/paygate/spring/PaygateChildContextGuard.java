@@ -2,12 +2,11 @@ package com.greenharborlabs.paygate.spring;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 import org.springframework.aop.framework.autoproxy.AutoProxyUtils;
+import org.springframework.aop.scope.ScopedProxyUtils;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
@@ -30,6 +29,9 @@ import org.springframework.util.ClassUtils;
  * to initialise instead of serving a paid route without payment.
  */
 final class PaygateChildContextGuard implements ApplicationListener<ContextRefreshedEvent> {
+
+  private static final System.Logger log =
+      System.getLogger(PaygateChildContextGuard.class.getName());
 
   private final ApplicationContext rootContext;
 
@@ -55,19 +57,26 @@ final class PaygateChildContextGuard implements ApplicationListener<ContextRefre
     }
   }
 
-  /** Returns the names of the context's own beans whose class declares {@code @PaymentRequired}. */
+  /**
+   * Returns the names of the context's own beans whose class declares {@code @PaymentRequired}.
+   *
+   * <p>Candidate detection mirrors Spring MVC's {@code AbstractHandlerMethodMapping} without
+   * ancestor detection: this context's own bean names, excluding scoped-proxy targets, skipping any
+   * bean whose type is unknown or cannot be resolved. A bean Spring MVC cannot type cannot become a
+   * handler, so healthy child contexts with lazy or unresolvable beans, such as Spring Cloud {@code
+   * NamedContextFactory} client contexts, are not failed.
+   */
   static List<String> findPaidBeans(ApplicationContext context) {
     ConfigurableListableBeanFactory beanFactory =
         context instanceof ConfigurableApplicationContext configurable
             ? configurable.getBeanFactory()
             : null;
-    // Bean definition and singleton names are local to this context; ancestors are not consulted.
-    var beanNames = new LinkedHashSet<>(Arrays.asList(context.getBeanDefinitionNames()));
-    if (beanFactory != null) {
-      beanNames.addAll(Arrays.asList(beanFactory.getSingletonNames()));
-    }
     var paidBeans = new ArrayList<String>();
-    for (String beanName : beanNames) {
+    // getBeanNamesForType does not consult ancestor contexts.
+    for (String beanName : context.getBeanNamesForType(Object.class)) {
+      if (ScopedProxyUtils.isScopedTarget(beanName)) {
+        continue;
+      }
       Class<?> beanClass = targetClass(context, beanFactory, beanName);
       if (beanClass != null && declaresPaymentRequired(beanClass)) {
         paidBeans.add(beanName);
@@ -80,10 +89,21 @@ final class PaygateChildContextGuard implements ApplicationListener<ContextRefre
       ApplicationContext context,
       @Nullable ConfigurableListableBeanFactory beanFactory,
       String beanName) {
-    Class<?> type =
-        beanFactory != null
-            ? AutoProxyUtils.determineTargetClass(beanFactory, beanName)
-            : context.getType(beanName, false);
+    Class<?> type;
+    try {
+      type =
+          beanFactory != null
+              ? AutoProxyUtils.determineTargetClass(beanFactory, beanName)
+              : context.getType(beanName);
+    } catch (Throwable ex) {
+      // An unresolvable bean type, probably from a lazy bean; Spring MVC ignores it the same way.
+      log.log(
+          System.Logger.Level.DEBUG,
+          "Could not resolve type for bean {0}; skipping @PaymentRequired check: {1}",
+          beanName,
+          ex.getClass().getName());
+      return null;
+    }
     return type == null ? null : ClassUtils.getUserClass(type);
   }
 
