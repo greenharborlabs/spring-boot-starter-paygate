@@ -2,9 +2,13 @@
 #
 # setup-go-interop.sh - Build the small Go helper used by PLAYBOOK.md section 9.
 #
+# The helper is written to and built in a private directory, because the build compiles and the
+# caller then runs whatever that directory contains. By default a fresh directory is created with
+# `mktemp -d`. GO_INTEROP_DIR selects an explicit directory instead; it is created with mode 0700
+# when absent, and an existing one must be a real directory (not a symlink) owned by the current
+# user and not group- or world-writable.
+#
 set -euo pipefail
-
-TARGET_DIR="${GO_INTEROP_DIR:-/tmp/paygate-go-interop}"
 
 if ! command -v go > /dev/null 2>&1; then
   echo "FAIL: Go toolchain not found. Install Go 1.21+ and rerun this script."
@@ -15,7 +19,36 @@ if ! command -v python3 > /dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$TARGET_DIR"
+# Refuses a directory that another local user could have planted or can still modify.
+require_private_dir() {
+  local dir="$1"
+  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    echo "FAIL: GO_INTEROP_DIR '$dir' is not a directory (or is a symlink)." >&2
+    exit 1
+  fi
+  if [ -z "$(find "$dir" -prune -type d -user "$(id -u)" ! -perm -020 ! -perm -002)" ]; then
+    echo "FAIL: GO_INTEROP_DIR '$dir' must be owned by the current user and must not be" \
+      "group- or world-writable. Choose another directory or unset GO_INTEROP_DIR to use a" \
+      "private temporary directory." >&2
+    exit 1
+  fi
+}
+
+if [ -n "${GO_INTEROP_DIR:-}" ]; then
+  TARGET_DIR="$GO_INTEROP_DIR"
+  # Keep mkdir, find and cd from reading a relative path that starts with '-' as an option.
+  case "$TARGET_DIR" in
+    /* | ./* | ../*) ;;
+    *) TARGET_DIR="./$TARGET_DIR" ;;
+  esac
+  # No -p: if another user creates the path first, mkdir fails and the ownership check refuses it.
+  if [ ! -e "$TARGET_DIR" ] && [ ! -L "$TARGET_DIR" ]; then
+    mkdir -m 700 "$TARGET_DIR" 2> /dev/null || true
+  fi
+  require_private_dir "$TARGET_DIR"
+else
+  TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paygate-go-interop.XXXXXX")"
+fi
 
 python3 - "$TARGET_DIR" <<'PY'
 from pathlib import Path
@@ -109,3 +142,4 @@ PY
 )
 
 echo "Go interop helper ready: $TARGET_DIR/paygate-go-interop"
+echo "To reuse it: export GO_INTEROP_DIR='$TARGET_DIR'"

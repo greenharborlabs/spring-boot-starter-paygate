@@ -1540,16 +1540,18 @@ Verify byte-level compatibility between the Java macaroon implementation and the
 Start the full local LNbits-over-LND stack, build the Go helper, and verify a Java-minted macaroon with Go:
 
 ```bash
+export GO_INTEROP_DIR="$(mktemp -d)"
 bash scripts/run-go-interop-test.sh
 ```
 
-This starts `bitcoind`, `lnd-payee`, `lnd-payer`, LNbits, and `paygate-example-app`, writes the helper source to `/tmp/paygate-go-interop`, builds `/tmp/paygate-go-interop/paygate-go-interop`, requests a fresh 402 challenge, and verifies the Java macaroon with Go.
+This starts `bitcoind`, `lnd-payee`, `lnd-payer`, LNbits, and `paygate-example-app`, writes the helper source to `$GO_INTEROP_DIR`, builds `$GO_INTEROP_DIR/paygate-go-interop`, requests a fresh 402 challenge, and verifies the Java macaroon with Go.
+The helper is built and run from a private directory. Without `GO_INTEROP_DIR`, the scripts create a fresh one with `mktemp -d` and print its path. An explicit `GO_INTEROP_DIR` is created with mode `0700` if it does not exist; an existing one must be a real directory owned by you and not group- or world-writable, or the setup fails. Do not point it at a shared fixed path such as `/tmp/paygate-go-interop`.
 By default it resets Docker volumes so stale regtest chain state cannot break setup. To reuse an existing clean stack, run `RESET_STACK=false bash scripts/run-go-interop-test.sh`.
 If an earlier failed paste left your terminal at a `heredoc>` prompt, press `Ctrl-C` to return to the normal shell prompt before running the script.
 
 ### 9.2 Java-to-Go: Mint in Java, verify in Go
 
-If the stack is already running and you only want to rerun the Java-to-Go check manually, obtain a macaroon from a 402 challenge:
+If the stack is already running and you only want to rerun the Java-to-Go check manually, set `GO_INTEROP_DIR` to the directory printed by section 9.1 (or run `bash scripts/setup-go-interop.sh` and use the `export` line it prints), then obtain a macaroon from a 402 challenge:
 
 ```bash
 APP_PORT="${APP_PORT:-18080}"
@@ -1569,7 +1571,7 @@ if [ -z "$MACAROON" ]; then
   echo "No macaroon found. Make sure the example app is running and $PROTECTED_ENDPOINT returns a 402 challenge."
 else
   echo "Java macaroon: ${MACAROON:0:40}..."
-  /tmp/paygate-go-interop/paygate-go-interop verify "$MACAROON"
+  "$GO_INTEROP_DIR/paygate-go-interop" verify "$MACAROON"
 fi
 ```
 
@@ -1594,7 +1596,7 @@ The Java app cannot verify the ad hoc Go-minted macaroon directly because it use
 ### 9.4 Cleanup
 
 ```bash
-rm -rf /tmp/paygate-go-interop
+rm -rf "$GO_INTEROP_DIR"
 ```
 
 ### Troubleshooting
