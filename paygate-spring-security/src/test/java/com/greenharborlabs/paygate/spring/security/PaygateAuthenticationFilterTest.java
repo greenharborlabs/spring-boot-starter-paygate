@@ -529,6 +529,74 @@ class PaygateAuthenticationFilterTest {
             "{\"code\": 401, \"error\": \"AUTHENTICATION_FAILED\", \"message\": \"L402 authentication failed\"}");
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(filterChain, never()).doFilter(request, response);
+    assertThat(PaygateAuthenticationFilter.isClientFaultFailure(request)).isTrue();
+  }
+
+  @ParameterizedTest(name = "{0} credential failure marks client fault: {2}")
+  @org.junit.jupiter.params.provider.CsvSource({
+    "MALFORMED, 400, true",
+    "INVALID, 402, true",
+    "UNAVAILABLE, 503, false"
+  })
+  void marksOnlyClientFaultCredentialFailuresForRateLimitPenalty(
+      PaymentValidationException.ErrorCode errorCode, int expectedStatus, boolean clientFault)
+      throws ServletException, IOException {
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any()))
+        .thenThrow(
+            new BadCredentialsException(
+                "Payment authentication failed",
+                new PaymentValidationException(errorCode, "failure", "token-1234")));
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(expectedStatus);
+    assertThat(PaygateAuthenticationFilter.isClientFaultFailure(request)).isEqualTo(clientFault);
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void doesNotMarkBackendRuntimeFailureOrFirstChallengeForRateLimitPenalty()
+      throws ServletException, IOException {
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any()))
+        .thenThrow(new RuntimeException("gRPC channel unavailable"));
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(PaygateAuthenticationFilter.isClientFaultFailure(request)).isFalse();
+
+    var challengeRequest = new MockHttpServletRequest("GET", "/api/protected");
+    filter.doFilter(challengeRequest, new MockHttpServletResponse(), filterChain);
+
+    verify(authenticationEntryPoint)
+        .commence(
+            org.mockito.ArgumentMatchers.same(challengeRequest),
+            any(),
+            any(ResolvedEndpoint.class));
+    assertThat(PaygateAuthenticationFilter.isClientFaultFailure(challengeRequest)).isFalse();
+  }
+
+  @Test
+  void doesNotMarkChallengeablePaidPriceReplacementForRateLimitPenalty()
+      throws ServletException, IOException {
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any()))
+        .thenThrow(
+            new BadCredentialsException(
+                "L402 authentication failed",
+                new PaymentValidationException(
+                    PaymentValidationException.ErrorCode.INSUFFICIENT,
+                    "L402 paid-price validation failed",
+                    "token-1234",
+                    new PriceValidationException(
+                        PriceValidationException.Kind.INSUFFICIENT_PRICE, "token-1234"))));
+
+    filter.doFilter(request, response, filterChain);
+
+    verify(authenticationEntryPoint).commenceReplacement(any(), any(), any());
+    assertThat(PaygateAuthenticationFilter.isClientFaultFailure(request)).isFalse();
   }
 
   @Test
