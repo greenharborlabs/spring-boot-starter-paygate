@@ -38,6 +38,19 @@ class JcsSerializerTest {
 
       assertThat(JcsSerializer.serialize(map)).isEqualTo("{\"a\":\"1\",\"m\":\"2\",\"z\":\"3\"}");
     }
+
+    @Test
+    @DisplayName("sorts keys by UTF-16 code units, not code points, as RFC 8785 requires")
+    void utf16CodeUnitOrder() {
+      // U+FF61 precedes U+1F600 in code point order, but the surrogate pair of U+1F600 starts
+      // with 0xD83D, which precedes 0xFF61 in UTF-16 code unit order.
+      var map = new LinkedHashMap<String, Object>();
+      map.put("｡", "bmp");
+      map.put("😀", "supplementary");
+
+      assertThat(JcsSerializer.serialize(map))
+          .isEqualTo("{\"😀\":\"supplementary\",\"｡\":\"bmp\"}");
+    }
   }
 
   @Nested

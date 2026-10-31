@@ -175,14 +175,32 @@ final class MinimalJsonParser {
     if (pos + 4 >= input.length()) {
       throw error("Incomplete unicode escape");
     }
-    String hex = input.substring(pos + 1, pos + 5);
-    try {
-      char unicode = (char) Integer.parseInt(hex, 16);
-      pos += 4; // advance past the 4 hex digits (the caller advances past the escape marker)
-      return unicode;
-    } catch (NumberFormatException _) {
-      throw error("Invalid unicode escape: \\u%s".formatted(hex));
+    // JSON requires exactly four ASCII hex digits. Integer.parseInt would also accept a sign and
+    // Character.digit would accept non-ASCII digits, so each digit is checked explicitly.
+    int unicode = 0;
+    for (int offset = 1; offset <= 4; offset++) {
+      int digit = asciiHexValue(input.charAt(pos + offset));
+      if (digit < 0) {
+        throw error("Invalid unicode escape: \\u%s".formatted(input.substring(pos + 1, pos + 5)));
+      }
+      unicode = (unicode << 4) | digit;
     }
+    pos += 4; // advance past the 4 hex digits (the caller advances past the escape marker)
+    return (char) unicode;
+  }
+
+  /** Returns the value of an ASCII hexadecimal digit, or {@code -1} for any other character. */
+  private static int asciiHexValue(char character) {
+    if (character >= '0' && character <= '9') {
+      return character - '0';
+    }
+    if (character >= 'a' && character <= 'f') {
+      return character - 'a' + 10;
+    }
+    if (character >= 'A' && character <= 'F') {
+      return character - 'A' + 10;
+    }
+    return -1;
   }
 
   /** Appends a high surrogate escape and the immediately following low surrogate escape. */

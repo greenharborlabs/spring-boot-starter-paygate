@@ -5,7 +5,6 @@ import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.PaymentValidationException.ErrorCode;
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -231,27 +230,8 @@ public final class MppCredentialParser {
 
   /** Decodes only the canonical, unpadded base64url representation of a value. */
   private static byte[] decodeCanonicalBase64Url(String encoded, String errorMessage) {
-    if (encoded == null || encoded.length() % 4 == 1) {
-      throw malformed(errorMessage);
-    }
-    for (int index = 0; index < encoded.length(); index++) {
-      char character = encoded.charAt(index);
-      if (!((character >= 'A' && character <= 'Z')
-          || (character >= 'a' && character <= 'z')
-          || (character >= '0' && character <= '9')
-          || character == '-'
-          || character == '_')) {
-        throw malformed(errorMessage);
-      }
-    }
-
     try {
-      byte[] decoded = Base64.getUrlDecoder().decode(encoded);
-      String canonical = Base64.getUrlEncoder().withoutPadding().encodeToString(decoded);
-      if (!canonical.equals(encoded)) {
-        throw malformed(errorMessage);
-      }
-      return decoded;
+      return MppBase64Url.decodeCanonical(encoded);
     } catch (IllegalArgumentException e) {
       throw malformed(errorMessage, e);
     }

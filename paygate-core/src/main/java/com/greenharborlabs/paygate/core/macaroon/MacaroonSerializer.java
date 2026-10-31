@@ -86,19 +86,25 @@ public final class MacaroonSerializer {
     int pos = 1;
     String location = null;
     byte[] identifier = null;
+    int previousHeaderFieldType = FIELD_EOS;
 
-    // Parse header section until EOS
+    // Parse header section until EOS. As in go-macaroon, the header holds an optional location
+    // followed by exactly one identifier: duplicate, out-of-order and unknown fields are rejected
+    // so that one macaroon has exactly one accepted encoding.
     while (pos < data.length) {
       if (data[pos] == FIELD_EOS) {
         pos++;
         break;
       }
       Varint.DecodeResult fieldTypeResult = Varint.decode(data, pos);
-      long rawFieldType = fieldTypeResult.value();
-      if (rawFieldType < 0 || rawFieldType > Integer.MAX_VALUE) {
-        throw new IllegalArgumentException("Invalid field type: " + rawFieldType);
+      int fieldType = checkedFieldType(fieldTypeResult.value());
+      if (fieldType <= previousHeaderFieldType) {
+        throw new IllegalArgumentException("V2 macaroon header fields out of order");
       }
-      int fieldType = (int) rawFieldType;
+      if (fieldType != FIELD_LOCATION && fieldType != FIELD_IDENTIFIER) {
+        throw new IllegalArgumentException("Unsupported header field type: " + fieldType);
+      }
+      previousHeaderFieldType = fieldType;
       pos += fieldTypeResult.bytesRead();
 
       Varint.DecodeResult lenResult = Varint.decode(data, pos);
@@ -118,12 +124,10 @@ public final class MacaroonSerializer {
       System.arraycopy(data, pos, payload, 0, len);
       pos += len;
 
-      switch (fieldType) {
-        case FIELD_LOCATION -> location = decodeUtf8(payload, "location");
-        case FIELD_IDENTIFIER -> identifier = payload;
-        default -> {
-          /* skip unknown fields */
-        }
+      if (fieldType == FIELD_LOCATION) {
+        location = decodeUtf8(payload, "location");
+      } else {
+        identifier = payload;
       }
     }
 

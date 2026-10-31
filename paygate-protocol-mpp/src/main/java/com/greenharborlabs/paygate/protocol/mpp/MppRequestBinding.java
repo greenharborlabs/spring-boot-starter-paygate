@@ -4,7 +4,6 @@ import com.greenharborlabs.paygate.api.ChallengeContext;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
 import com.greenharborlabs.paygate.api.PaymentValidationException.ErrorCode;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -179,7 +178,7 @@ final class MppRequestBinding {
     }
     byte[] decoded;
     try {
-      decoded = Base64.getUrlDecoder().decode(base64Url);
+      decoded = MppBase64Url.decodeCanonical(base64Url);
     } catch (IllegalArgumentException _) {
       throw invalid(tokenId);
     }

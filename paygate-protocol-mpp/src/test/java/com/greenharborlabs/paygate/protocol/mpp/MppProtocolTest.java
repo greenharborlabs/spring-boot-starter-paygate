@@ -24,6 +24,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class MppProtocolTest {
 
@@ -42,6 +44,15 @@ class MppProtocolTest {
   /** Creates a fresh SensitiveBytes wrapping a clone of SECRET_BYTES (safe for repeated use). */
   private static SensitiveBytes secret() {
     return new SensitiveBytes(SECRET_BYTES.clone());
+  }
+
+  /** Returns {@code length} bytes that are not all equal, for constructor length tests. */
+  private static byte[] distinctBytes(int length) {
+    byte[] bytes = new byte[length];
+    for (int i = 0; i < bytes.length; i++) {
+      bytes[i] = (byte) (i + 1);
+    }
+    return bytes;
   }
 
   private static SensitiveBytes previousSecret() {
@@ -113,13 +124,41 @@ class MppProtocolTest {
 
     @Test
     void acceptsExactly32ByteSecret() {
-      MppProtocol p = new MppProtocol(new SensitiveBytes(new byte[32]));
+      MppProtocol p = new MppProtocol(new SensitiveBytes(distinctBytes(32)));
       assertThat(p.scheme()).isEqualTo("Payment");
     }
 
     @Test
     void acceptsLongerSecret() {
-      MppProtocol p = new MppProtocol(new SensitiveBytes(new byte[64]));
+      MppProtocol p = new MppProtocol(new SensitiveBytes(distinctBytes(64)));
+      assertThat(p.scheme()).isEqualTo("Payment");
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0x00, 0x61, 0xFF})
+    void rejectsSecretOfOneRepeatedByte(int value) {
+      byte[] repeated = new byte[32];
+      Arrays.fill(repeated, (byte) value);
+      assertThatThrownBy(() -> new MppProtocol(new SensitiveBytes(repeated)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("challengeBindingSecret must not be a single repeated byte");
+    }
+
+    @Test
+    void rejectsPreviousSecretOfOneRepeatedByte() {
+      SensitiveBytes repeated = new SensitiveBytes(new byte[64]);
+      assertThatThrownBy(() -> new MppProtocol(secret(), MppParserLimits.defaults(), repeated))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(
+              "previousChallengeBindingSecret must not be a single repeated byte");
+    }
+
+    @Test
+    void acceptsSecretThatDiffersFromARepeatedByteInOnlyItsLastByte() {
+      byte[] nearlyRepeated = new byte[32];
+      Arrays.fill(nearlyRepeated, (byte) 0x61);
+      nearlyRepeated[31] = 0x62;
+      MppProtocol p = new MppProtocol(new SensitiveBytes(nearlyRepeated));
       assertThat(p.scheme()).isEqualTo("Payment");
     }
 

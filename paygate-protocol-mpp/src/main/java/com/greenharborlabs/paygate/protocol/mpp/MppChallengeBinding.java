@@ -62,7 +62,8 @@ public final class MppChallengeBinding {
 
   /**
    * Constant-time verifies a challenge ID against the expected HMAC. Returns true if valid, false
-   * if tampered.
+   * if tampered. Only the canonical unpadded base64url spelling of the ID verifies; a padded ID or
+   * one with nonzero unused trailing bits is rejected even though it decodes to the same HMAC.
    *
    * @param id the challenge ID to verify (base64url-nopad encoded HMAC)
    * @param realm service name (never null)
@@ -94,9 +95,9 @@ public final class MppChallengeBinding {
 
     byte[] presentedBytes;
     try {
-      presentedBytes = Base64.getUrlDecoder().decode(id);
+      presentedBytes = MppBase64Url.decodeCanonical(id);
     } catch (IllegalArgumentException _) {
-      // Malformed base64 input — reject without timing leak
+      // Malformed or noncanonical base64url: only the issued spelling of an ID verifies.
       return false;
     }
 
