@@ -432,6 +432,22 @@ A capture that observes fewer bytes than a positive declared `Content-Length` fa
 `400 REQUEST_BODY_INCOMPLETE` (body truncated or already consumed). Chunked requests are
 unaffected. See the `paygate-spring-security` README for Spring Security-specific operator guidance.
 
+### Additional DispatcherServlet contexts are unsupported for paid handlers
+
+Paygate discovers and enforces `@PaymentRequired` handlers only in the application context where
+it is auto-configured (normally the root context). An additional `DispatcherServlet` registered
+with its own child context has handler mappings that Paygate never scans, so `@PaymentRequired` in
+that child context is **unsupported and fails**:
+
+- When a child context refreshes, Paygate inspects the child's own beans (not its ancestors'). If
+  any bean class declares `@PaymentRequired` on the class or on a method, including interface
+  methods and proxied beans, the refresh fails with an `IllegalStateException`.
+- A child dispatcher with `load-on-startup` therefore fails application startup. A lazily
+  initialised one fails on each dispatch (HTTP 500) and never serves the paid route.
+
+Child contexts without `@PaymentRequired` are unaffected. Declare paid handlers in the root
+context's `DispatcherServlet`.
+
 ### 0.1.5 resolver constructor migration
 
 The unused service-name constructor argument has been removed from the Spring Security fallback resolver:
