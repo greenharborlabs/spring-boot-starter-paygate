@@ -1,7 +1,7 @@
 # Remediate 2026-10-18 security review Info items
-Status: working
+Status: review
 Base revision: b1d9c9ed8b04a1afae3141e693c04ea347e1c3c3
-Review scope: paygate-api/src/**, paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, build.gradle.kts, META-INF/**, integration-tests/docker-compose*.yml, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
+Review scope: paygate-api/src/**, paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, build.gradle.kts, META-INF/**, integration-tests/docker-compose*.yml, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, docs/macaroons-deep-dive.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
 ## Goal
 Resolve the Info items from the [2026-10-18 security review](../reports/security-review-2026-10-18-claude-opus-5-5.md) that the [Low remediation record](2026-10-31-remediate-security-review-2026-10-18-lows.md) deferred: I-01, I-04 to I-14, I-16 to I-19, and the optional I-20 strict mode. Each item is either fixed or explicitly closed with a reason.
@@ -74,21 +74,62 @@ Acceptance evidence:
 Approved: 2026-10-31 by Mark Hammond at plan revision b1d9c9ed8b04a1afae3141e693c04ea347e1c3c3.
 
 ## Tasks
-- [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the PoCs in and record which still reproduce.
-- [ ] I-01, I-04, I-05, I-06: strict V2 and L402 decoding, cache ordering, preimage zeroization, closed-context throw. Check: inverted V2ParserEdgeCase and L402Price `c2`/`c3`; go-macaroon interop vectors still parse; module tests.
-- [ ] I-13, I-14: MPP canonical base64url, `\u` parsing, final-second validity, secret check, JCS Javadoc. Check: inverted MppBinding; a credential is valid until its expiry instant and rejected after it.
-- [ ] I-07, I-08, I-09, I-11: filter price fallback, result type, session docs, exception propagation. Check: inverted AuthResultTrust and LegacySessionPersistence, the latter documenting the remaining deprecated-API behaviour; a handler exception reaches `/error` in both modes.
-- [ ] I-10, I-12, I-17, I-18: property guard, multi-method handlers, README example, redispatch price. Check: inverted ProtocolSwitchSpelling and HiddenMethodOverride, or a recorded "resolved earlier" result; the README example context starts; a FORWARD to another endpoint re-resolves the price.
-- [ ] I-16: BOLT11 payment-hash extractor and backend checks. Check: specification vectors, a corrupted checksum is rejected, and a mismatching backend response gives 503 for LND and LNbits.
-- [ ] I-19: remove `META-INF`, fix `installGitHook`, pin digests, fix SCM URLs. Check: a scratch-repository run of the hook shows unstaged files stay unstaged; `docker manifest inspect` (or equivalent) confirms each pinned digest, or the item is recorded `blocked`; generated POM inspection.
-- [ ] Ledger, SECURITY.md, CHANGELOG and README updates. Check by inspection: every in-scope row is `implemented` or `accepted` with evidence, and the ledger links this record.
-- [ ] Final: run `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
+- [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results. Copy the PoCs in and record which still reproduce.
+- [x] I-01, I-04, I-05, I-06: strict V2 and L402 decoding, cache ordering, preimage zeroization, closed-context throw. Check: inverted V2ParserEdgeCase and L402Price `c2`/`c3`; go-macaroon interop vectors still parse; module tests.
+- [x] I-13, I-14: MPP canonical base64url, `\u` parsing, final-second validity, secret check, JCS Javadoc. Check: inverted MppBinding; a credential is valid until its expiry instant and rejected after it.
+- [x] I-07, I-08, I-09, I-11: filter price fallback, result type, session docs, exception propagation. Check: inverted AuthResultTrust and LegacySessionPersistence, the latter documenting the remaining deprecated-API behaviour; a handler exception reaches `/error` in both modes.
+- [x] I-10, I-12, I-17, I-18: property guard, multi-method handlers, README example, redispatch price. Check: inverted ProtocolSwitchSpelling and HiddenMethodOverride, or a recorded "resolved earlier" result; the README example context starts; a FORWARD to another endpoint re-resolves the price.
+- [x] I-16: BOLT11 payment-hash extractor and backend checks. Check: specification vectors, a corrupted checksum is rejected, and a mismatching backend response gives 503 for LND and LNbits.
+- [x] I-19: remove `META-INF`, fix `installGitHook`, pin digests, fix SCM URLs. Check: a scratch-repository run of the hook shows unstaged files stay unstaged; `docker manifest inspect` (or equivalent) confirms each pinned digest, or the item is recorded `blocked`; generated POM inspection.
+- [x] Ledger, SECURITY.md, CHANGELOG and README updates. Check by inspection: every in-scope row is `implemented` or `accepted` with evidence, and the ledger links this record.
+- [x] Final: run `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation complete at `3bc5804`; awaiting fresh-context review.
+
+Baseline at `4740301`: pass.
+- `./gradlew check --continue --rerun-tasks` exited 0: 3,297 default-module tests, 0 failures or skips.
+- `./gradlew :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` 145 and `securityTest` 66, 0 failures. XML timestamps (2026-10-31T21:00Z) confirm a fresh run.
+
+WORK results on the merged branch:
+- **Final required checks: pass.**
+  - `./gradlew spotlessCheck check --rerun-tasks --continue` exited 0: 3,447 default-module tests, 0 failures or skips.
+  - `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` 154 and `securityTest` 71, 0 failures or skips, with fresh XML timestamps (2026-10-31T21:21Z).
+  - `git diff --check 4740301 HEAD` was clean.
+- **PoCs, all reproduced at base before their fixes and now inverted regression tests:**
+  - V2ParserEdgeCase: duplicate-identifier and unknown or out-of-order field cases. Its base64 case calls the JDK decoder directly; L402Price `c3` covers the Paygate path.
+  - L402Price `c2` and `c3`.
+  - MppBinding I-13 cases. The malleable-`id` case needed route and method in its setup after SR-02.
+  - AuthResultTrust, LegacySessionPersistence, ProtocolSwitchSpelling and HiddenMethodOverride.
+  - I-12 was **not** resolved by earlier work. Both per-method registrations matched, and the ambiguity guard threw.
+  - No `SecReview*` files remain.
+- **No PoC.** New tests cover I-05 (indirectly, through the cache tests), I-06, I-07, I-11, I-16, I-17 and I-18, and the I-13 expiry and secret cases. Agents confirmed that the I-07, I-08, servlet I-11, I-12 and I-13 tests fail against the pre-fix code.
+- **I-16.** `Bolt11PaymentHashExtractorTest` uses 15 valid and 8 invalid vectors copied from BOLT #11 (`lightning/bolts` commit `191462825ae341f0a27098765c075f01ca9bc6c2`), plus constructed edge cases. `InvoiceHashMismatchIT` shows a 503 through the filter for both backends.
+- **I-19.**
+  - Index digests were resolved with `docker buildx imagetools inspect`: LND `sha256:e44e6296…` (OCI index: amd64, arm64) and bitcoind `sha256:324fec72…` (manifest list: amd64, arm/v7, arm64/v8). Both pinned references re-resolve, and `docker compose config -q` passes for all four files.
+  - The hook script was rendered from `build.gradle.kts` and run in a scratch repository with a reformatting `gradlew`. Staged files, including a name with a space, were re-staged; an unrelated unstaged file stayed unstaged.
+  - The generated `paygate-core` POM shows https `spring-boot-starter-paygate` URLs.
+
+Points for the reviewer:
+1. **I-06 implementation.** `ChallengeContext` is a record and cannot hold a closed flag without changing its public components. The owned root-key array therefore carries one private trailing state byte (open, closed or absent), read and written under the context monitor. The accessor and constructors are unchanged, and `equals`/`hashCode` already ignore the field. Reflective readers would see one extra byte.
+2. **I-10.** The guard is an `EnvironmentPostProcessor` registered in a new `paygate-spring-autoconfigure` `META-INF/spring.factories`, so it also runs when Paygate is disabled. It requires exactly `true` or `false` (any case) **without trimming**, because `@ConditionalOnProperty` compares the raw value. It runs only under `SpringApplication`, not plain `ApplicationContextRunner`.
+3. **I-12 goes slightly beyond the decision.** Fixing only the registry would let a credential paid for POST run the same handler as DELETE via `_method`. `PaygateHandlerInterceptor` now also requires the authorized policy to equal the dispatched method's policy, and needs both success attributes. The built-in filters set both.
+4. **I-11.** Spring Security mode already propagated handler exceptions, so only servlet mode changed. The caveat verify-duration metric now excludes handler time. The reference `SecurityConfig` authenticates `/error`, so after a handler exception it answers 402 (no invoice minted). The example app's `src/main` is outside this scope, so the README documents permitting `/error` and the ERROR dispatch instead.
+5. **I-18 contract change.** `REQUEST_PRICE_ATTRIBUTE` now holds the price with its endpoint config. New public `PaygateRequestPricingService.memoizedPrice` and `memoize` are used by every reader and writer, including the I-07 branch in `PaygateAuthenticationFilter`, which was integrated across the two parallel changes.
+6. **I-13.**
+   - A noncanonical `id` still parses and is rejected at binding verification (`INVALID`).
+   - The README uses `openssl rand -hex 32`, the project's existing guidance.
+   - The plan assumed an issuance-time lifetime check that does not exist, so zero or over-24-hour timeouts still issue unusable challenges.
+7. **I-16 deliberately rejects uppercase invoices.** BOLT #11 allows them, but LND and LNbits return lowercase. The node signature is not verified.
+8. **Limits.**
+   - I-05 has no direct test.
+   - The I-17 LNbits example is not compiled by a test.
+   - The Docker stacks, live LND and LNbits, and GitHub runners were not exercised.
+   - The example app's `eclipse-temurin:25` images remain unpinned, outside the I-19 decision.
+   - `docs/macaroons-deep-dive.md` was added to `Review scope` because the I-17 wording lived there.
 
 ## Outcome
 Pending.
 
 ## Next action
-Implement the approved plan, record each check result, and set `Status: review`.
+Run the fresh-context `keel-review` of this record.
