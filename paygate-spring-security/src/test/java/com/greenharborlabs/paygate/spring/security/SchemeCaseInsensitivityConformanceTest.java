@@ -5,7 +5,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
+import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
 import com.greenharborlabs.paygate.spring.ResolvedEndpoint;
@@ -23,7 +25,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,7 +39,11 @@ class SchemeCaseInsensitivityConformanceTest {
   @Mock private AuthenticationManager authenticationManager;
   @Mock private PaygateEndpointRegistry endpointRegistry;
   @Mock private FilterChain filterChain;
-  @Mock private Authentication authenticatedResult;
+  private final PaygateAuthenticationToken authenticatedResult =
+      PaygateAuthenticationToken.authenticated(
+          new PaymentCredential(
+              new byte[32], new byte[32], "token-id", "Payment", null, new ProtocolMetadata() {}),
+          "conformance");
 
   private PaygateAuthenticationFilter filter;
   private MockHttpServletRequest request;

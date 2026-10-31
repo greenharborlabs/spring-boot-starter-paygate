@@ -62,9 +62,9 @@ class PaygateAuthenticationFilterTest {
 
   @Mock private FilterChain filterChain;
 
-  @Mock private Authentication authenticatedResult;
-
   @Mock private PaygateAuthenticationEntryPoint authenticationEntryPoint;
+
+  private PaygateAuthenticationToken authenticatedResult;
 
   private PaygateAuthenticationFilter filter;
   private MockHttpServletRequest request;
@@ -101,6 +101,7 @@ class PaygateAuthenticationFilterTest {
             null,
             null,
             authenticationEntryPoint);
+    authenticatedResult = createAuthenticatedMppToken();
     request = new MockHttpServletRequest();
     response = new MockHttpServletResponse();
     SecurityContextHolder.clearContext();
@@ -1339,8 +1340,10 @@ class PaygateAuthenticationFilterTest {
   }
 
   @Test
-  void nonPaygateAuthenticationTokenSkipsReceiptAndSucceeds() throws ServletException, IOException {
+  void nonPaygateAuthenticationResultFailsClosedWithoutContextOrReceipt()
+      throws ServletException, IOException {
     PaymentProtocol mppProtocol = mockMppProtocolWithScheme();
+    Authentication foreignResult = mock(Authentication.class);
 
     filter =
         new PaygateAuthenticationFilter(
@@ -1353,14 +1356,16 @@ class PaygateAuthenticationFilterTest {
     var config =
         new PaygateEndpointConfig("GET", "/api/resource", 100, 3600, "Test resource", "", "read");
     when(endpointRegistry.findConfig("GET", "/api/resource")).thenReturn(config);
-    // Return a non-PaygateAuthenticationToken
-    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+    // A non-conforming manager returns something other than a PaygateAuthenticationToken.
+    when(authenticationManager.authenticate(any())).thenReturn(foreignResult);
 
     filter.doFilter(request, response, filterChain);
 
+    assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getContentAsString()).contains("LIGHTNING_UNAVAILABLE");
     assertThat(response.getHeader("Payment-Receipt")).isNull();
-    verify(filterChain)
-        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(filterChain, never()).doFilter(any(), any());
     verify(mppProtocol, never()).createReceipt(any(), any());
   }
 
@@ -1390,6 +1395,72 @@ class PaygateAuthenticationFilterTest {
 
     verify(mppProtocol, never())
         .createReceipt(any(PaymentCredential.class), any(ChallengeContext.class));
+  }
+
+  @Test
+  void withoutEntryPointNamedPricingStrategyFailsClosedInsteadOfChargingStaticPrice()
+      throws ServletException, IOException {
+    var config = new PaygateEndpointConfig("POST", "/priced", 10, 60, "priced", "perUnit", "read");
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod()));
+    var noEntryPointFilter =
+        new PaygateAuthenticationFilter(
+            authenticationManager, List.of(), endpointRegistry, null, "test-service");
+    request.setMethod("POST");
+    request.setRequestURI("/priced");
+    request.setContent("units=100".getBytes(StandardCharsets.UTF_8));
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+
+    noEntryPointFilter.doFilter(request, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getContentAsString()).contains("LIGHTNING_UNAVAILABLE");
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    verify(authenticationManager, never()).authenticate(any());
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  void withoutEntryPointStaticPriceIsTrustedForAuthentication()
+      throws ServletException, IOException {
+    var config = new PaygateEndpointConfig("GET", "/static", 42, 60, "static", "", "read");
+    when(endpointRegistry.resolve(any(HttpServletRequest.class)))
+        .thenReturn(new ResolvedEndpoint(config, config.pathPattern(), config.httpMethod()));
+    var noEntryPointFilter =
+        new PaygateAuthenticationFilter(
+            authenticationManager, List.of(), endpointRegistry, null, "test-service");
+    request.setMethod("GET");
+    request.setRequestURI("/static");
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+
+    noEntryPointFilter.doFilter(request, response, filterChain);
+
+    ArgumentCaptor<PaygateAuthenticationToken> captor =
+        ArgumentCaptor.forClass(PaygateAuthenticationToken.class);
+    verify(authenticationManager).authenticate(captor.capture());
+    assertThat(captor.getValue().getRequestMetadata())
+        .containsEntry(VerificationContextKeys.CURRENT_PRICE_SATS, "42");
+    assertThat(SecurityContextHolder.getContext().getAuthentication())
+        .isSameAs(authenticatedResult);
+    verify(filterChain)
+        .doFilter(any(HttpServletRequest.class), org.mockito.ArgumentMatchers.eq(response));
+  }
+
+  @Test
+  void exceptionDownstreamOfSuccessfulPaymentPropagatesUnchanged()
+      throws ServletException, IOException {
+    request.addHeader("Authorization", "L402 " + VALID_MACAROON_B64 + ":" + VALID_PREIMAGE);
+    when(authenticationManager.authenticate(any())).thenReturn(authenticatedResult);
+    var applicationFailure = new IllegalStateException("application failure");
+    org.mockito.Mockito.doThrow(applicationFailure).when(filterChain).doFilter(any(), any());
+
+    assertThatThrownBy(() -> filter.doFilter(request, response, filterChain))
+        .isSameAs(applicationFailure);
+
+    assertThat(response.getStatus()).isEqualTo(200);
+    assertThat(response.isCommitted()).isFalse();
+    assertThat(response.getContentAsString()).isEmpty();
   }
 
   private void assertRejectedWithoutAuthentication() throws IOException, ServletException {
