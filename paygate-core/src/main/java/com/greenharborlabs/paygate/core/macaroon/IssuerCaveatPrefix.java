@@ -21,6 +21,7 @@ public final class IssuerCaveatPrefix {
   private static final String SERVICES_CAVEAT_KEY = "services";
   private static final String ROUTE_CAVEAT_KEY = "route";
   private static final String METHOD_CAVEAT_KEY = "method";
+  private static final String CLIENT_IP_CAVEAT_KEY = "client_ip";
 
   private IssuerCaveatPrefix() {}
 
@@ -69,6 +70,33 @@ public final class IssuerCaveatPrefix {
           VerificationFailureReason.CAVEAT_NOT_MET,
           "Credential is missing a required issuer boundary caveat");
     }
+  }
+
+  /**
+   * Returns whether the caveats carry exactly one {@code client_ip} caveat and the issuer signed it
+   * before the first {@code {serviceName}_valid_until} caveat.
+   *
+   * <p>A holder therefore cannot self-bind an unbound credential by appending {@code client_ip},
+   * and cannot add a second {@code client_ip} to a bound one. Keys are compared exactly, matching
+   * how client-address binding has always counted them.
+   *
+   * @param caveats authenticated caveats in signed order
+   * @param serviceName first-party service name
+   * @return {@code true} only for a single issuer-signed {@code client_ip} caveat
+   */
+  public static boolean hasIssuerClientAddressBinding(List<Caveat> caveats, String serviceName) {
+    int end = validUntilIndex(caveats, serviceName);
+    int total = 0;
+    int inPrefix = 0;
+    for (int i = 0; i < caveats.size(); i++) {
+      if (CLIENT_IP_CAVEAT_KEY.equals(caveats.get(i).key())) {
+        total++;
+        if (i < end) {
+          inPrefix++;
+        }
+      }
+    }
+    return total == 1 && inPrefix == 1;
   }
 
   private static int validUntilIndex(List<Caveat> caveats, String serviceName) {

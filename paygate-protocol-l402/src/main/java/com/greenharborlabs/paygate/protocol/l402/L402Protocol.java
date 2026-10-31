@@ -248,12 +248,7 @@ public class L402Protocol implements PaymentProtocol {
    * {serviceName}_valid_until}.
    */
   private boolean hasIssuerClientAddressBinding(Macaroon macaroon) {
-    return clientAddressCaveatCount(macaroon.caveats()) == 1
-        && clientAddressCaveatCount(IssuerCaveatPrefix.of(macaroon.caveats(), serviceName)) == 1;
-  }
-
-  private static long clientAddressCaveatCount(List<Caveat> caveats) {
-    return caveats.stream().filter(caveat -> CLIENT_IP_CAVEAT_KEY.equals(caveat.key())).count();
+    return IssuerCaveatPrefix.hasIssuerClientAddressBinding(macaroon.caveats(), serviceName);
   }
 
   /**

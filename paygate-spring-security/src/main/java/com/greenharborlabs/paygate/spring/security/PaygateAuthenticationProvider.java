@@ -5,6 +5,7 @@ import com.greenharborlabs.paygate.api.PaymentCredential;
 import com.greenharborlabs.paygate.api.PaymentProtocol;
 import com.greenharborlabs.paygate.api.PaymentReceipt;
 import com.greenharborlabs.paygate.api.PaymentValidationException;
+import com.greenharborlabs.paygate.core.macaroon.IssuerCaveatPrefix;
 import com.greenharborlabs.paygate.core.macaroon.L402VerificationContext;
 import com.greenharborlabs.paygate.core.macaroon.Macaroon;
 import com.greenharborlabs.paygate.core.protocol.L402Credential;
@@ -125,7 +126,7 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
       L402Validator.ValidationResult result = l402Validator.validate(components, context);
       L402Credential credential = result.credential();
       try {
-        if (clientAddressBindingEnabled && clientAddressCaveatCount(credential.macaroon()) != 1) {
+        if (clientAddressBindingEnabled && !hasIssuerClientAddressBinding(credential.macaroon())) {
           throw new L402Exception(
               com.greenharborlabs.paygate.core.protocol.ErrorCode.INVALID_MACAROON,
               "L402 credential validation failed",
@@ -149,10 +150,15 @@ public final class PaygateAuthenticationProvider implements AuthenticationProvid
     }
   }
 
-  private static long clientAddressCaveatCount(Macaroon macaroon) {
-    return macaroon.caveats().stream()
-        .filter(caveat -> CLIENT_IP_CAVEAT_KEY.equals(caveat.key()))
-        .count();
+  /**
+   * Returns whether the issuer bound the credential to one client address. Only a {@code client_ip}
+   * in the {@linkplain IssuerCaveatPrefix issuer prefix} counts, so a holder cannot self-bind a
+   * legacy unbound credential by appending one. Without a service name the issuer prefix cannot be
+   * located, so binding fails closed.
+   */
+  private boolean hasIssuerClientAddressBinding(Macaroon macaroon) {
+    return serviceName != null
+        && IssuerCaveatPrefix.hasIssuerClientAddressBinding(macaroon.caveats(), serviceName);
   }
 
   private static PaymentValidationException mapL402Failure(L402Exception failure) {
