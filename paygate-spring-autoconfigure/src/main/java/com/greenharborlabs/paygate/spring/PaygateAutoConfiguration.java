@@ -504,6 +504,15 @@ public class PaygateAutoConfiguration {
     };
   }
 
+  /**
+   * Fails a child context, such as an additional {@code DispatcherServlet}'s, that declares
+   * {@code @PaymentRequired} handlers this registry cannot discover. Not overridable.
+   */
+  @Bean
+  PaygateChildContextGuard paygateChildContextGuard(ApplicationContext applicationContext) {
+    return new PaygateChildContextGuard(applicationContext);
+  }
+
   private static void rejectUnsupportedPaidHandlerSource(
       String beanName, HandlerMapping handlerMapping) {
     try {

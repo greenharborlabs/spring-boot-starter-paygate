@@ -432,6 +432,22 @@ A capture that observes fewer bytes than a positive declared `Content-Length` fa
 `400 REQUEST_BODY_INCOMPLETE` (body truncated or already consumed). Chunked requests are
 unaffected. See the `paygate-spring-security` README for Spring Security-specific operator guidance.
 
+### Additional DispatcherServlet contexts are unsupported for paid handlers
+
+Paygate discovers and enforces `@PaymentRequired` handlers only in the application context where
+it is auto-configured (normally the root context). An additional `DispatcherServlet` registered
+with its own child context has handler mappings that Paygate never scans, so `@PaymentRequired` in
+that child context is **unsupported and fails**:
+
+- When a child context refreshes, Paygate inspects the child's own beans (not its ancestors'). If
+  any bean class declares `@PaymentRequired` on the class or on a method, including interface
+  methods and proxied beans, the refresh fails with an `IllegalStateException`.
+- A child dispatcher with `load-on-startup` therefore fails application startup. A lazily
+  initialised one fails on each dispatch (HTTP 500) and never serves the paid route.
+
+Child contexts without `@PaymentRequired` are unaffected. Declare paid handlers in the root
+context's `DispatcherServlet`.
+
 ### 0.1.5 resolver constructor migration
 
 The unused service-name constructor argument has been removed from the Spring Security fallback resolver:
@@ -480,6 +496,7 @@ Rate limiting prevents invoice flooding attacks by throttling 402 challenge issu
 
 - Each client IP gets an independent token bucket with `paygate.rate-limit.burst-size` maximum tokens and a refill rate of `paygate.rate-limit.requests-per-second` tokens per second.
 - New buckets start full. Each challenge request consumes one token.
+- In servlet mode, every request to a paid endpoint consumes its one token before `PaygateSecurityFilter` captures the request body or runs a named pricing strategy, whether or not it presents a credential. A rate-limited request gets 429 without that work. A failed credential validation still consumes one additional penalty token.
 - When a bucket is empty, the client receives HTTP 429 until tokens refill.
 - The total number of tracked IPs is capped at `paygate.rate-limit.max-buckets` (default 100,000) to prevent memory exhaustion. When the Caffeine implementation is active, Caffeine handles LRU eviction and idle-entry expiry automatically. The JDK fallback cleans up stale entries lazily and evicts a sampled oldest entry at capacity.
 

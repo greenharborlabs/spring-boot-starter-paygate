@@ -30,9 +30,10 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * On real Tomcat, any token is accepted as an HTTP method. Sending many distinct (and very long)
  * method tokens with a compressed body to a method-agnostic paid route with a named pricing
- * strategy emits one {@code COMPRESSED_BODY_REJECTED} decision per request; the auto-configured
- * decision reporter must still keep the {@code method} tag of {@code paygate.security.decisions}
- * bounded.
+ * strategy emits one {@code COMPRESSED_BODY_REJECTED} decision per admitted request; the
+ * auto-configured decision reporter must still keep the {@code method} tag of {@code
+ * paygate.security.decisions} bounded. The rate limit admits every probe, because pricing runs only
+ * after admission.
  */
 @Tag("integration")
 @SpringBootTest(
@@ -42,8 +43,8 @@ import org.springframework.web.bind.annotation.RestController;
       "paygate.enabled=true",
       "paygate.root-key-store=memory",
       "paygate.protocols.mpp.enabled=false",
-      "paygate.rate-limit.burst-size=1",
-      "paygate.rate-limit.requests-per-second=0.001"
+      "paygate.rate-limit.burst-size=100000",
+      "paygate.rate-limit.requests-per-second=100000"
     })
 class DecisionMethodTagCardinalityIT {
 
