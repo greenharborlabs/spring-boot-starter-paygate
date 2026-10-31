@@ -156,7 +156,7 @@
     {
       "name": "paygate.lnbits.allow-plaintext-http",
       "type": "java.lang.Boolean",
-      "description": "Explicit local/test opt-in that allows LNbits http:// URLs only when the host is loopback or local. Production LNbits URLs should use HTTPS.",
+      "description": "Explicit local/test opt-in that allows LNbits http:// URLs only when the host is exact localhost, a canonical loopback literal, a *.localhost name resolving only to loopback addresses, or the Compose service name lnbits. Enabling it requires every active profile to be dev, local, development, or test; otherwise startup fails. Production LNbits URLs should use HTTPS.",
       "defaultValue": false
     },
     {

@@ -178,7 +178,7 @@ All properties are bound from the `paygate.*` namespace via `PaygateProperties`.
 | `paygate.lnbits.api-key` | `string` | -- | When `paygate.backend=lnbits` | LNbits Invoice/read API key. Keep this value secret. |
 | `paygate.lnbits.request-timeout-seconds` | `Integer` | -- | No | Per-request HTTP timeout override. |
 | `paygate.lnbits.connect-timeout-seconds` | `Integer` | -- | No | Connection timeout override. |
-| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Explicit local/test opt-in for `http://` LNbits URLs. Accepted only for loopback, localhost, or the known local Compose service host. |
+| `paygate.lnbits.allow-plaintext-http` | `boolean` | `false` | No | Explicit local/test opt-in for `http://` LNbits URLs. It requires only `dev`, `local`, `development`, or `test` profiles, and accepts only loopback literals, exact `localhost`, `*.localhost` names resolving entirely to loopback, or the known local Compose service host `lnbits`. |
 
 ### LND Backend Properties
 
