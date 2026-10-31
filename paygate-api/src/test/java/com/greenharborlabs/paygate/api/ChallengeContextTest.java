@@ -3,6 +3,8 @@ package com.greenharborlabs.paygate.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -553,13 +555,13 @@ class ChallengeContextTest {
   }
 
   @Test
-  void closeZeroizesOwnedRootKeyAndIsIdempotent() {
+  void closeZeroizesOwnedRootKeyAndIsIdempotent() throws Exception {
     var context = validContext();
 
     context.close();
     context.close();
 
-    assertThat(context.rootKeyBytes()).containsOnly((byte) 0);
+    assertThat(ownedRootKeyBytes(context)).hasSize(VALID_ROOT_KEY.length).containsOnly((byte) 0);
   }
 
   @Test
@@ -571,7 +573,72 @@ class ChallengeContextTest {
     first.join();
     second.join();
 
-    assertThat(context.rootKeyBytes()).containsOnly((byte) 0);
+    assertThat(ownedRootKeyBytes(context)).hasSize(VALID_ROOT_KEY.length).containsOnly((byte) 0);
+    assertThatThrownBy(context::rootKeyBytes).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void rootKeyBytesThrowsAfterCloseInsteadOfReturningZeros() {
+    var context = validContext();
+    assertThat(context.rootKeyBytes()).isEqualTo(VALID_ROOT_KEY);
+
+    context.close();
+
+    assertThatThrownBy(context::rootKeyBytes)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("closed");
+  }
+
+  @Test
+  void rootKeyBytesThrowsAfterCloseEvenWithoutRootKey() {
+    var context =
+        new ChallengeContext(
+            VALID_HASH.clone(),
+            VALID_TOKEN_ID,
+            VALID_BOLT11,
+            VALID_PRICE,
+            null,
+            null,
+            VALID_TIMEOUT,
+            null,
+            null,
+            null,
+            null);
+    assertThat(context.rootKeyBytes()).isNull();
+
+    context.close();
+
+    assertThatThrownBy(context::rootKeyBytes).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void emptyRootKeyIsDistinctFromAbsentRootKey() {
+    var context =
+        new ChallengeContext(
+            VALID_HASH.clone(),
+            VALID_TOKEN_ID,
+            VALID_BOLT11,
+            VALID_PRICE,
+            null,
+            null,
+            VALID_TIMEOUT,
+            null,
+            new byte[0],
+            null,
+            null);
+
+    assertThat(context.rootKeyBytes()).isNotNull().isEmpty();
+  }
+
+  /**
+   * Reads the context's owned root-key storage, excluding its trailing state byte, so a test can
+   * check zeroization without the accessor that {@code close()} disables.
+   */
+  private static byte[] ownedRootKeyBytes(ChallengeContext context) throws Exception {
+    Field field = ChallengeContext.class.getDeclaredField("rootKeyBytes");
+    field.setAccessible(true);
+    byte[] stored = (byte[]) field.get(context);
+    return Arrays.copyOf(stored, stored.length - 1);
   }
 
   @Test

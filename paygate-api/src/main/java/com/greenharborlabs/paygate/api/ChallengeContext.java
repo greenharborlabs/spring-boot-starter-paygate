@@ -1,6 +1,7 @@
 package com.greenharborlabs.paygate.api;
 
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 
@@ -16,6 +17,9 @@ import java.util.Objects;
  * actual request method used to mint the challenge. {@code rawQuery} preserves the unmodified
  * servlet query and {@code queryPresent} distinguishes an absent query from an explicit empty
  * query. Request-boundary metadata is intentionally omitted from {@link #toString()}.
+ *
+ * <p>{@link #close()} zeroizes the owned root-key copy; afterwards {@link #rootKeyBytes()} throws
+ * {@link IllegalStateException} rather than returning key material that is no longer valid.
  */
 public record ChallengeContext(
     byte[] paymentHash,
@@ -36,6 +40,12 @@ public record ChallengeContext(
     String trustedClientAddress)
     implements AutoCloseable {
 
+  // A record cannot declare instance fields, so the owned root-key array carries one trailing state
+  // byte after the key bytes. It is read and written only under this context's monitor.
+  private static final byte ROOT_KEY_OPEN = 0;
+  private static final byte ROOT_KEY_CLOSED = 1;
+  private static final byte ROOT_KEY_ABSENT = 2;
+
   public ChallengeContext {
     Objects.requireNonNull(paymentHash, "paymentHash must not be null");
     Objects.requireNonNull(tokenId, "tokenId must not be null");
@@ -46,7 +56,10 @@ public record ChallengeContext(
 
     // Defensive copies of mutable fields
     paymentHash = paymentHash.clone();
-    rootKeyBytes = rootKeyBytes != null ? rootKeyBytes.clone() : null;
+    rootKeyBytes =
+        rootKeyBytes != null
+            ? Arrays.copyOf(rootKeyBytes, rootKeyBytes.length + 1) // trailing ROOT_KEY_OPEN
+            : new byte[] {ROOT_KEY_ABSENT};
     opaque = opaque != null ? Map.copyOf(opaque) : null;
     if (queryPresent == (rawQuery == null)) {
       throw new IllegalArgumentException("query presence must match rawQuery nullability");
@@ -174,9 +187,20 @@ public record ChallengeContext(
     return paymentHash.clone();
   }
 
+  /**
+   * Returns a caller-owned copy of the root key, or {@code null} when this context carries none.
+   *
+   * @return a copy of the root key, or {@code null}
+   * @throws IllegalStateException if this context has been closed
+   */
   @Override
-  public byte[] rootKeyBytes() {
-    return rootKeyBytes != null ? rootKeyBytes.clone() : null;
+  public synchronized byte[] rootKeyBytes() {
+    int keyLength = rootKeyBytes.length - 1;
+    return switch (rootKeyBytes[keyLength]) {
+      case ROOT_KEY_OPEN -> Arrays.copyOf(rootKeyBytes, keyLength);
+      case ROOT_KEY_ABSENT -> null;
+      default -> throw new IllegalStateException("ChallengeContext is closed");
+    };
   }
 
   @Override
@@ -218,14 +242,18 @@ public record ChallengeContext(
             rawQuery,
             queryPresent,
             trustedClientAddress);
-    result = 31 * result + java.util.Arrays.hashCode(paymentHash);
+    result = 31 * result + Arrays.hashCode(paymentHash);
     return result;
   }
 
-  /** Zeroizes this context's owned root-key copy. This operation is idempotent and thread-safe. */
+  /**
+   * Zeroizes this context's owned root-key copy, after which {@link #rootKeyBytes()} throws {@link
+   * IllegalStateException}. This operation is idempotent and thread-safe.
+   */
   @Override
   public synchronized void close() {
     CryptoUtils.zeroize(rootKeyBytes);
+    rootKeyBytes[rootKeyBytes.length - 1] = ROOT_KEY_CLOSED;
   }
 
   @Override
