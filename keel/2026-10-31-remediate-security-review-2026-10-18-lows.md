@@ -1,5 +1,5 @@
 # Remediate 2026-10-18 security review Low findings
-Status: working
+Status: review
 Base revision: 817e8b9c8a6612fcd3d8cacf270ee20aba0c54d5
 Review scope: paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, integration-tests/scripts/setup-go-interop.sh, integration-tests/scripts/run-go-interop-test.sh, paygate-api/src/main/java/com/greenharborlabs/paygate/api/PaymentCredential.java, integration-tests/PLAYBOOK.md, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
@@ -84,7 +84,7 @@ Approved: 2026-10-31 by Mark Hammond at plan revision 817e8b9c8a6612fcd3d8cacf27
 - [x] Final: run `./gradlew spotlessCheck check`, `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` and `git diff --check`, then record the results.
 
 ## Review
-Implementation complete at `f4de1ba`; awaiting fresh-context review.
+Implementation complete at `f4de1ba`; Attempt 1 rework complete at `0e9822b`; awaiting fresh-context review.
 
 Baseline at `817e8b9`: pass. `./gradlew check --continue --rerun-tasks` exited 0 with 3,141 default-module tests and no failures or skips. `./gradlew :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` ran 96 tests and `securityTest` ran 66, all passing, with fresh XML timestamps from 2026-10-31T13:22Z. A stale 2026-09-24 `wavelengthSpike` result in the build directory was not part of this run and was excluded.
 
@@ -128,6 +128,15 @@ Verification:
 - `shellcheck` and `bash -n` on `integration-tests/scripts/setup-go-interop.sh` and `integration-tests/scripts/run-go-interop-test.sh`: pass.
 - Acceptance criteria (inverted PoCs, ledger rows, documentation claims, final checks): fail because of findings 1 and 2; the remaining acceptance items pass.
 - Docker LNbits stack: skipped (optional per the record). Live LND, LNbits, Docker stacks and GitHub runners were not exercised, matching the record's stated limits.
+
+Rework after Attempt 1 (implementation at `0e9822b`):
+1. **Finding 1, fixed in `c0c3929`.** The issuer-prefix binding rule moved into `IssuerCaveatPrefix.hasIssuerClientAddressBinding`: exactly one `client_ip`, and it must lie before the first `{svc}_valid_until`. Keys are compared exactly, as both previous counters did. `L402Protocol` and `PaygateAuthenticationProvider` both call it, so the Spring Security path no longer accepts a holder-appended `client_ip` on a legacy unbound credential. The provider fails binding closed when it has no service name. `ProviderIssuerClientAddressBindingRegressionTest` (3 tests) mints built-in-order credentials and covers three cases: an unbound credential with an appended matching `client_ip` is rejected INVALID, an issuer-bound credential authenticates but rejects an added second `client_ip`, and an unbound credential authenticates with binding disabled. Against the previous raw count, the self-binding test fails (1 of 3). The documented guarantees in SECURITY.md, the L402 README and the CHANGELOG now hold in both modes, and the SR-12 and I-02 ledger rows cite the new test.
+2. **Finding 2, fixed in `0e9822b`.** Each of the 17 Info rows not remediated here (I-01, I-04 to I-14, I-16 to I-20) now says it is tracked in the follow-up record *Remediate 2026-10-18 security review Info items*. That record does not exist yet, so it is named by title rather than path.
+
+Rework verification:
+- `./gradlew spotlessCheck check --rerun-tasks --continue`: pass, exit 0. 3,297 default-module tests, 0 failures or skips.
+- `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration`: pass, exit 0. `test` 145 and `securityTest` 66, 0 failures, with fresh XML timestamps (2026-10-31T14:09Z).
+- `git diff --check 817e8b9 HEAD`: pass (clean).
 
 ## Outcome
 Pending.
