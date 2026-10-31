@@ -248,6 +248,21 @@ Endpoint-policy resolution failures are treated separately from authentication a
 failures: the filter clears the security context, returns a sanitized HTTP 500 JSON response, and
 does not invoke the authentication manager or downstream filter chain.
 
+The filter also fails closed with HTTP 503, without setting the security context or invoking the
+downstream chain, when:
+
+- the `AuthenticationManager` returns anything other than an authenticated
+  `PaygateAuthenticationToken` (for example `null`, the unauthenticated input token, or another
+  authentication type); or
+- the filter was built without a `PaygateAuthenticationEntryPoint` and the endpoint names a
+  pricing strategy. Without the entry point the strategy cannot be evaluated, so the static price
+  is never charged in its place. Static-priced endpoints keep using their configured price.
+
+An exception thrown downstream of a successful payment decision, such as by the paid handler,
+propagates unchanged to the servlet container's error handling. It is not reported as 503. If your
+chain requires authentication for every request, permit the `/error` page (or the `ERROR`
+dispatch) so that clients see the application's error response.
+
 ### PaygateAuthenticationProvider
 
 Implements `AuthenticationProvider`. Accepts only `PaygateAuthenticationToken` instances (returns `null` for other token types, per the Spring Security contract). For L402 credentials it delegates to `L402Validator`; for other supported schemes it delegates to the matching `PaymentProtocol`. Validation failures are wrapped in `BadCredentialsException`.
@@ -549,6 +564,22 @@ A credential with named capabilities is valid only for an endpoint that declares
 ### Authenticated State and Serialization
 
 The authenticated `PaygateAuthenticationToken` intentionally retains no raw `Authorization` header, parsed credential components or preimage, `L402Credential`, or `PaymentCredential`. Its trusted attributes are immutable. Receipt handoff is transient, and multipart-payment receipt generation completes before the token is reduced to credential-free authenticated state. Consequently, serializing an authenticated token does not serialize payment credentials or request secrets.
+
+### Payment Authorities Are Per-Request
+
+Payment authorities (`ROLE_PAYMENT`, `ROLE_L402`, and the capability authorities) apply only to
+the request that presented the payment credential. `PaygateAuthenticationFilter` sets the
+`SecurityContextHolder` directly and never saves the context to a `SecurityContextRepository`, so
+under Spring Security's default explicit-save behaviour the next request starts unauthenticated.
+`SessionCreationPolicy.STATELESS`, as in the examples above, is still recommended.
+
+The deprecated opt-in `securityContext(c -> c.requireExplicitSave(false))` changes this. It saves
+the context at the end of the request, so one payment's authorities persist in the HTTP session.
+Later requests in that session then satisfy authority rules such as `hasRole("PAYMENT")` on
+**unpaid** routes without paying again. Paid routes are unaffected: `PaygateAuthenticationFilter`
+runs on every registered paid route and still returns 402 without a fresh credential. Do not
+combine the deprecated opt-in with routes whose only protection is a payment authority. Instead,
+register such routes as paid with `@PaymentRequired`.
 
 ### Route, Method, and Deployment Prefixes
 
