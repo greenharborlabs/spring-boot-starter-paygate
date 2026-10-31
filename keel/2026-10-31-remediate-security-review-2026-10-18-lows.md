@@ -1,5 +1,5 @@
 # Remediate 2026-10-18 security review Low findings
-Status: review
+Status: working
 Base revision: 817e8b9c8a6612fcd3d8cacf270ee20aba0c54d5
 Review scope: paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, integration-tests/scripts/setup-go-interop.sh, integration-tests/scripts/run-go-interop-test.sh, paygate-api/src/main/java/com/greenharborlabs/paygate/api/PaymentCredential.java, integration-tests/PLAYBOOK.md, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
@@ -108,6 +108,26 @@ Points for the reviewer:
 8. **Limits.**
    - Live LND and LNbits, the Docker LNbits stacks and GitHub runners were not exercised.
    - Residual risks are recorded per row in the ledger, including Spring Security mode capture before rate limiting (SR-20) and LNbits DNS re-resolution on connect (SR-21).
+
+### Attempt 1
+Reviewed revision: 3ce817c09745115abc64660f54a5b76816fced37
+Verdict: rework
+
+Findings and dispositions:
+1. **SR-12/I-02 is still exploitable in Spring Security mode (security; acceptance failure).** `PaygateAuthenticationProvider.authenticateL402` ([`PaygateAuthenticationProvider.java:128`](../paygate-spring-security/src/main/java/com/greenharborlabs/paygate/spring/security/PaygateAuthenticationProvider.java#L128)) accepts when `clientAddressBindingEnabled && clientAddressCaveatCount(credential.macaroon()) != 1` passes. That counts every `client_ip` caveat, not only those in the issuer prefix. L402 credentials in Spring Security mode do not pass through `L402Protocol.validate`, so the new `hasIssuerClientAddressBinding` check ([`L402Protocol.java:214`](../paygate-protocol-l402/src/main/java/com/greenharborlabs/paygate/protocol/l402/L402Protocol.java#L214)) never runs on this path. A credential minted while binding was disabled plus a holder-appended `client_ip` equal to the requesting address therefore satisfies the count and binds successfully with `paygate.protocols.l402.client-address-binding-enabled=true`. The check predates this record (this diff only removes `source` from this file), but the record and its documentation now assert a guarantee this path does not provide: ledger `I-02` says "remediated", [`SECURITY.md:88`](../SECURITY.md#L88) says "the same key appended after it is treated as absent", [`paygate-protocol-l402/README.md`](../paygate-protocol-l402/README.md#L340) says "a legacy unbound credential stays rejected after its holder appends one", and [`CHANGELOG.md:51`](../CHANGELOG.md#L51) says a holder "cannot self-bind a legacy unbound credential with `client_ip`". No test covers the provider path: `IssuerPrefixRegressionTest` exercises `L402Protocol`, and `ClientAddressBindingIT` only presents credentials the issuer already bound. Rework: enforce the issuer prefix in the provider (reuse `IssuerCaveatPrefix` or `L402Protocol.hasIssuerClientAddressBinding` instead of a raw count), add a provider-level regression test for a legacy unbound credential with an appended `client_ip`, and keep the docs and ledger aligned with the resulting guarantee.
+2. **The deferred Info rows do not name the follow-up record (acceptance gap).** Acceptance requires that "the remaining Info rows name the follow-up record", but the deferred rows in [`docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md`](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md#L56) only say `planned`; only the section introduction at line 12 mentions "a separate follow-up Keel record". Add a concrete reference (path or title) to each deferred row, or amend the acceptance claim. Low severity; no functional impact.
+
+Reviewed clean: SR-13 zero-segment catch-all logic; SR-14/SR-15 endpoint resolution and client-fault penalty; SR-16 child-context guard (including the real-Tomcat test); SR-18 realm binding (constant-time, non-null realm); SR-19 `source` removal; SR-20 admission before capture and pricing, and the no-double-token paths; SR-21/I-15 dev gate and config hygiene; SR-22 body and deadline bounds; SR-23 revocation; SR-24 private temp directory. No other correctness, data-loss or unnecessary-complexity findings.
+
+Verification:
+- Preconditions (status `review`, full base revision, concrete `Review scope` excluding the record, clean tree, scoped paths clean): pass.
+- Scoped diff `817e8b9..3ce817c`: pass. `HEAD` changes only this record (38 insertions, 15 deletions), so the reviewed implementation is the `ca1fdb4`..`f4de1ba` history.
+- `./gradlew spotlessCheck check --rerun-tasks --continue`: pass, exit 0, `BUILD SUCCESSFUL in 1m 21s`; 3,294 module tests, 0 failures, errors or skips across 492 result XML files.
+- `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration`: pass, exit 0; `test` 145 tests and `securityTest` 66 tests, 0 failures or skips.
+- `git diff --check 817e8b9 HEAD`: pass (clean).
+- `shellcheck` and `bash -n` on `integration-tests/scripts/setup-go-interop.sh` and `integration-tests/scripts/run-go-interop-test.sh`: pass.
+- Acceptance criteria (inverted PoCs, ledger rows, documentation claims, final checks): fail because of findings 1 and 2; the remaining acceptance items pass.
+- Docker LNbits stack: skipped (optional per the record). Live LND, LNbits, Docker stacks and GitHub runners were not exercised, matching the record's stated limits.
 
 ## Outcome
 Pending.
