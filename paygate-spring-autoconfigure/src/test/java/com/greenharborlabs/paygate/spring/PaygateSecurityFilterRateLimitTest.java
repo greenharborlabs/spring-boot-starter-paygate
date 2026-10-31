@@ -2,6 +2,8 @@ package com.greenharborlabs.paygate.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -257,6 +259,121 @@ class PaygateSecurityFilterRateLimitTest {
     assertThat(response.getStatus()).isEqualTo(400);
     verify(rateLimiter, times(1)).tryAcquire("10.0.0.1");
     verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  @DisplayName("a denied challenge request runs neither body capture nor the pricing strategy")
+  void deniedChallengeRequestSkipsBodyCaptureAndPricing() throws Exception {
+    var throwingRequest = pricedPostWithoutCredential();
+    org.mockito.Mockito.doThrow(new PaygateRateLimitedException("limited"))
+        .when(challengeService)
+        .acquireChallengeRateLimit(any());
+
+    pricedFilter().doFilter(throwingRequest, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(429);
+    assertThat(throwingRequest.bodyRead).isFalse();
+    verify(challengeService, never()).resolveTrustedPrice(any(), any());
+    verify(rateLimiter, never()).tryAcquire(any());
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  @DisplayName("a denied credential request runs neither body capture nor the pricing strategy")
+  void deniedCredentialRequestSkipsBodyCaptureAndPricing() throws Exception {
+    var throwingRequest = pricedPostWithoutCredential();
+    throwingRequest.addHeader("Authorization", "L402 test-token");
+    when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(false);
+
+    pricedFilter().doFilter(throwingRequest, response, filterChain);
+
+    assertThat(response.getStatus()).isEqualTo(429);
+    assertThat(throwingRequest.bodyRead).isFalse();
+    verify(rateLimiter, times(1)).tryAcquire("10.0.0.1");
+    verify(challengeService, never()).resolveTrustedPrice(any(), any());
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(filterChain, never()).doFilter(any(), any());
+  }
+
+  @Test
+  @DisplayName("a challenge request is admitted once, before pricing, and not charged again")
+  void challengeRequestIsAdmittedOnceBeforePricing() throws Exception {
+    request.removeHeader("Authorization");
+    var filter =
+        new PaygateSecurityFilter(
+            registry,
+            List.of(stubProtocol),
+            challengeService,
+            "test-service",
+            null,
+            null,
+            null,
+            rateLimiter);
+
+    filter.doFilter(request, response, filterChain);
+
+    var order = inOrder(challengeService);
+    order.verify(challengeService).acquireChallengeRateLimit(any());
+    order.verify(challengeService).resolveTrustedPrice(any(), any());
+    order
+        .verify(challengeService)
+        .createChallenge(
+            any(jakarta.servlet.http.HttpServletRequest.class),
+            any(ResolvedEndpoint.class),
+            eq(PaygateChallengeService.ChallengeOptions.rateLimitAlreadyConsumed()));
+    verify(challengeService, times(1)).acquireChallengeRateLimit(any());
+    verify(rateLimiter, never()).tryAcquire(any());
+  }
+
+  @Test
+  @DisplayName("a presented credential is admitted once, before pricing, and not charged again")
+  void credentialRequestIsAdmittedOnceBeforePricing() throws Exception {
+    when(rateLimiter.tryAcquire("10.0.0.1")).thenReturn(true);
+    var filter =
+        new PaygateSecurityFilter(
+            registry,
+            List.of(stubProtocol),
+            challengeService,
+            "test-service",
+            null,
+            null,
+            null,
+            rateLimiter);
+
+    filter.doFilter(request, response, filterChain);
+
+    var order = inOrder(rateLimiter, challengeService, stubProtocol);
+    order.verify(rateLimiter).tryAcquire("10.0.0.1");
+    order.verify(challengeService).resolveTrustedPrice(any(), any());
+    order.verify(stubProtocol).validate(any(), any());
+    verify(rateLimiter, times(1)).tryAcquire("10.0.0.1");
+    verify(challengeService, never()).acquireChallengeRateLimit(any());
+    verify(filterChain, times(1)).doFilter(any(), any());
+  }
+
+  private PaygateSecurityFilter pricedFilter() {
+    var pricedRegistry = new PaygateEndpointRegistry();
+    pricedRegistry.register(
+        new PaygateEndpointConfig(
+            "POST", PROTECTED_PATH, 10, 600, "Priced endpoint", "expensivePricing", ""));
+    return new PaygateSecurityFilter(
+        pricedRegistry,
+        List.of(stubProtocol),
+        challengeService,
+        "test-service",
+        null,
+        null,
+        null,
+        rateLimiter);
+  }
+
+  private static ThrowingBodyRequest pricedPostWithoutCredential() {
+    var throwingRequest = new ThrowingBodyRequest();
+    throwingRequest.setMethod("POST");
+    throwingRequest.setRequestURI(PROTECTED_PATH);
+    throwingRequest.setRemoteAddr("10.0.0.1");
+    throwingRequest.setContentType("application/json");
+    return throwingRequest;
   }
 
   private PaygateChallengeService realChallengeService() {

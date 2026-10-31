@@ -40,10 +40,12 @@ import org.jspecify.annotations.Nullable;
  *
  * <ol>
  *   <li>Match request against registry; if no match, pass through
+ *   <li>Consume one rate-limit token before body capture, pricing, or any credential or challenge
+ *       work; deny with 429 when it is unavailable
  *   <li>If Authorization header is present, iterate registered protocols to find one that can
  *       handle it; validate the credential (purely local, no Lightning health check needed)
  *   <li>If no valid credential, delegate to {@link PaygateChallengeService} which checks Lightning
- *       health, rate limits, and creates the 402 challenge
+ *       health and creates the 402 challenge
  * </ol>
  */
 @SuppressWarnings("PMD.CyclomaticComplexity") // Security response classification must stay explicit
@@ -194,6 +196,18 @@ public class PaygateSecurityFilter implements Filter {
       return;
     }
 
+    // Admit the request before body capture, the pricing strategy, credential validation, or
+    // challenge work. This is the request's only admission token: later stages run with it
+    // already consumed. Headers do not depend on the body, so the credential state is final here.
+    String authHeader = httpRequest.getHeader(AUTHORIZATION_HEADER);
+    CredentialState credentialState =
+        authHeader == null ? CredentialState.NO_CREDENTIAL : CredentialState.PRESENTED;
+    if (!tryAdmit(httpRequest, credentialState)) {
+      PaygateResponseWriter.writeRateLimited(httpResponse);
+      recordRateLimitRejection(resolvedEndpoint.routePattern());
+      return;
+    }
+
     HttpServletRequest protectedRequest = httpRequest;
     if (hasNamedPricingStrategy(resolvedEndpoint.config())) {
       try {
@@ -227,17 +241,9 @@ public class PaygateSecurityFilter implements Filter {
 
     // 2. Check Authorization header — validate credentials before checking Lightning health,
     //    so requests with valid cached credentials skip the health-check cost entirely.
-    String authHeader = protectedRequest.getHeader(AUTHORIZATION_HEADER);
-    CredentialState credentialState =
-        authHeader == null ? CredentialState.NO_CREDENTIAL : CredentialState.PRESENTED;
     if (credentialState == CredentialState.PRESENTED) {
       for (PaymentProtocol protocol : protocols) {
         if (protocol.canHandle(authHeader)) {
-          if (!tryAcquireRateLimit(protectedRequest)) {
-            PaygateResponseWriter.writeRateLimited(httpResponse);
-            recordRateLimitRejection(resolvedEndpoint.routePattern());
-            return;
-          }
           HttpServletRequest protocolRequest = protectedRequest;
           if (RequestDigestSupport.isMppProtocol(protocol)) {
             try {
@@ -269,28 +275,16 @@ public class PaygateSecurityFilter implements Filter {
         }
       }
       // A presented credential that no enabled protocol accepts is not a request for a new
-      // credential. Bound its cost with the normal validation limiter and fail closed without
-      // consulting Lightning or minting replacement state.
-      if (!tryAcquireRateLimit(protectedRequest)) {
-        PaygateResponseWriter.writeRateLimited(httpResponse);
-        recordRateLimitRejection(resolvedEndpoint.routePattern());
-        return;
-      }
+      // credential. Its admission token bounds the cost; fail closed without consulting Lightning
+      // or minting replacement state.
       PaygateResponseWriter.writeMethodUnsupported(httpResponse, "Unsupported payment credential");
       recordRejected(resolvedEndpoint.routePattern(), "unknown");
       return;
     }
 
-    // 3. Only NO_CREDENTIAL reaches ChallengeService for health check,
-    //    rate limiting, invoice creation, and macaroon minting.
+    // 3. Only NO_CREDENTIAL reaches ChallengeService for health check, invoice creation, and
+    //    macaroon minting. Its challenge rate-limit token was consumed at admission.
     HttpServletRequest challengeRequest = protectedRequest;
-    try {
-      challengeService.acquireChallengeRateLimit(protectedRequest);
-    } catch (PaygateRateLimitedException _) {
-      PaygateResponseWriter.writeRateLimited(httpResponse);
-      recordRateLimitRejection(resolvedEndpoint.routePattern());
-      return;
-    }
     if (mppEnabled) {
       try {
         challengeRequest =
@@ -307,6 +301,25 @@ public class PaygateSecurityFilter implements Filter {
       }
     }
     issuePaymentChallenge(challengeRequest, httpResponse, method, safePath, resolvedEndpoint);
+  }
+
+  /**
+   * Consumes the request's single admission token. A presented credential uses this filter's
+   * validation limiter; a challenge request uses the challenge service's limiter, and challenge
+   * creation then runs with {@link
+   * PaygateChallengeService.ChallengeOptions#rateLimitAlreadyConsumed()}. Both fail closed when the
+   * limiter throws.
+   */
+  private boolean tryAdmit(HttpServletRequest request, CredentialState credentialState) {
+    if (credentialState == CredentialState.PRESENTED) {
+      return tryAcquireRateLimit(request);
+    }
+    try {
+      challengeService.acquireChallengeRateLimit(request);
+      return true;
+    } catch (PaygateRateLimitedException _) {
+      return false;
+    }
   }
 
   private static boolean hasNamedPricingStrategy(PaygateEndpointConfig endpoint) {

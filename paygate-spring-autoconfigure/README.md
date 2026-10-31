@@ -480,6 +480,7 @@ Rate limiting prevents invoice flooding attacks by throttling 402 challenge issu
 
 - Each client IP gets an independent token bucket with `paygate.rate-limit.burst-size` maximum tokens and a refill rate of `paygate.rate-limit.requests-per-second` tokens per second.
 - New buckets start full. Each challenge request consumes one token.
+- In servlet mode, every request to a paid endpoint consumes its one token before `PaygateSecurityFilter` captures the request body or runs a named pricing strategy, whether or not it presents a credential. A rate-limited request gets 429 without that work. A failed credential validation still consumes one additional penalty token.
 - When a bucket is empty, the client receives HTTP 429 until tokens refill.
 - The total number of tracked IPs is capped at `paygate.rate-limit.max-buckets` (default 100,000) to prevent memory exhaustion. When the Caffeine implementation is active, Caffeine handles LRU eviction and idle-entry expiry automatically. The JDK fallback cleans up stale entries lazily and evicts a sampled oldest entry at capacity.
 
