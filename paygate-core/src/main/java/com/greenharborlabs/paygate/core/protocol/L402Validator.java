@@ -405,20 +405,24 @@ public final class L402Validator {
             KeyMaterial.zeroize(rootKey);
           }
 
-          // 6. Cache only after complete signature/caveat validation and return the verified final
-          //    capability ceiling.
+          // 6. Check the paid price, then cache only after every validator-side check has passed,
+          //    so a failing same-token variant never replaces a cached valid one. Ownership of the
+          //    credential passes to the caller only on return; any failure up to that point
+          //    destroys its preimage in the outer finally.
+          PaidPriceEvidence paidPriceEvidence =
+              verifyPaidPrice(credential.macaroon(), context, tokenId);
           long cacheTtl = extractCacheTtl(credential.macaroon(), DEFAULT_TTL_SECONDS, now);
           credentialStore.store(tokenId, credential, cacheTtl);
 
+          ValidationResult result =
+              new ValidationResult(
+                  credential,
+                  true,
+                  verificationDetails.effectiveCapabilities(),
+                  verificationDetails.verifiedAttributes(),
+                  paidPriceEvidence);
           returningCredential = true;
-          PaidPriceEvidence paidPriceEvidence =
-              verifyPaidPrice(credential.macaroon(), context, tokenId);
-          return new ValidationResult(
-              credential,
-              true,
-              verificationDetails.effectiveCapabilities(),
-              verificationDetails.verifiedAttributes(),
-              paidPriceEvidence);
+          return result;
         }
       } finally {
         KeyMaterial.zeroize(tokenIdBytes);
