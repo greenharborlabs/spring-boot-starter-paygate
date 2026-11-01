@@ -1,7 +1,7 @@
 # Upgrade Gradle minor and patch dependencies
-Status: working
+Status: review
 Base revision: faf58731b08719c943f0a97f2f0e1660e698c825
-Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/**, gradlew, gradlew.bat, config/dependency-provenance-exceptions.tsv, paygate-*/src/**, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
+Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/**, gradlew, gradlew.bat, config/dependency-provenance-exceptions.tsv, scripts/test-dependency-provenance.sh, paygate-*/src/**, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
 
 ## Goal
 Land the dependency updates from Dependabot PR #92 (head `49bc5733`) and PR #11 on `main`, with the provenance controls intact. Close both PRs as superseded.
@@ -80,16 +80,16 @@ Approved: 2026-11-01 by Mark Hammond at plan revision faf58731b08719c943f0a97f2f
 Amendment approved: 2026-11-01 by Mark Hammond.
 
 ## Tasks
-- [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
-- [ ] Apply #92's version changes and the MockWebServer bump, and migrate the LNbits tests to `mockwebserver3`. Check: `./gradlew compileJava compileTestJava` with verification temporarily in lenient mode in a scratch Gradle home only, never committed.
-- [ ] Compatibility review of the Boot 4.1, Framework, Security, Gradle 9.8 and Protobuf plugin 0.10 notes. Check: each relevant change is listed in this record with its disposition.
-- [ ] Provenance: generate candidates, review them by hand, add or remove exception rows, and keep the keyring and trusted keys unchanged. Checks:
+- [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
+- [x] Apply #92's version changes and the MockWebServer bump, and migrate the LNbits tests to `mockwebserver3`. Check: `./gradlew compileJava compileTestJava` with verification temporarily in lenient mode in a scratch Gradle home only, never committed.
+- [x] Compatibility review of the Boot 4.1, Framework, Security, Gradle 9.8 and Protobuf plugin 0.10 notes. Check: each relevant change is listed in this record with its disposition.
+- [x] Provenance: generate candidates, review them by hand, add or remove exception rows, and keep the keyring and trusted keys unchanged. Checks:
   - `python3 scripts/audit-dependency-provenance-sources.py` matches every row's source bytes;
   - a diff shows no `<trusted-key>` additions;
   - `./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls` passes.
-- [ ] Fix compile, test or behaviour regressions. Check: module tests.
-- [ ] Review document, SECURITY.md link, version references and CHANGELOG. Check by inspection: no stale version strings remain in the listed docs.
-- [ ] Final checks, then record the results:
+- [x] Fix compile, test or behaviour regressions. Check: module tests.
+- [x] Review document, SECURITY.md link, version references and CHANGELOG. Check by inspection: no stale version strings remain in the listed docs.
+- [x] Final checks, then record the results:
   - `GRADLE_USER_HOME=$(mktemp -d) ./gradlew spotlessCheck check --no-daemon --rerun-tasks`
   - `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration`
   - `./gradlew buildHealth`
@@ -99,7 +99,7 @@ Amendment approved: 2026-11-01 by Mark Hammond.
 - [ ] After merge: close #92 and #11 with a link to the merged PR. (optional)
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation complete at `16d6a62`; awaiting fresh-context review.
 
 Baseline at `5fed97c` (record-only over base `faf5873`): pass.
 - `./gradlew check --continue --rerun-tasks` exited 0: 3,447 default-module tests, 0 failures or skips.
@@ -109,8 +109,69 @@ WORK notes:
 - **#92 head moved.** Dependabot rebased #92 from `49bc5733` to `bdcf093`, based on `4fd5125`, with identical versions. It was cherry-picked with `-x` as `aa7d850`, keeping Dependabot authorship.
 - **Gradle wrapper inputs: pass.** The new `gradle-wrapper.jar` SHA-256 (`3b8a2577…68e98`) and `distributionSha256Sum` (`21bd5da2…89607`) match `services.gradle.org`'s published `gradle-9.8.2-wrapper.jar.sha256` and `gradle-9.8.2-bin.zip.sha256`.
 
+**Compatibility review.** A research pass compared the published old and new POMs and jars (`javap`) against Paygate's code.
+- **Versions Spring Boot 4.1.2 brings:**
+  - Spring Framework 7.0.10 (still 7.0.x);
+  - Spring Security 7.1.2: no breaking changes, and the filter order and APIs the chain guard uses are unchanged;
+  - Jackson 3.1.7, Micrometer 1.17.2 (the meter APIs Paygate uses are unchanged), and Kotlin 2.3.21 for tests.
+- **New BOM imports:** Boot 4.1.2 now imports `grpc-bom` 1.84.1 and `protobuf-bom` 4.36.2.
+- **Changes needed:**
+  - mixed gRPC versions, resolved by the approved amendment;
+  - the `mockwebserver3` API.
+- **No change needed:**
+  - Boot 4.1 removals: none of Paygate's Boot imports or properties were deprecated in 4.0.8;
+  - Tomcat 11.0.27, Log4j 2.26.1 (not used directly), Caffeine 3.3.1 (`compileOnly`);
+  - gRPC channel settings: `forAddress`, the default TLS context and keepalive are unchanged;
+  - Protobuf 4.36.2: gencode and runtime are equal;
+  - protobuf-gradle-plugin 0.10.0: no removed DSL is used.
+- **Gradle 9.6+ deprecation warnings only (optional fixes):** `by extra` and `by configurations.getting` delegates, and a `taskDependencies` read inside `doLast`.
+- **Not read in full:** the Jackson 3.1.6/3.1.7, gRPC 1.82.1 and Protobuf v31–v33 notes. The test suites cover them.
+
+**Changes made:**
+- **gRPC:** set to 1.84.1 (`9ae2915`). All 48 gRPC resolutions across lnd, autoconfigure and integration-tests agree, and regenerated stubs still use only `@io.grpc.stub.annotations.GrpcGenerated`.
+- **MockWebServer:** migrated to `mockwebserver3` 5.3.2 (`29445e4`). All 57 `MockResponse` builders were converted; `SocketPolicy.NO_RESPONSE` became `onResponseStart(SocketEffect.Stall.INSTANCE)`, and `DISCONNECT_AT_START` became `onRequestStart(new SocketEffect.CloseSocket())`. All 141 LNbits tests pass.
+
+**Provenance (`198fc2d`, `698f5ac`, merged at `82e9b63`).**
+- **Generation:** candidate metadata was generated with `sha256,pgp` from empty Gradle homes, plus a checksum-only pass to capture the full resolved set, then reconciled by hand.
+- **Ledger:** 285 rows for superseded artifacts were removed and 332 exact rows (EX-465 to EX-796) added. 179 unchanged rows keep their entries, giving 511 rows, all at 2026-11-22.
+- **Metadata:** 470 artifacts added and 1,005 removed.
+- **New artifacts covered by an already-trusted key:** 138. That includes one Guava jar Gradle checks by checksum only; following the 33.5.0 precedent, it has no row, and its signature was verified separately with a key trusted for Guava.
+- **Discarded:** Gradle's proposed 11 trusted-key scopes and 7 artifact key pins.
+- **Ignored keys (each only forces checksum fallback):** 12 globally ignored keys added, one unused ignored key removed, and snakeyaml 2.6 artifact-scoped.
+- **Other edits:** the Linux protoc 4.36.2 and protoc-gen-grpc-java 1.84.1 entries were added as for earlier versions; CI is their first Gradle check. `scripts/test-dependency-provenance.sh` hard-coded the removed EX-001 row, so it now points at the ledger's new line 3 (EX-020), and that mutation is still rejected. The path was added to `Review scope`.
+- **Owner field:** new rows use `Green Harbor Labs maintainer`, matching all existing rows.
+- **Evidence:** [DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md), linked from SECURITY.md as the current review (`16d6a62`).
+
+Coordinator verification of the provenance claims: pass.
+- `git diff 9ae2915` is empty for `gradle/verification-keyring.keys`.
+- The `<trusted-keys>` block is byte-identical.
+- No `+<trusted-key|trusting|pgp>` lines were added, and the `<configuration>` flags are unchanged.
+- The four provenance controls (`validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls`) exited 0.
+- `python3 scripts/audit-dependency-provenance-sources.py` exited 0: 511 of 511 SHA-256 matches, 72,420,133 bytes (500 from Maven Central, 11 from the Plugin Portal).
+
+**Final checks** at `16d6a62`, from an empty `GRADLE_USER_HOME` with strict verification:
+- `./gradlew --no-daemon spotlessCheck check --rerun-tasks`: pass. 3,447 default-module tests, 0 failures or skips.
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun`: pass. `test` 154 and `securityTest` 71, 0 failures, with fresh XML timestamps (2026-11-01T22:11Z).
+- `./gradlew --no-daemon buildHealth cyclonedxBom`: pass. Per-module SBOMs are at `*/build/reports/cyclonedx/bom.json`, the path `release.yml` collects.
+- `./gradlew --no-daemon dependencyCheckAggregate --rerun`: pass, "Found 0 vulnerabilities". The CVE-2025-32013 suppression still applies.
+- `git diff --check faf5873 HEAD`: clean except `gradlew.bat`. That file is Gradle-generated with CRLF line endings, before and after, which Windows batch requires; with carriage returns stripped, no line has trailing whitespace. `git diff --check faf5873 HEAD -- . ':!gradlew.bat'` is clean.
+
+Points for the reviewer:
+1. **gRPC amendment.** The amendment (`e7e90b4`, approved 2026-11-01) is the only deviation from #92's versions.
+2. **Pre-existing validator gap, not introduced here; needs a separate decision.**
+   - `scripts/validate-dependency-provenance.sh` demands a ledger row only for checksums annotated "A key couldn't be downloaded".
+   - 46 committed, still-resolved artifacts verify by checksum alone with no row, among them logback 1.5.38, google-java-format, okhttp 4.12.0, okio 3.6.0 and 13 `junit-bom` 5.x files. 13 legacy unsigned artifacts are in the same position.
+   - The validator also does not enforce the 111 new valid-signature and unsigned rows, though they exist.
+   - Recommended for the 2026-11-22 renewal: add rows for those artifacts and tighten the validator rule.
+3. **Removed hand-verified entries.** The 69 dependency sources jars (IDE downloads) and the old Linux protoc executables were removed because no CI task resolves them. IDE source downloads will need fresh entries.
+4. **Limits.**
+   - Publisher identity is still not authenticated.
+   - The Linux protoc executables are first checked by Gradle in CI.
+   - Gradle deprecation warnings are recorded but not fixed.
+   - Live LND and LNbits and the Docker stacks were not exercised.
+
 ## Outcome
 Pending.
 
 ## Next action
-Implement the approved plan, record each check result, and set `Status: review`.
+Run the fresh-context `keel-review` of this record.
