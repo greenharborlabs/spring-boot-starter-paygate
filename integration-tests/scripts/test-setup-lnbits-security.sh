@@ -56,16 +56,30 @@ explicit_output="$(LNBITS_SETUP_PASSWORD='explicit-secret' LNBITS_SETUP_SECRET_F
 [[ -z "$explicit_output" && ! -e "$workspace/explicit.json" ]] || fail 'explicit secret was printed or persisted'
 
 concurrent_file="$workspace/concurrent.json"
-for _ in 1 2; do
+concurrent_pids=()
+for index in 1 2 3 4; do
   LNBITS_SETUP_SECRET_FILE="$concurrent_file" bash -c '
     source "$1"
-    resolve_lnbits_setup_password
+    resolve_lnbits_setup_password || exit 1
     printf "%s" "$LNBITS_RESOLVED_SETUP_PASSWORD" > "$2"
-  ' -- "$LIBRARY" "$workspace/result.$_" &
+  ' -- "$LIBRARY" "$workspace/result.$index" 2> "$workspace/error.$index" &
+  concurrent_pids[index]=$!
 done
-wait
-[[ "$(cat "$workspace/result.1")" == "$(cat "$workspace/result.2")" ]] \
-  || fail 'concurrent setup did not converge on one secret'
+for index in 1 2 3 4; do
+  status=0
+  wait "${concurrent_pids[index]}" || status=$?
+  # Diagnostics name the failing resolver and its stderr only; the helper never prints secrets.
+  [[ "$status" -eq 0 && -s "$workspace/result.$index" ]] \
+    || fail "concurrent resolver $index exited $status without a secret: $(tr '\n' ' ' < "$workspace/error.$index")"
+done
+persisted="$(resolve "$concurrent_file")"
+for index in 1 2 3 4; do
+  [[ "$(cat "$workspace/result.$index")" == "$persisted" ]] \
+    || fail "concurrent resolver $index did not converge on the persisted secret"
+done
+if compgen -G "$concurrent_file.tmp.*" > /dev/null; then
+  fail 'concurrent setup left temporary secret state behind'
+fi
 
 bash "$SCRIPT_DIRECTORY/test-setup-lnbits-fail-closed.sh"
 
