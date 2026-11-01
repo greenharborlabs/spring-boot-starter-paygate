@@ -43,7 +43,7 @@ Use the base `paygate-spring-autoconfigure` module (with `@PaymentRequired`) whe
 ## Prerequisites
 
 - **Java 25** (LTS)
-- **Spring Boot 4.0.5** with **Spring Security** on the classpath
+- **Spring Boot 4.1.2** with **Spring Security** on the classpath
 - **A configured Lightning backend** (`paygate-lightning-lnbits` or `paygate-lightning-lnd`) -- required for the `L402Validator` bean that this module depends on
 - **`paygate.enabled=true`** in application properties
 

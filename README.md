@@ -6,7 +6,7 @@ A Spring Boot starter that adds [L402](https://docs.lightning.engineering/the-li
 [![Maven Central](https://img.shields.io/maven-central/v/com.greenharborlabs/paygate-spring-boot-starter)](https://central.sonatype.com/artifact/com.greenharborlabs/paygate-spring-boot-starter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java 25](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
-[![Spring Boot 4.0](https://img.shields.io/badge/Spring%20Boot-4.0.5-green.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot 4.1](https://img.shields.io/badge/Spring%20Boot-4.1.2-green.svg)](https://spring.io/projects/spring-boot)
 
 ---
 
@@ -1025,13 +1025,13 @@ New L402 challenges use signed identifier version 1. The identifier layout remai
 | Component | Version |
 |-----------|---------|
 | Java | 25 (LTS) |
-| Spring Boot | 4.0.5 |
+| Spring Boot | 4.1.2 |
 | Spring Framework | 7.x |
 | Jakarta EE | 11 (Servlet 6.1) |
-| Gradle wrapper | 9.4.1 |
-| Caffeine | 3.2.3 |
-| gRPC | 1.80.0 |
-| Protobuf | 4.29.3 |
+| Gradle wrapper | 9.8.2 |
+| Caffeine | 3.3.1 |
+| gRPC | 1.84.1 |
+| Protobuf | 4.36.2 |
 | Jackson | Spring Boot managed |
 | Micrometer | Spring Boot managed |
 

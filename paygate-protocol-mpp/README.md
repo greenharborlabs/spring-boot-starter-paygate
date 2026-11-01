@@ -85,7 +85,7 @@ implementation("com.greenharborlabs:paygate-protocol-mpp:0.1.4")
 | compile | `paygate-api` | `PaymentProtocol`, `PaymentCredential`, `ChallengeContext`, `ChallengeResponse`, `PaymentReceipt`, `ProtocolMetadata` interfaces and records |
 | compile | *no external libraries* | Zero external compile dependencies -- JDK only |
 | test | JUnit 5 | Test framework |
-| test | AssertJ 3.27.3 | Fluent test assertions |
+| test | AssertJ 3.27.7 | Fluent test assertions |
 
 ---
 
