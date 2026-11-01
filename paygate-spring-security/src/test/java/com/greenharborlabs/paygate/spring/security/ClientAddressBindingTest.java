@@ -7,6 +7,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.greenharborlabs.paygate.api.PaymentCredential;
+import com.greenharborlabs.paygate.api.ProtocolMetadata;
 import com.greenharborlabs.paygate.core.macaroon.VerificationContextKeys;
 import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
@@ -20,7 +22,6 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 @DisplayName("Spring Security client-address binding")
@@ -42,7 +43,11 @@ class ClientAddressBindingTest {
     var resolver = mock(ClientIpResolver.class);
     var registry = paidRegistry();
     var request = request();
-    var authenticated = mock(Authentication.class);
+    var authenticated =
+        PaygateAuthenticationToken.authenticated(
+            new PaymentCredential(
+                new byte[32], new byte[32], "token-id", "L402", null, new ProtocolMetadata() {}),
+            "binding");
     when(resolver.resolveBindingAddress(request)).thenReturn(Optional.of("2001:db8:0:0:0:0:0:7"));
     when(authenticationManager.authenticate(any())).thenReturn(authenticated);
     var filter = bindingFilter(authenticationManager, registry, resolver);

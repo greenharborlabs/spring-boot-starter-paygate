@@ -65,6 +65,26 @@ class MppProtocolExpiryTest {
   }
 
   @Test
+  void acceptsCredentialInItsFinalSecond() {
+    assertThatCode(
+            () ->
+                protocol()
+                    .validate(buildCredential(timestamp(NOW.plusMillis(500))), requestContext()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void credentialIsValidAtItsExpiryInstantAndRejectedAfterIt() {
+    Instant expiry = NOW.plusSeconds(60);
+    PaymentCredential credential = buildCredential(timestamp(expiry));
+
+    assertThatCode(() -> protocolAt(expiry).validate(credential, requestContext()))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> protocolAt(expiry.plusNanos(1)).validate(credential, requestContext()))
+        .isInstanceOf(PaymentValidationException.class);
+  }
+
+  @Test
   void acceptsExpiryAtMaximumTwentyFourHourBoundary() {
     assertThatCode(
             () ->
@@ -87,6 +107,10 @@ class MppProtocolExpiryTest {
 
   private static MppProtocol protocol() {
     return new MppProtocol(secret(), CLOCK);
+  }
+
+  private static MppProtocol protocolAt(Instant instant) {
+    return new MppProtocol(secret(), Clock.fixed(instant, ZoneOffset.UTC));
   }
 
   private static PaymentCredential buildCredential(String expires) {

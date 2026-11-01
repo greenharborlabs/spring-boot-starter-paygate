@@ -16,8 +16,9 @@ public final class JcsSerializer {
   private JcsSerializer() {}
 
   /**
-   * Serializes a Map to RFC 8785 canonical JSON. Keys are sorted in Unicode code point order. No
-   * whitespace.
+   * Serializes a Map to RFC 8785 canonical JSON. Keys are sorted by their UTF-16 code units, as RFC
+   * 8785 section 3.2.3 requires and as {@link String#compareTo(String)} orders them. This differs
+   * from Unicode code point order for keys containing supplementary characters. No whitespace.
    */
   public static String serialize(Map<String, Object> map) {
     if (map == null) {

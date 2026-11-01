@@ -7,10 +7,13 @@ import static org.mockito.Mockito.when;
 
 import com.greenharborlabs.paygate.api.SecurityDecisionObserver;
 import com.greenharborlabs.paygate.api.SecurityDecisionReason;
+import jakarta.servlet.DispatcherType;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.context.ApplicationContext;
 import org.springframework.mock.web.MockHttpServletRequest;
 
@@ -27,6 +30,59 @@ class PaygateRequestPricingServiceTest {
     var request = new MockHttpServletRequest("POST", "/api/analyze");
 
     assertThat(service.resolve(request, dynamicConfig).amountSats()).isEqualTo(25);
+    assertThat(service.resolve(request, dynamicConfig).amountSats()).isEqualTo(25);
+    assertThat(calls).hasValue(1);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = DispatcherType.class,
+      names = {"FORWARD", "ASYNC", "ERROR"})
+  void reusesThePriceOnARedispatchToTheSameEndpoint(DispatcherType redispatch) {
+    var calls = new AtomicInteger();
+    var service =
+        service((request, ignored) -> calls.incrementAndGet() * 25, Duration.ofSeconds(1), 1);
+    var request = new MockHttpServletRequest("POST", "/api/analyze");
+    service.resolve(request, dynamicConfig);
+
+    request.setDispatcherType(redispatch);
+    var redispatched = new PaygateEndpointConfig("POST", "/api/analyze", 10, 60, "", "dynamic", "");
+
+    assertThat(service.resolve(request, redispatched).amountSats()).isEqualTo(25);
+    assertThat(calls).hasValue(1);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = DispatcherType.class,
+      names = {"FORWARD", "ASYNC", "ERROR"})
+  void reResolvesThePriceOnARedispatchToAnotherEndpoint(DispatcherType redispatch) {
+    var calls = new AtomicInteger();
+    var service =
+        service((request, ignored) -> calls.incrementAndGet() * 25, Duration.ofSeconds(1), 1);
+    var request = new MockHttpServletRequest("POST", "/api/analyze");
+    var other = new PaygateEndpointConfig("POST", "/api/premium", 10, 60, "", "dynamic", "");
+    service.resolve(request, dynamicConfig);
+
+    request.setDispatcherType(redispatch);
+    request.setRequestURI("/api/premium");
+
+    assertThat(service.resolve(request, other).amountSats()).isEqualTo(50);
+    assertThat(calls).hasValue(2);
+    assertThat(PaygateRequestPricingService.memoizedPrice(request, other).amountSats())
+        .isEqualTo(50);
+    assertThat(PaygateRequestPricingService.memoizedPrice(request, dynamicConfig)).isNull();
+  }
+
+  @Test
+  void doesNotTrustAPriceThatIsNotBoundToAnEndpoint() {
+    var calls = new AtomicInteger();
+    var service =
+        service((request, ignored) -> calls.incrementAndGet() * 25, Duration.ofSeconds(1), 1);
+    var request = new MockHttpServletRequest("POST", "/api/analyze");
+    request.setAttribute(
+        PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE, new TrustedRequestPrice(1));
+
     assertThat(service.resolve(request, dynamicConfig).amountSats()).isEqualTo(25);
     assertThat(calls).hasValue(1);
   }

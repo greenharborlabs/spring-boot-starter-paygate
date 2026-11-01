@@ -11,6 +11,7 @@ import com.greenharborlabs.paygate.spring.ClientIpResolver;
 import com.greenharborlabs.paygate.spring.LogSanitizer;
 import com.greenharborlabs.paygate.spring.PaygateEndpointConfig;
 import com.greenharborlabs.paygate.spring.PaygateEndpointRegistry;
+import com.greenharborlabs.paygate.spring.PaygateRequestPricingService;
 import com.greenharborlabs.paygate.spring.PaygateResponseWriter;
 import com.greenharborlabs.paygate.spring.RequestBodyIncompleteException;
 import com.greenharborlabs.paygate.spring.RequestBodyTooLargeException;
@@ -254,9 +255,20 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     try {
       if (authenticationEntryPoint != null) {
         authenticationEntryPoint.resolveTrustedPrice(authRequest, resolvedEndpoint);
+      } else if (hasNamedPricingStrategy(resolvedEndpoint.config())) {
+        // Without an entry point there is no pricing service to evaluate the named strategy.
+        // Charging the static price instead could accept an underpayment, so fail closed.
+        log.log(
+            System.Logger.Level.WARNING,
+            "Named pricing strategy cannot be evaluated without an authentication entry point;"
+                + " failing closed with service unavailable");
+        SecurityContextHolder.clearContext();
+        PaygateResponseWriter.writeLightningUnavailable(response);
+        return;
       } else {
-        authRequest.setAttribute(
-            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE",
+        PaygateRequestPricingService.memoize(
+            authRequest,
+            resolvedEndpoint.config(),
             new TrustedRequestPrice(resolvedEndpoint.config().priceSats()));
       }
     } catch (UnsupportedRequestEncodingException e) {
@@ -324,6 +336,11 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     Authentication authenticated;
     try {
       authenticated = authenticationManager.authenticate(unauthenticatedToken);
+      if (!isAuthenticatedPaygateToken(authenticated)) {
+        // A non-conforming AuthenticationManager must never grant access to a paid route.
+        failUnexpectedAuthentication(response);
+        return;
+      }
       var securityContext = SecurityContextHolder.createEmptyContext();
       securityContext.setAuthentication(authenticated);
       SecurityContextHolder.setContext(securityContext);
@@ -357,17 +374,28 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
       PaygateResponseWriter.writeAuthenticationFailed(response);
       return;
     } catch (RuntimeException e) {
-      log.log(
-          System.Logger.Level.WARNING,
-          "Payment authentication encountered an unexpected error; failing closed with service unavailable");
-      SecurityContextHolder.clearContext();
-      PaygateResponseWriter.writeLightningUnavailable(response);
+      failUnexpectedAuthentication(response);
       return;
     }
 
     writeReceipt(authenticated, response);
 
+    // Deliberately outside every try block: an exception thrown downstream of the successful
+    // payment decision propagates unchanged to the container's error handling, never as a 503.
     filterChain.doFilter(authRequest, response);
+  }
+
+  private static boolean isAuthenticatedPaygateToken(Authentication authentication) {
+    return authentication instanceof PaygateAuthenticationToken token && token.isAuthenticated();
+  }
+
+  private static void failUnexpectedAuthentication(HttpServletResponse response)
+      throws IOException {
+    log.log(
+        System.Logger.Level.WARNING,
+        "Payment authentication encountered an unexpected error; failing closed with service unavailable");
+    SecurityContextHolder.clearContext();
+    PaygateResponseWriter.writeLightningUnavailable(response);
   }
 
   /**
@@ -461,13 +489,10 @@ public final class PaygateAuthenticationFilter extends OncePerRequestFilter {
     if (capability != null && !capability.isBlank()) {
       metadata.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
-    Object resolvedPrice =
-        request.getAttribute(
-            "com.greenharborlabs.paygate.spring.PaygateRequestPricingService.TRUSTED_REQUEST_PRICE");
+    TrustedRequestPrice resolvedPrice =
+        PaygateRequestPricingService.memoizedPrice(request, endpointConfig);
     TrustedRequestPrice trustedPrice =
-        resolvedPrice instanceof TrustedRequestPrice candidate
-            ? candidate
-            : new TrustedRequestPrice(endpointConfig.priceSats());
+        resolvedPrice != null ? resolvedPrice : new TrustedRequestPrice(endpointConfig.priceSats());
     metadata.put(
         VerificationContextKeys.CURRENT_PRICE_SATS, Long.toString(trustedPrice.amountSats()));
     metadata.put(

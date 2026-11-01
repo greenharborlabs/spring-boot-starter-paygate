@@ -38,21 +38,25 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
       return preHandleNonMethodHandler(request, response);
     }
 
-    boolean paid;
+    ResolvedEndpoint endpoint;
     try {
-      paid = isPaid(request, handlerMethod);
+      endpoint = resolveSelectedEndpoint(request, handlerMethod);
     } catch (RuntimeException _) {
       // The final enforcement boundary cannot prove this mapping is safe.
       PaygateResponseWriter.writeInternalError(response);
       return false;
     }
-    if (!paid) {
+    if (endpoint == null && handlerMethod.getMethodAnnotation(PaymentRequired.class) == null) {
       return true;
     }
 
     Object successfulHandler = request.getAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE);
     if (successfulHandler instanceof HandlerMethod markedHandler
-        && identifiesSameHandler(handlerMethod, markedHandler)) {
+        && identifiesSameHandler(handlerMethod, markedHandler)
+        && (endpoint == null
+            || endpoint.equals(request.getAttribute(SUCCESSFUL_POLICY_DECISION_ATTRIBUTE)))) {
+      // A handler mapping several methods has one policy per method. The authorized policy must be
+      // the one for the method MVC dispatches, not merely the same handler.
       return true;
     }
 
@@ -94,15 +98,15 @@ public final class PaygateHandlerInterceptor implements HandlerInterceptor {
         && selected.getMethod().equals(marked.getMethod());
   }
 
-  private boolean isPaid(HttpServletRequest request, HandlerMethod handlerMethod) {
+  private ResolvedEndpoint resolveSelectedEndpoint(
+      HttpServletRequest request, HandlerMethod handlerMethod) {
     var endpoint = registry.resolve(request);
     if (endpoint != null) {
       var registeredHandler = endpoint.handlerMethod();
       if (registeredHandler == null || !identifiesSameHandler(handlerMethod, registeredHandler)) {
         throw new IllegalStateException("Registry mapping does not identify the selected handler");
       }
-      return true;
     }
-    return handlerMethod.getMethodAnnotation(PaymentRequired.class) != null;
+    return endpoint;
   }
 }

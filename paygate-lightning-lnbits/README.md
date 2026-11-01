@@ -366,7 +366,7 @@ If the calling thread is interrupted during an HTTP call, the module:
 
 The module validates required fields in LNbits API responses and throws `LnbitsException` with descriptive messages when fields are missing:
 
-- `createInvoice`: Requires `payment_hash` and `payment_request` in the response
+- `createInvoice`: Requires `payment_hash` and `payment_request` in the response. The `payment_request` must be a well-formed BOLT11 invoice (bech32 checksum, single 52-word `p` field) that commits to the returned `payment_hash`; otherwise the call fails and the request gets HTTP 503. The node signature is not verified.
 - `lookupInvoice`: Requires `paid`, `details`, `details.bolt11`, and `details.amount` in the response
 
 A paid lookup response may omit `preimage`; in that case the returned `Invoice` has `status=SETTLED` and `preimage=null`. That is valid invoice-status information, but it is not enough for a Paygate client to produce an L402 or MPP credential.

@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.lightning.lnd;
 
 import com.google.protobuf.ByteString;
 import com.greenharborlabs.paygate.api.SecurityBounds;
+import com.greenharborlabs.paygate.core.lightning.Bolt11PaymentHashExtractor;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -77,6 +78,8 @@ public class LndBackend implements LightningBackend, AutoCloseable {
           stub.withDeadlineAfter(rpcDeadlineSeconds, TimeUnit.SECONDS).addInvoice(request);
       byte[] paymentHash = addResponse.getRHash().toByteArray();
       requireHashLength(paymentHash, "create invoice response hash");
+      String paymentRequest = addResponse.getPaymentRequest();
+      requireInvoiceCommitsToHash(paymentRequest, paymentHash);
 
       Instant createdAt = Instant.now();
       Instant expiresAt = createdAt.plusSeconds(DEFAULT_EXPIRY_SECONDS);
@@ -84,7 +87,7 @@ public class LndBackend implements LightningBackend, AutoCloseable {
       var invoice =
           new Invoice(
               paymentHash,
-              addResponse.getPaymentRequest(),
+              paymentRequest,
               amountSats,
               memo,
               InvoiceStatus.PENDING,
@@ -187,6 +190,26 @@ public class LndBackend implements LightningBackend, AutoCloseable {
         preimage,
         createdAt,
         expiresAt);
+  }
+
+  /**
+   * Requires the BOLT11 {@code payment_request} to commit to the {@code r_hash} LND returned, so a
+   * challenge never pairs a macaroon with an invoice for a different payment.
+   */
+  private static void requireInvoiceCommitsToHash(String paymentRequest, byte[] paymentHash) {
+    byte[] invoiceHash;
+    try {
+      invoiceHash = Bolt11PaymentHashExtractor.extract(paymentRequest);
+    } catch (IllegalArgumentException e) {
+      log.log(System.Logger.Level.WARNING, "LND createInvoice returned an unparseable invoice");
+      throw LndException.invalidBackendData(e);
+    }
+    if (!MessageDigest.isEqual(invoiceHash, paymentHash)) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "LND createInvoice returned an invoice whose payment hash differs from r_hash");
+      throw LndException.invalidBackendData();
+    }
   }
 
   private static void requireHashLength(byte[] value, String field) {

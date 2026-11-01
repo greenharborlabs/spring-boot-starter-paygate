@@ -198,7 +198,7 @@ Utility class that builds a `PaymentReceipt` from a validated `PaymentCredential
 
 A minimal [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JSON Canonicalization Scheme) implementation. Produces deterministic JSON output suitable for cryptographic signing:
 
-- Keys are sorted in Unicode code point order (via `TreeMap`)
+- Keys are sorted by UTF-16 code units, as RFC 8785 requires (via `TreeMap`, which uses `String.compareTo`). This differs from Unicode code point order only for keys with supplementary characters
 - No whitespace between tokens
 - Supports `String`, `Integer`, `Long`, `Double`, `Float`, `Boolean`, `null`, nested `Map`, and `List`
 - String escaping follows RFC 8259: escapes `"`, `\`, `\b`, `\f`, `\n`, `\r`, `\t`, and control characters below `0x20` as `\uXXXX`
@@ -340,7 +340,7 @@ Server validates (security-critical order):
   2. echoed digest == request digest           (digest binding)
   3. HMAC-SHA256(secret, fields) == id         (binding check)
      realm == serviceName                      (realm check, realm-bound instances)
-  4. Instant.now() < expires                   (expiry check)
+  4. now <= expires <= now + 24h               (expiry check)
   5. opaque route/method/capability == request (paid-policy binding)
      request.amount >= current price
   6. method == "lightning"                     (method check)
@@ -454,9 +454,21 @@ This prevents timing side-channel attacks. The method is used for:
 
 The `MppProtocol` constructor defensively clones the `challengeBindingSecret` byte array to prevent external mutation after construction.
 
-### Minimum Secret Length
+### Minimum Secret Length and Generation
 
-The challenge binding secret must be at least 32 bytes (256 bits). Shorter secrets are rejected at construction time with `IllegalArgumentException`.
+The challenge binding secret must be at least 32 bytes (256 bits). Shorter secrets are rejected at construction time with `IllegalArgumentException`, as is a secret made of a single repeated byte (for example all zeros or `aaaa...`), which indicates a placeholder rather than a generated value. This check catches only that degenerate case; it is not an entropy estimate, so always generate the secret randomly:
+
+```bash
+export PAYGATE_MPP_SECRET="$(openssl rand -hex 32)"
+```
+
+### Canonical Encodings
+
+Every base64url field (the credential blob, the challenge `id`, `request`, and `opaque`) is accepted only in its canonical form: unpadded, and with zero unused trailing bits. A padded or otherwise re-spelled challenge `id` fails binding verification, so each challenge has exactly one accepted `id`. The JSON parser accepts a `\u` escape only when it is followed by exactly four ASCII hexadecimal digits.
+
+### Expiry
+
+A credential is valid up to and including its HMAC-bound `expires` instant and is rejected after it. Validation also rejects an `expires` more than 24 hours ahead of the server clock. It applies no minimum remaining lifetime, so a credential remains usable in its final second.
 
 ### One Binding Secret per Service
 
@@ -584,7 +596,8 @@ Tests use **JUnit 5** with **AssertJ** for fluent assertions. No external JSON l
 | Test Case | What It Verifies |
 |-----------|-----------------|
 | Sorts keys lexicographically | RFC 8785 key ordering |
-| Sorts by Unicode code point order | Correct sort semantics |
+| Sorts by Unicode code point order | Correct sort semantics for BMP keys |
+| Sorts by UTF-16 code units, not code points | RFC 8785 ordering for supplementary characters |
 | Recursively sorts nested map keys | Deep sorting |
 | Handles deeply nested maps | Recursive serialization |
 | Serializes mixed types (String, Integer, Long, Double, Boolean, null) | Type dispatch |

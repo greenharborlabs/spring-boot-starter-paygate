@@ -2,6 +2,7 @@ package com.greenharborlabs.paygate.lightning.lnbits;
 
 import com.greenharborlabs.paygate.api.SecurityBounds;
 import com.greenharborlabs.paygate.api.crypto.CryptoUtils;
+import com.greenharborlabs.paygate.core.lightning.Bolt11PaymentHashExtractor;
 import com.greenharborlabs.paygate.core.lightning.Invoice;
 import com.greenharborlabs.paygate.core.lightning.InvoiceStatus;
 import com.greenharborlabs.paygate.core.lightning.LightningBackend;
@@ -99,6 +100,7 @@ public class LnbitsBackend implements LightningBackend {
               requireField(json, "payment_hash", "create invoice response").asString(),
               "payment_hash");
       String bolt11 = requireField(json, "payment_request", "create invoice response").asString();
+      requireInvoiceCommitsToHash(bolt11, providerPaymentHash);
       Instant now = Instant.now();
 
       log.log(System.Logger.Level.DEBUG, "LNbits invoice created");
@@ -330,6 +332,26 @@ public class LnbitsBackend implements LightningBackend {
         parseExpiryField(details, createdAt, createdAt.plus(DEFAULT_INVOICE_EXPIRY));
 
     return new Invoice(paymentHash, bolt11, amount, memo, status, preimage, createdAt, expiresAt);
+  }
+
+  /**
+   * Requires the BOLT11 {@code payment_request} to commit to the {@code payment_hash} LNbits
+   * returned, so a challenge never pairs a macaroon with an invoice for a different payment.
+   */
+  private static void requireInvoiceCommitsToHash(String bolt11, byte[] paymentHash) {
+    byte[] invoiceHash;
+    try {
+      invoiceHash = Bolt11PaymentHashExtractor.extract(bolt11);
+    } catch (IllegalArgumentException e) {
+      log.log(System.Logger.Level.WARNING, "LNbits createInvoice returned an unparseable invoice");
+      throw LnbitsException.invalidBackendData(e);
+    }
+    if (!MessageDigest.isEqual(invoiceHash, paymentHash)) {
+      log.log(
+          System.Logger.Level.WARNING,
+          "LNbits createInvoice returned an invoice whose payment hash differs from payment_hash");
+      throw LnbitsException.invalidBackendData();
+    }
   }
 
   /** Decodes a provider-supplied hash or preimage and requires the Lightning 32-byte width. */

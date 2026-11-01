@@ -219,6 +219,74 @@ class PaygateHandlerInterceptorTest {
   }
 
   @Nested
+  @DisplayName("a paid handler mapping several methods")
+  class MultiMethodHandler {
+
+    private static final String SUCCESSFUL_POLICY_DECISION_ATTRIBUTE =
+        "com.greenharborlabs.paygate.spring.PaygateSecurityFilter.successfulPolicyDecision";
+    private static final String PATH = "/records/1";
+
+    private final PaidController controller = new PaidController();
+    private final PaygateEndpointRegistry registry = new PaygateEndpointRegistry();
+    private RequestMappingHandlerMapping mapping;
+
+    private HandlerMethod register() throws Exception {
+      var applicationContext = new StaticApplicationContext();
+      applicationContext.refresh();
+      mapping = new RequestMappingHandlerMapping();
+      mapping.setApplicationContext(applicationContext);
+      mapping.afterPropertiesSet();
+      mapping.registerMapping(
+          RequestMappingInfo.paths(PATH).methods(RequestMethod.POST, RequestMethod.DELETE).build(),
+          controller,
+          controller.getClass().getMethod("paid"));
+      registry.scanAnnotatedEndpoints(mapping);
+      return (HandlerMethod) mapping.getHandler(methodRequest("POST")).getHandler();
+    }
+
+    private MockHttpServletRequest methodRequest(String method) {
+      var request = new MockHttpServletRequest(method, PATH);
+      request.setRequestURI(PATH);
+      return request;
+    }
+
+    @Test
+    @DisplayName("allows the method whose policy the filter authorized")
+    void allowsAuthorizedMethod() throws Exception {
+      var handler = register();
+      var request = methodRequest("POST");
+      request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, handler);
+      request.setAttribute(
+          SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, registry.resolve(methodRequest("POST")));
+      var response = new MockHttpServletResponse();
+
+      var proceed = interceptor(registry).preHandle(request, response, handler);
+
+      assertThat(proceed).isTrue();
+      assertThat(response.getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("fails closed when the dispatched method differs from the authorized method")
+    void failsClosedWhenDispatchedMethodDiffers() throws Exception {
+      var handler = register();
+      // For example HiddenHttpMethodFilter turning an authorized POST into DELETE.
+      var request = methodRequest("DELETE");
+      request.setAttribute(SUCCESSFUL_PAID_HANDLER_ATTRIBUTE, handler);
+      request.setAttribute(
+          SUCCESSFUL_POLICY_DECISION_ATTRIBUTE, registry.resolve(methodRequest("POST")));
+      var response = new MockHttpServletResponse();
+
+      var proceed = interceptor(registry).preHandle(request, response, handler);
+      invokeSelectedHandlerIfAllowed(proceed, handler);
+
+      assertThat(proceed).isFalse();
+      assertThat(response.getStatus()).isEqualTo(500);
+      assertThat(controller.calls).hasValue(0);
+    }
+  }
+
+  @Nested
   @DisplayName("handlers that are not MVC handler methods")
   class NonMethodHandlers {
 

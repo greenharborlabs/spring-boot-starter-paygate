@@ -357,8 +357,7 @@ public class PaygateSecurityFilter implements Filter {
       context.put(VerificationContextKeys.REQUESTED_CAPABILITY, capability);
     }
     TrustedRequestPrice trustedPrice =
-        (TrustedRequestPrice)
-            httpRequest.getAttribute(PaygateRequestPricingService.REQUEST_PRICE_ATTRIBUTE);
+        PaygateRequestPricingService.memoizedPrice(httpRequest, config);
     if (trustedPrice == null) {
       // Some container and unit-test request implementations do not retain attributes. The
       // endpoint's configured price is still trusted for fixed-price policies.
@@ -443,11 +442,11 @@ public class PaygateSecurityFilter implements Filter {
       FilterChain chain,
       ServletRequest request,
       ServletResponse response)
-      throws IOException {
+      throws IOException, ServletException {
 
     long verifyStart = System.nanoTime();
+    PaygateEndpointConfig config = resolvedEndpoint.config();
     try {
-      PaygateEndpointConfig config = resolvedEndpoint.config();
       try (PaymentCredential credential = protocol.parseCredential(authHeader)) {
         Map<String, String> requestContext =
             buildRequestContext(
@@ -468,24 +467,29 @@ public class PaygateSecurityFilter implements Filter {
         }
         generateReceipt(credential, config, protocol, httpResponse);
       }
-
       // The parsed credential has been closed before protected application code can run.
-      chain.doFilter(request, response);
-      recordCaveatVerifyDuration(verifyStart);
-      recordPassed(resolvedEndpoint.routePattern(), config.priceSats(), protocol.scheme());
-
     } catch (PaymentValidationException e) {
       recordCaveatVerifyDuration(verifyStart);
       handlePaymentValidationFailure(e, protocol, httpRequest, httpResponse, resolvedEndpoint);
-
+      return;
     } catch (RequestBodyTooLargeException e) {
       recordCaveatVerifyDuration(verifyStart);
       PaygateResponseWriter.writeRequestBodyTooLarge(httpResponse);
       recordRejected(resolvedEndpoint.routePattern(), protocol.scheme());
+      return;
     } catch (Exception e) {
       recordCaveatVerifyDuration(verifyStart);
       handleUnexpectedValidationError(e, protocol, httpRequest, httpResponse, method, safePath);
+      return;
     }
+
+    // The verify duration covers validation only, never the protected handler. The chain runs
+    // outside the validation try so that an exception thrown downstream of the successful payment
+    // decision propagates unchanged to the container's error handling instead of becoming a 503.
+    // The request is counted as passed only when the chain completes normally.
+    recordCaveatVerifyDuration(verifyStart);
+    chain.doFilter(request, response);
+    recordPassed(resolvedEndpoint.routePattern(), config.priceSats(), protocol.scheme());
   }
 
   private static boolean hasSuccessfulDecisionFor(

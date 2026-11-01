@@ -790,12 +790,12 @@ public class CustomCredentialStoreConfig {
 public class CustomBackendConfig {
 
     @Bean
-    public LightningBackend lightningBackend(ObjectMapper objectMapper) {
+    public LightningBackend lightningBackend(JsonMapper jsonMapper) {
         var config = new LnbitsConfig("https://lnbits.example.com", System.getenv("LNBITS_API_KEY"));
         var httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
                 .build();
-        return new LnbitsBackend(config, objectMapper, httpClient);
+        return new LnbitsBackend(config, jsonMapper, httpClient);
     }
 }
 ```
@@ -809,21 +809,26 @@ public class CustomValidatorConfig {
     @Bean
     public L402Validator l402Validator(RootKeyStore rootKeyStore,
                                        CredentialStore credentialStore,
-                                       LightningBackend lightningBackend) {
+                                       LightningBackend lightningBackend,
+                                       @Value("${paygate.service-name:default}") String serviceName) {
         return new L402Validator(rootKeyStore, credentialStore,
                 List.of(
                         // Required by L402Validator: construction fails if any is missing.
                         new ServicesCaveatVerifier(50),
                         new RouteCaveatVerifier(50),
                         new MethodCaveatVerifier(50),
-                        new CapabilitiesCaveatVerifier("my-service", 50),
-                        new ValidUntilCaveatVerifier("my-service"),
+                        new CapabilitiesCaveatVerifier(serviceName, 50),
+                        new ValidUntilCaveatVerifier(serviceName),
                         new MyCustomCaveatVerifier()),
-                "my-service",
+                serviceName,
                 lightningBackend);
     }
 }
 ```
+
+Use the same service name as `paygate.service-name`. Paygate issues challenges with
+`{serviceName}_capabilities` and `{serviceName}_valid_until` caveats for that name, so a validator
+built for another name rejects every credential Paygate issues.
 
 Pass the `LightningBackend` so that `ROUTE_STABLE` routes can verify legacy credentials without a
 signed price caveat against the settled invoice. The 4-argument constructor has no evidence source
@@ -839,14 +844,16 @@ issuer signed them before `{serviceName}_valid_until`; see the
 public class CustomCaveatConfig {
 
     @Bean("caveatVerifiers")
-    public List<CaveatVerifier> caveatVerifiers() {
+    public List<CaveatVerifier> caveatVerifiers(
+            @Value("${paygate.service-name:default}") String serviceName) {
         return List.of(
                 // Required by L402Validator: startup fails if any of these is missing.
+                // The capabilities and valid_until keys must use paygate.service-name.
                 new ServicesCaveatVerifier(50),
                 new RouteCaveatVerifier(50),
                 new MethodCaveatVerifier(50),
-                new CapabilitiesCaveatVerifier("my-service", 50),
-                new ValidUntilCaveatVerifier("my-service"),
+                new CapabilitiesCaveatVerifier(serviceName, 50),
+                new ValidUntilCaveatVerifier(serviceName),
                 // Required when paygate.protocols.l402.client-address-binding-enabled=true;
                 // also enforces holder-added client_ip delegation caveats.
                 new ClientIpCaveatVerifier(50),
