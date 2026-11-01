@@ -15,7 +15,7 @@ val caffeineVersion = "3.3.1"
 val grpcVersion = "1.85.1"
 val protobufVersion = "4.36.2"
 val assertjVersion = "3.27.7"
-val mockWebServerVersion = "4.12.0"
+val mockWebServerVersion = "5.3.2"
 
 allprojects {
     group = property("group") as String

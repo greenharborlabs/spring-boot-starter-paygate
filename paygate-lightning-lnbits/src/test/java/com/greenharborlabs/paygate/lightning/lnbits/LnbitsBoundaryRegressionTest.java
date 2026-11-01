@@ -10,9 +10,9 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import okhttp3.mockwebserver.RecordedRequest;
+import mockwebserver3.MockResponse;
+import mockwebserver3.MockWebServer;
+import mockwebserver3.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,8 +44,8 @@ class LnbitsBoundaryRegressionTest {
 
   @AfterEach
   void tearDown() throws Exception {
-    server.shutdown();
-    redirectTarget.shutdown();
+    server.close();
+    redirectTarget.close();
   }
 
   /** Same HttpClient construction as the LNbits auto-configuration. */
@@ -90,9 +90,10 @@ class LnbitsBoundaryRegressionTest {
   @Test
   void redirectsAreNotFollowedAndApiKeyIsNotForwarded() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(302)
-            .setHeader("Location", redirectTarget.url("/api/v1/payments").toString()));
+        new MockResponse.Builder()
+            .code(302)
+            .setHeader("Location", redirectTarget.url("/api/v1/payments").toString())
+            .build());
     assertThatThrownBy(() -> backend(5).createInvoice(10, "regression"))
         .isInstanceOf(LnbitsException.class)
         .hasMessage("LNbits request failed");
@@ -104,11 +105,11 @@ class LnbitsBoundaryRegressionTest {
     byte[] hash = new byte[32];
     hash[0] = (byte) 0x2f; // '/'
     hash[1] = (byte) 0x2e; // '.'
-    server.enqueue(new MockResponse().setResponseCode(404));
+    server.enqueue(new MockResponse.Builder().code(404).build());
     assertThatThrownBy(() -> backend(5).lookupInvoice(hash)).isInstanceOf(LnbitsException.class);
     RecordedRequest recorded = server.takeRequest(5, TimeUnit.SECONDS);
-    assertThat(recorded.getPath()).isEqualTo("/api/v1/payments/" + HEX.formatHex(hash));
-    assertThat(recorded.getHeader("X-Api-Key")).isEqualTo(API_KEY);
+    assertThat(recorded.getTarget()).isEqualTo("/api/v1/payments/" + HEX.formatHex(hash));
+    assertThat(recorded.getHeaders().get("X-Api-Key")).isEqualTo(API_KEY);
   }
 
   @Test
@@ -117,13 +118,14 @@ class LnbitsBoundaryRegressionTest {
     preimage[0] = 5;
     byte[] hash = MessageDigest.getInstance("SHA-256").digest(preimage);
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
-            .setBody(
+        new MockResponse.Builder()
+            .code(200)
+            .body(
                 """
                 {"paid":true,"preimage":"%s","details":{"payment_hash":"%s","bolt11":"lnbc1x","amount":-10000}}
                 """
-                    .formatted(HEX.formatHex(preimage), HEX.formatHex(hash))));
+                    .formatted(HEX.formatHex(preimage), HEX.formatHex(hash)))
+            .build());
     assertThatThrownBy(() -> backend(5).lookupInvoice(hash)).isInstanceOf(LnbitsException.class);
   }
 
@@ -135,11 +137,12 @@ class LnbitsBoundaryRegressionTest {
     byte[] hash = MessageDigest.getInstance("SHA-256").digest(preimage);
     String pad = "x".repeat(24 * 1024 * 1024);
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
-            .setBody(
+        new MockResponse.Builder()
+            .code(200)
+            .body(
                 "{\"paid\":true,\"preimage\":\"%s\",\"pad\":\"%s\",\"details\":{\"payment_hash\":\"%s\",\"bolt11\":\"lnbc1x\",\"amount\":10000}}"
-                    .formatted(HEX.formatHex(preimage), pad, HEX.formatHex(hash))));
+                    .formatted(HEX.formatHex(preimage), pad, HEX.formatHex(hash)))
+            .build());
 
     assertThatThrownBy(() -> backend(5).lookupInvoice(hash))
         .isInstanceOf(LnbitsException.class)
@@ -160,10 +163,11 @@ class LnbitsBoundaryRegressionTest {
         "{\"paid\":true,\"preimage\":\"%s\",\"details\":{\"payment_hash\":\"%s\",\"bolt11\":\"lnbc1x\",\"amount\":10000}}"
             .formatted(HEX.formatHex(preimage), HEX.formatHex(hash));
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
-            .setBody(body)
-            .throttleBody(body.length() / 6 + 1, 1, TimeUnit.SECONDS));
+        new MockResponse.Builder()
+            .code(200)
+            .body(body)
+            .throttleBody(body.length() / 6 + 1, 1, TimeUnit.SECONDS)
+            .build());
     var backend = backend(2);
 
     long start = System.nanoTime();

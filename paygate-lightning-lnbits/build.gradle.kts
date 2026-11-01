@@ -5,5 +5,5 @@ dependencies {
 
     implementation("tools.jackson.core:jackson-databind")
 
-    testImplementation("com.squareup.okhttp3:mockwebserver:$mockWebServerVersion")
+    testImplementation("com.squareup.okhttp3:mockwebserver3:$mockWebServerVersion")
 }

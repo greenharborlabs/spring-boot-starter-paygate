@@ -18,10 +18,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.concurrent.TimeUnit;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import okhttp3.mockwebserver.RecordedRequest;
-import okhttp3.mockwebserver.SocketPolicy;
+import mockwebserver3.MockResponse;
+import mockwebserver3.MockWebServer;
+import mockwebserver3.RecordedRequest;
+import mockwebserver3.SocketEffect;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,7 +59,7 @@ class LnbitsBackendTest {
 
   @AfterEach
   void tearDown() throws Exception {
-    server.shutdown();
+    server.close();
   }
 
   @Test
@@ -76,10 +76,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     // When
     Invoice invoice = backend.createInvoice(100L, "test memo");
@@ -87,16 +88,16 @@ class LnbitsBackendTest {
     // Then: correct endpoint and method
     RecordedRequest request = server.takeRequest();
     assertThat(request.getMethod()).isEqualTo("POST");
-    assertThat(request.getPath()).isEqualTo("/api/v1/payments");
+    assertThat(request.getTarget()).isEqualTo("/api/v1/payments");
 
     // Then: correct request body
-    var requestBody = objectMapper.readTree(request.getBody().readUtf8());
+    var requestBody = objectMapper.readTree(request.getBody().utf8());
     assertThat(requestBody.get("out").asBoolean()).isFalse();
     assertThat(requestBody.get("amount").asLong()).isEqualTo(100L);
     assertThat(requestBody.get("memo").asString()).isEqualTo("test memo");
 
     // Then: correct X-Api-Key header
-    assertThat(request.getHeader("X-Api-Key")).isEqualTo(API_KEY);
+    assertThat(request.getHeaders().get("X-Api-Key")).isEqualTo(API_KEY);
 
     // Then: response is mapped to a valid Invoice
     assertThat(invoice).isNotNull();
@@ -127,10 +128,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     // When
     Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
@@ -138,10 +140,10 @@ class LnbitsBackendTest {
     // Then: correct endpoint, method, and hash in URL
     RecordedRequest request = server.takeRequest();
     assertThat(request.getMethod()).isEqualTo("GET");
-    assertThat(request.getPath()).isEqualTo("/api/v1/payments/" + PAYMENT_HASH_HEX);
+    assertThat(request.getTarget()).isEqualTo("/api/v1/payments/" + PAYMENT_HASH_HEX);
 
     // Then: correct header
-    assertThat(request.getHeader("X-Api-Key")).isEqualTo(API_KEY);
+    assertThat(request.getHeaders().get("X-Api-Key")).isEqualTo(API_KEY);
 
     // Then: unpaid maps to PENDING
     assertThat(invoice).isNotNull();
@@ -175,10 +177,11 @@ class LnbitsBackendTest {
             .formatted(preimageHex, paymentHashHex, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     // When
     Invoice invoice = backend.lookupInvoice(paymentHash);
@@ -208,10 +211,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class);
@@ -221,13 +225,14 @@ class LnbitsBackendTest {
   void isHealthy_returnsTrue_when200() throws Exception {
     // Given: wallet endpoint returns 200
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"id": "wallet-id", "name": "test", "balance": 1000}
-                        """));
+                        """)
+            .build());
 
     // When / Then
     assertThat(backend.isHealthy()).isTrue();
@@ -235,14 +240,14 @@ class LnbitsBackendTest {
     // Verify correct endpoint, method, and auth header
     RecordedRequest request = server.takeRequest();
     assertThat(request.getMethod()).isEqualTo("GET");
-    assertThat(request.getPath()).isEqualTo("/api/v1/wallet");
-    assertThat(request.getHeader("X-Api-Key")).isEqualTo(API_KEY);
+    assertThat(request.getTarget()).isEqualTo("/api/v1/wallet");
+    assertThat(request.getHeaders().get("X-Api-Key")).isEqualTo(API_KEY);
   }
 
   @Test
   void isHealthy_returnsFalse_whenNon200() {
     // Given: wallet endpoint returns 500
-    server.enqueue(new MockResponse().setResponseCode(500).setBody("Internal Server Error"));
+    server.enqueue(new MockResponse.Builder().code(500).body("Internal Server Error").build());
 
     // When / Then
     assertThat(backend.isHealthy()).isFalse();
@@ -252,33 +257,36 @@ class LnbitsBackendTest {
   void allRequests_includeApiKeyHeader() throws Exception {
     // Enqueue responses for three different request types
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "%s"}
                         """
-                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": false, "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000, "memo": "m", "time": 1700000000, "expiry": 3600}}
                         """
-                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"id": "w", "name": "test", "balance": 0}
-                        """));
+                        """)
+            .build());
 
     // Execute all three request types
     backend.createInvoice(100L, "memo");
@@ -288,17 +296,17 @@ class LnbitsBackendTest {
     // Verify X-Api-Key header on every request
     for (int i = 0; i < 3; i++) {
       RecordedRequest request = server.takeRequest();
-      assertThat(request.getHeader("X-Api-Key"))
+      assertThat(request.getHeaders().get("X-Api-Key"))
           .as(
               "Request #%d (%s %s) must include X-Api-Key",
-              i + 1, request.getMethod(), request.getPath())
+              i + 1, request.getMethod(), request.getTarget())
           .isEqualTo(API_KEY);
     }
   }
 
   @Test
   void createInvoice_throws_when4xxResponse() {
-    server.enqueue(new MockResponse().setResponseCode(401).setBody("Unauthorized"));
+    server.enqueue(new MockResponse.Builder().code(401).body("Unauthorized").build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
         .isInstanceOf(LnbitsException.class)
@@ -309,7 +317,7 @@ class LnbitsBackendTest {
 
   @Test
   void createInvoice_throws_when5xxResponse() {
-    server.enqueue(new MockResponse().setResponseCode(500).setBody("Internal Server Error"));
+    server.enqueue(new MockResponse.Builder().code(500).body("Internal Server Error").build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "test memo"))
         .isInstanceOf(LnbitsException.class)
@@ -320,7 +328,7 @@ class LnbitsBackendTest {
 
   @Test
   void lookupInvoice_throws_when4xxResponse() {
-    server.enqueue(new MockResponse().setResponseCode(404).setBody("Not Found"));
+    server.enqueue(new MockResponse.Builder().code(404).body("Not Found").build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -331,7 +339,7 @@ class LnbitsBackendTest {
 
   @Test
   void lookupInvoice_throws_when5xxResponse() {
-    server.enqueue(new MockResponse().setResponseCode(502).setBody("Bad Gateway"));
+    server.enqueue(new MockResponse.Builder().code(502).body("Bad Gateway").build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -355,14 +363,15 @@ class LnbitsBackendTest {
           Long.toString((SecurityBounds.MAX_PRICE_SATS + 1) * 1000)
         }) {
       server.enqueue(
-          new MockResponse()
-              .setResponseCode(200)
+          new MockResponse.Builder()
+              .code(200)
               .setHeader("Content-Type", "application/json")
-              .setBody(
+              .body(
                   """
                   {"paid":false,"details":{"payment_hash":"%s","bolt11":"%s","amount":%s}}
                   """
-                      .formatted(PAYMENT_HASH_HEX, BOLT11, amount)));
+                      .formatted(PAYMENT_HASH_HEX, BOLT11, amount))
+              .build());
 
       assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
           .isInstanceOf(LnbitsException.class)
@@ -373,14 +382,15 @@ class LnbitsBackendTest {
   @Test
   void lookupInvoice_acceptsMaximumExactlyConvertibleMillisatoshis() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                 {"paid":false,"details":{"payment_hash":"%s","bolt11":"%s","amount":%d}}
                 """
-                    .formatted(PAYMENT_HASH_HEX, BOLT11, SecurityBounds.MAX_PRICE_SATS * 1000)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11, SecurityBounds.MAX_PRICE_SATS * 1000))
+            .build());
 
     assertThat(backend.lookupInvoice(PAYMENT_HASH).amountSats())
         .isEqualTo(SecurityBounds.MAX_PRICE_SATS);
@@ -397,14 +407,15 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenAmountIsZero() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "%s"}
                         """
-                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(0L, "memo"))
         .isInstanceOf(IllegalArgumentException.class)
@@ -416,14 +427,15 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenAmountIsNegative() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "%s"}
                         """
-                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(-1L, "memo"))
         .isInstanceOf(IllegalArgumentException.class)
@@ -474,14 +486,15 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenPaymentHashMissing() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_request": "%s"}
                         """
-                    .formatted(BOLT11)));
+                    .formatted(BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -491,14 +504,15 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenPaymentRequestMissing() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s"}
                         """
-                    .formatted(PAYMENT_HASH_HEX)));
+                    .formatted(PAYMENT_HASH_HEX))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -508,14 +522,15 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenBolt11CommitsToDifferentPaymentHash() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "%s"}
                         """
-                    .formatted(OTHER_PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(OTHER_PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -528,14 +543,15 @@ class LnbitsBackendTest {
   void createInvoice_throws_whenBolt11IsNotAValidInvoice() {
     String corrupted = BOLT11.substring(0, BOLT11.length() - 1) + "q";
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "%s"}
                         """
-                    .formatted(PAYMENT_HASH_HEX, corrupted)));
+                    .formatted(PAYMENT_HASH_HEX, corrupted))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -548,14 +564,15 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenBolt11IsPlaceholderText() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "lnbc100n1pjexamplefake"}
                         """
-                    .formatted(PAYMENT_HASH_HEX)));
+                    .formatted(PAYMENT_HASH_HEX))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -565,14 +582,15 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenPaymentHashHasWrongLength() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "%s"}
                         """
-                    .formatted(HEX.formatHex(new byte[31]), BOLT11)));
+                    .formatted(HEX.formatHex(new byte[31]), BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -582,14 +600,15 @@ class LnbitsBackendTest {
   @Test
   void lookupInvoice_throws_whenPaidFieldMissing() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"details": {"bolt11": "%s", "amount": 100}}
                         """
-                    .formatted(BOLT11)));
+                    .formatted(BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -599,13 +618,14 @@ class LnbitsBackendTest {
   @Test
   void lookupInvoice_throws_whenDetailsMissing() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": false}
-                        """));
+                        """)
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -615,14 +635,15 @@ class LnbitsBackendTest {
   @Test
   void lookupInvoice_throws_whenDetailsBolt11Missing() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": false, "details": {"payment_hash": "%s", "amount": 100}}
                         """
-                    .formatted(PAYMENT_HASH_HEX)));
+                    .formatted(PAYMENT_HASH_HEX))
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -632,14 +653,15 @@ class LnbitsBackendTest {
   @Test
   void lookupInvoice_throws_whenDetailsAmountMissing() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": false, "details": {"payment_hash": "%s", "bolt11": "%s"}}
                         """
-                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -652,14 +674,15 @@ class LnbitsBackendTest {
   void lookupInvoice_throws_whenResponsePaymentHashHasWrongLength() {
     String shortHashHex = HEX.formatHex(new byte[31]);
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": false, "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
                         """
-                    .formatted(shortHashHex, BOLT11)));
+                    .formatted(shortHashHex, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class);
@@ -669,14 +692,15 @@ class LnbitsBackendTest {
   void lookupInvoice_throws_whenResponsePaymentHashDoesNotMatchQueriedHash() {
     String differentHashHex = HEX.formatHex(new byte[32]);
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": false, "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
                         """
-                    .formatted(differentHashHex, BOLT11)));
+                    .formatted(differentHashHex, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class);
@@ -686,14 +710,15 @@ class LnbitsBackendTest {
   void lookupInvoice_throws_whenSettledPreimageHasWrongLength() {
     String shortPreimageHex = HEX.formatHex(new byte[31]);
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": true, "preimage": "%s", "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
                         """
-                    .formatted(shortPreimageHex, PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(shortPreimageHex, PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -704,14 +729,15 @@ class LnbitsBackendTest {
   void lookupInvoice_throws_whenSettledPreimageDoesNotHashToQueriedPaymentHash() {
     String preimageHex = HEX.formatHex(new byte[32]);
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"paid": true, "preimage": "%s", "details": {"payment_hash": "%s", "bolt11": "%s", "amount": 100000}}
                         """
-                    .formatted(preimageHex, PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(preimageHex, PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class);
@@ -741,10 +767,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11, creationEpoch, expirySeconds);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     // When
     Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
@@ -772,10 +799,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     // When
     Instant before = Instant.now();
@@ -800,7 +828,7 @@ class LnbitsBackendTest {
 
   @Test
   void createInvoice_throwsLnbitsTimeoutException_onTimeout() {
-    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+    server.enqueue(new MockResponse.Builder().onResponseStart(SocketEffect.Stall.INSTANCE).build());
 
     var shortTimeoutBackend = backendWithShortTimeout();
 
@@ -812,7 +840,7 @@ class LnbitsBackendTest {
 
   @Test
   void lookupInvoice_throwsLnbitsTimeoutException_onTimeout() {
-    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+    server.enqueue(new MockResponse.Builder().onResponseStart(SocketEffect.Stall.INSTANCE).build());
 
     var shortTimeoutBackend = backendWithShortTimeout();
 
@@ -824,7 +852,7 @@ class LnbitsBackendTest {
 
   @Test
   void isHealthy_returnsFalse_onTimeout() {
-    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+    server.enqueue(new MockResponse.Builder().onResponseStart(SocketEffect.Stall.INSTANCE).build());
 
     var shortTimeoutBackend = backendWithShortTimeout();
 
@@ -849,7 +877,8 @@ class LnbitsBackendTest {
 
   @Test
   void createInvoice_rejectsTwoMebibyteResponseBody() {
-    server.enqueue(new MockResponse().setBody(paddedJson(createInvoiceJson(), TWO_MIB)));
+    server.enqueue(
+        new MockResponse.Builder().body(paddedJson(createInvoiceJson(), TWO_MIB)).build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -864,7 +893,7 @@ class LnbitsBackendTest {
     String prefix =
         "{\"paid\":false,\"details\":{\"payment_hash\":\"%s\",\"bolt11\":\"%s\",\"amount\":100000},"
             .formatted(PAYMENT_HASH_HEX, BOLT11);
-    server.enqueue(new MockResponse().setBody(paddedJson(prefix, TWO_MIB)));
+    server.enqueue(new MockResponse.Builder().body(paddedJson(prefix, TWO_MIB)).build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class)
@@ -874,7 +903,7 @@ class LnbitsBackendTest {
 
   @Test
   void isHealthy_returnsFalse_whenResponseBodyExceedsLimit() {
-    server.enqueue(new MockResponse().setBody(paddedJson("{", TWO_MIB)));
+    server.enqueue(new MockResponse.Builder().body(paddedJson("{", TWO_MIB)).build());
 
     assertThat(backend.isHealthy()).isFalse();
   }
@@ -882,9 +911,10 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_acceptsResponseBodyExactlyAtLimit() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
-            .setBody(paddedJson(createInvoiceJson(), LnbitsBackend.MAX_RESPONSE_BODY_BYTES)));
+        new MockResponse.Builder()
+            .code(201)
+            .body(paddedJson(createInvoiceJson(), LnbitsBackend.MAX_RESPONSE_BODY_BYTES))
+            .build());
 
     Invoice invoice = backend.createInvoice(100L, "memo");
 
@@ -894,9 +924,10 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_rejectsResponseBodyOneByteOverLimit() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
-            .setBody(paddedJson(createInvoiceJson(), LnbitsBackend.MAX_RESPONSE_BODY_BYTES + 1)));
+        new MockResponse.Builder()
+            .code(201)
+            .body(paddedJson(createInvoiceJson(), LnbitsBackend.MAX_RESPONSE_BODY_BYTES + 1))
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -907,10 +938,11 @@ class LnbitsBackendTest {
   void createInvoice_slowBodyTimesOutWithinRequestDeadline() {
     String body = paddedJson(createInvoiceJson(), 600);
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
-            .setBody(body)
-            .throttleBody(100, 1, TimeUnit.SECONDS));
+        new MockResponse.Builder()
+            .code(201)
+            .body(body)
+            .throttleBody(100, 1, TimeUnit.SECONDS)
+            .build());
     var shortTimeoutBackend = backendWithShortTimeout();
 
     long start = System.nanoTime();
@@ -925,7 +957,8 @@ class LnbitsBackendTest {
   @Test
   void isHealthy_returnsFalse_whenBodyIsSlowerThanRequestDeadline() {
     String body = paddedJson("{", 600);
-    server.enqueue(new MockResponse().setBody(body).throttleBody(100, 1, TimeUnit.SECONDS));
+    server.enqueue(
+        new MockResponse.Builder().body(body).throttleBody(100, 1, TimeUnit.SECONDS).build());
     var shortTimeoutBackend = backendWithShortTimeout();
 
     long start = System.nanoTime();
@@ -938,7 +971,7 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_nonTimeoutError_stillThrowsLnbitsException() {
     // Verify that non-timeout errors remain as LnbitsException (not LnbitsTimeoutException)
-    server.enqueue(new MockResponse().setResponseCode(500).setBody("Internal Server Error"));
+    server.enqueue(new MockResponse.Builder().code(500).body("Internal Server Error").build());
 
     var shortTimeoutBackend = backendWithShortTimeout();
 
@@ -953,7 +986,7 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_doesNotExposeSecretErrorBody() {
     String secretBody = "lnbits-secret=x-api-key-abc123-super-secret";
-    server.enqueue(new MockResponse().setResponseCode(500).setBody(secretBody));
+    server.enqueue(new MockResponse.Builder().code(500).body(secretBody).build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -965,7 +998,7 @@ class LnbitsBackendTest {
 
   @Test
   void createInvoice_handlesEmptyErrorBody() {
-    server.enqueue(new MockResponse().setResponseCode(502).setBody(""));
+    server.enqueue(new MockResponse.Builder().code(502).body("").build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -1003,10 +1036,11 @@ class LnbitsBackendTest {
   @Test
   void createInvoice_throws_whenResponseBodyIsNotJson() {
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody("not json at all"));
+            .body("not json at all")
+            .build());
 
     assertThatThrownBy(() -> backend.createInvoice(100L, "memo"))
         .isInstanceOf(LnbitsException.class)
@@ -1031,10 +1065,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     assertThatThrownBy(() -> backend.lookupInvoice(PAYMENT_HASH))
         .isInstanceOf(LnbitsException.class);
@@ -1058,10 +1093,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
 
@@ -1086,10 +1122,11 @@ class LnbitsBackendTest {
             .formatted(PAYMENT_HASH_HEX, BOLT11);
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(200)
+        new MockResponse.Builder()
+            .code(200)
             .setHeader("Content-Type", "application/json")
-            .setBody(responseBody));
+            .body(responseBody)
+            .build());
 
     Instant before = Instant.now();
     Invoice invoice = backend.lookupInvoice(PAYMENT_HASH);
@@ -1107,24 +1144,26 @@ class LnbitsBackendTest {
         new LnbitsBackend(trailingSlashConfig, objectMapper, HttpClient.newHttpClient());
 
     server.enqueue(
-        new MockResponse()
-            .setResponseCode(201)
+        new MockResponse.Builder()
+            .code(201)
             .setHeader("Content-Type", "application/json")
-            .setBody(
+            .body(
                 """
                         {"payment_hash": "%s", "payment_request": "%s"}
                         """
-                    .formatted(PAYMENT_HASH_HEX, BOLT11)));
+                    .formatted(PAYMENT_HASH_HEX, BOLT11))
+            .build());
 
     trailingSlashBackend.createInvoice(100L, "memo");
 
     RecordedRequest request = server.takeRequest();
-    assertThat(request.getPath()).isEqualTo("/api/v1/payments");
+    assertThat(request.getTarget()).isEqualTo("/api/v1/payments");
   }
 
   @Test
   void isHealthy_returnsFalse_whenConnectionDisconnects() {
-    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START));
+    server.enqueue(
+        new MockResponse.Builder().onRequestStart(new SocketEffect.CloseSocket()).build());
 
     assertThat(backend.isHealthy()).isFalse();
   }
