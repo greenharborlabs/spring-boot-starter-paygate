@@ -1,5 +1,5 @@
 # Remediate 2026-10-18 security review Info items
-Status: review
+Status: closed
 Base revision: b1d9c9ed8b04a1afae3141e693c04ea347e1c3c3
 Review scope: paygate-api/src/**, paygate-core/src/**, paygate-protocol-l402/src/**, paygate-protocol-mpp/src/**, paygate-spring-autoconfigure/src/**, paygate-spring-security/src/**, paygate-lightning-lnd/src/**, paygate-lightning-lnbits/src/**, paygate-integration-tests/src/**, paygate-example-app-spring-security/src/test/**, build.gradle.kts, META-INF/**, integration-tests/docker-compose*.yml, docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md, docs/macaroons-deep-dive.md, SECURITY.md, CHANGELOG.md, README.md, */README.md
 
@@ -128,8 +128,70 @@ Points for the reviewer:
    - The example app's `eclipse-temurin:25` images remain unpinned, outside the I-19 decision.
    - `docs/macaroons-deep-dive.md` was added to `Review scope` because the I-17 wording lived there.
 
+### Attempt 1
+Reviewed revision: 503af2d9e983cfb7798c56646176a141826ee50a
+Verdict: pass
+Findings and dispositions: No findings; no rework required. The scoped diff implements each I-01 to I-20 decision, and the documentation claims match the implementation.
+Verification:
+- Scoped diff inspection (base `b1d9c9e` through `503af2d`, 70 files): pass. Only the task record is outside the declared scope, and the working tree is clean.
+- `./gradlew spotlessCheck check --continue --rerun-tasks`: pass (BUILD SUCCESSFUL; 3,447 default-module tests, 0 failures, errors, or skips).
+- `./gradlew :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration`: pass (`test` 154, `securityTest` 71; 0 failures, errors, or skips).
+- `git diff --check 4740301 HEAD`: pass (clean).
+- I-19 pinned digests: pass. `docker buildx imagetools inspect` reports LND index `sha256:e44e6296…` and bitcoind `sha256:324fec72…`, matching the compose files, and `docker compose config -q` passes for all four files.
+- Generated POM: pass. `paygate-core` uses the https `spring-boot-starter-paygate` project and SCM URLs.
+- Material limits: live LND/LNbits and the Docker stacks were not exercised; the example app's `eclipse-temurin:25` images remain unpinned; I-05 has no direct zeroization test; the I-17 LNbits example is not compiled by a test. These are recorded in the record and ledger and do not block the scoped claims.
+
 ## Outcome
-Pending.
+Every remaining Info item from the 2026-10-18 security review is resolved on `fix/security-review-2026-10-18-info`. Review Attempt 1 passed at `503af2d`; the implementation is the `b1d9c9e..3bc5804` history. I-01 to I-19 are remediated, and I-20 (strict caveat mode) is closed as an accepted limitation, not planned.
+
+**Credential encodings and validation (I-01, I-04, I-05, I-06, I-13, I-14).**
+- V2 headers and L402 base64 must be canonical, as go-macaroon requires.
+- MPP base64url and `\u` escapes are strict.
+- MPP credentials are valid through their expiry instant.
+- A repeated-byte MPP binding secret fails startup.
+- A credential is cached only after the price check, and the preimage is zeroized when that check throws.
+- `ChallengeContext.rootKeyBytes()` throws after `close()`, using a private trailing state byte.
+- The `JcsSerializer` Javadoc is corrected.
+
+**Spring integration (I-07, I-08, I-09, I-10, I-11, I-12, I-17, I-18).**
+- The no-entry-point named-pricing case and untrusted `AuthenticationManager` results fail closed with 503.
+- The session-persistence hazard is documented.
+- Non-boolean `paygate.enabled` or `paygate.protocols.l402.enabled` values fail startup.
+- Handler exceptions after payment reach error handling in servlet mode.
+- Multi-method paid handlers enforce each method separately. The interceptor also blocks `_method` method switching.
+- The README override examples start as written.
+- Redispatch pricing is bound to its endpoint.
+
+**Backends and build (I-16, I-19).**
+- A JDK-only BOLT11 payment-hash check makes LND and LNbits reject an inconsistent created invoice with 503.
+- LND and bitcoind images are digest-pinned.
+- `installGitHook` re-stages only previously staged files.
+- The POM URLs are corrected, and the stray root `META-INF` is removed.
+
+**Verification.**
+- All 8 PoCs reproduced at base and are inverted regression tests. I-12 needed a real fix rather than being resolved by earlier work.
+- At Attempt 1:
+  - `spotlessCheck check`: 3,447 tests (baseline 3,297).
+  - Integration `test`: 154 (baseline 145).
+  - Integration `securityTest`: 71 (baseline 66).
+  - All passed, and `git diff --check` was clean.
+- The BOLT #11 specification vectors pass.
+- The pinned digests and the generated POM were confirmed independently by the reviewer.
+
+**Documentation.**
+- The [ledger](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md) now resolves every 2026-10-18 finding and Info item, and links this record.
+- [SECURITY.md](../SECURITY.md) documents the strict encodings, the BOLT11 check, handler-exception propagation, redispatch pricing and the switch guard.
+- [CHANGELOG.md](../CHANGELOG.md) is updated.
+- The [Spring Security README](../paygate-spring-security/README.md), the [autoconfigure README](../paygate-spring-autoconfigure/README.md), the [MPP README](../paygate-protocol-mpp/README.md), the backend READMEs and [docs/macaroons-deep-dive.md](../docs/macaroons-deep-dive.md) are updated.
+
+**Limits and remaining uncertainty.**
+- Not exercised: live LND and LNbits, the Docker stacks, and GitHub runners.
+- I-05 has no direct zeroization test.
+- The I-17 LNbits example is not compiled by a test.
+- The example app's `eclipse-temurin:25` images remain unpinned.
+- The reference Spring Security app answers 402 on `/error` after a handler exception, because its chain authenticates `/error`.
+- L402 clients that strip base64 padding are now rejected.
+- BOLT11 node signatures are not verified, and uppercase invoices are rejected.
 
 ## Next action
-Run the fresh-context `keel-review` of this record.
+Open a pull request from `fix/security-review-2026-10-18-info` to `main`, with the dispositions in [the ledger](../docs/security/OPUS-2026-10-18-FINDING-DISPOSITIONS.md).
