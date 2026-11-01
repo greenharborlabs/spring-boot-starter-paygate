@@ -1,5 +1,5 @@
 # Upgrade Gradle minor and patch dependencies
-Status: review
+Status: working
 Base revision: faf58731b08719c943f0a97f2f0e1660e698c825
 Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/**, gradlew, gradlew.bat, config/dependency-provenance-exceptions.tsv, scripts/test-dependency-provenance.sh, paygate-*/src/**, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
 
@@ -170,8 +170,31 @@ Points for the reviewer:
    - Gradle deprecation warnings are recorded but not fixed.
    - Live LND and LNbits and the Docker stacks were not exercised.
 
+### Attempt 1
+Reviewed revision: 0d0e7c2f502fc90e3f9753e1000e5a9e4cc506d1
+Verdict: rework
+Findings and dispositions:
+1. **Stale Protobuf Gradle plugin version (rework).** `paygate-lightning-lnd/README.md:567` still says the `com.google.protobuf` Gradle plugin is v0.9.6, while `paygate-lightning-lnd/build.gradle.kts` declares 0.10.0. This is a stale version string in a document the record lists for update and fails the record's own check, "no stale version strings remain in the listed docs." Update it to 0.10.0.
+2. **Stale MockWebServer example (rework).** `paygate-lightning-lnbits/README.md:429-452` documents a test example using the removed OkHttp 4 `okhttp3.mockwebserver` API: `new MockResponse()`, `setResponseCode`, `setHeader`, `setBody`, and `server.shutdown()`. The module now depends on `mockwebserver3` 5.3.2, where `MockResponse` has no no-arg constructor and requires `MockResponse.Builder`, and `MockWebServer.shutdown()` is `close()`. The example no longer compiles against the declared test dependency, so the documentation does not match the migration this task made. Update the example to the `mockwebserver3` API.
+3. **No implementation findings.** The scoped implementation is otherwise consistent. The ledger has 511 rows (285 removed, 332 added, 179 retained byte-identical; all deadline 2026-11-22; unique IDs). The metadata has 546 components and 965 artifacts (470 added, 1,005 removed, 495 kept with unchanged checksums). There are no `<trusted-key>`, `<trusting>` or `<pgp>` additions; the `<trusted-keys>` block and `gradle/verification-keyring.keys` are byte-identical to the base. Every ledger row matches a metadata SHA-256. The review document's counts and hashes reconcile with the committed files.
+4. **Pre-existing validator gap** (record "Points for the reviewer" 2) is unchanged by this task and remains a separate renewal decision; not rework here.
+
+Verification:
+- Scoped paths clean at HEAD; commit `0d0e7c2` changes only this record.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, 511/511 SHA-256 matches, 72,420,133 bytes (500 Maven Central, 11 Gradle Plugin Portal).
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls`: pass, all four tasks executed.
+- `GRADLE_USER_HOME=$(mktemp -d) ./gradlew --no-daemon spotlessCheck check --rerun-tasks`: pass, strict verification, 122/122 tasks executed; default-module test XML 3,447 tests with 0 failures, errors or skips (a raw count of 3,601 includes 154 stale integration results not run by this invocation).
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun`: pass; `test` 154 and `securityTest` 71, 0 failures.
+- `./gradlew --no-daemon buildHealth cyclonedxBom`: pass (exit 0, non-fatal dependency advice only); SBOMs written under `*/build/reports/cyclonedx/bom.json`.
+- `./gradlew --no-daemon dependencyCheckAggregate --rerun`: pass, "Found 0 vulnerabilities".
+- `git diff --check base..HEAD`: fails only on the Gradle-generated CRLF `gradlew.bat`; excluding that path it is clean. `gradlew.bat` has CRLF at both base and HEAD.
+- Wrapper inputs: pass. `gradle-wrapper.jar` SHA-256 and `distributionSha256Sum` match `services.gradle.org` for 9.8.2.
+- gRPC resolution: pass. Every `io.grpc` artifact on the `:paygate-lightning-lnd` runtime classpath resolves to 1.84.1.
+- Documentation check: fail, per findings 1 and 2.
+- Optional post-merge task (close #92 and #11): skipped, not applicable before merge.
+
 ## Outcome
 Pending.
 
 ## Next action
-Run the fresh-context `keel-review` of this record.
+Address the two documentation findings in keel-review Attempt 1, commit, and return to `Status: review` for a fresh-context review.
