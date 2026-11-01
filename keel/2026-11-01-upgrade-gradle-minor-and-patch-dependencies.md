@@ -1,6 +1,6 @@
 # Upgrade Gradle minor and patch dependencies
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: faf58731b08719c943f0a97f2f0e1660e698c825
 Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/**, gradlew, gradlew.bat, config/dependency-provenance-exceptions.tsv, paygate-*/src/**, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
 
 ## Goal
@@ -69,6 +69,8 @@ Acceptance evidence:
   - Fix only what fails, or what the notes flag as changed behaviour Paygate relies on. Record each finding in this record.
 - **Documentation.** Update the version references in [CLAUDE.md](../CLAUDE.md), the root [README](../README.md) badge and version table, the [LND README](../paygate-lightning-lnd/README.md) dependency table and protoc versions, and the [Spring Security README](../paygate-spring-security/README.md) requirement. Add a CHANGELOG `Changed` entry for the dependency updates.
 
+Approved: 2026-11-01 by Mark Hammond at plan revision faf58731b08719c943f0a97f2f0e1660e698c825. Deadline for new exception rows confirmed: 2026-11-22 UTC (option A, shared with the existing ledger). The plan was rebased unchanged from `20164c7` onto `main` after #101 (LNbits setup-script fix, unrelated paths) merged.
+
 ## Tasks
 - [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
 - [ ] Apply #92's version changes and the MockWebServer bump, and migrate the LNbits tests to `mockwebserver3`. Check: `./gradlew compileJava compileTestJava` with verification temporarily in lenient mode in a scratch Gradle home only, never committed.
@@ -95,4 +97,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise this plan.
+Implement the approved plan, record each check result, and set `Status: review`.
