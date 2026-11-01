@@ -564,7 +564,7 @@ The proto file uses `package lnrpc` and `option java_package = "lnrpc"` to match
 
 ### Protobuf Code Generation
 
-The `com.google.protobuf` Gradle plugin (v0.9.6) generates Java classes from the proto file at build time. The `protoc-gen-grpc-java` plugin generates the gRPC stubs. Both are configured in `build.gradle.kts`:
+The `com.google.protobuf` Gradle plugin (v0.10.0) generates Java classes from the proto file at build time. The `protoc-gen-grpc-java` plugin generates the gRPC stubs. Both are configured in `build.gradle.kts`:
 
 - `protoc` compiler: `com.google.protobuf:protoc:4.36.2`
 - gRPC Java plugin: `io.grpc:protoc-gen-grpc-java:1.84.1`
