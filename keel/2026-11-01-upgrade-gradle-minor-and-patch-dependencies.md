@@ -1,5 +1,5 @@
 # Upgrade Gradle minor and patch dependencies
-Status: review
+Status: closed
 Base revision: faf58731b08719c943f0a97f2f0e1660e698c825
 Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/**, gradlew, gradlew.bat, config/dependency-provenance-exceptions.tsv, scripts/test-dependency-provenance.sh, paygate-*/src/**, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
 
@@ -212,8 +212,69 @@ Rework verification:
   - `./gradlew --no-daemon dependencyCheckAggregate --rerun`: pass, "Found 0 vulnerabilities".
 - `git diff --check faf5873 HEAD -- . ':!gradlew.bat'`: pass (clean). `gradlew.bat` is unchanged since Attempt 1 and keeps its required CRLF line endings.
 
+### Attempt 2
+Reviewed revision: 725c0c49ee2b857434cab077a199969476f8cf0a
+Verdict: pass
+Findings and dispositions:
+1. **Finding 1 (Attempt 1), resolved.** `paygate-lightning-lnd/README.md:567` now names the `com.google.protobuf` Gradle plugin at v0.10.0, matching `paygate-lightning-lnd/build.gradle.kts`. The module README's dependency table and protoc versions also read 1.84.1 / 4.36.2.
+2. **Finding 2 (Attempt 1), resolved.** `paygate-lightning-lnbits/README.md:433-464` now uses `mockwebserver3`: `MockResponse.Builder` with `code`/`setHeader`/`body`/`build`, and try-with-resources `close` instead of `shutdown()`. The example also uses the five-argument `LnbitsConfig` with `allowPlaintextHttp`, `JsonMapper`, and a BOLT #11 specification invoice whose hash matches the returned `payment_hash`. `LnbitsReadmeExampleTest` runs the example verbatim and passes, so it cannot drift from the declared test dependency again.
+3. **No new implementation findings.** The rework commit `4fc1f13` changes only the two READMEs and adds the test; `725c0c4` changes only this record. The provenance ledger, metadata, keyring and review document reconcile with the record and the committed files.
+4. **Pre-existing validator gap** (record "Points for the reviewer" 2 and review document "Limits") remains unchanged by this task and is a separate renewal decision; not rework here.
+
+Verification:
+- Scoped implementation paths clean at HEAD; reviewed implementation is `4fc1f13`, with `725c0c4` record-only.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, 511/511 SHA-256 matches, 72,420,133 bytes (500 Maven Central, 11 Gradle Plugin Portal).
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls`: pass, all four tasks executed.
+- `GRADLE_USER_HOME=$(mktemp -d) ./gradlew --no-daemon spotlessCheck check --rerun-tasks`: pass, strict verification, 122/122 tasks executed; default-module test XML 3,448 tests with 0 failures, errors or skips (raw 3,602 includes 154 stale integration results not run by this invocation).
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun`: pass; `test` 154 and `securityTest` 71, 0 failures, fresh XML timestamps 2026-11-01T22:46Z and 22:47Z.
+- `./gradlew --no-daemon buildHealth cyclonedxBom`: pass (exit 0, non-fatal dependency advice only); 8 module SBOMs under `*/build/reports/cyclonedx/bom.json`.
+- `./gradlew --no-daemon dependencyCheckAggregate --rerun`: pass, "Found 0 vulnerabilities"; the CVE-2025-32013 suppression still applies.
+- `git diff --check faf5873 HEAD -- . ':!gradlew.bat'`: pass. `gradlew.bat` is Gradle-generated with CRLF at both base and HEAD, and has no trailing whitespace after stripping carriage returns.
+- Wrapper inputs: pass. `gradle-wrapper.jar` SHA-256 `3b8a2577…68e98` and `distributionSha256Sum` `21bd5da2…89607` match `services.gradle.org` for 9.8.2.
+- gRPC resolution: pass. Every `io.grpc` artifact on the `:paygate-lightning-lnd` runtime classpath resolves to 1.84.1.
+- Provenance reconciliation: pass. Ledger 511 rows (332 added EX-465–EX-796, 285 removed, 179 byte-identical; unique IDs; all deadline 2026-11-22); metadata 546 components and 965 artifacts (470 added, 1,005 removed, 495 kept, 0 checksums changed); 118 `<trusted-key>` entries and 7 artifact `<pgp>` pins unchanged; keyring byte-identical; 12 global `<ignored-key>` entries added and 1 removed; every ledger row matches a metadata SHA-256. The review document's counts and SHA-256 values (`f1f52ab5…` ledger, `4983724f…` metadata, `11d778c6…` keyring) reconcile with the committed files.
+- Documentation check: pass, per findings 1 and 2. No superseded dependency version strings remain in the listed docs; the remaining occurrences are historical entries in `CHANGELOG.md`, `specs/`, `plans/`, `reports/` and earlier review documents, which the record excludes.
+- Optional post-merge task (close #92 and #11): skipped, not applicable before merge.
+
 ## Outcome
-Pending.
+The Dependabot gradle-minor-and-patch group (#92) and the MockWebServer update (#11) are landed on `chore/upgrade-gradle-minor-and-patch-2026-11`. Review Attempt 2 passed at `725c0c4`; the implementation is `faf5873..4fc1f13`.
+
+**Versions.**
+- Spring Boot 4.1.2, bringing Spring Framework 7.0.10, Spring Security 7.1.2, Jackson 3.1.7 and Micrometer 1.17.2.
+- Tomcat 11.0.27, Log4j 2.26.1, Caffeine 3.3.1, Protobuf 4.36.2, AssertJ 3.27.7 and Byte Buddy 1.18.16.
+- Gradle 9.8.2, with the CycloneDX, JMH, Protobuf and build-health plugins updated.
+- `mockwebserver3` 5.3.2.
+
+**The one deviation from #92.** gRPC is 1.84.1, not 1.85.1. Spring Boot 4.1.2 newly manages gRPC at 1.84.1, which left #92's pins resolving to mixed versions. The amendment was approved and is recorded above, and every `io.grpc` artifact now resolves to 1.84.1. No other compatibility change was needed. The LNbits tests moved to the `mockwebserver3` API.
+
+**Provenance.** No trust was added: the keyring and `<trusted-keys>` are byte-identical, and the generated trusted-key scopes and key pins were discarded.
+- 285 superseded exception rows were removed and 332 exact rows added, leaving 511 rows, all at the 2026-11-22 deadline (option A).
+- 138 new artifacts are covered by keys that were already trusted.
+- Evidence is in [DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md), linked from [SECURITY.md](../SECURITY.md) as the current review.
+
+**Review corrections (Attempt 1).**
+- A stale Protobuf plugin version in the [LND README](../paygate-lightning-lnd/README.md) was corrected.
+- The [LNbits README](../paygate-lightning-lnbits/README.md) test example was broken four ways and now runs as written. `LnbitsReadmeExampleTest` guards it.
+
+**Verification at Attempt 2, from an empty Gradle home with strict verification.**
+- `spotlessCheck check`: 3,448 tests (baseline 3,447, plus the README test).
+- Integration `test` 154 and `securityTest` 71.
+- `buildHealth` and the 8 module SBOMs.
+- Advisory scan: 0 vulnerabilities.
+- Provenance controls and source-byte audit: 511 of 511.
+- Gradle wrapper checksums: match services.gradle.org.
+- Single gRPC version.
+- `git diff --check`: clean, except `gradlew.bat`'s required CRLF.
+
+**Documentation.** Versions are updated in [CLAUDE.md](../CLAUDE.md), the root [README](../README.md), the module READMEs and [CHANGELOG.md](../CHANGELOG.md). `CLAUDE.md` notes that gRPC follows Spring Boot's managed version.
+
+**Limits and remaining uncertainty.**
+- **Publisher identity:** still not authenticated.
+- **Linux protoc executables:** first checked by Gradle in CI.
+- **Gradle 9.6+ deprecation warnings:** recorded but not fixed. These are the `by extra` and `by configurations.getting` delegates and a `taskDependencies` read in `doLast`.
+- **IDE sources jars:** their removed entries mean IDE source downloads need fresh entries.
+- **Not exercised:** live LND and LNbits, and the Docker stacks.
+- **Pre-existing validator gap, unchanged here:** 46 resolved artifacts plus 13 legacy unsigned ones pass on checksum alone without ledger rows, and the validator enforces rows only for `NO_PUBKEY` checksums. It is recorded in the review document's Limits for the 2026-11-22 renewal.
 
 ## Next action
-Address the two documentation findings in keel-review Attempt 1, commit, and return to `Status: review` for a fresh-context review.
+Open a pull request from `chore/upgrade-gradle-minor-and-patch-2026-11` to `main`, linking [the November 1 provenance review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md). After it merges, close #92 and #11 as superseded.
