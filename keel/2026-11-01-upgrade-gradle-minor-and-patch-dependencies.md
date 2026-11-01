@@ -14,7 +14,7 @@ The versions:
 | Log4j | 2.25.5 | 2.26.1 |
 | Tomcat | 11.0.25 | 11.0.27 |
 | Caffeine | 3.2.3 | 3.3.1 |
-| gRPC | 1.80.0 | 1.85.1 |
+| gRPC | 1.80.0 | 1.84.1 (amended from #92's 1.85.1; see Decisions) |
 | Protobuf | 4.29.3 | 4.36.2 |
 | AssertJ | 3.27.3 | 3.27.7 |
 | Byte Buddy | 1.18.8 | 1.18.16 |
@@ -71,6 +71,14 @@ Acceptance evidence:
 
 Approved: 2026-11-01 by Mark Hammond at plan revision faf58731b08719c943f0a97f2f0e1660e698c825. Deadline for new exception rows confirmed: 2026-11-22 UTC (option A, shared with the existing ledger). The plan was rebased unchanged from `20164c7` onto `main` after #101 (LNbits setup-script fix, unrelated paths) merged.
 
+**Amendment, 2026-11-01: gRPC 1.84.1 instead of 1.85.1.**
+- Spring Boot 4.1.2 newly imports `grpc-bom` 1.84.1. With #92's explicit 1.85.1 pins, `grpc-api`, `grpc-core`, `grpc-util` and `grpc-protobuf-lite` resolved to 1.84.1 under 1.85.1 artifacts (confirmed in the `:paygate-lightning-lnd` runtime classpath), and gRPC supports only one version across its artifacts.
+- `grpcVersion` follows Boot's managed version (1.84.1), which also drives `protoc-gen-grpc-java`. Boot users receive that version whatever Paygate declares, and it is the gRPC/Protobuf 4.36.2 pairing Boot ships.
+- Rejected alternative: importing `grpc-bom` 1.85.1 after the Boot BOM. It would make the build consistent, but the suite would test a version Boot users never run.
+- Future gRPC bumps follow Boot's managed version.
+
+Amendment approved: 2026-11-01 by Mark Hammond.
+
 ## Tasks
 - [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
 - [ ] Apply #92's version changes and the MockWebServer bump, and migrate the LNbits tests to `mockwebserver3`. Check: `./gradlew compileJava compileTestJava` with verification temporarily in lenient mode in a scratch Gradle home only, never committed.
@@ -92,6 +100,14 @@ Approved: 2026-11-01 by Mark Hammond at plan revision faf58731b08719c943f0a97f2f
 
 ## Review
 Awaiting implementation and fresh-context review.
+
+Baseline at `5fed97c` (record-only over base `faf5873`): pass.
+- `./gradlew check --continue --rerun-tasks` exited 0: 3,447 default-module tests, 0 failures or skips.
+- `./gradlew :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun -Pintegration` exited 0: `test` 154 and `securityTest` 71, 0 failures. XML timestamps (2026-11-01T19:17Z) confirm a fresh run.
+
+WORK notes:
+- **#92 head moved.** Dependabot rebased #92 from `49bc5733` to `bdcf093`, based on `4fd5125`, with identical versions. It was cherry-picked with `-x` as `aa7d850`, keeping Dependabot authorship.
+- **Gradle wrapper inputs: pass.** The new `gradle-wrapper.jar` SHA-256 (`3b8a2577…68e98`) and `distributionSha256Sum` (`21bd5da2…89607`) match `services.gradle.org`'s published `gradle-9.8.2-wrapper.jar.sha256` and `gradle-9.8.2-bin.zip.sha256`.
 
 ## Outcome
 Pending.
