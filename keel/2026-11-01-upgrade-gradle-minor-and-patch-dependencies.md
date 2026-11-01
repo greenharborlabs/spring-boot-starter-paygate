@@ -1,5 +1,5 @@
 # Upgrade Gradle minor and patch dependencies
-Status: working
+Status: review
 Base revision: faf58731b08719c943f0a97f2f0e1660e698c825
 Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/**, gradlew, gradlew.bat, config/dependency-provenance-exceptions.tsv, scripts/test-dependency-provenance.sh, paygate-*/src/**, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
 
@@ -99,7 +99,7 @@ Amendment approved: 2026-11-01 by Mark Hammond.
 - [ ] After merge: close #92 and #11 with a link to the merged PR. (optional)
 
 ## Review
-Implementation complete at `16d6a62`; awaiting fresh-context review.
+Implementation complete at `16d6a62`; Attempt 1 rework complete at `4fc1f13`; awaiting fresh-context review.
 
 Baseline at `5fed97c` (record-only over base `faf5873`): pass.
 - `./gradlew check --continue --rerun-tasks` exited 0: 3,447 default-module tests, 0 failures or skips.
@@ -192,6 +192,25 @@ Verification:
 - gRPC resolution: pass. Every `io.grpc` artifact on the `:paygate-lightning-lnd` runtime classpath resolves to 1.84.1.
 - Documentation check: fail, per findings 1 and 2.
 - Optional post-merge task (close #92 and #11): skipped, not applicable before merge.
+
+Rework after Attempt 1 (implementation at `4fc1f13`):
+1. **Finding 1, fixed.** `paygate-lightning-lnd/README.md` now names `com.google.protobuf` Gradle plugin v0.10.0. A repository-wide search of the maintained Markdown found no other superseded version string. The search covered every from-version in the Goal table, the plugin versions, and `okhttp3.mockwebserver` / `mockwebserver:`. It excluded history in `keel/`, `CHANGELOG.md` and earlier review documents.
+2. **Finding 2, fixed and widened.** Beyond the removed OkHttp 4 API the review cited, the `paygate-lightning-lnbits/README.md` test example also failed three of the backend's current checks:
+   - `LnbitsBackend` takes Jackson 3 `JsonMapper`, not `ObjectMapper`;
+   - the two-argument `LnbitsConfig` rejects the plain `http://localhost` URL without the `allowPlaintextHttp` opt-in;
+   - the placeholder `payment_request` fails the I-16 BOLT11 payment-hash check.
+
+   The example now uses `mockwebserver3`, the five-argument `LnbitsConfig` with the opt-in, `JsonMapper`, and the BOLT #11 specification invoice with its hash, with the reasons explained above the code. The new `LnbitsReadmeExampleTest` runs the example verbatim and passes, so it cannot drift from the declared test dependency again.
+
+Rework verification:
+- The four provenance controls: pass, exit 0.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, 511 of 511 SHA-256 matches, 72,420,133 bytes.
+- From an empty `GRADLE_USER_HOME` with strict verification:
+  - `./gradlew --no-daemon spotlessCheck check --rerun-tasks`: pass, 3,448 default-module tests (3,447 plus the README example test), 0 failures or skips.
+  - The integration `spotlessCheck`, `test` and `securityTest`: pass, 154 and 71 tests, 0 failures, with fresh XML timestamps (2026-11-01T22:37Z).
+  - `./gradlew --no-daemon buildHealth cyclonedxBom`: pass, 8 module SBOMs at `*/build/reports/cyclonedx/bom.json`.
+  - `./gradlew --no-daemon dependencyCheckAggregate --rerun`: pass, "Found 0 vulnerabilities".
+- `git diff --check faf5873 HEAD -- . ':!gradlew.bat'`: pass (clean). `gradlew.bat` is unchanged since Attempt 1 and keeps its required CRLF line endings.
 
 ## Outcome
 Pending.
