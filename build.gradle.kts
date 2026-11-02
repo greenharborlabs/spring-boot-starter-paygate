@@ -4,7 +4,7 @@ plugins {
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.5.1" apply false
-    id("com.diffplug.spotless") version "7.2.1" apply false
+    id("com.diffplug.spotless") version "8.10.4" apply false
     id("org.owasp.dependencycheck") version "13.0.0"
 }
 
