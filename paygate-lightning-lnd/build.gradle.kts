@@ -1,7 +1,7 @@
 import com.google.protobuf.gradle.id
 
 plugins {
-    id("com.google.protobuf") version "0.9.6"
+    id("com.google.protobuf") version "0.10.0"
 }
 
 val grpcVersion: String by extra
@@ -15,7 +15,7 @@ dependencies {
     implementation("io.grpc:grpc-stub:$grpcVersion")
     implementation("com.google.protobuf:protobuf-java:$protobufVersion")
 
-    // protoc-gen-grpc-java 1.80.0 uses @io.grpc.stub.annotations.GrpcGenerated (no javax/jakarta needed);
+    // protoc-gen-grpc-java (grpcVersion) uses @io.grpc.stub.annotations.GrpcGenerated (no javax/jakarta needed);
     // kept as compileOnly for any hand-written code that may use Jakarta annotations
     compileOnly("jakarta.annotation:jakarta.annotation-api")
 

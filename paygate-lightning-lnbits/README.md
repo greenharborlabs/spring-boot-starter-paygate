@@ -428,28 +428,39 @@ Tests use **OkHttp MockWebServer** to simulate the LNbits REST API without requi
 
 ### Writing Your Own Tests
 
-If you provide a custom `LightningBackend` bean that wraps `LnbitsBackend`, you can use MockWebServer in the same pattern:
+If you provide a custom `LightningBackend` bean that wraps `LnbitsBackend`, you can use OkHttp's
+`mockwebserver3` (`com.squareup.okhttp3:mockwebserver3`) in the same pattern. Two backend checks
+shape the fixture:
+
+- `LnbitsBackend` rejects a created invoice whose BOLT11 `payment_request` does not commit to the
+  returned `payment_hash`, so the example uses a BOLT #11 specification invoice and its hash.
+- Plain HTTP to the local test server needs the explicit `allowPlaintextHttp` opt-in (the last
+  `LnbitsConfig` argument).
+
+`LnbitsReadmeExampleTest` runs this example as written.
 
 ```java
 @Test
 void myCustomTest() throws Exception {
-    var server = new MockWebServer();
-    server.start();
+    try (var server = new MockWebServer()) {
+        server.start();
 
-    server.enqueue(new MockResponse()
-            .setResponseCode(201)
-            .setHeader("Content-Type", "application/json")
-            .setBody("""
-                    {"payment_hash": "abcd...64hex...", "payment_request": "lnbc..."}
-                    """));
+        server.enqueue(new MockResponse.Builder()
+                .code(201)
+                .setHeader("Content-Type", "application/json")
+                .body("""
+                        {"payment_hash": "0001020304050607080900010203040506070809000102030405060708090102",
+                         "payment_request": "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq9qrsgq357wnc5r2ueh7ck6q93dj32dlqnls087fxdwk8qakdyafkq3yap9us6v52vjjsrvywa6rt52cm9r9zqt8r2t7mlcwspyetp5h2tztugp9lfyql"}
+                        """)
+                .build());
 
-    var config = new LnbitsConfig(server.url("/").toString(), "test-key");
-    var backend = new LnbitsBackend(config, new ObjectMapper(), HttpClient.newHttpClient());
+        var config = new LnbitsConfig(server.url("/").toString(), "test-key", 5, 10, true);
+        var backend =
+                new LnbitsBackend(config, JsonMapper.builder().build(), HttpClient.newHttpClient());
 
-    Invoice invoice = backend.createInvoice(100L, "test");
-    assertThat(invoice.status()).isEqualTo(InvoiceStatus.PENDING);
-
-    server.shutdown();
+        Invoice invoice = backend.createInvoice(100L, "test");
+        assertThat(invoice.status()).isEqualTo(InvoiceStatus.PENDING);
+    }
 }
 ```
 

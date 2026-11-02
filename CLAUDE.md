@@ -3,15 +3,15 @@
 Auto-generated from all feature plans. Last updated: 2026-06-06
 
 ## Active Technologies
-- Java 25 (LTS) + Spring Boot 4.0.5, Spring Framework 7.x, Jakarta EE 11, Caffeine 3.2.3, gRPC 1.80.0, Protobuf 4.29.3, Jackson, Micrometer (optional) (002-dual-protocol-mpp)
+- Java 25 (LTS) + Spring Boot 4.1.2, Spring Framework 7.x, Jakarta EE 11, Caffeine 3.3.1, gRPC 1.84.1, Protobuf 4.36.2, Jackson, Micrometer (optional) (002-dual-protocol-mpp)
 - File-based root key store (default), in-memory credential cache (Caffeine) (002-dual-protocol-mpp)
 - Delegation caveat verifiers: path/method/client_ip (paygate-core, zero-dep); Jakarta Servlet API for context population (003-delegation-caveat-verifiers)
 
-- Java 25 (LTS) + Spring Boot 4.0.5 + Spring Framework 7.x + Jakarta EE 11
+- Java 25 (LTS) + Spring Boot 4.1.2 + Spring Framework 7.x + Jakarta EE 11
 - Spring Security (optional, for `paygate-spring-security` module)
-- Gradle 9.4.1 (Kotlin DSL), multi-module
-- Caffeine 3.2.3, gRPC 1.80.0, Protobuf 4.29.3, Jackson, Micrometer (optional)
-- AssertJ 3.27.3, OkHttp MockWebServer 4.12.0 (test)
+- Gradle 9.8.2 (Kotlin DSL), multi-module
+- Caffeine 3.3.1, gRPC 1.84.1 (follows Spring Boot's managed gRPC version), Protobuf 4.36.2, Jackson, Micrometer (optional)
+- AssertJ 3.27.7, OkHttp mockwebserver3 5.3.2 (test)
 
 ## Project Structure
 

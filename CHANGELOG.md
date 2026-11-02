@@ -112,6 +112,11 @@ security review; I-20 remains an accepted limitation. Dispositions for every fin
 
 ### Changed
 
+- Dependencies: Spring Boot 4.1.2 (Spring Security 7.1.2, Spring Framework 7.0.10, Jackson
+  3.1.7, Micrometer 1.17.2), Tomcat 11.0.27, Log4j 2.26.1, Caffeine 3.3.1, gRPC 1.84.1, Protobuf
+  4.36.2, and Gradle 9.8.2 with updated CycloneDX, JMH, Protobuf and build-health plugins. gRPC
+  follows Spring Boot's managed version (1.84.1), so every `io.grpc` artifact resolves to one
+  version. Tests use OkHttp `mockwebserver3` 5.3.2.
 - Servlet-mode applications that used matrix variables or dot segments in request paths now receive
   400.
 - These setups now fail closed with 400 instead of passing an unbound body:

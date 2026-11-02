@@ -92,10 +92,10 @@ This module depends on:
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | `paygate-core` | -- | `LightningBackend` interface, `Invoice` record, `InvoiceStatus` enum |
-| `io.grpc:grpc-netty-shaded` | 1.80.0 | gRPC transport with shaded Netty (no Netty version conflicts) |
-| `io.grpc:grpc-protobuf` | 1.80.0 | Protobuf message marshalling for gRPC |
-| `io.grpc:grpc-stub` | 1.80.0 | Generated gRPC stub classes |
-| `com.google.protobuf:protobuf-java` | 4.29.3 | Protobuf runtime |
+| `io.grpc:grpc-netty-shaded` | 1.84.1 | gRPC transport with shaded Netty (no Netty version conflicts) |
+| `io.grpc:grpc-protobuf` | 1.84.1 | Protobuf message marshalling for gRPC |
+| `io.grpc:grpc-stub` | 1.84.1 | Generated gRPC stub classes |
+| `com.google.protobuf:protobuf-java` | 4.36.2 | Protobuf runtime |
 
 ---
 
@@ -564,10 +564,10 @@ The proto file uses `package lnrpc` and `option java_package = "lnrpc"` to match
 
 ### Protobuf Code Generation
 
-The `com.google.protobuf` Gradle plugin (v0.9.6) generates Java classes from the proto file at build time. The `protoc-gen-grpc-java` plugin generates the gRPC stubs. Both are configured in `build.gradle.kts`:
+The `com.google.protobuf` Gradle plugin (v0.10.0) generates Java classes from the proto file at build time. The `protoc-gen-grpc-java` plugin generates the gRPC stubs. Both are configured in `build.gradle.kts`:
 
-- `protoc` compiler: `com.google.protobuf:protoc:4.29.3`
-- gRPC Java plugin: `io.grpc:protoc-gen-grpc-java:1.80.0`
+- `protoc` compiler: `com.google.protobuf:protoc:4.36.2`
+- gRPC Java plugin: `io.grpc:protoc-gen-grpc-java:1.84.1`
 
 Generated sources are placed in `build/generated/source/proto/` and are automatically included in the source set. The generated `lnrpc/**` classes are excluded from JaCoCo code coverage reporting.
 

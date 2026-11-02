@@ -30,8 +30,11 @@ passed validator or matching committed files alone is not a review. The
 [September 23 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-09-23.md) chose 30 days
 for that renewal only. A dependency, key, checksum, or source change requires review before
 the deadline; date changes alone cannot satisfy renewal. The current review is the
-[October 15 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-10-15.md), which renewed
-all 464 exceptions through 2026-11-22 UTC on re-verified source bytes.
+[November 1 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md), which
+reconciled the ledger with the Spring Boot 4.1.2 upgrade: 285 rows for superseded artifacts were
+removed and 332 exact rows added on re-verified source bytes, without adding any trusted key.
+All 511 rows share the 2026-11-22 UTC deadline set by the
+[October 15 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-10-15.md).
 
 Never accept generated verification metadata, a key-server identity, or a valid signature
 from an unauthenticated key as publisher approval by itself. Re-resolve from an isolated

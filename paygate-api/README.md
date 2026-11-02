@@ -63,7 +63,7 @@ implementation("com.greenharborlabs:paygate-api:0.1.4")
 |-------|-----------|---------|
 | compile | *none* | Zero external compile dependencies -- JDK only |
 | test | JUnit 5 | Test framework |
-| test | AssertJ 3.27.3 | Fluent test assertions |
+| test | AssertJ 3.27.7 | Fluent test assertions |
 
 ---
 
