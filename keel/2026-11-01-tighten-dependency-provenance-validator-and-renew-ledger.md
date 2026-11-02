@@ -1,6 +1,6 @@
 # Tighten the dependency-provenance validator and renew the exception ledger
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 651c43e985d223a72b9c2c0b3acf7f69635d981d
 Review scope: scripts/validate-dependency-provenance.sh, scripts/test-dependency-provenance.sh, scripts/test-fixtures/dependency-provenance/cases.tsv, scripts/audit-dependency-provenance-sources.py, config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml (`<sha256 reason>` attributes only), docs/security/DEPENDENCY-PROVENANCE-REVIEW-<work date>.md (with a `-2` suffix if that date's review already exists), SECURITY.md
 
 ## Goal
@@ -77,6 +77,8 @@ Acceptance evidence:
 
   SECURITY.md updates the current-review sentence and states the enforced rule and its residual limit.
 
+Approved: 2026-11-01 by Mark Hammond at plan revision 651c43e985d223a72b9c2c0b3acf7f69635d981d. Deadline confirmed: 2026-12-01 UTC (30 days), as proposed.
+
 ## Tasks
 - [ ] At approval, confirm that `main` is `c288ec6` and that the metadata, keyring and ledger hashes match those in Constraints. Run `./gradlew --no-daemon validateDependencyProvenance` before any edit.
 - [ ] **Commit R.**
@@ -120,4 +122,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Mark approves or revises this plan, including the 2026-12-01 UTC deadline.
+Implement the approved plan in a fresh context, starting with Commit R.
