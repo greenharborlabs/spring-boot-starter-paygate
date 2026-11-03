@@ -1,7 +1,7 @@
 # Tighten the dependency-provenance validator and renew the exception ledger
-Status: working
+Status: review
 Base revision: 651c43e985d223a72b9c2c0b3acf7f69635d981d
-Review scope: scripts/validate-dependency-provenance.sh, scripts/test-dependency-provenance.sh, scripts/test-fixtures/dependency-provenance/cases.tsv, scripts/audit-dependency-provenance-sources.py, config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml (`<sha256 reason>` attributes only), docs/security/DEPENDENCY-PROVENANCE-REVIEW-<work date>.md (with a `-2` suffix if that date's review already exists), SECURITY.md
+Review scope: scripts/validate-dependency-provenance.sh, scripts/test-dependency-provenance.sh, scripts/test-fixtures/dependency-provenance/cases.tsv, scripts/audit-dependency-provenance-sources.py, config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml (`<sha256 reason>` attributes only), docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md, SECURITY.md
 
 ## Goal
 Keep root `check` passing after 2026-11-22 UTC. Close the validator gap recorded in the [November 1 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md#limits): every artifact that Gradle accepts on its checksum alone must have an exact ledger row, and the validator must enforce that.
@@ -80,19 +80,19 @@ Acceptance evidence:
 Approved: 2026-11-01 by Mark Hammond at plan revision 651c43e985d223a72b9c2c0b3acf7f69635d981d. Deadline confirmed: 2026-12-01 UTC (30 days), as proposed.
 
 ## Tasks
-- [ ] At approval, confirm that `main` is `c288ec6` and that the metadata, keyring and ledger hashes match those in Constraints. Run `./gradlew --no-daemon validateDependencyProvenance` before any edit.
-- [ ] **Commit R.**
+- [x] At approval, confirm that `main` is `c288ec6` and that the metadata, keyring and ledger hashes match those in Constraints. Run `./gradlew --no-daemon validateDependencyProvenance` before any edit.
+- [x] **Commit R.**
   1. Run `python3 scripts/audit-dependency-provenance-sources.py`. It must report 511/511 matches (500 Maven Central, 11 Plugin Portal). Record `blocked` if the network is unavailable and `incomplete` if the run fails partway.
   2. Set `review-date` to the approved deadline on all 511 rows. A field-level diff against base must show 511 `review-date` changes and nothing else.
   3. Write the review document's renewal section and the SECURITY.md current-review link, then commit.
-- [ ] **Classification.** Re-run the static classification. Then run the detached-signature classification, using HTTPS `.asc` files, an isolated GPG home holding only the committed keyring, and `--no-auto-key-retrieve`, over every checksum-carrying artifact without a row. It must confirm:
+- [x] **Classification.** Re-run the static classification. Then run the detached-signature classification, using HTTPS `.asc` files, an isolated GPG home holding only the committed keyring, and `--no-auto-key-retrieve`, over every checksum-carrying artifact without a row. It must confirm:
   - the residual class;
   - the 5 valid pins;
   - the protoc executables' coverage.
 
   Record the count for each category.
-- [ ] (optional) Gradle cross-check. From an empty home, run `--write-verification-metadata sha256,pgp` on a scratch copy with `<configuration>` kept and `<components>` emptied, then discard the output. The goal is to observe Gradle's checksum-only set and whether a global ignore overrides the `plexus-8` pin.
-- [ ] **Commit V.**
+- [x] (optional, skipped) Gradle cross-check. From an empty home, run `--write-verification-metadata sha256,pgp` on a scratch copy with `<configuration>` kept and `<components>` emptied, then discard the output. The goal is to observe Gradle's checksum-only set and whether a global ignore overrides the `plexus-8` pin.
+- [x] **Commit V.**
   1. Implement the rule, the strict row linkage, the pin keyring check and the Guava mapping, in both the validator and the audit.
   2. Add the residual `reason` annotations and the gap rows.
   3. Add fixtures to `cases.tsv` and `test-dependency-provenance.sh`. Each case must be rejected:
@@ -107,7 +107,7 @@ Approved: 2026-11-01 by Mark Hammond at plan revision 651c43e985d223a72b9c2c0b3a
 
      `clean-resolution` must still pass.
   4. Write the review document's evidence section and the SECURITY.md rule text, then commit.
-- [ ] **Checks after V,** with each command, exit code, task count, test totals and omissions recorded. The baseline is 3,448 default-module tests, 154 integration `test` and 71 `securityTest`.
+- [x] **Checks after V,** with each command, exit code, task count, test totals and omissions recorded. The baseline is 3,448 default-module tests, 154 integration `test` and 71 `securityTest`.
   - `python3 scripts/audit-dependency-provenance-sources.py`: every row matches.
   - `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls`
   - `GRADLE_USER_HOME=$(mktemp -d) ./gradlew --no-daemon spotlessCheck check --rerun-tasks` (strict verification)
@@ -116,10 +116,51 @@ Approved: 2026-11-01 by Mark Hammond at plan revision 651c43e985d223a72b9c2c0b3a
   - `git diff --check c288ec6 HEAD -- . ':!gradlew.bat'` must be clean. `gradlew.bat` is CRLF by design.
 
 ## Review
-Awaiting implementation and fresh-context review.
+Implementation complete at `cee9480` on base `651c43e` (approval record `0accf22`). It has two commits:
+- **Commit R** (`df3b296`): the date renewal, the review document's renewal section, and the SECURITY.md current-review link. It passed the unchanged validator and negative controls on its own.
+- **Commit V** (`cee9480`): the rest of the scope.
+
+The work date is 2026-11-03 UTC, so the review document is [DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md). Awaiting fresh-context review.
+
+WORK evidence (Java 25.0.1 Temurin, Gradle 9.8.2, GnuPG 2.5.20, macOS arm64):
+- **Approval checks: pass.** `origin/main` = `c288ec6`. The metadata `4983724f…`, keyring `11d778c6…` and ledger `f1f52ab5…` hashes match. The pre-edit `validateDependencyProvenance` exited 0.
+- **Commit R audit: pass.** `python3 scripts/audit-dependency-provenance-sources.py` at 2026-11-03T02:57Z exited 0: 511/511 matches, 72,420,133 bytes, 500 from Maven Central and 11 from the Plugin Portal.
+- **Commit R field diff: pass.** 511 `review-date` changes (`2026-11-22` to `2026-12-01`), with no other field or header changes. Ledger `af2c48c7…`.
+- **Classification: pass.** All 454 rowless checksum-carrying artifacts matched their metadata SHA-256 at HTTPS sources. Their signatures were checked in an isolated GPG home with the committed keyring only (187 keys processed, 116 imported, 52 without user IDs) and `--no-auto-key-retrieve`. The results:
+  - 391 are covered;
+  - 63 are checksum-only: 31 with a valid signature from a key that isn't trusted for them or is ignored, 19 `NO_PUBKEY`, and 13 unsigned;
+  - the Guava `-android` jar is checksum-only in Gradle;
+  - all 10 existing rows under a non-ignored scope are signed by a different key.
+
+  The validator's static conditions require 49 of the 64 checksum-only artifacts. The other 15, plus those 10 rows, form the residual class of 25 that was annotated.
+- **Optional Gradle cross-check: skipped.** The GPG classification against the committed keyring is the stricter test, and every artifact it does not cover now has a row.
+- **Commit V audit: pass.** At 2026-11-03T03:06Z: 575/575 matches, 82,476,457 bytes, 558 from Maven Central and 17 from the Plugin Portal.
+- **Ledger: pass.** The 511 base rows are kept, with only `review-date` changed; 64 rows were added as EX-797 through EX-860; none were removed. Every deadline is 2026-12-01. Ledger `5f67e564…`, metadata `769da5ba…`.
+- **Negative controls: pass.** The 12 new cases are each rejected with their expected message, and a no-op mutation fails the harness. Against the previous validator, extended only with the Guava mapping, all 9 rule cases were accepted, so the fixtures detect a regression. The validator and harness pass with macOS awk, and with mawk and gawk on Ubuntu 24.04 (Docker).
+- **Four provenance controls: pass.** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls` exited 0, with 4/4 tasks executed.
+- **Strict check: pass.** `GRADLE_USER_HOME=<new empty scratch dir> ./gradlew --no-daemon spotlessCheck check --rerun-tasks` exited 0 in 2m 9s, with 122/122 tasks executed. The default-module test XML has 3,448 tests, with 0 failures, errors or skips.
+- **Integration tests: pass.** `./gradlew --no-daemon -Pintegration :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun` exited 0. `test` ran 154 and `securityTest` 71, with 0 failures, errors or skips. The XML timestamps are 2026-11-03T03:14Z. Stale September `wavelengthSpike*` XML is present but was not run by this invocation.
+- **Trust diffs: pass.**
+  - `git diff c288ec6 -- gradle/verification-keyring.keys` is empty.
+  - `<configuration>` is byte-identical to base.
+  - The metadata diff has no `<trusted-key|trusting|pgp|ignored-key>` lines; it is exactly 25 `<sha256>` lines gaining the residual `reason` attribute.
+- **Whitespace: pass.** `git diff --check c288ec6 HEAD -- . ':!gradlew.bat'` is clean.
+
+Deviations from the plan's expectations. None changes the rule, the scope or the acceptance:
+1. **Pins.** Only 2 of the 5 non-ignored `<pgp>` pins verify with the committed keyring. The keys for the `gson-2.3.1`, `apache-16` and `commons-parent-39` pins are absent from it, and so is the key for the `plexus-8` pin. These 4 artifacts got rows (EX-810, EX-836, EX-837, EX-844), giving 64 rows rather than about 61. The plexus "conflict" therefore predates the November 1 ignore: that pin never had keyring-backed coverage.
+2. **Pin keyring check.** It is implemented as a coverage condition, not a hard metadata failure. A pin whose key is absent or ignored gives no coverage, so its artifact requires a row. This keeps the change within scope: rows only, with no pin removal. The `pin-key-not-in-keyring` fixture is rejected.
+3. **Annotations.** The residual annotation covers 25 artifacts, not about 11. The extra 10 are existing rows whose enforcement would otherwise have been lost under the new rule.
+4. **Interval.** The approved 2026-12-01 deadline is 28 days from the 2026-11-03 UTC work date, shorter than the proposed 30. It was kept as approved and recorded in the review document.
+
+Limits:
+- No publisher identity is authenticated.
+- An unannotated artifact under a covering scope but signed by another key is undetectable offline; the per-change signature classification remains the control.
+- Gradle's key-server lookup for keys absent from the keyring is not disabled. That is outside this task, and the affected artifacts now have rows.
+- 139 three-digit exception IDs remain.
+- Default `check` omits live Lightning, advisory freshness and release readiness.
 
 ## Outcome
 Pending.
 
 ## Next action
-Implement the approved plan in a fresh context, starting with Commit R.
+Run the fresh-context keel review, then open a PR before 2026-11-22 UTC. If commit V needs rework past 2026-11-18 UTC, ship commit R (`df3b296`) alone.
