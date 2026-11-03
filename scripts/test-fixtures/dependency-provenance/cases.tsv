@@ -1,4 +1,4 @@
-# case	mutation
+# case	mutation	expected-error (optional substring of the rejection)
 missing-key	remove the committed keyring
 untrusted-signature	remove a scoped trusted-key entry
 checksum-change	change one SHA-256 value
@@ -7,4 +7,16 @@ broad-exception	use a wildcard coordinate
 duplicate-exception	duplicate an exact exception coordinate
 orphaned-exception	reference an absent component
 expired-exception	use a past review date
+unscoped-without-exception	drop the exception of an artifact no trusted-key scope covers	checksum-only artifact lacks an exact exception for ch.qos.logback:logback-classic:1.5.38:logback-classic-1.5.38.jar
+unsigned-without-exception	drop the exception of an artifact annotated as not signed	checksum-only artifact lacks an exact exception for aopalliance:aopalliance:1.0:aopalliance-1.0.jar
+residual-without-exception	drop the exception of a reason-annotated artifact under a covering scope	checksum-only artifact lacks an exact exception for com.google.googlejavaformat:google-java-format:1.35.0:google-java-format-1.35.0.jar
+ignored-scope-without-exception	drop the exception of an artifact whose only scope key is ignored	checksum-only artifact lacks an exact exception for com.squareup.okio:okio-jvm:3.6.0:okio-jvm-3.6.0.jar
+ignored-pin-without-exception	drop the exception of the artifact pinned to an ignored key	checksum-only artifact lacks an exact exception for org.codehaus.plexus:plexus:8:plexus-8.pom
+artifact-ignored-pin	ignore a covering pin key on its artifact	checksum-only artifact lacks an exact exception for net.java:jvnet-parent:1:jvnet-parent-1.pom
+pin-key-not-in-keyring	pin a covered artifact to a fingerprint absent from the keyring	checksum-only artifact lacks an exact exception for net.java:jvnet-parent:1:jvnet-parent-1.pom
+unsupported-scope-regex	rewrite a regex scope in a form the validator does not evaluate	checksum-only artifact lacks an exact exception for com.google
+checksum-from-other-artifact	add an exception for a signature-covered artifact with another artifact checksum	does not name an exact metadata artifact and checksum
+android-source-unmapped	point the Guava -android jar exception at its component-version path	exception EX-821 source does not match its exact coordinate
+android-source-wrong-version	point the Guava -android jar exception at another -jre version	exception EX-821 source does not match its exact coordinate
+jre-source-on-non-android	use a -jre source version for a component that is not -android	exception EX-811 source does not match its exact coordinate
 clean-resolution	validate the unmodified reviewed inputs

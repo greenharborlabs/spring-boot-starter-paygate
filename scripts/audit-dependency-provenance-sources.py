@@ -29,7 +29,12 @@ def read_exceptions(path):
 def verify(row):
     exception_id, group, module, version, filename, expected_sha, url, *_ = row
     parsed = urlsplit(url)
-    coordinate_path = f"{group.replace('.', '/')}/{module}/{version}/{filename}"
+    # Guava's module metadata redirects a -android component to its -jre jar, which is published
+    # only under the -jre version. This is the single accepted source/version difference.
+    source_version = version
+    if version.endswith("-android") and filename.startswith(f"{module}-{version.removesuffix('-android')}-jre."):
+        source_version = version.removesuffix("-android") + "-jre"
+    coordinate_path = f"{group.replace('.', '/')}/{module}/{source_version}/{filename}"
     if (
         parsed.scheme != "https"
         or parsed.netloc not in REPOSITORIES

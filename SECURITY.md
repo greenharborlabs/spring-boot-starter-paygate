@@ -20,7 +20,14 @@ Gradle verifies both SHA-256 checksums and publisher signatures using the commit
 `gradle/verification-metadata.xml` and `gradle/verification-keyring.keys`. A dependency without
 usable publisher authentication requires one exact, independently reviewed row in
 `config/dependency-provenance-exceptions.tsv`; rows record the coordinate, artifact bytes,
-authoritative source, rationale, owner, next review deadline, and renewal trigger. The legacy
+authoritative source, rationale, owner, next review deadline, and renewal trigger.
+`validateDependencyProvenance` requires such a row for every artifact Gradle can accept on its
+checksum alone: one whose checksum carries any `reason` annotation, or one that no non-ignored
+trusted-key scope for its exact coordinates and no artifact pin backed by the committed keyring
+covers. The validator cannot detect, offline, an artifact under a covering scope that another key
+signs. Every dependency change therefore needs a detached-signature classification, and such an
+artifact must be annotated `reason="Signature is not from a key trusted for these coordinates"`.
+The legacy
 `review-date` column is an inclusive UTC deadline, not the date the review was performed;
 validation rejects it when it precedes the current UTC date. Record the actual review date,
 exact source-byte evidence, publisher-authentication limitations, and owner-approved bounded
@@ -31,7 +38,8 @@ passed validator or matching committed files alone is not a review. The
 for that renewal only. A dependency, key, checksum, or source change requires review before
 the deadline; date changes alone cannot satisfy renewal. The current review is the
 [November 3 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md), which
-re-verified the source bytes of every row and renewed the ledger through 2026-12-01 UTC.
+re-verified the source bytes of every row and renewed the ledger through 2026-12-01 UTC. It
+also added 64 rows for checksum-only artifacts that the earlier validator did not require.
 The [November 1 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md) reconciled
 the ledger with the Spring Boot 4.1.2 upgrade: 285 rows for superseded artifacts were
 removed and 332 exact rows added on re-verified source bytes, without adding any trusted key.
