@@ -35,7 +35,11 @@ The same procedure on the 10 existing rows that sit under a non-ignored scope fo
 
 ### Artifact pins
 
-Only 2 of the 7 artifact-level `<pgp>` pins verify with the committed keyring: `jvnet-parent-1.pom` and `velocity-master-7.pom`. The keys pinned on these 4 artifacts are absent from the keyring:
+A pin covers its artifact only when the pinned fingerprint is in the committed keyring and is not ignored. Of the 7 artifact-level `<pgp>` pins, 3 signatures verify with the committed keyring, but only 2 give coverage: `jvnet-parent-1.pom` and `velocity-master-7.pom`. Both signatures are cryptographically good, but neither key is currently valid. The `jvnet-parent-1` key `2BCBDD0F…0374CF2E8DD1BDFD` carries a revocation in the committed keyring (`REVKEYSIG`). The `velocity-master-7` key `6A814B1F…1A2A1C94BDE89688` expired on 2026-06-05 (`EXPKEYSIG`), after the 2024-07-30 signature. Gradle accepts both: the strict `check` passes from an empty Gradle home. The validator and this classification count them as coverage. See [Limits](#limits-and-interval).
+
+The third, `all-1.2.0.pom`, is pinned to `4F7E32D440EF90A83011A8FC6425559C47CC79C4`. That key is in the committed keyring and signs the POM, but it is globally ignored (`<ignored-key id="6425559C47CC79C4"/>`). The pin therefore gives no coverage, and the row EX-440, which already existed at base, stays required.
+
+The keys pinned on the other 4 artifacts are absent from the keyring:
 - `gson-2.3.1.pom` (EX-810);
 - `apache-16.pom` (EX-836);
 - `commons-parent-39.pom` (EX-837);
@@ -50,7 +54,7 @@ The optional Gradle `--write-verification-metadata` cross-check was not run. The
 The validator now parses each `<component>`/`<artifact>` as a unit. An artifact with a checksum must have an exact row (group, module, version, file and SHA-256) when either of these holds:
 
 1. Its `<sha256>` carries any `reason` annotation.
-2. No non-ignored key covers it. A key covers an artifact through a `<trusted-key>`/`<trusting>` scope that matches its exact coordinates, or through a `<pgp>` pin whose fingerprint is in the committed keyring.
+2. No non-ignored key covers it. A key covers an artifact through a `<trusted-key>`/`<trusting>` scope that matches its exact coordinates, or through a `<pgp>` pin. A pin covers only when its fingerprint is a 40-hex key in the committed keyring and is not ignored, globally or on the artifact. A pin to an ignored key, such as that of `all-1.2.0.pom`, gives no coverage.
 
 Further details:
 - **Regex scopes.** Only Gradle's generated group-prefix shape, `^<literal>($|([.].*))`, is evaluated as a regex scope. Any other regex counts as not covering, so the artifact needs a row.
@@ -93,6 +97,7 @@ The ledger now has 575 rows, SHA-256 `5f67e564c54466b9db001f8dcd955d22e6054bafd9
 
 - **Publisher identity.** This review re-establishes artifact bytes, sources and metadata linkage. It does not authenticate publisher identity: no key was recovered, imported or trusted, and no fingerprint was confirmed out of band. `<trusted-keys>`, `<ignored-keys>`, the `<pgp>` pins and the keyring are unchanged.
 - **Residual detection.** The offline validator cannot detect an unannotated checksum-only artifact under a covering scope: one signed by a key other than the one trusted for its coordinates. A future dependency change could add such an artifact. The detached-signature classification that policy requires for every dependency change remains the control for that case.
+- **Key validity.** Coverage here means a cryptographically good signature from a trusted or pinned key that is not ignored. It does not consider whether that key is revoked or expired. The committed keyring has 116 primary keys: 1 revoked and 20 expired. Of the 21, 14 are trusted and not ignored: `2BCBDD0F…0374CF2E8DD1BDFD` (revoked) and 13 expired keys, including `6A814B1F…1A2A1C94BDE89688`. Gradle accepts their signatures, so neither the validator nor the classification above requires rows for the artifacts they sign. Deciding whether a revoked or expired key should still give coverage is a trust decision, and it is outside this review's scope.
 - **Key servers.** The metadata does not disable Gradle's key-server lookup for keys absent from the keyring. A key obtained that way is not publisher approval. Every artifact whose key is absent from the keyring now has a row whatever Gradle fetches.
 - **ID space.** IDs use three digits (`EX-NNN`). EX-860 is the highest, which leaves 139 IDs.
 

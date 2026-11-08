@@ -23,8 +23,8 @@ usable publisher authentication requires one exact, independently reviewed row i
 authoritative source, rationale, owner, next review deadline, and renewal trigger.
 `validateDependencyProvenance` requires such a row for every artifact Gradle can accept on its
 checksum alone: one whose checksum carries any `reason` annotation, or one that no non-ignored
-trusted-key scope for its exact coordinates and no artifact pin backed by the committed keyring
-covers. The validator cannot detect, offline, an artifact under a covering scope that another key
+trusted-key scope for its exact coordinates and no artifact pin to a non-ignored key in the
+committed keyring covers. The validator cannot detect, offline, an artifact under a covering scope that another key
 signs. Every dependency change therefore needs a detached-signature classification, and such an
 artifact must be annotated `reason="Signature is not from a key trusted for these coordinates"`.
 The legacy
