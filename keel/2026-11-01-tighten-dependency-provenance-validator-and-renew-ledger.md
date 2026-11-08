@@ -1,5 +1,5 @@
 # Tighten the dependency-provenance validator and renew the exception ledger
-Status: review
+Status: working
 Base revision: 651c43e985d223a72b9c2c0b3acf7f69635d981d
 Review scope: scripts/validate-dependency-provenance.sh, scripts/test-dependency-provenance.sh, scripts/test-fixtures/dependency-provenance/cases.tsv, scripts/audit-dependency-provenance-sources.py, config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml (`<sha256 reason>` attributes only), docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md, SECURITY.md
 
@@ -158,6 +158,26 @@ Limits:
 - Gradle's key-server lookup for keys absent from the keyring is not disabled. That is outside this task, and the affected artifacts now have rows.
 - 139 three-digit exception IDs remain.
 - Default `check` omits live Lightning, advisory freshness and release readiness.
+
+### Attempt 1
+Reviewed revision: 26b92d7d5cc8b1e351521131b15a7c7a5fc182ca
+Verdict: rework
+Findings and dispositions:
+1. **Rework: the pin evidence in the review document is inaccurate and incomplete.** [DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md) says "Only 2 of the 7 artifact-level `<pgp>` pins verify with the committed keyring: `jvnet-parent-1.pom` and `velocity-master-7.pom`", then lists 4 pins whose keys are absent. Those 6 pins do not account for the seventh: `com.sun.activation:all:1.2.0` (`all-1.2.0.pom`), pinned to `4F7E32D440EF90A83011A8FC6425559C47CC79C4`. That key is in the committed keyring and the detached signature verifies (isolated GPG home containing only the committed keyring, `--no-auto-key-retrieve`), but the key is globally ignored (`<ignored-key id="6425559C47CC79C4" .../>`), so the pin gives no coverage and the pre-existing EX-440 row is required. Correct the document to state that 3 of 7 signatures verify, that only `jvnet-parent-1.pom` and `velocity-master-7.pom` give coverage, that the `gson-2.3.1`, `apache-16`, `commons-parent-39` and `plexus-8` keys are absent, and that the `all-1.2.0` key is present but ignored. Make the Rule bullet's pin condition explicit: a pin covers only when its fingerprint is in the committed keyring and is not ignored. Add the same clarification to the WORK "Pins" paragraph. No validator, audit, ledger or metadata change is implied: the implemented rule already treats the ignored pin as no coverage, and EX-440 already existed at base.
+
+Verification:
+- `bash scripts/validate-dependency-provenance.sh`: pass.
+- `bash scripts/test-dependency-provenance.sh`: pass, including the 12 new rule cases and `clean-resolution`.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass (575/575 matches, 82,476,457 bytes, 558 Maven Central / 17 Plugin Portal).
+- Audit of the Commit R ledger (`git show df3b296:config/dependency-provenance-exceptions.tsv`): pass (511/511 matches, 72,420,133 bytes, 500/11).
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls`: pass, 4/4 tasks executed.
+- `./gradlew --no-daemon spotlessCheck check --rerun-tasks`: pass, 122/122 tasks executed.
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun`: pass, 154 `test` and 71 `securityTest`, 0 failures/errors/skips.
+- Trust state: pass. `git diff 651c43e..HEAD -- gradle/verification-keyring.keys` is empty; `<configuration>` is byte-identical; the metadata diff has no `<trusted-key|trusting|pgp|ignored-key>` line and is exactly 25 `<sha256>` lines gaining the residual `reason` (50 diff lines).
+- Ledger: pass. 511 rows changed `review-date` only, 64 added as EX-797..EX-860, none removed; all 575 deadlines are 2026-12-01; the additions are contiguous and in coordinate order, 58 Maven Central / 6 Plugin Portal. The base, Commit R and HEAD hashes match the review document.
+- `git diff --check 651c43e..HEAD -- . ':!gradlew.bat'`: pass.
+- Pin spot check: `all-1.2.0.pom` has a good detached signature by the pinned key `4F7E32D440EF90A83011A8FC6425559C47CC79C4` with the committed keyring, contradicting the document's "2 of 7" count (finding 1).
+- Not re-run: the 454-artifact detached-signature classification (network-heavy; WORK evidence was used) and the mawk/gawk portability run (Docker). The optional Gradle cross-check remains skipped as recorded.
 
 ## Outcome
 Pending.
