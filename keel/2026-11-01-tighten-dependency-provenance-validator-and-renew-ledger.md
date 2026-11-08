@@ -1,5 +1,5 @@
 # Tighten the dependency-provenance validator and renew the exception ledger
-Status: working
+Status: review
 Base revision: 651c43e985d223a72b9c2c0b3acf7f69635d981d
 Review scope: scripts/validate-dependency-provenance.sh, scripts/test-dependency-provenance.sh, scripts/test-fixtures/dependency-provenance/cases.tsv, scripts/audit-dependency-provenance-sources.py, config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml (`<sha256 reason>` attributes only), docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md, SECURITY.md
 
@@ -116,7 +116,7 @@ Approved: 2026-11-01 by Mark Hammond at plan revision 651c43e985d223a72b9c2c0b3a
   - `git diff --check c288ec6 HEAD -- . ':!gradlew.bat'` must be clean. `gradlew.bat` is CRLF by design.
 
 ## Review
-Implementation complete at `cee9480` on base `651c43e` (approval record `0accf22`). It has two commits:
+Implementation complete at `cee9480` on base `651c43e` (approval record `0accf22`); Attempt 1 rework complete at `e446650`. The implementation has two commits:
 - **Commit R** (`df3b296`): the date renewal, the review document's renewal section, and the SECURITY.md current-review link. It passed the unchanged validator and negative controls on its own.
 - **Commit V** (`cee9480`): the rest of the scope.
 
@@ -147,7 +147,7 @@ WORK evidence (Java 25.0.1 Temurin, Gradle 9.8.2, GnuPG 2.5.20, macOS arm64):
 - **Whitespace: pass.** `git diff --check c288ec6 HEAD -- . ':!gradlew.bat'` is clean.
 
 Deviations from the plan's expectations. None changes the rule, the scope or the acceptance:
-1. **Pins.** Only 2 of the 5 non-ignored `<pgp>` pins verify with the committed keyring. The keys for the `gson-2.3.1`, `apache-16` and `commons-parent-39` pins are absent from it, and so is the key for the `plexus-8` pin. These 4 artifacts got rows (EX-810, EX-836, EX-837, EX-844), giving 64 rows rather than about 61. The plexus "conflict" therefore predates the November 1 ignore: that pin never had keyring-backed coverage.
+1. **Pins.** A pin covers only when its fingerprint is in the committed keyring and is not ignored. Of the 7 `<pgp>` pins, 3 signatures verify with the committed keyring, but only 2 give coverage: `jvnet-parent-1.pom` and `velocity-master-7.pom`. The `all-1.2.0.pom` pin key `4F7E…79C4` is in the keyring but globally ignored, so that pin covers nothing and its pre-existing EX-440 row stays required. The keys for the `gson-2.3.1`, `apache-16` and `commons-parent-39` pins are absent from the keyring, and so is the key for the `plexus-8` pin. These 4 artifacts got rows (EX-810, EX-836, EX-837, EX-844), giving 64 rows rather than about 61. The plexus "conflict" therefore predates the November 1 ignore: that pin never had keyring-backed coverage.
 2. **Pin keyring check.** It is implemented as a coverage condition, not a hard metadata failure. A pin whose key is absent or ignored gives no coverage, so its artifact requires a row. This keeps the change within scope: rows only, with no pin removal. The `pin-key-not-in-keyring` fixture is rejected.
 3. **Annotations.** The residual annotation covers 25 artifacts, not about 11. The extra 10 are existing rows whose enforcement would otherwise have been lost under the new rule.
 4. **Interval.** The approved 2026-12-01 deadline is 28 days from the 2026-11-03 UTC work date, shorter than the proposed 30. It was kept as approved and recorded in the review document.
@@ -178,6 +178,33 @@ Verification:
 - `git diff --check 651c43e..HEAD -- . ':!gradlew.bat'`: pass.
 - Pin spot check: `all-1.2.0.pom` has a good detached signature by the pinned key `4F7E32D440EF90A83011A8FC6425559C47CC79C4` with the committed keyring, contradicting the document's "2 of 7" count (finding 1).
 - Not re-run: the 454-artifact detached-signature classification (network-heavy; WORK evidence was used) and the mawk/gawk portability run (Docker). The optional Gradle cross-check remains skipped as recorded.
+
+Rework after Attempt 1 (implementation at `e446650`; documentation only):
+1. **Finding 1, fixed.** [DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md#artifact-pins) now says the following:
+   - 3 of the 7 pin signatures verify, and only `jvnet-parent-1.pom` and `velocity-master-7.pom` give coverage.
+   - The `all-1.2.0` key is present but globally ignored, so EX-440 stays required.
+   - The `gson-2.3.1`, `apache-16`, `commons-parent-39` and `plexus-8` keys are absent.
+
+   The Rule bullet now states the pin condition explicitly: a 40-hex fingerprint in the committed keyring that is not ignored, globally or on the artifact. The WORK "Pins" deviation above carries the same clarification. The SECURITY.md rule sentence now says "an artifact pin to a non-ignored key in the committed keyring". No validator, audit, ledger or metadata change was made.
+2. **New observation, documented and not acted on.** Re-verifying all 7 pins showed that the 2 covering pins are not currently valid keys:
+   - `jvnet-parent-1` is signed by a key revoked in the committed keyring (`REVKEYSIG`, `2BCBDD0F…0374CF2E8DD1BDFD`);
+   - `velocity-master-7` is signed by a key that expired on 2026-06-05 (`EXPKEYSIG`, `6A814B1F…1A2A1C94BDE89688`).
+
+   Gradle accepts both, since `verify-signatures` is true and the strict `check` passes. This is broader than pins: 14 trusted, non-ignored keyring keys are expired (13) or revoked (1), and both keys above are also trusted by scope. Whether such keys should still give coverage is a trust decision. Constraints put that out of scope, and the approved plan rejected rows for valid pins. So the review document records it under the pins and as a new "Key validity" limit, and it is left for Mark to decide in a follow-up.
+
+Rework verification (2026-11-08 UTC):
+- Pin re-verification: pass, matching finding 1. All 7 POMs were fetched over HTTPS from Maven Central, and each matches its metadata SHA-256. They were checked with `gpgv` against a dearmored copy of the committed keyring, with no agent and no key retrieval. Results: `all-1.2.0` `GOODSIG` by `4F7E…79C4`; `jvnet-parent-1` `REVKEYSIG`/`VALIDSIG`; `velocity-master-7` `EXPKEYSIG`/`VALIDSIG`; `gson-2.3.1`, `apache-16`, `commons-parent-39` and `plexus-8` `NO_PUBKEY`. A first attempt with `gpg --homedir` under the scratchpad hung on the agent socket ("File name too long") and was killed; its output was discarded.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, exit 0, at 2026-11-08T01:06Z. 575/575 matches, 82,476,457 bytes, 558 from Maven Central and 17 from the Plugin Portal.
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls spotlessCheck`: pass, exit 0. All four controls reported passed.
+- `GRADLE_USER_HOME=<new empty scratch dir> ./gradlew --no-daemon spotlessCheck check --rerun-tasks`: pass, exit 0, in 2m 15s, with 122/122 tasks executed. 3,448 default-module tests, 0 failures, errors or skips.
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun`, with the same Gradle home: pass, exit 0, 36 tasks with 3 executed. `test` ran 154 and `securityTest` 71, with 0 failures, errors or skips, all in fresh result XML.
+- Trust state: pass.
+  - `git diff 651c43e HEAD -- gradle/verification-keyring.keys` is empty.
+  - `<configuration>` is byte-identical to base.
+  - The metadata diff has no `<trusted-key|trusting|pgp|ignored-key>` lines, and its 50 changed lines are unchanged from Attempt 1.
+  - The ledger `5f67e564…` and metadata `769da5ba…` are unchanged.
+- `git diff --check 651c43e HEAD -- . ':!gradlew.bat'`: pass (clean).
+- Not re-run: the 454-artifact classification and the mawk/gawk portability run. The rework touched no script or data file.
 
 ## Outcome
 Pending.
