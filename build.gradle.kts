@@ -12,10 +12,10 @@ val springBootVersion = "4.1.2"
 val log4jVersion = "2.26.1"
 val tomcatVersion = "11.0.27"
 val caffeineVersion = "3.3.1"
-val grpcVersion = "1.84.1"
+val grpcVersion = "1.85.1"
 val protobufVersion = "4.36.2"
 val assertjVersion = "3.27.7"
-val mockWebServerVersion = "5.3.2"
+val mockWebServerVersion = "5.5.1"
 
 allprojects {
     group = property("group") as String
@@ -140,8 +140,8 @@ subprojects {
                 entry("tomcat-embed-el")
                 entry("tomcat-embed-websocket")
             }
-            dependency("net.bytebuddy:byte-buddy:1.18.16")
-            dependency("net.bytebuddy:byte-buddy-agent:1.18.16")
+            dependency("net.bytebuddy:byte-buddy:1.18.17")
+            dependency("net.bytebuddy:byte-buddy-agent:1.18.17")
         }
     }
 
