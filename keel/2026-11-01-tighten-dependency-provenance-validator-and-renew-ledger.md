@@ -1,5 +1,5 @@
 # Tighten the dependency-provenance validator and renew the exception ledger
-Status: review
+Status: closed
 Base revision: 651c43e985d223a72b9c2c0b3acf7f69635d981d
 Review scope: scripts/validate-dependency-provenance.sh, scripts/test-dependency-provenance.sh, scripts/test-fixtures/dependency-provenance/cases.tsv, scripts/audit-dependency-provenance-sources.py, config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml (`<sha256 reason>` attributes only), docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md, SECURITY.md
 
@@ -206,8 +206,52 @@ Rework verification (2026-11-08 UTC):
 - `git diff --check 651c43e HEAD -- . ':!gradlew.bat'`: pass (clean).
 - Not re-run: the 454-artifact classification and the mawk/gawk portability run. The rework touched no script or data file.
 
+### Attempt 2
+Reviewed revision: 770f5e42683d454cfc2746f5e734c154d928bf84
+Verdict: pass
+Findings and dispositions: No findings; no rework required. Attempt 1's finding is fixed accurately: the pin section now accounts for all 7 pins, states that 3 signatures verify and only 2 give coverage, and explains the ignored `all-1.2.0` pin. The added key-validity claim was independently confirmed: `all-1.2.0` `GOODSIG`; `jvnet-parent-1` `REVKEYSIG`/`VALIDSIG`; `velocity-master-7` `EXPKEYSIG`/`VALIDSIG`; the 4 remaining pins `NO_PUBKEY`; the committed keyring has 116 primary keys, 1 revoked and 20 expired, of which 14 are trusted and not ignored (1 revoked, 13 expired).
+Verification:
+- `bash scripts/validate-dependency-provenance.sh`: pass.
+- `bash scripts/test-dependency-provenance.sh`: pass.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass (575/575 matches, 82,476,457 bytes, 558 Maven Central / 17 Plugin Portal).
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls verifyRepositorySecretIgnoreControls verifyDependencyAdvisoryWorkflowControls spotlessCheck check --rerun-tasks`: pass, 122/122 tasks executed.
+- `GRADLE_USER_HOME=<new empty scratch dir> ./gradlew --no-daemon spotlessCheck check --rerun-tasks`: pass in 2m 21s, 122/122 tasks executed.
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:test --rerun :paygate-integration-tests:securityTest --rerun`: pass (154 `test`, 71 `securityTest`, 0 failures/errors/skips). The rework changed only documentation; the integration-test inputs are byte-identical to Attempt 1's run, where the reviewer executed this command, and WORK also reran it at this revision.
+- Pin signatures independently re-verified over HTTPS with the committed keyring: pass, matching the review document and the rework evidence.
+- Trust state: pass. The keyring, `<configuration>` and all trust declarations are unchanged from Attempt 1: keyring `11d778c6…`, metadata `769da5ba…`, ledger `5f67e564…`; zero `<trusted-key|trusting|pgp|ignored-key>` diff lines; the 50 metadata diff lines are still the 25 `<sha256>` `reason` additions.
+- `git diff --check 651c43e..HEAD -- . ':!gradlew.bat'`: pass.
+- Not re-run: the 454-artifact detached-signature classification, the mawk/gawk portability run, and the optional Gradle cross-check (still skipped). These are not required checks, and the rework touched no script or data file. Material limit: the statement that Gradle accepts the revoked and expired pin signatures rests on the recorded empty-home strict check; the rework did not change the metadata or ledger that the build verifies.
+
 ## Outcome
-Pending.
+Closed after review Attempt 2 passed at `770f5e4`. The implementation is `df3b296` (Commit R), `cee9480` (Commit V) and `e446650` (Attempt 1 rework), on base `651c43e`.
+
+What changed:
+- **Renewal.** All 511 existing ledger rows were renewed to 2026-12-01 UTC on re-verified source bytes, changing `review-date` only.
+- **Validator rule.** `scripts/validate-dependency-provenance.sh` now requires an exact row for every checksum-only artifact. That is an artifact with any `<sha256>` `reason`, or one that no non-ignored trusted-key scope covers, and that no pin to a non-ignored key in the committed keyring covers. Row linkage is now a single exact match on artifact and checksum.
+- **Guava mapping.** The validator and `scripts/audit-dependency-provenance-sources.py` accept the Guava `-android`→`-jre` source mapping and no other.
+- **Gap rows and annotations.** 64 rows were added as EX-797..EX-860. 25 residual artifacts got the informational `reason="Signature is not from a key trusted for these coordinates"`.
+- **Fixtures.** 12 negative-control fixtures were added.
+- **Trust.** No trust was added. The keyring, `<configuration>` and every trusted-key, trusting, pin and ignored-key declaration are unchanged.
+
+Verification (Attempt 2, all pass):
+- the validator, the negative-control harness and the four provenance controls;
+- the source-byte audit, 575/575 matches;
+- the strict empty-home `spotlessCheck check --rerun-tasks`, 122/122 tasks and 3,448 tests;
+- the integration tests, `test` 154 and `securityTest` 71;
+- independent re-verification of the pin signatures;
+- the trust-state diffs and `git diff --check`.
+
+Review correction: Attempt 1 found that the pin evidence left out the ignored `all-1.2.0` pin. The fix states that 3 of the 7 pin signatures verify but only 2 give coverage, and it makes the pin condition explicit.
+
+Limits and remaining uncertainty:
+- **Key validity.** The 2 covering pins are signed by a revoked key (`jvnet-parent-1`) and an expired key (`velocity-master-7`). In all, 14 trusted, non-ignored keyring keys are revoked or expired. Gradle accepts them, as shown by the recorded empty-home strict check, and the rule still counts them as coverage. Whether they should give coverage is an unresolved trust decision, outside this task.
+- **Not authenticated or detected.** No publisher identity is authenticated. An unannotated artifact under a covering scope but signed by another key is still undetectable offline.
+- **Not re-run.** The 454-artifact classification and the mawk/gawk run were not repeated after WORK. The optional Gradle cross-check was skipped.
+- **ID space.** 139 exception IDs remain.
+
+Documentation:
+- [DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md), the new review document.
+- [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials), which links it as the current review and states the enforced rule and its residual limit.
 
 ## Next action
-Run the fresh-context keel review, then open a PR before 2026-11-22 UTC. If commit V needs rework past 2026-11-18 UTC, ship commit R (`df3b296`) alone.
+Push `chore/tighten-provenance-validator-2026-11` and open one PR to `main` with Commits R and V before 2026-11-22 UTC, linking [the review document](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md).
