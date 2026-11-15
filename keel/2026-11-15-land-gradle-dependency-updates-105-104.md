@@ -78,8 +78,29 @@ Acceptance evidence:
 
 Approved: 2026-11-15 by Mark Hammond at plan revision 230b3600ea724f9b4908830822ba82a7125dfc8e. This confirms holding `mockwebserver3` at 5.3.2, the two Dependabot ignores, and the shared 2026-12-01 UTC deadline for new rows.
 
+**Proposed amendment, 2026-11-15 (pending approval): Protobuf plugin stays on 0.10.0, and Spotless moves to 8.10.2 instead of 8.10.4.**
+
+These are findings from the first candidate generation. That generation ran the after state from an empty Gradle home with `-Pintegration` and the November 1 task set (594 tasks, exit 0). It added 35 artifacts and removed 32, and no checksum changed. Each new artifact and its `.asc` were fetched over HTTPS and verified with `gpgv` against the committed keyring only (SHA-256 `11d778c6…`). The method reproduced the committed representation for all 32 removed artifacts.
+
+- **Protobuf Gradle plugin 0.10.1: the jar Gradle resolves fails its publisher signature.**
+  - `gradlePluginPortal()` is listed first in `pluginManagement`, so Gradle resolved `protobuf-gradle-plugin-0.10.1.jar` from the Plugin Portal. That copy is `02aee6fe…`, served from `plugins-artifacts.gradle.org`.
+  - Maven Central's jar is different bytes, `6cbcf1b3…`. Its `.asc` verifies with `1DBB44E80F61493D6369B5FB95C15058A5EDA4F1`, the key already trusted for `^com.google`.
+  - The Portal serves the same `.asc`, which gives `BADSIG` against the Portal bytes. Strict verification would reject the build, because the signing key is trusted and not ignored.
+  - For 0.10.0, Gradle's bytes matched Central's signed jar.
+  - **Proposed:** keep 0.10.0. Add a Dependabot ignore for `com.google.protobuf` at version `0.10.1` only, so a corrected later release is still proposed. 0.10.1 contains only caching and deprecation changes, which Paygate doesn't need.
+  - Rejected: exact rows with the Portal bytes plus an artifact-scoped ignored key. That would accept bytes the publisher's own signature contradicts.
+  - Rejected: routing `com.google.protobuf` plugin resolution to Central with repository content filtering. That changes repository policy, which is out of scope for a dependency task.
+- **Spotless rotated its signing key at 8.10.3.**
+  - Every release through 8.10.2 (2026-09-04) is signed by `2C7F998F4272C851`, the subkey of `A31DDE881C3E3C4C985BD0D02C7F998F4272C851`, which is trusted for `com.diffplug.spotless`.
+  - 8.10.3 (2026-09-25) and 8.10.4 are signed by `FA5C18CFB74EC7C6`, which is not in the keyring.
+  - The POM's source is still `github.com/diffplug/spotless`, and GitHub shows no transfer.
+  - **Proposed:** land 8.10.2. Its libraries stay covered by the existing trusted signature, and only the unsigned Plugin Portal marker needs a row, as 7.2.1's does. Add a Dependabot ignore for `com.diffplug.spotless` at `>= 8.10.3` until a key-recovery task authenticates the new key. 8.10.3 and 8.10.4 change only the default google-java-format and remove deprecated Gradle calls. The google-java-format pin is unaffected.
+  - Rejected: 8.10.4 with about 6 exact rows. The approved rule allows it, but it swaps signature coverage for checksum-only trust on a plugin that runs in every build.
+- **Unchanged by this amendment:** Byte Buddy 1.18.17 is covered by the trusted `net.bytebuddy` key. build-health 3.20.1 follows 3.20.0's representation: `NO_PUBKEY` rows for 4 artifacts under the ignored key `95962C5E716C39AA`, and the unsigned marker. The acceptance evidence is the same.
+
 ## Tasks
-- [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
+- [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
+  - **pass:** `check` exit 0, 122 tasks, 3,448 tests with 0 failures. Integration `test` 154 and `securityTest` 71, both with 0 failures.
 - [ ] Apply the in-scope version changes. Check: `./gradlew compileJava compileTestJava`, using lenient verification only in a scratch Gradle home and never committing it.
 - [ ] Spotless 8 changelog review and build-script adaptation. Checks:
   - `spotlessCheck` passes;
@@ -107,4 +128,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Implement the approved tasks.
+Approve or revise the proposed amendment (Protobuf plugin stays on 0.10.0, Spotless 8.10.2). Work on the affected versions is paused until then.
