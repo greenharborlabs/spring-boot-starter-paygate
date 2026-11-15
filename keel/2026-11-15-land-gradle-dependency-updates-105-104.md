@@ -78,7 +78,7 @@ Acceptance evidence:
 
 Approved: 2026-11-15 by Mark Hammond at plan revision 230b3600ea724f9b4908830822ba82a7125dfc8e. This confirms holding `mockwebserver3` at 5.3.2, the two Dependabot ignores, and the shared 2026-12-01 UTC deadline for new rows.
 
-**Proposed amendment, 2026-11-15 (pending approval): Protobuf plugin stays on 0.10.0, and Spotless moves to 8.10.2 instead of 8.10.4.**
+**Amendment, 2026-11-15: Protobuf plugin stays on 0.10.0, and Spotless moves to 8.10.2 instead of 8.10.4.**
 
 These are findings from the first candidate generation. That generation ran the after state from an empty Gradle home with `-Pintegration` and the November 1 task set (594 tasks, exit 0). It added 35 artifacts and removed 32, and no checksum changed. Each new artifact and its `.asc` were fetched over HTTPS and verified with `gpgv` against the committed keyring only (SHA-256 `11d778c6…`). The method reproduced the committed representation for all 32 removed artifacts.
 
@@ -97,6 +97,8 @@ These are findings from the first candidate generation. That generation ran the 
   - **Proposed:** land 8.10.2. Its libraries stay covered by the existing trusted signature, and only the unsigned Plugin Portal marker needs a row, as 7.2.1's does. Add a Dependabot ignore for `com.diffplug.spotless` at `>= 8.10.3` until a key-recovery task authenticates the new key. 8.10.3 and 8.10.4 change only the default google-java-format and remove deprecated Gradle calls. The google-java-format pin is unaffected.
   - Rejected: 8.10.4 with about 6 exact rows. The approved rule allows it, but it swaps signature coverage for checksum-only trust on a plugin that runs in every build.
 - **Unchanged by this amendment:** Byte Buddy 1.18.17 is covered by the trusted `net.bytebuddy` key. build-health 3.20.1 follows 3.20.0's representation: `NO_PUBKEY` rows for 4 artifacts under the ignored key `95962C5E716C39AA`, and the unsigned marker. The acceptance evidence is the same.
+
+Amendment approved: 2026-11-15 by Mark Hammond at plan revision 941a4641ccc460afc4cacda8cc4e1aa720ba0fde (options: hold Protobuf plugin 0.10.0; Spotless 8.10.2).
 
 ## Tasks
 - [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
@@ -128,4 +130,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise the proposed amendment (Protobuf plugin stays on 0.10.0, Spotless 8.10.2). Work on the affected versions is paused until then.
+Implement the approved tasks as amended.
