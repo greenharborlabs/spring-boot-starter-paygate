@@ -1,6 +1,6 @@
 # Land Gradle dependency updates from Dependabot #105 and #104
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 230b3600ea724f9b4908830822ba82a7125dfc8e
 Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
 
 ## Goal
@@ -76,6 +76,8 @@ Acceptance evidence:
   - a CHANGELOG `Changed` entry;
   - version references (the [LND README](../paygate-lightning-lnd/README.md) Protobuf plugin version, and any others found).
 
+Approved: 2026-11-15 by Mark Hammond at plan revision 230b3600ea724f9b4908830822ba82a7125dfc8e. This confirms holding `mockwebserver3` at 5.3.2, the two Dependabot ignores, and the shared 2026-12-01 UTC deadline for new rows.
+
 ## Tasks
 - [ ] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
 - [ ] Apply the in-scope version changes. Check: `./gradlew compileJava compileTestJava`, using lenient verification only in a scratch Gradle home and never committing it.
@@ -105,7 +107,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise this plan. In particular, confirm:
-- holding `mockwebserver3` at 5.3.2;
-- the two Dependabot ignores;
-- the shared 2026-12-01 deadline for new rows.
+Implement the approved tasks.
