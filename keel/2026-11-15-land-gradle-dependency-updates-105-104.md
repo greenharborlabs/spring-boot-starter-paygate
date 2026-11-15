@@ -1,7 +1,7 @@
 # Land Gradle dependency updates from Dependabot #105 and #104
-Status: working
+Status: review
 Base revision: 230b3600ea724f9b4908830822ba82a7125dfc8e
-Review scope: build.gradle.kts, settings.gradle.kts, */build.gradle.kts, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md, */README.md
+Review scope: build.gradle.kts, settings.gradle.kts, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md, SECURITY.md, CHANGELOG.md
 
 ## Goal
 Land the safe subset of Dependabot PRs #105 (gradle-minor-and-patch group) and #104 (Spotless) on our own branch, with the provenance controls intact. Close both PRs as superseded.
@@ -103,24 +103,37 @@ Amendment approved: 2026-11-15 by Mark Hammond at plan revision 941a4641ccc460af
 ## Tasks
 - [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
   - **pass:** `check` exit 0, 122 tasks, 3,448 tests with 0 failures. Integration `test` 154 and `securityTest` 71, both with 0 failures.
-- [ ] Apply the in-scope version changes. Check: `./gradlew compileJava compileTestJava`, using lenient verification only in a scratch Gradle home and never committing it.
-- [ ] Spotless 8 changelog review and build-script adaptation. Checks:
-  - `spotlessCheck` passes;
-  - `git diff --stat -- 'paygate-*/src/**'` is empty.
-- [ ] Compatibility review of the other three release notes. Check: each relevant item is listed here with its disposition.
-- [ ] Provenance: generate candidates, review them by hand, classify each new artifact's detached signature, and add or remove rows. Checks:
-  - `python3 scripts/audit-dependency-provenance-sources.py` matches every row's source bytes;
-  - a diff of `gradle/verification-keyring.keys` and the `<trusted-keys>` block is empty;
-  - `./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls` passes.
-- [ ] Add the Dependabot `ignore` entries. Check: `.github/dependabot.yml` parses (YAML load) and lists only the two intended ignores.
-- [ ] Review document, SECURITY.md link, version references and CHANGELOG. Check by inspection: no stale version strings remain in the listed docs.
-- [ ] Final checks, then record the results:
-  - `GRADLE_USER_HOME=$(mktemp -d) ./gradlew spotlessCheck check --no-daemon --rerun-tasks`
-  - `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration`
-  - `./gradlew buildHealth`
-  - `./gradlew cyclonedxBom`
-  - `./gradlew dependencyCheckAggregate --rerun`, which must show no new unsuppressed findings
-  - `git diff --check`
+- [x] Apply the in-scope version changes (as amended): Byte Buddy 1.18.17, build-health 3.20.1, Spotless 8.10.2. Protobuf plugin stays at 0.10.0.
+  - **pass:** the lenient scratch-home run was the after-state `--write-verification-metadata sha256` pass, a superset of `compileJava compileTestJava`. Exit 0, 594 tasks, including every module's compile, `test`, the integration suites and `spotlessCheck`. Nothing lenient was committed.
+- [x] Spotless 8 changelog review and build-script adaptation.
+  - **Review:** none of the 8.0.0–8.10.2 breaking changes affect this build. This build runs Gradle 9.8.2 and Java 25, and doesn't use `removeWildcardImports`, the pre-push hook or `LintSuppression`. 8.10.0 requires google-java-format ≥ 1.30.0 on JVM 25, which the 1.35.0 pin satisfies. The 8.10.1 `targetExclude` change affects only `Directory` arguments; this build uses the `"build/**"` string.
+  - **pass:** no build-script adaptation was needed. `spotlessCheck` passes in the strict final run.
+  - **pass:** `git diff --stat 230b360 -- 'paygate-*/src/**'` is empty.
+- [x] Compatibility review of the other release notes. Check: each relevant item is listed here with its disposition.
+  - **Byte Buddy 1.18.17:** an Android AGP plugin fix only. Not applicable.
+  - **build-health 3.20.1:** Kotlin Multiplatform advice fixes only. Not applicable; `buildHealth` passes.
+  - **Protobuf plugin 0.10.1:** not landed (see the amendment).
+- [x] Provenance: generate candidates, review them by hand, classify each new artifact's detached signature, and add or remove rows. Evidence is in [the November 15 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md).
+  - **Result:** 28 artifacts added and 29 removed. 14 rows removed and 14 added (EX-861..EX-874). No `<ignored-key>` changes.
+  - **pass:** `python3 scripts/audit-dependency-provenance-sources.py`, exit 0, 575/575 matches.
+  - **pass:** `cmp` of the `<configuration>` block against base is identical, and `git diff -- gradle/verification-keyring.keys` is empty. The metadata diff has 0 `<trusted-key>`, `<trusting>`, `<pgp>` or `<ignored-key>` additions.
+  - **pass:** `./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
+- [x] Add the Dependabot `ignore` entries. Check: `.github/dependabot.yml` parses (YAML load) and lists only the intended ignores.
+  - **pass:** the YAML loads. The Gradle block lists exactly four ignores: `io.grpc:*` and `com.squareup.okhttp3:*` from the plan, and `com.google.protobuf` `0.10.1` and `com.diffplug.spotless` `>= 8.10.3` from the approved amendment. The GitHub Actions block is unchanged.
+- [x] Review document, SECURITY.md link, version references and CHANGELOG. Check by inspection: no stale version strings remain in the listed docs.
+  - **pass:**
+    - [DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md) is added, and [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials) links it as the current review.
+    - A CHANGELOG `Changed` entry is added.
+    - A search of the root and module READMEs and CLAUDE.md finds no Byte Buddy, build-health or Spotless version strings to update. CLAUDE.md's `mockwebserver3 5.3.2` is still correct.
+- [x] Final checks, then record the results. Each Gradle run used a new, empty `GRADLE_USER_HOME` with strict verification. Only the NVD database was copied for Dependency-Check.
+  - **pass:** `./gradlew --no-daemon spotlessCheck check --rerun-tasks`, exit 0. 121/121 tasks; the baseline had 122. 3,448 tests with 0 failures, errors or skips.
+  - **pass:** `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`, exit 0. `test` 154 and `securityTest` 71, with 0 failures.
+  - **pass:** `./gradlew --no-daemon buildHealth cyclonedxBom dependencyCheckAggregate --rerun`, exit 0. 16 SBOM files (8 modules, direct and full). Dependency-Check 13.0.0 found 126 dependencies, 0 unsuppressed findings and 1 suppressed (the approved CVE-2025-32013).
+  - **pass:** `git diff --check 230b360`, exit 0.
+  - **Limits:**
+    - The review host is macOS arm64, so the Linux protoc executables are first verified by Gradle in CI. They are unchanged.
+    - Live LND and LNbits and the Docker stacks were not exercised.
+    - Publisher identity is not authenticated.
 - [ ] After merge: close #105 and #104 with a link to the merged PR, noting what was held and why. (optional)
 
 ## Review
@@ -130,4 +143,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Implement the approved tasks as amended.
+Run a fresh-context `keel-review` of this record. The implementation is commits `0a5ff2d` (versions and provenance), `48dc974` (Dependabot ignores) and `11c98aa` (review document and docs), on branch `chore/gradle-deps-2026-11`. Review must pass before 2026-12-01 UTC.
