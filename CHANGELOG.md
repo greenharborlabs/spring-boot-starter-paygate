@@ -117,6 +117,10 @@ security review; I-20 remains an accepted limitation. Dispositions for every fin
   4.36.2, and Gradle 9.8.2 with updated CycloneDX, JMH, Protobuf and build-health plugins. gRPC
   follows Spring Boot's managed version (1.84.1), so every `io.grpc` artifact resolves to one
   version. Tests use OkHttp `mockwebserver3` 5.3.2.
+- Build and test dependencies: Byte Buddy 1.18.17, the build-health plugin 3.20.1, and Spotless
+  8.10.2. The Protobuf Gradle plugin stays at 0.10.0, because the 0.10.1 jar on the Gradle Plugin
+  Portal fails its publisher signature. Spotless stays at 8.10.2, because 8.10.3 and later are
+  signed by a key that has not been authenticated.
 - Servlet-mode applications that used matrix variables or dot segments in request paths now receive
   400.
 - These setups now fail closed with 400 instead of passing an unbound body:
