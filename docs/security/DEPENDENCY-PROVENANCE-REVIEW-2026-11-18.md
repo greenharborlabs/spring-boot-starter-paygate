@@ -18,11 +18,21 @@ The work was performed on 2026-11-18 UTC on plan base `325814e`, which carries `
   - 575 `review-date` changes;
   - no other change to an existing field;
   - an unchanged header;
-  - the 17 key-validity rows below as the only additions.
+  - the 19 key-validity rows below as the only additions.
 
 ## Key validity
 
-Gradle accepts a signature from a trusted key whether or not the key has since expired or been revoked. So does `validateDependencyProvenance`. At base, the committed keyring had 14 trusted, non-ignored keys that are revoked or expired.
+Gradle accepts a signature from a trusted key whether or not the key has since expired or been revoked. So does `validateDependencyProvenance`.
+
+At base, the committed metadata had **18** trusted, non-globally-ignored keys that are revoked or expired:
+- **14** are referenced by their primary fingerprint.
+- **4** are referenced by a subkey fingerprint:
+  - `07A4FA67…F8052E4E1BD0DB31` for `^org.neo4j`, expired 2026-02-12;
+  - `2518174F…9757D7E7E06DD2AC` for `io.prometheus`, expired 2024-12-31;
+  - `2B34821418…953E02E4F573B46F` for `jakarta.platform`, expired 2024-02-13;
+  - `E7DC75FC…3D5839A2262CBBFB` for `org.jetbrains.kotlinx`, expired 2026-09-29.
+
+The first inventory for this review matched `<trusted-key>` IDs against primary fingerprints only. It missed the four subkey references and counted 14 keys. Review Attempt 1 found the gap. The inventory and the classification below were then rerun over all 18, matching every `<trusted-key>` and `<pgp>` reference against both primary and subkey fingerprints.
 
 **The rule.** These keys keep coverage only for signatures they made while valid. A key's validity ends at the earliest of:
 - the primary key's expiry;
@@ -32,20 +42,22 @@ Gradle accepts a signature from a trusted key whether or not the key has since e
 All dates come from the committed keyring.
 
 **Method.**
-1. Every committed artifact in the 14 keys' trust scopes, or pinned to one of them, was selected. 4 already have rows and were set aside.
-2. Each of the remaining 66 artifacts and its `.asc` were fetched over HTTPS from Maven Central and matched to the committed SHA-256.
+1. Every committed artifact in the 18 keys' trust scopes, or pinned to one of them, was selected: 80 in total. 6 already have rows and were set aside, including the Prometheus `client_java_parent` and `prometheus-metrics-bom` 1.7.0 POMs (EX-543, EX-544).
+2. Each of the remaining 74 artifacts and its `.asc` were fetched over HTTPS from Maven Central and matched to the committed SHA-256.
 3. Each signature was verified with `gpgv` against a dearmored copy of the committed keyring only.
 4. The signature creation time was compared with the end of the signing key's validity.
+
+All classification ran against the base metadata and ledger.
 
 **Result:**
 
 | Outcome | Artifacts |
 | --- | --- |
 | Signed by a different trusted key (out of scope; coverage unchanged) | 23 |
-| Signed while the key was valid (coverage stands) | 26 |
-| Signed after the key's validity ended (coverage removed; exact row added) | 17 |
+| Signed while the key was valid (coverage stands) | 32 |
+| Signed after the key's validity ended (coverage removed; exact row added) | 19 |
 
-**Signed while valid (26):**
+**Signed while valid (32):**
 - **Sonatype release key** `2BCBDD0F…0374CF2E8DD1BDFD`, revoked 2024-01-04T20:49Z with reason `0x01`, superseded (12 artifacts):
   - `jvnet-parent-1.pom` (pinned), signed 2011;
   - `oss-parent-5.pom`;
@@ -58,8 +70,12 @@ All dates come from the committed keyring.
   - `durian-swt.os` 4.3.0, signed 2023-12-08, expired 2025-01-11;
   - JetBrains `annotations` 13.0, signed 2013, expired 2023-12-08;
   - `mockito-bom` 4.11.0, signed 2022-12-28, expired 2023-02-14.
+- **Keys referenced by subkey (6 artifacts):**
+  - Prometheus `parent` and `simpleclient_bom` 0.16.0, signed 2022-06-15, subkey expired 2024-12-31;
+  - `jakarta.jakartaee-bom` and `jakartaee-api-parent` 9.1.0, signed 2021-04-27, subkey expired 2024-02-13;
+  - `kotlinx-coroutines-bom` 1.10.2 and `kotlinx-serialization-bom` 1.11.0, signed 2025-04-08 and 2026-04-09, subkey expired 2026-09-29.
 
-**Signed after validity (17):**
+**Signed after validity (19):**
 
 | Ignored key (scope; expiry in committed keyring) | Artifacts | Signed | Rows |
 | --- | --- | --- | --- |
@@ -70,12 +86,13 @@ All dates come from the committed keyring.
 | `79752DB6C966F0B8` (`com.google.android`; 2011-08-28) | `annotations` 4.1.1.4 (2) | 2012-08-31 | EX-875..EX-876 |
 | `90D5CE79E1DE6A2C` (`com.querydsl`; 2021-11-19) | `querydsl-bom` 5.1.0 (1) | 2024-01-29 | EX-877 |
 | `21871D2A9AB66A31` (`io.rsocket`; 2023-06-09) | `rsocket-bom` 1.1.5 (1) | 2025-02-03 | EX-878 |
+| `F8052E4E1BD0DB31`, a subkey (`^org.neo4j`; 2026-02-12) | `neo4j-bolt-connection-bom` 11.0.2 (`org.neo4j.bolt`) and `neo4j-java-driver-bom` 6.1.0 (`org.neo4j.driver`) (2) | 2026-04-30 and 2026-05-01 | EX-892..EX-893 |
 
 The `org.latencyutils` key (expired 2017) covers no committed artifact.
 
 **Representation.**
-- Each of the 17 artifacts gets an artifact-scoped `<ignored-keys>` entry for its signing primary key, with `reason="Exact checksum exception EX-NNN required"`. This is the form used for `snakeyaml` 2.6 in the [November 1 review](DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md#metadata-representation-of-exceptions). Its existing checksum is unchanged.
-- Each gets an exact row (EX-875..EX-891) with:
+- Each of the 19 artifacts gets an artifact-scoped `<ignored-keys>` entry for the key that made its signature, with `reason="Exact checksum exception EX-NNN required"`. For 17 that is a primary key; for the two neo4j BOMs it is the trusted subkey. This is the form used for `snakeyaml` 2.6 in the [November 1 review](DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md#metadata-representation-of-exceptions). Its existing checksum is unchanged.
+- Each gets an exact row (EX-875..EX-893) with:
   - the Maven Central source;
   - the existing owner and trigger;
   - the 2026-12-31 deadline;
@@ -85,19 +102,19 @@ The `org.latencyutils` key (expired 2017) covers no committed artifact.
 **Likely cause.** Several of these publishers kept signing after the recorded expiry. Mockito's key, for example, is recorded as expired in 2023 but signed a 2026 release. This points to stale key copies in the committed keyring, where the publishers later extended the expiry with new self-signatures. Refreshing those copies would change the keyring. That is a separate, reviewed key-recovery task; this review does not accept a key-server copy as approval.
 
 **Controls.**
-- **Validator enforces the rows:** with EX-882 (`hamcrest-3.0.jar`) removed from a scratch ledger, `scripts/validate-dependency-provenance.sh` fails with `checksum-only artifact lacks an exact exception for org.hamcrest:hamcrest:3.0:hamcrest-3.0.jar`.
-- **Gradle honors the ignore:** in two scratch trees, each resolved from a new, empty Gradle home, `hamcrest-3.0.module`'s checksum was deleted.
-  - **With the new ignore:** `:paygate-spring-autoconfigure:dependencyInsight` on `testRuntimeClasspath` **fails** dependency verification for that artifact.
-  - **Without the ignore:** it **passes** on the expired key's signature alone.
+- **Validator enforces the rows.** With EX-882 (`hamcrest-3.0.jar`) or EX-893 (`neo4j-java-driver-bom-6.1.0.pom`) removed from a scratch ledger, `scripts/validate-dependency-provenance.sh` fails with `checksum-only artifact lacks an exact exception for` that artifact.
+- **Gradle honors the ignore, for both a primary key and a subkey.** Each control used two scratch trees, each resolved from a new, empty Gradle home, with one artifact's checksum deleted.
+  - **`hamcrest-3.0.module`** (primary key), resolved with `:paygate-spring-autoconfigure:dependencyInsight` on `testRuntimeClasspath`.
+  - **`neo4j-java-driver-bom-6.1.0.pom`** (subkey), resolved with `:paygate-spring-autoconfigure:dependencies` on `testRuntimeClasspath`.
 
-  So the 17 artifacts are now accepted by exact checksum, not by signature.
+  In both controls, dependency verification **fails** for that artifact with the new ignore present. Without it, verification **passes** on the expired key's signature alone. So the 19 artifacts are now accepted by exact checksum, not by signature.
 
 ## Result
 
-- **Ledger:** 592 rows, all with the 2026-12-31 deadline. SHA-256 `7c133d8f675669bc37442da05e94e5fe4877d88813b5ab4abef4b2b8f5dd4018`.
-- **Metadata:** 17 artifact-scoped ignore blocks added, with no other change. SHA-256 `8423ed452e23d4c965f89c91e3136065a8a818f8e62300c7b40ae0200cba41df`.
+- **Ledger:** 594 rows, all with the 2026-12-31 deadline. SHA-256 `873d19bd266c6914361c2ffb1fac15ccac1440fcf6e2414f1d39d15cbe951286`.
+- **Metadata:** 19 artifact-scoped ignore blocks added, with no other change. SHA-256 `cd0b29ed6a720e6028c5d42799d4870ed596c63ad75b59fe946cd84945d30b9a`.
 - **Keyring:** unchanged.
-- **ID space:** 108 three-digit IDs remain (EX-892..EX-999).
+- **ID space:** 106 three-digit IDs remain (EX-894..EX-999).
 
 ## Limits and interval
 

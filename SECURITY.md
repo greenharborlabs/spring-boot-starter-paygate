@@ -31,7 +31,9 @@ A trusted key covers only signatures it made while valid. Its validity ends at t
 its expiry (or its signing subkey's expiry) as recorded in the committed keyring, and its
 revocation. An artifact signed later gets an artifact-scoped `<ignored-key>` and an exact row.
 Gradle and the validator do not check key validity offline, so each renewal and dependency
-change must classify the artifacts covered by revoked or expired keys.
+change must classify the artifacts covered by revoked or expired keys. A `<trusted-key>` or
+`<pgp>` reference may name a subkey, so match every reference against both primary and subkey
+fingerprints when finding those keys.
 The legacy
 `review-date` column is an inclusive UTC deadline, not the date the review was performed;
 validation rejects it when it precedes the current UTC date. Record the actual review date,
@@ -45,7 +47,8 @@ the deadline; date changes alone cannot satisfy renewal. The current review is t
 [November 18 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md). It
 re-verified the source bytes of every row and renewed the ledger through 2026-12-31 UTC, in the
 same week as the CVE-2025-32013 suppression deadline. It also applied the key-validity rule:
-17 artifacts signed after their key's recorded expiry now need exact rows, and no trust was added.
+of 18 revoked or expired trusted keys, 19 artifacts were signed after their key's recorded
+expiry and now need exact rows. No trust was added.
 The [November 15 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md)
 reconciled the ledger with the Byte Buddy, build-health and Spotless updates: 14 superseded
 rows were removed and 14 exact rows added at the existing 2026-12-01 UTC deadline, without
