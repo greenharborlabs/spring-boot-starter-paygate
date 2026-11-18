@@ -1,6 +1,6 @@
 # Renew the dependency provenance ledger before 2026-12-01
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 325814ea904c044eaaf4aab069c4e86a64eec05f
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md
 
 ## Goal
@@ -66,6 +66,10 @@ Acceptance evidence:
     - the limits and the justified interval;
   - SECURITY.md updates the current-review sentence and states the key-validity rule and its limit.
 
+Approved: 2026-11-18 by Mark Hammond at plan revision 325814ea904c044eaaf4aab069c4e86a64eec05f.
+- **Interval:** Option B, **2026-12-31 UTC**, aligned with the CVE-2025-32013 suppression deadline.
+- **Key validity:** the valid-at-signing rule, as recommended.
+
 ## Tasks
 - [ ] Pre-edit state. Checks:
   - the metadata, ledger and keyring hashes match the starting state;
@@ -91,4 +95,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise this plan. In particular, choose the interval (A: 2026-12-18, or B: 2026-12-31) and confirm the key-validity rule.
+Implement the approved tasks.
