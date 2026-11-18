@@ -1,5 +1,5 @@
 # Renew the dependency provenance ledger before 2026-12-01
-Status: working
+Status: review
 Base revision: 325814ea904c044eaaf4aab069c4e86a64eec05f
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md
 
@@ -71,22 +71,41 @@ Approved: 2026-11-18 by Mark Hammond at plan revision 325814ea904c044eaaf4aab069
 - **Key validity:** the valid-at-signing rule, as recommended.
 
 ## Tasks
-- [ ] Pre-edit state. Checks:
+- [x] Pre-edit state. Checks:
   - the metadata, ledger and keyring hashes match the starting state;
   - `./gradlew --no-daemon validateDependencyProvenance` passes.
-- [ ] Source-byte audit. Check: `python3 scripts/audit-dependency-provenance-sources.py` exits 0 with 575/575 matches, before any edit.
-- [ ] Key validity. For every artifact covered by one of the 14 keys, classify its signature creation time against the key's validity, and add an artifact-scoped ignore and exact row for each one signed outside validity. Checks:
-  - the classification table covers every in-scope artifact;
-  - a diff shows no `<trusted-key>`, `<trusting>` or `<pgp>` additions, and an empty keyring diff;
-  - any new rows pass the audit.
-- [ ] Renew `review-date` on every row to the approved deadline. Check: a field-level comparison with the starting ledger shows only `review-date` changes on existing rows, plus any new key-validity rows.
-- [ ] Review document and SECURITY.md (current-review link and key-validity rule). Check: links resolve, and `./scripts/validate-agents-md.sh` passes.
-- [ ] Final checks, then record the results:
-  - `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`;
-  - `python3 scripts/audit-dependency-provenance-sources.py` on the final ledger;
-  - every row's `review-date` equals the approved deadline, checked field by field. The provenance validator reads `date -u` and has no date override, so the expiry boundary can't be exercised directly;
-  - if `gradle/verification-metadata.xml` changed: `GRADLE_USER_HOME=$(mktemp -d) ./gradlew --no-daemon spotlessCheck check --rerun-tasks` with strict verification;
-  - `git diff --check`.
+  - **pass:** hashes `3fdbcdb6…`, `4079c494…` and `11d778c6…` match. All 575 rows were at 2026-12-01. The validator exited 0.
+- [x] Source-byte audit. Check: `python3 scripts/audit-dependency-provenance-sources.py` exits 0 with 575/575 matches, before any edit.
+  - **pass:** at 2026-11-18T14:31Z, exit 0 with 575/575 matches, 82,550,441 bytes (558 Maven Central, 17 Plugin Portal).
+- [x] Key validity. For every artifact covered by one of the 14 keys, classify its signature creation time against the key's validity, and add an artifact-scoped ignore and exact row for each one signed outside validity. Evidence is in [the November 18 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md#key-validity).
+  - **pass:** the classification covers every committed artifact in the 14 keys' scopes and pins. 4 already had rows. Of the 66 classified:
+    - 23 are signed by other trusted keys;
+    - 26 were signed while their key was valid, including all 12 under the superseded Sonatype key;
+    - 17 were signed after their key's recorded expiry.
+
+    The 17 got artifact-scoped `<ignored-key>` entries and rows EX-875..EX-891 (commit `cef9292`).
+  - **pass:** `cmp` of `<configuration>` against base is identical, and the keyring diff is empty. The metadata diff is purely additive: 17 artifact-level `<ignored-keys>` blocks, with 0 `<trusted-key>`, `<trusting>` or `<pgp>` additions.
+  - **pass:** the new rows are part of the final 592/592 audit.
+  - **pass (controls):**
+    - with EX-882 removed from a scratch ledger, the validator fails with `checksum-only artifact lacks an exact exception for org.hamcrest:hamcrest:3.0:hamcrest-3.0.jar`;
+    - with `hamcrest-3.0.module`'s checksum deleted in scratch trees resolved from empty Gradle homes, dependency verification fails when the new ignore is present and passes on the expired signature when it is absent.
+- [x] Renew `review-date` on every row to the approved deadline. Check: a field-level comparison with the starting ledger shows only `review-date` changes on existing rows, plus any new key-validity rows.
+  - **pass:** 575 existing rows changed only `review-date` (2026-12-01 → 2026-12-31). The 17 added rows are the only additions, with 0 removals and an unchanged header. 592 rows, one distinct `review-date` (commit `f539506`).
+- [x] Review document and SECURITY.md (current-review link and key-validity rule). Check: links resolve, and `./scripts/validate-agents-md.sh` passes.
+  - **pass:** [DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md) is added. [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials) links it as current and states the key-validity rule and its offline limit (commit `c508696`). A relative-link and anchor check over both and this record found 20 links and 0 broken. `validate-agents-md.sh` exited 0.
+- [x] Final checks, then record the results:
+  - **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
+  - **pass:** `python3 scripts/audit-dependency-provenance-sources.py` on the final ledger, exit 0 with 592/592 matches, 83,876,666 bytes (575 Maven Central, 17 Plugin Portal).
+  - **pass:** every row's `review-date` is 2026-12-31, checked field by field above. The provenance validator reads `date -u` and has no date override, so the expiry boundary can't be exercised directly.
+  - **pass:** the metadata changed, so `GRADLE_USER_HOME=<new empty home> ./gradlew --no-daemon spotlessCheck check --rerun-tasks` ran with strict verification. Exit 0, 121/121 tasks, 3,448 tests with 0 failures, errors or skips.
+  - **pass (optional):** `GRADLE_USER_HOME=<new empty home> ./gradlew --no-daemon -Pintegration :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`, exit 0. `test` 154 and `securityTest` 71, with 0 failures.
+  - **pass:** `git diff --check 325814e`, exit 0.
+  - **Limits:**
+    - publisher identity is not authenticated;
+    - key validity uses the committed keyring's possibly stale expiry data;
+    - the rule is not enforced offline;
+    - Dependabot #113 is not reconciled here;
+    - macOS arm64 host, so the Linux protoc executables are first verified by Gradle in CI (they are unchanged).
 
 ## Review
 Awaiting implementation and fresh-context review.
@@ -95,4 +114,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Implement the approved tasks.
+Run a fresh-context `keel-review` of this record. The implementation is commits `cef9292` (key validity), `f539506` (renewal) and `c508696` (review document and SECURITY.md), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
