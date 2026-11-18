@@ -34,6 +34,8 @@ At base, the committed metadata had **18** trusted, non-globally-ignored keys th
 
 The first inventory for this review matched `<trusted-key>` IDs against primary fingerprints only. It missed the four subkey references and counted 14 keys. Review Attempt 1 found the gap. The inventory and the classification below were then rerun over all 18, matching every `<trusted-key>` and `<pgp>` reference against both primary and subkey fingerprints.
 
+That rerun still selected artifacts by `group` alone. Review Attempt 2 found that this wrongly counted six `durian-collect`, `durian-core` and `durian-io` 1.2.0 artifacts as in scope, so the counts below now apply the full scope. Those six are signed by a separate, valid group-wide key. The 32 "signed while valid" and the 19 "signed after validity" results did not change.
+
 **The rule.** These keys keep coverage only for signatures they made while valid. A key's validity ends at the earliest of:
 - the primary key's expiry;
 - the signing subkey's expiry;
@@ -42,8 +44,10 @@ The first inventory for this review matched `<trusted-key>` IDs against primary 
 All dates come from the committed keyring.
 
 **Method.**
-1. Every committed artifact in the 18 keys' trust scopes, or pinned to one of them, was selected: 80 in total. 6 already have rows and were set aside, including the Prometheus `client_java_parent` and `prometheus-metrics-bom` 1.7.0 POMs (EX-543, EX-544).
-2. Each of the remaining 74 artifacts and its `.asc` were fetched over HTTPS from Maven Central and matched to the committed SHA-256.
+1. Every committed artifact in the 18 keys' trust scopes, or pinned to one of them, was selected: 74 in total.
+   - **Scope matching:** a scope matches only when every attribute it sets (`group`, `name`, `version` and `file`, exact or regex) matches, as Gradle applies it. Seven of the keys are narrowed by `name` and `version`, for example the expired `com.diffplug.durian` key, which is scoped to `durian-swt.os` 4.3.0 only.
+   - **Set aside:** 6 already have rows, including the Prometheus `client_java_parent` and `prometheus-metrics-bom` 1.7.0 POMs (EX-543, EX-544).
+2. Each of the remaining 68 artifacts and its `.asc` were fetched over HTTPS from Maven Central and matched to the committed SHA-256.
 3. Each signature was verified with `gpgv` against a dearmored copy of the committed keyring only.
 4. The signature creation time was compared with the end of the signing key's validity.
 
@@ -53,7 +57,7 @@ All classification ran against the base metadata and ledger.
 
 | Outcome | Artifacts |
 | --- | --- |
-| Signed by a different trusted key (out of scope; coverage unchanged) | 23 |
+| Signed by a different trusted key (out of scope; coverage unchanged) | 17 |
 | Signed while the key was valid (coverage stands) | 32 |
 | Signed after the key's validity ended (coverage removed; exact row added) | 19 |
 

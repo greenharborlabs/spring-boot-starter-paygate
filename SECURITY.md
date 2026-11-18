@@ -33,7 +33,8 @@ revocation. An artifact signed later gets an artifact-scoped `<ignored-key>` and
 Gradle and the validator do not check key validity offline, so each renewal and dependency
 change must classify the artifacts covered by revoked or expired keys. A `<trusted-key>` or
 `<pgp>` reference may name a subkey, so match every reference against both primary and subkey
-fingerprints when finding those keys.
+fingerprints when finding those keys. A key's scope covers an artifact only when every
+attribute it sets (`group`, `name`, `version` and `file`) matches.
 The legacy
 `review-date` column is an inclusive UTC deadline, not the date the review was performed;
 validation rejects it when it precedes the current UTC date. Record the actual review date,
