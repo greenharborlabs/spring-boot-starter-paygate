@@ -121,6 +121,12 @@ security review; I-20 remains an accepted limitation. Dispositions for every fin
   8.10.2. The Protobuf Gradle plugin stays at 0.10.0, because the 0.10.1 jar on the Gradle Plugin
   Portal fails its publisher signature. The Spotless update is held at 8.10.2 rather than the
   latest release, because 8.10.3 and later are signed by a key that is not yet authenticated.
+- Build dependencies: Tomcat 11.0.29, the CycloneDX plugin 3.6.1, the build-health plugin
+  3.20.3, and the Gradle wrapper 9.9.1, which fixes the GHSA-gqrr-4j89-5267 and
+  GHSA-pcp8-98xm-c6pr daemon-registry advisories. Tomcat keeps an explicit pin, which may lead
+  Spring Boot's managed version to adopt security fixes; 11.0.29 rolls up the unreleased
+  11.0.28 and adds HTTP/2 SETTINGS-acknowledgement flood detection and flow-control fixes.
+  Tomcat reaches only tests and the example apps, not the published library modules.
 - Servlet-mode applications that used matrix variables or dot segments in request paths now receive
   400.
 - These setups now fail closed with 400 instead of passing an unbound body:
