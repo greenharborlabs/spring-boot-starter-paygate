@@ -1,5 +1,5 @@
 # Land Gradle dependency updates from Dependabot #105 and #104
-Status: review
+Status: working
 Base revision: 230b3600ea724f9b4908830822ba82a7125dfc8e
 Review scope: build.gradle.kts, settings.gradle.kts, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md, SECURITY.md, CHANGELOG.md
 
@@ -138,6 +138,31 @@ Amendment approved: 2026-11-15 by Mark Hammond at plan revision 941a4641ccc460af
 
 ## Review
 Awaiting implementation and fresh-context review.
+
+### Attempt 1
+Reviewed revision: d4e0af9a478f4257a35ec6c4fcd17848a2f46810
+Verdict: rework
+Findings and dispositions:
+1. **Rework — broken internal link in the new provenance review.** `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md:112` links to `DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md#limits`, but that document's heading is `## Limits and interval`, so its anchor is `#limits-and-interval`. Update the link.
+2. **Rework — inaccurate CHANGELOG wording.** `CHANGELOG.md:122` says "Spotless stays at 8.10.2". The base was 7.2.1, so the update moved to 8.10.2 and then held; "stays" implies it was already there. Reword to say the update stops at, or is held at, 8.10.2 because 8.10.3 and later are signed by a key that is not yet authenticated.
+3. **Rework — overbroad review-document generalization.** `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md:68` says each new ledger row has "the rationale of the row it replaces." EX-870 (`commons-codec` 1.22.0 POM) has no predecessor row. Reword to cover a row that follows the ledger's existing rationale for that artifact family, or drop the claim.
+4. **No implementation findings.** The provenance controls, metadata/ledger/keyring reconciliation, strict empty-home build, integration suites, buildHealth, SBOM, advisory scan and Dependabot configuration all pass. The rework is documentation-only; the provenance and dependency changes are otherwise consistent with the record.
+
+Verification:
+- Scoped paths clean at the reviewed revision; no `paygate-*/src/**` changes; `git diff --check 230b360` pass.
+- Metadata `3fdbcdb6…`, ledger `4079c494…`, keyring `11d778c6…`; 547 components and 964 artifacts; 575 ledger rows: pass. The `<configuration>` block and keyring are byte-identical to base; the metadata diff has no `<trusted-key>`, `<trusting>`, `<pgp>` or `<ignored-key>` additions.
+- Metadata delta: pass. 28 artifacts added, 29 removed, 0 checksums changed; matches the review document.
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls spotlessCheck`: pass.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, 575/575 SHA-256 matches, 82,550,441 bytes (558 Maven Central, 17 Gradle Plugin Portal).
+- `./gradlew --no-daemon -g <new empty home> spotlessCheck check --rerun-tasks`: pass, strict verification, 121/121 tasks executed; 3,448 root tests with 0 failures, errors or skips.
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`: pass; `test` 154 and `securityTest` 71, 0 failures.
+- `./gradlew --no-daemon spotlessCheck buildHealth --rerun-tasks`: pass; `buildHealth` reports only non-fatal, pre-existing advice.
+- `./gradlew --no-daemon cyclonedxBom`: pass, 16 SBOM files (8 modules, JSON and XML).
+- `./gradlew --no-daemon dependencyCheckAggregate --rerun-tasks`: pass, 126 dependencies, 0 unsuppressed findings, 1 suppressed (CVE-2025-32013).
+- `.github/dependabot.yml`: pass. YAML loads; the Gradle block lists exactly `io.grpc:*`, `com.squareup.okhttp3:*`, `com.google.protobuf` `0.10.1` and `com.diffplug.spotless` `>= 8.10.3`; the GitHub Actions block is unchanged.
+- Documentation check: fail, per findings 1–3.
+- Optional post-merge task (close #105 and #104): skipped, optional and not applicable before merge.
+- Material limits: publisher identity is not authenticated; the open decision on 14 revoked or expired keyring keys is unchanged; live LND/LNbits and the Docker stacks were not exercised; the Linux protoc executables are unchanged and are exercised by CI. These match the record's stated limits.
 
 ## Outcome
 Pending.
