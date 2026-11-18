@@ -65,7 +65,8 @@ No `<ignored-key>` was added or changed, because every exception signer was alre
 
 - **Removed (14 rows):** EX-134, EX-135, EX-364, EX-365, EX-469 through EX-472, EX-477, EX-804, EX-814, EX-815, EX-818 and EX-840. Nothing resolves these artifacts any more.
 - **Added (14 rows):** EX-861 through EX-874, appended in coordinate order.
-  - Each has the deadline `2026-12-01`, the existing owner `Green Harbor Labs maintainer`, the existing review trigger, and the rationale of the row it replaces.
+  - Each has the deadline `2026-12-01`, the existing owner `Green Harbor Labs maintainer` and the existing review trigger.
+  - **Rationale:** 13 rows replace a removed row for the same group and module, and reuse its rationale. EX-870 (`commons-codec` 1.22.0 POM) replaces no row. It reuses the rationale of the existing `commons-codec` 1.22.1 rows, EX-527 and EX-528.
   - 12 rows have Maven Central sources and 2 have Gradle Plugin Portal sources. Each URL is the source of the bytes Gradle resolved.
 - **Unchanged:** 561 rows, byte-identical.
 - **Result:** 575 rows. 125 three-digit IDs remain (EX-875..EX-999).
@@ -109,7 +110,7 @@ The POM's source is still `github.com/diffplug/spotless`, and GitHub shows no tr
 ## Limits
 
 - **Publisher identity:** this review authenticates bytes and links them to sources and metadata. It does not authenticate publisher identity. No key was recovered, imported or trusted, and no fingerprint was confirmed out of band.
-- **Revoked and expired keys:** the open trust decision about 14 revoked or expired keyring keys, recorded in the [November 3 review](DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md#limits), is unchanged.
+- **Revoked and expired keys:** the open trust decision about 14 revoked or expired keyring keys, recorded in the [November 3 review](DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md#limits-and-interval), is unchanged.
 - **Ledger expiry:** this review does not renew the ledger. All 575 rows, including the 14 new ones, expire on 2026-12-01 UTC.
 - **Not checked:** the classification relies on Gradle skipping ignored keys, as in the earlier reviews. Live LND and LNbits and the Docker stacks were not exercised.
 
