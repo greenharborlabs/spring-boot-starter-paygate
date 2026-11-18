@@ -27,6 +27,11 @@ trusted-key scope for its exact coordinates and no artifact pin to a non-ignored
 committed keyring covers. The validator cannot detect, offline, an artifact under a covering scope that another key
 signs. Every dependency change therefore needs a detached-signature classification, and such an
 artifact must be annotated `reason="Signature is not from a key trusted for these coordinates"`.
+A trusted key covers only signatures it made while valid. Its validity ends at the earliest of
+its expiry (or its signing subkey's expiry) as recorded in the committed keyring, and its
+revocation. An artifact signed later gets an artifact-scoped `<ignored-key>` and an exact row.
+Gradle and the validator do not check key validity offline, so each renewal and dependency
+change must classify the artifacts covered by revoked or expired keys.
 The legacy
 `review-date` column is an inclusive UTC deadline, not the date the review was performed;
 validation rejects it when it precedes the current UTC date. Record the actual review date,
@@ -37,7 +42,11 @@ passed validator or matching committed files alone is not a review. The
 [September 23 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-09-23.md) chose 30 days
 for that renewal only. A dependency, key, checksum, or source change requires review before
 the deadline; date changes alone cannot satisfy renewal. The current review is the
-[November 15 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md), which
+[November 18 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md). It
+re-verified the source bytes of every row and renewed the ledger through 2026-12-31 UTC, in the
+same week as the CVE-2025-32013 suppression deadline. It also applied the key-validity rule:
+17 artifacts signed after their key's recorded expiry now need exact rows, and no trust was added.
+The [November 15 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md)
 reconciled the ledger with the Byte Buddy, build-health and Spotless updates: 14 superseded
 rows were removed and 14 exact rows added at the existing 2026-12-01 UTC deadline, without
 adding any trusted key. It also records three held updates: OkHttp 5.5.1, the Protobuf Gradle
