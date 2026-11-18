@@ -37,7 +37,12 @@ passed validator or matching committed files alone is not a review. The
 [September 23 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-09-23.md) chose 30 days
 for that renewal only. A dependency, key, checksum, or source change requires review before
 the deadline; date changes alone cannot satisfy renewal. The current review is the
-[November 3 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md), which
+[November 15 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md), which
+reconciled the ledger with the Byte Buddy, build-health and Spotless updates: 14 superseded
+rows were removed and 14 exact rows added at the existing 2026-12-01 UTC deadline, without
+adding any trusted key. It also records three held updates: OkHttp 5.5.1, the Protobuf Gradle
+plugin 0.10.1, and Spotless 8.10.3+. The
+[November 3 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md)
 re-verified the source bytes of every row and renewed the ledger through 2026-12-01 UTC. It
 also added 64 rows for checksum-only artifacts that the earlier validator did not require.
 The [November 1 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md) reconciled

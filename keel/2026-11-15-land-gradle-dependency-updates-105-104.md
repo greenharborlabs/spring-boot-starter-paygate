@@ -1,0 +1,250 @@
+# Land Gradle dependency updates from Dependabot #105 and #104
+Status: closed
+Base revision: 230b3600ea724f9b4908830822ba82a7125dfc8e
+Review scope: build.gradle.kts, settings.gradle.kts, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md, SECURITY.md, CHANGELOG.md
+
+## Goal
+Land the safe subset of Dependabot PRs #105 (gradle-minor-and-patch group) and #104 (Spotless) on our own branch, with the provenance controls intact. Close both PRs as superseded.
+
+| Dependency | From | To | In scope |
+| --- | --- | --- | --- |
+| Byte Buddy (`byte-buddy`, `byte-buddy-agent`) | 1.18.16 | 1.18.17 | yes |
+| build-health plugin | 3.20.0 | 3.20.1 | yes |
+| Protobuf Gradle plugin | 0.10.0 | 0.10.1 | yes |
+| Spotless plugin (#104) | 7.2.1 | 8.10.4 | yes |
+| gRPC (5 artifacts) | 1.84.1 | 1.85.1 | **no**: stays on Boot's managed 1.84.1 |
+| `mockwebserver3` | 5.3.2 | 5.5.1 | **no**: held at 5.3.2 (see Decisions) |
+
+Acceptance evidence:
+- **Dependency verification:** passes from an empty Gradle user home, with no trust added.
+- **Provenance review record:** every new or removed exception row is recorded with source-byte evidence.
+- **Builds and tests:**
+  - root `spotlessCheck check` passes, and Spotless 8 reports no reformatting of existing sources;
+  - the integration `test` and `securityTest` suites pass;
+  - `buildHealth` and the SBOM task pass.
+- **Advisory scan:** a fresh advisory scan has no new unsuppressed findings.
+
+## Constraints
+- Follow [AGENTS.md](../AGENTS.md), [CLAUDE.md](../CLAUDE.md) and the [dependency provenance policy](../SECURITY.md#dependency-provenance-and-local-credentials):
+  - Never accept generated verification metadata, a key-server identity, or a valid signature from an unauthenticated key as publisher approval.
+  - Re-resolve from an isolated Gradle user home after any dependency, checksum, key or exception change.
+- **Why #105 and #104 fail:** every failing check is dependency verification. The first missing entry is `com.autonomousapps.build-health.gradle.plugin-3.20.1.pom` (#105 run `42575781427`). Dependabot can't update `verification-metadata.xml`.
+- **gRPC follows Spring Boot's managed version** ([2026-11-01 amendment](2026-11-01-upgrade-gradle-minor-and-patch-dependencies.md#decisions)). Boot 4.1.2 is still the latest release and manages gRPC 1.84.1, so #105's 1.85.1 pins would reintroduce the mixed-version classpath that amendment removed.
+- **Validator rule** ([2026-11-01 tighten record](2026-11-01-tighten-dependency-provenance-validator-and-renew-ledger.md#decisions)):
+  - every checksum-only artifact needs an exact row;
+  - a dependency change needs a per-artifact detached-signature classification;
+  - an artifact under a covering scope but signed by another key gets `reason="Signature is not from a key trusted for these coordinates"`.
+- **ID space:** IDs must match `EX-[0-9]{3}`. The ledger ends at EX-860, so 139 IDs remain (EX-861..EX-999). Spotless 8 may bring many new transitive artifacts.
+- **Ledger expiry:** all 575 rows expire on 2026-12-01 UTC. Renewing them is a separate task, but this task's new rows are part of that renewal.
+- **Open trust decision, unchanged here:** 14 trusted keyring keys are revoked or expired and still count as coverage ([November 3 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md)).
+- **Spotless pins `googleJavaFormat("1.35.0")`**, so the major plugin bump should not by itself change formatting output.
+
+## Decisions
+- **Land on our own branch; close #105 and #104 after merge.** This follows the [#92 precedent](2026-11-01-upgrade-gradle-minor-and-patch-dependencies.md#decisions): Dependabot force-pushes over manual commits and can't carry provenance review.
+- **Hold `mockwebserver3` at 5.3.2.** This is a finding from planning, checked against Maven Central and GitHub on 2026-11-15:
+  - **Signing key changed:** 5.3.2's signature is from `793FD5751A0F0780`, the Square key the keyring already trusts for `com.squareup.okio`. 5.5.1's signature is from a different key, `6751E1A6E2001B8D`.
+  - **Source moved:** in the same release, the POM's SCM and site moved from `github.com/square/okhttp` to `github.com/lysine-dev/okhttp` and `lysine.dev`.
+  - **Repo transferred:** GitHub redirects `square/okhttp` (created 2012) to `lysine-dev/okhttp`, owned by an unverified org created 2026-03-02.
+  - **Why hold:** the move may be a legitimate change of maintainers, but nothing reviewed authenticates the new key or the new steward. The dependency is test-only (LNbits tests) and the update brings no fix Paygate needs.
+  - **Rejected: take 5.5.1 with exact exception rows.** Policy permits it, since rows record source bytes and don't claim publisher identity. But it would knowingly adopt artifacts from an unauthenticated new key on a transferred project, for no benefit.
+  - **Revisit:** a separate key-recovery task can authenticate the transfer and the new key.
+- **Keep gRPC at 1.84.1.** Drop #105's gRPC and `protoc-gen-grpc-java` changes.
+- **Stop Dependabot reproposing held updates.** Add `ignore` entries to the Gradle block of `.github/dependabot.yml`, each with a comment giving the reason and a link here:
+  - `io.grpc:*`, since Boot bumps carry gRPC;
+  - `com.squareup.okhttp3:*`, until the key-recovery task.
+  - Rejected alternative: leaving Dependabot unchanged. It reopens the same failing PRs every Monday.
+- **No new trust.** Same method as the [November 1 upgrade](2026-11-01-upgrade-gradle-minor-and-patch-dependencies.md#decisions):
+  - generate candidates with `--write-verification-metadata sha256,pgp` from an isolated Gradle home, then review the diff by hand;
+  - discard every generated `<trusted-key>`, `<trusting>` and `<pgp>` addition;
+  - a new artifact signed by an already-trusted key for its group keeps only its checksum entry;
+  - a new unsigned artifact, or one signed by an untrusted key, gets an exact row with its HTTPS source bytes verified by `scripts/audit-dependency-provenance-sources.py`;
+  - remove metadata entries and rows for artifacts that nothing resolves any more.
+- **New rows:** IDs from EX-861 upward, with the existing owner and trigger. They share the **2026-12-01 UTC** deadline, so the ledger keeps one renewal cycle.
+  - **Stop and ask** if more than 139 IDs are needed. Widening the ID format is a validator change outside this scope.
+- **Spotless 8 is conditional.**
+  - Read the 8.0.0–8.10.4 changelog for breaking changes to the APIs this build uses (`googleJavaFormat`, `removeUnusedImports`, `trimTrailingWhitespace`, `endWithNewline`, `targetExclude`), and adapt only the build script.
+  - **Stop and ask** if `spotlessCheck` would reformat any existing source, or if Spotless needs a newer `googleJavaFormat`. Rejected alternative: reformatting the codebase in a dependency task.
+- **Compatibility review, not refactoring.** Read the Byte Buddy 1.18.17, build-health 3.20.1 and Protobuf plugin 0.10.1 release notes, record each relevant item and its disposition here, and fix only what fails. `paygate-*/src/**` is out of scope. A needed source change means a revised plan.
+- **Documentation:**
+  - a new `docs/security/DEPENDENCY-PROVENANCE-REVIEW-<work date>.md`, in the form of the November 1 review, recording:
+    - the PR heads;
+    - the row counts added, removed and unchanged;
+    - the audit result;
+    - that no trusted key was added;
+    - the OkHttp stewardship and key finding;
+  - SECURITY.md links it as the current review;
+  - a CHANGELOG `Changed` entry;
+  - version references (the [LND README](../paygate-lightning-lnd/README.md) Protobuf plugin version, and any others found).
+
+Approved: 2026-11-15 by Mark Hammond at plan revision 230b3600ea724f9b4908830822ba82a7125dfc8e. This confirms holding `mockwebserver3` at 5.3.2, the two Dependabot ignores, and the shared 2026-12-01 UTC deadline for new rows.
+
+**Amendment, 2026-11-15: Protobuf plugin stays on 0.10.0, and Spotless moves to 8.10.2 instead of 8.10.4.**
+
+These are findings from the first candidate generation. That generation ran the after state from an empty Gradle home with `-Pintegration` and the November 1 task set (594 tasks, exit 0). It added 35 artifacts and removed 32, and no checksum changed. Each new artifact and its `.asc` were fetched over HTTPS and verified with `gpgv` against the committed keyring only (SHA-256 `11d778c6…`). The method reproduced the committed representation for all 32 removed artifacts.
+
+- **Protobuf Gradle plugin 0.10.1: the jar Gradle resolves fails its publisher signature.**
+  - `gradlePluginPortal()` is listed first in `pluginManagement`, so Gradle resolved `protobuf-gradle-plugin-0.10.1.jar` from the Plugin Portal. That copy is `02aee6fe…`, served from `plugins-artifacts.gradle.org`.
+  - Maven Central's jar is different bytes, `6cbcf1b3…`. Its `.asc` verifies with `1DBB44E80F61493D6369B5FB95C15058A5EDA4F1`, the key already trusted for `^com.google`.
+  - The Portal serves the same `.asc`, which gives `BADSIG` against the Portal bytes. Strict verification would reject the build, because the signing key is trusted and not ignored.
+  - For 0.10.0, Gradle's bytes matched Central's signed jar.
+  - **Proposed:** keep 0.10.0. Add a Dependabot ignore for `com.google.protobuf` at version `0.10.1` only, so a corrected later release is still proposed. 0.10.1 contains only caching and deprecation changes, which Paygate doesn't need.
+  - Rejected: exact rows with the Portal bytes plus an artifact-scoped ignored key. That would accept bytes the publisher's own signature contradicts.
+  - Rejected: routing `com.google.protobuf` plugin resolution to Central with repository content filtering. That changes repository policy, which is out of scope for a dependency task.
+- **Spotless rotated its signing key at 8.10.3.**
+  - Every release through 8.10.2 (2026-09-04) is signed by `2C7F998F4272C851`, the subkey of `A31DDE881C3E3C4C985BD0D02C7F998F4272C851`, which is trusted for `com.diffplug.spotless`.
+  - 8.10.3 (2026-09-25) and 8.10.4 are signed by `FA5C18CFB74EC7C6`, which is not in the keyring.
+  - The POM's source is still `github.com/diffplug/spotless`, and GitHub shows no transfer.
+  - **Proposed:** land 8.10.2. Its libraries stay covered by the existing trusted signature, and only the unsigned Plugin Portal marker needs a row, as 7.2.1's does. Add a Dependabot ignore for `com.diffplug.spotless` at `>= 8.10.3` until a key-recovery task authenticates the new key. 8.10.3 and 8.10.4 change only the default google-java-format and remove deprecated Gradle calls. The google-java-format pin is unaffected.
+  - Rejected: 8.10.4 with about 6 exact rows. The approved rule allows it, but it swaps signature coverage for checksum-only trust on a plugin that runs in every build.
+- **Unchanged by this amendment:** Byte Buddy 1.18.17 is covered by the trusted `net.bytebuddy` key. build-health 3.20.1 follows 3.20.0's representation: `NO_PUBKEY` rows for 4 artifacts under the ignored key `95962C5E716C39AA`, and the unsigned marker. The acceptance evidence is the same.
+
+Amendment approved: 2026-11-15 by Mark Hammond at plan revision 941a4641ccc460afc4cacda8cc4e1aa720ba0fde (options: hold Protobuf plugin 0.10.0; Spotless 8.10.2).
+
+## Tasks
+- [x] Baseline: run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration` at base and record the results.
+  - **pass:** `check` exit 0, 122 tasks, 3,448 tests with 0 failures. Integration `test` 154 and `securityTest` 71, both with 0 failures.
+- [x] Apply the in-scope version changes (as amended): Byte Buddy 1.18.17, build-health 3.20.1, Spotless 8.10.2. Protobuf plugin stays at 0.10.0.
+  - **pass:** the lenient scratch-home run was the after-state `--write-verification-metadata sha256` pass, a superset of `compileJava compileTestJava`. Exit 0, 594 tasks, including every module's compile, `test`, the integration suites and `spotlessCheck`. Nothing lenient was committed.
+- [x] Spotless 8 changelog review and build-script adaptation.
+  - **Review:** none of the 8.0.0–8.10.2 breaking changes affect this build. This build runs Gradle 9.8.2 and Java 25, and doesn't use `removeWildcardImports`, the pre-push hook or `LintSuppression`. 8.10.0 requires google-java-format ≥ 1.30.0 on JVM 25, which the 1.35.0 pin satisfies. The 8.10.1 `targetExclude` change affects only `Directory` arguments; this build uses the `"build/**"` string.
+  - **pass:** no build-script adaptation was needed. `spotlessCheck` passes in the strict final run.
+  - **pass:** `git diff --stat 230b360 -- 'paygate-*/src/**'` is empty.
+- [x] Compatibility review of the other release notes. Check: each relevant item is listed here with its disposition.
+  - **Byte Buddy 1.18.17:** an Android AGP plugin fix only. Not applicable.
+  - **build-health 3.20.1:** Kotlin Multiplatform advice fixes only. Not applicable; `buildHealth` passes.
+  - **Protobuf plugin 0.10.1:** not landed (see the amendment).
+- [x] Provenance: generate candidates, review them by hand, classify each new artifact's detached signature, and add or remove rows. Evidence is in [the November 15 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md).
+  - **Result:** 28 artifacts added and 29 removed. 14 rows removed and 14 added (EX-861..EX-874). No `<ignored-key>` changes.
+  - **pass:** `python3 scripts/audit-dependency-provenance-sources.py`, exit 0, 575/575 matches.
+  - **pass:** `cmp` of the `<configuration>` block against base is identical, and `git diff -- gradle/verification-keyring.keys` is empty. The metadata diff has 0 `<trusted-key>`, `<trusting>`, `<pgp>` or `<ignored-key>` additions.
+  - **pass:** `./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
+- [x] Add the Dependabot `ignore` entries. Check: `.github/dependabot.yml` parses (YAML load) and lists only the intended ignores.
+  - **pass:** the YAML loads. The Gradle block lists exactly four ignores: `io.grpc:*` and `com.squareup.okhttp3:*` from the plan, and `com.google.protobuf` `0.10.1` and `com.diffplug.spotless` `>= 8.10.3` from the approved amendment. The GitHub Actions block is unchanged.
+- [x] Review document, SECURITY.md link, version references and CHANGELOG. Check by inspection: no stale version strings remain in the listed docs.
+  - **pass:**
+    - [DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md) is added, and [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials) links it as the current review.
+    - A CHANGELOG `Changed` entry is added.
+    - A search of the root and module READMEs and CLAUDE.md finds no Byte Buddy, build-health or Spotless version strings to update. CLAUDE.md's `mockwebserver3 5.3.2` is still correct.
+- [x] Final checks, then record the results. Each Gradle run used a new, empty `GRADLE_USER_HOME` with strict verification. Only the NVD database was copied for Dependency-Check.
+  - **pass:** `./gradlew --no-daemon spotlessCheck check --rerun-tasks`, exit 0. 121/121 tasks; the baseline had 122. 3,448 tests with 0 failures, errors or skips.
+  - **pass:** `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`, exit 0. `test` 154 and `securityTest` 71, with 0 failures.
+  - **pass:** `./gradlew --no-daemon buildHealth cyclonedxBom dependencyCheckAggregate --rerun`, exit 0. 16 SBOM files (8 modules, direct and full). Dependency-Check 13.0.0 found 126 dependencies, 0 unsuppressed findings and 1 suppressed (the approved CVE-2025-32013).
+  - **pass:** `git diff --check 230b360`, exit 0.
+  - **Limits:**
+    - The review host is macOS arm64, so the Linux protoc executables are first verified by Gradle in CI. They are unchanged.
+    - Live LND and LNbits and the Docker stacks were not exercised.
+    - Publisher identity is not authenticated.
+- [ ] After merge: close #105 and #104 with a link to the merged PR, noting what was held and why. (optional)
+
+## Review
+Awaiting implementation and fresh-context review.
+
+### Attempt 1
+Reviewed revision: d4e0af9a478f4257a35ec6c4fcd17848a2f46810
+Verdict: rework
+Findings and dispositions:
+1. **Rework — broken internal link in the new provenance review.** `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md:112` links to `DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md#limits`, but that document's heading is `## Limits and interval`, so its anchor is `#limits-and-interval`. Update the link.
+2. **Rework — inaccurate CHANGELOG wording.** `CHANGELOG.md:122` says "Spotless stays at 8.10.2". The base was 7.2.1, so the update moved to 8.10.2 and then held; "stays" implies it was already there. Reword to say the update stops at, or is held at, 8.10.2 because 8.10.3 and later are signed by a key that is not yet authenticated.
+3. **Rework — overbroad review-document generalization.** `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md:68` says each new ledger row has "the rationale of the row it replaces." EX-870 (`commons-codec` 1.22.0 POM) has no predecessor row. Reword to cover a row that follows the ledger's existing rationale for that artifact family, or drop the claim.
+4. **No implementation findings.** The provenance controls, metadata/ledger/keyring reconciliation, strict empty-home build, integration suites, buildHealth, SBOM, advisory scan and Dependabot configuration all pass. The rework is documentation-only; the provenance and dependency changes are otherwise consistent with the record.
+
+Verification:
+- Scoped paths clean at the reviewed revision; no `paygate-*/src/**` changes; `git diff --check 230b360` pass.
+- Metadata `3fdbcdb6…`, ledger `4079c494…`, keyring `11d778c6…`; 547 components and 964 artifacts; 575 ledger rows: pass. The `<configuration>` block and keyring are byte-identical to base; the metadata diff has no `<trusted-key>`, `<trusting>`, `<pgp>` or `<ignored-key>` additions.
+- Metadata delta: pass. 28 artifacts added, 29 removed, 0 checksums changed; matches the review document.
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls spotlessCheck`: pass.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, 575/575 SHA-256 matches, 82,550,441 bytes (558 Maven Central, 17 Gradle Plugin Portal).
+- `./gradlew --no-daemon -g <new empty home> spotlessCheck check --rerun-tasks`: pass, strict verification, 121/121 tasks executed; 3,448 root tests with 0 failures, errors or skips.
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`: pass; `test` 154 and `securityTest` 71, 0 failures.
+- `./gradlew --no-daemon spotlessCheck buildHealth --rerun-tasks`: pass; `buildHealth` reports only non-fatal, pre-existing advice.
+- `./gradlew --no-daemon cyclonedxBom`: pass, 16 SBOM files (8 modules, JSON and XML).
+- `./gradlew --no-daemon dependencyCheckAggregate --rerun-tasks`: pass, 126 dependencies, 0 unsuppressed findings, 1 suppressed (CVE-2025-32013).
+- `.github/dependabot.yml`: pass. YAML loads; the Gradle block lists exactly `io.grpc:*`, `com.squareup.okhttp3:*`, `com.google.protobuf` `0.10.1` and `com.diffplug.spotless` `>= 8.10.3`; the GitHub Actions block is unchanged.
+- Documentation check: fail, per findings 1–3.
+- Optional post-merge task (close #105 and #104): skipped, optional and not applicable before merge.
+- Material limits: publisher identity is not authenticated; the open decision on 14 revoked or expired keyring keys is unchanged; live LND/LNbits and the Docker stacks were not exercised; the Linux protoc executables are unchanged and are exercised by CI. These match the record's stated limits.
+
+### Attempt 1 rework
+Rework revision: e32944a37c9772f055809d4bce91564960c3e080. It touches only `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md` and `CHANGELOG.md`, both in Review scope.
+
+Dispositions:
+1. **Fixed.** The revoked-key limit now links to `DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md#limits-and-interval`.
+2. **Fixed.** The CHANGELOG now says the Spotless update "is held at 8.10.2 rather than the latest release", because 8.10.3 and later are signed by a key that is not yet authenticated.
+3. **Fixed.** The review document drops the blanket claim. It now says 13 rows replace a removed row for the same group and module and reuse its rationale. EX-870 (`commons-codec` 1.22.0 POM) replaces no row and reuses the rationale of the existing `commons-codec` 1.22.1 rows EX-527 and EX-528. This was confirmed by comparing every new row's rationale with the base ledger.
+4. No implementation change, as Attempt 1 found none.
+
+Verification after rework:
+- **pass:** a relative-link and anchor check, using GitHub slug rules, over the November 15 review, SECURITY.md, CHANGELOG.md and this record. 21 links, 0 broken. As a control, the same check on the reviewed revision `d4e0af9` of the review document flagged exactly the old `#limits` anchor.
+- **pass:** `./scripts/validate-agents-md.sh`, the CI documentation job.
+- **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`.
+- **pass:** `git diff --check 230b360`, exit 0. No `paygate-*/src/**` changes.
+- **Not rerun:** the strict empty-home build, the integration suites, `buildHealth`, the SBOM, the advisory scan and the source-byte audit. The rework changes only Markdown, which none of them read, and Attempt 1 recorded all of them as pass at `d4e0af9`.
+
+### Attempt 2
+Reviewed revision: 62c9afed097c601bf2e05e86cda0802a45d23088
+Verdict: pass
+Findings and dispositions:
+No findings; no rework required. All three Attempt 1 findings are resolved in `e32944a`, which touches only Markdown in Review scope:
+1. The revoked-key limit now links to the November 3 review's `#limits-and-interval` anchor; the target heading is `## Limits and interval`.
+2. The CHANGELOG now says the Spotless update "is held at 8.10.2 rather than the latest release", which is accurate against the 7.2.1 base.
+3. The review document's 13-row/EX-870 statement matches the ledger: 13 new rows have a same-group-and-module predecessor with the same rationale; EX-870 has none and matches EX-527 and EX-528. The 12 Maven Central and 2 Gradle Plugin Portal source counts are correct.
+
+Verification:
+- Scoped implementation paths clean at `62c9afe`; the only changes since Attempt 1 are `e32944a` (Markdown) and record-only commits. `git diff --check 230b360` pass; no `paygate-*/src/**` changes.
+- Documentation check: pass. A relative-link and anchor check over the November 15 review, `SECURITY.md`, `CHANGELOG.md` and this record found 21 links and 0 broken. The same check on `d4e0af9` flagged the old `#limits` link, confirming the control.
+- `./scripts/validate-agents-md.sh`: pass (20 Gradle commands, 0 failures).
+- `./gradlew --no-daemon -g <new empty home> spotlessCheck check --rerun-tasks`: pass, strict verification, 121/121 tasks executed. Default-module test XML: 3,448 tests (the raw 3,602 includes 154 integration results), 0 failures, errors or skips; timestamps 2026-11-18T03:25Z.
+- `./gradlew --no-daemon -g <new empty home> -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`: pass; `test` 154 and `securityTest` 71, 0 failures; timestamps 2026-11-18T03:25Z.
+- `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls spotlessCheck`: pass.
+- `python3 scripts/audit-dependency-provenance-sources.py`: pass, 575/575 SHA-256 matches, 82,550,441 bytes (558 Maven Central, 17 Gradle Plugin Portal).
+- Metadata/ledger/keyring: pass. Hashes `3fdbcdb6…`, `4079c494…`, `11d778c6…`; 547 components, 964 artifacts, 575 rows. Metadata delta 28 added, 29 removed, 936 kept, 0 checksum or PGP changes. The `<configuration>` block and keyring are byte-identical to base; no `<trusted-key>`, `<trusting>`, `<pgp>` or `<ignored-key>` additions.
+- `./gradlew --no-daemon spotlessCheck buildHealth --rerun-tasks`: pass; `buildHealth` reports only non-fatal, pre-existing dependency advice.
+- `./gradlew --no-daemon cyclonedxBom`: pass, 16 SBOM files (8 modules, JSON and XML).
+- `./gradlew --no-daemon dependencyCheckAggregate --rerun-tasks`: pass, "Found 0 vulnerabilities". The report has 126 dependencies, 0 active findings and 1 suppressed finding, CVE-2025-32013 on `paygate-lightning-lnbits-0.1.8-SNAPSHOT.jar`, matching the approved disposition.
+- `.github/dependabot.yml`: pass. YAML loads; the Gradle block lists exactly `io.grpc:*`, `com.squareup.okhttp3:*`, `com.google.protobuf` `0.10.1` and `com.diffplug.spotless` `>= 8.10.3`; the GitHub Actions block is unchanged.
+- Optional post-merge task (close #105 and #104): skipped, optional and not applicable before merge.
+- Material limits: publisher identity is not authenticated; the open decision on 14 revoked or expired keyring keys is unchanged; live LND/LNbits and the Docker stacks were not exercised; the Linux protoc executables are unchanged and are exercised by CI. These match the record's stated limits.
+
+## Outcome
+Closed after review Attempt 2 passed at `62c9afe`. The implementation is `0a5ff2d`, `48dc974`, `11c98aa` and `e32944a` on base `230b360`, on branch `chore/gradle-deps-2026-11`.
+
+What changed:
+- **Versions.** Byte Buddy 1.18.17, build-health 3.20.1 and Spotless 8.10.2, from Dependabot #105 and #104. No build-script adaptation or source change was needed.
+- **Held.** Four updates were held under the plan and its approved amendment:
+  - gRPC 1.85.1, because gRPC follows Spring Boot's managed 1.84.1;
+  - `mockwebserver3` 5.5.1, because OkHttp moved to an unverified GitHub org and is signed by a new key;
+  - Protobuf Gradle plugin 0.10.1, because the Plugin Portal jar Gradle resolves gives `BADSIG` against its publisher signature, while Central's differently-built jar verifies;
+  - Spotless 8.10.3 and later, because they are signed by a rotated key that is not yet authenticated.
+
+  `.github/dependabot.yml` ignores each of them, scoped as narrowly as possible.
+- **Provenance.** No trust was added: `<configuration>` and the keyring are byte-identical.
+  - 28 artifacts were added and 29 removed in the verification metadata.
+  - 14 new artifacts are covered by keys already trusted for their coordinates.
+  - The other 14 replace 14 superseded rows as EX-861..EX-874, keeping the 2026-12-01 UTC deadline. The ledger stays at 575 rows, and 125 three-digit IDs remain.
+
+Verification at Attempt 2, all pass:
+- **Strict empty-home builds:** `spotlessCheck check`, 121/121 tasks and 3,448 tests. Integration `test` 154 and `securityTest` 71.
+- **Provenance controls:** the validator, its negative controls, and the source-byte audit at 575/575.
+- **Trust-state diffs:** the configuration block and keyring are unchanged, with no trust-element additions.
+- **Build tasks:** `buildHealth`, 16 SBOM files, and the advisory scan with 0 active findings and only the approved CVE-2025-32013 suppressed.
+- **Configuration and docs:** the Dependabot config, the documentation link check, `validate-agents-md.sh`, and `git diff --check`.
+
+Review correction: Attempt 1 found three documentation defects, fixed in `e32944a`:
+- a broken November 3 anchor;
+- CHANGELOG wording that said Spotless "stays" at 8.10.2;
+- an overbroad rationale claim, now stated as 13 replaced rows plus EX-870 reusing EX-527 and EX-528.
+
+Limits and remaining uncertainty:
+- Publisher identity is not authenticated.
+- The decision on 14 revoked or expired keyring keys is still open.
+- The Linux protoc executables are unchanged and first verified by Gradle in CI.
+- Live LND and LNbits and the Docker stacks were not exercised.
+- The held OkHttp and Spotless keys need a separate key-recovery task before those updates can land.
+
+Documentation:
+- [DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md);
+- [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials), which links it as the current review;
+- the [CHANGELOG](../CHANGELOG.md) `Changed` entry.
+
+## Next action
+Open a pull request from `chore/gradle-deps-2026-11` to `main` that links [the November 15 provenance review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md), and merge it before 2026-12-01 UTC. Then close #105 and #104 as superseded.
