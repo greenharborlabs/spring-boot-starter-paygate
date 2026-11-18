@@ -1,5 +1,5 @@
 # Renew the dependency provenance ledger before 2026-12-01
-Status: review
+Status: working
 Base revision: 325814ea904c044eaaf4aab069c4e86a64eec05f
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md
 
@@ -108,10 +108,36 @@ Approved: 2026-11-18 by Mark Hammond at plan revision 325814ea904c044eaaf4aab069
     - macOS arm64 host, so the Linux protoc executables are first verified by Gradle in CI (they are unchanged).
 
 ## Review
-Awaiting implementation and fresh-context review.
+
+### Attempt 1
+Reviewed revision: a7c6c9c04e8bc3aa26a8b27307f8db95755fbbd5
+Verdict: rework
+Findings and dispositions:
+1. **The key inventory and the "14 keys" claim are incomplete and wrong.** As of 2026-11-18 the committed metadata has **18** trusted, non-globally-ignored keys that are revoked or expired, not 14. Four are referenced by a subkey fingerprint in `<trusted-key>` and are absent from both this record and the review document:
+   - `07A4FA67A8222F1B39F9EDAEF8052E4E1BD0DB31` (`^org[.]neo4j…`), principal `76DBA0D1…89AF105CEEC705A4`, expired 2026-02-12;
+   - `2518174F4111F02779592A6F9757D7E7E06DD2AC` (`io.prometheus`), principal `55C895C9…3C9B410084525C69`, expired 2024-12-31;
+   - `2B34821418CF19CF1F2A8352953E02E4F573B46F` (`jakarta.platform`), principal `71C52468…049FE94F2D5DAD9D`, expired 2024-02-13;
+   - `E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB` (`org.jetbrains.kotlinx`), principal `BC900CD2…E3822B59020A349D`, expired 2026-09-29.
+
+   Their scopes contain 8 committed artifacts (`org.neo4j`: none; `io.prometheus`: 4 POMs; `jakarta.platform`: 2 POMs; `org.jetbrains.kotlinx`: 2 BOMs). The reviewer fetched each `.asc` and checked the issuer and creation time: all 8 are signed while their key was valid (prometheus `9757D7E7E06DD2AC` 2022-06-15; jakarta `953E02E4F573B46F` 2021-04-27; kotlinx `3D5839A2262CBBFB` 2025-04-08 and 2026-04-09) or by the globally ignored `502001558D63CB9A` (2026-06-04), so no additional rows or `<ignored-key>` entries are required. The security outcome is unchanged, but the method's premise ("every committed artifact in the 14 keys' scopes") and the evidence in the review document do not cover these keys. **Disposition: rework** — correct the inventory and counts, record the classification of the 8 artifacts (or justify their exclusion), and update the review document and SECURITY.md wording that relies on "14".
+2. **Minor: the size estimate is wrong.** The record's Constraint says "at most 69 committed artifacts fall in these scopes", but the 14-key selection is 4 pre-existing rows + 66 classified = 70, and adding the four omitted keys gives 78. **Disposition: rework** — correct the figure while revising.
+
+Verification:
+- Scoped diff (`325814e..a7c6c9c`): **pass** — exactly `SECURITY.md`, `config/dependency-provenance-exceptions.tsv`, `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md` and `gradle/verification-metadata.xml`, plus this record; no dependency changes; working tree clean at HEAD.
+- Ledger edit: **pass** — field-by-field comparison: 575 existing rows changed only `review-date` (2026-12-01 → 2026-12-31); 17 additions (EX-875..EX-891), 0 removals, header unchanged; 592 rows, one distinct review date; no duplicate IDs or coordinates.
+- Metadata: **pass** — `<configuration>` byte-identical to base; keyring unchanged; 17 artifact-scoped `<ignored-keys>` only, with no `<trusted-key>`, `<trusting>` or `<pgp>` additions. All 17 ignore ids match the actual `.asc` issuer ids and creation dates; all map to their ledger rows and existing checksums.
+- Key-validity inventory: **fail** — finding 1.
+- Review document and SECURITY.md: **pass** — new document added; SECURITY.md links it and states the rule and its offline limit; 24 local links and anchors across the record, SECURITY.md and the review document resolve; `./scripts/validate-agents-md.sh` exits 0.
+- Validator and negative controls (`./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`): **pass** — exit 0.
+- Source-byte audit (`python3 scripts/audit-dependency-provenance-sources.py`): **pass** — 592/592 SHA-256 matches, 83,876,666 bytes (575 Maven Central, 17 Plugin Portal).
+- Strict empty-home `spotlessCheck check --rerun-tasks`: **pass** — 121 tasks, 3448 default-module tests (3673 including a stale integration-results tree), 0 failures, errors or skips.
+- `git diff --check 325814e`: **pass** — exit 0.
+- Pre-edit validator run: **skipped** — historical base-state claim, not rerun; the post-edit validator and audit are the material checks.
+- Optional integration tests: **skipped** — record marks them pass; not rerun.
+- Material limits: the 26 "signed while valid" and 23 "signed by other keys" artifacts under the 14 keys were not re-fetched individually; the 8 artifacts under the four omitted keys were checked. The three unchanged `<pgp>` pins whose keys are absent from the committed keyring (`gson` 2.3.1, `apache` 16, `commons-parent` 39) are pre-existing and outside this diff.
 
 ## Outcome
 Pending.
 
 ## Next action
-Run a fresh-context `keel-review` of this record. The implementation is commits `cef9292` (key validity), `f539506` (renewal) and `c508696` (review document and SECURITY.md), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
+Address keel-review Attempt 1 (rework): correct the revoked/expired key inventory and counts, record the classification of the eight artifacts under the four omitted keys, commit the scoped corrections, and return the record to `Status: review`. The implementation is commits `cef9292` (key validity), `f539506` (renewal) and `c508696` (review document and SECURITY.md), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
