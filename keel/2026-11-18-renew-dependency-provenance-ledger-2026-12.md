@@ -1,5 +1,5 @@
 # Renew the dependency provenance ledger before 2026-12-01
-Status: working
+Status: review
 Base revision: 325814ea904c044eaaf4aab069c4e86a64eec05f
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md
 
@@ -40,8 +40,16 @@ Acceptance evidence:
     - `org.hamcrest` (2020-11-20);
     - `org.json` (2025-06-17).
   - **Size:** at most 69 committed artifacts fall in these scopes, and some are covered by other keys.
+  - **Correction (Attempt 1 rework).** The inventory above matched `<trusted-key>` IDs against primary fingerprints only, so the key count of 14 is wrong.
+    - **18 keys:** the four missing keys are trusted by subkey fingerprint:
+      - `07A4FA67…F8052E4E1BD0DB31` (`^org.neo4j`, expired 2026-02-12);
+      - `2518174F…9757D7E7E06DD2AC` (`io.prometheus`, 2024-12-31);
+      - `2B34821418…953E02E4F573B46F` (`jakarta.platform`, 2024-02-13);
+      - `E7DC75FC…3D5839A2262CBBFB` (`org.jetbrains.kotlinx`, 2026-09-29).
+    - **80 artifacts:** the selection, including pins, is 80 committed artifacts, not "at most 69".
+    - **Rule unchanged:** it applies to all 18, which is what "revoked or expired trusted keys" in the Goal and Decisions means.
 - **Gradle accepts signatures from expired or revoked keys.** A rule about key validity therefore has to be expressed with existing metadata constructs. An artifact-scoped `<ignored-key>` plus an exact row, as used for `snakeyaml` 2.6 in the [November 1 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md#metadata-representation-of-exceptions), narrows trust without adding any.
-- **ID space:** 125 IDs remain (EX-875..EX-999).
+- **ID space:** 125 IDs remain (EX-875..EX-999). After this task, 106 remain (EX-894..EX-999).
 - **No dependency changes during this task.** If a Dependabot PR merges first, this task must reconcile it before review.
 
 ## Decisions
@@ -77,28 +85,30 @@ Approved: 2026-11-18 by Mark Hammond at plan revision 325814ea904c044eaaf4aab069
   - **pass:** hashes `3fdbcdb6…`, `4079c494…` and `11d778c6…` match. All 575 rows were at 2026-12-01. The validator exited 0.
 - [x] Source-byte audit. Check: `python3 scripts/audit-dependency-provenance-sources.py` exits 0 with 575/575 matches, before any edit.
   - **pass:** at 2026-11-18T14:31Z, exit 0 with 575/575 matches, 82,550,441 bytes (558 Maven Central, 17 Plugin Portal).
-- [x] Key validity. For every artifact covered by one of the 14 keys, classify its signature creation time against the key's validity, and add an artifact-scoped ignore and exact row for each one signed outside validity. Evidence is in [the November 18 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md#key-validity).
-  - **pass:** the classification covers every committed artifact in the 14 keys' scopes and pins. 4 already had rows. Of the 66 classified:
+- [x] Key validity. For every artifact covered by a revoked or expired trusted key (18 keys after the Attempt 1 correction), classify its signature creation time against the key's validity, and add an artifact-scoped ignore and exact row for each one signed outside validity. Evidence is in [the November 18 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md#key-validity).
+  - **pass (rework):** the classification was rerun against the base metadata and ledger for all 18 keys. Every `<trusted-key>` and `<pgp>` reference was matched against primary and subkey fingerprints. It covers all 80 committed artifacts in those scopes and pins; 6 already had rows. Of the 74 classified:
     - 23 are signed by other trusted keys;
-    - 26 were signed while their key was valid, including all 12 under the superseded Sonatype key;
-    - 17 were signed after their key's recorded expiry.
-
-    The 17 got artifact-scoped `<ignored-key>` entries and rows EX-875..EX-891 (commit `cef9292`).
-  - **pass:** `cmp` of `<configuration>` against base is identical, and the keyring diff is empty. The metadata diff is purely additive: 17 artifact-level `<ignored-keys>` blocks, with 0 `<trusted-key>`, `<trusting>` or `<pgp>` additions.
-  - **pass:** the new rows are part of the final 592/592 audit.
+    - 32 were signed while their key was valid, including all 12 under the superseded Sonatype key, and the Prometheus, Jakarta and kotlinx BOMs under the subkey-referenced keys;
+    - 19 were signed after their key's recorded expiry.
+  - **Versus Attempt 1:**
+    - The 17 artifacts from the 14-key run are unchanged (EX-875..EX-891, commit `cef9292`).
+    - Two `org.neo4j` BOMs (`neo4j-bolt-connection-bom` 11.0.2 and `neo4j-java-driver-bom` 6.1.0) were signed in 2026-04/05 by trusted subkey `07A4FA67…F8052E4E1BD0DB31`, which expired 2026-02-12. They got subkey ignores and rows EX-892..EX-893 (commit `dd3de26`).
+  - **pass:** `cmp` of `<configuration>` against base is identical, and the keyring diff is empty. The metadata diff is purely additive: 19 artifact-level `<ignored-keys>` blocks, with 0 `<trusted-key>`, `<trusting>` or `<pgp>` additions.
+  - **pass:** the new rows are part of the final audit (see Final checks).
   - **pass (controls):**
-    - with EX-882 removed from a scratch ledger, the validator fails with `checksum-only artifact lacks an exact exception for org.hamcrest:hamcrest:3.0:hamcrest-3.0.jar`;
-    - with `hamcrest-3.0.module`'s checksum deleted in scratch trees resolved from empty Gradle homes, dependency verification fails when the new ignore is present and passes on the expired signature when it is absent.
+    - **Validator:** with EX-882 or EX-893 removed from a scratch ledger, it fails with `checksum-only artifact lacks an exact exception for` that artifact.
+    - **Gradle, primary key:** with `hamcrest-3.0.module`'s checksum deleted, in scratch trees resolved from empty Gradle homes, verification fails when the ignore is present and passes on the expired signature when it is absent.
+    - **Gradle, subkey:** the same holds for `neo4j-java-driver-bom-6.1.0.pom`.
 - [x] Renew `review-date` on every row to the approved deadline. Check: a field-level comparison with the starting ledger shows only `review-date` changes on existing rows, plus any new key-validity rows.
-  - **pass:** 575 existing rows changed only `review-date` (2026-12-01 → 2026-12-31). The 17 added rows are the only additions, with 0 removals and an unchanged header. 592 rows, one distinct `review-date` (commit `f539506`).
+  - **pass:** 575 existing rows changed only `review-date` (2026-12-01 → 2026-12-31), in commit `f539506`. After the rework, the 19 key-validity rows (EX-875..EX-893, all 2026-12-31) are the only additions, with 0 removals and an unchanged header: 594 rows, one distinct `review-date`.
 - [x] Review document and SECURITY.md (current-review link and key-validity rule). Check: links resolve, and `./scripts/validate-agents-md.sh` passes.
-  - **pass:** [DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md) is added. [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials) links it as current and states the key-validity rule and its offline limit (commit `c508696`). A relative-link and anchor check over both and this record found 20 links and 0 broken. `validate-agents-md.sh` exited 0.
+  - **pass:** [DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md) is added and corrected to the 18-key inventory. [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials) links it as current, states the key-validity rule and its offline limit, and now says to match references against subkeys (commits `c508696` and `813ae73`). The link check is recorded in the Attempt 1 rework below.
 - [x] Final checks, then record the results:
   - **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
-  - **pass:** `python3 scripts/audit-dependency-provenance-sources.py` on the final ledger, exit 0 with 592/592 matches, 83,876,666 bytes (575 Maven Central, 17 Plugin Portal).
+  - **pass:** `python3 scripts/audit-dependency-provenance-sources.py` on the final ledger, exit 0 with 594/594 matches, 83,881,439 bytes (577 Maven Central, 17 Plugin Portal).
   - **pass:** every row's `review-date` is 2026-12-31, checked field by field above. The provenance validator reads `date -u` and has no date override, so the expiry boundary can't be exercised directly.
-  - **pass:** the metadata changed, so `GRADLE_USER_HOME=<new empty home> ./gradlew --no-daemon spotlessCheck check --rerun-tasks` ran with strict verification. Exit 0, 121/121 tasks, 3,448 tests with 0 failures, errors or skips.
-  - **pass (optional):** `GRADLE_USER_HOME=<new empty home> ./gradlew --no-daemon -Pintegration :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`, exit 0. `test` 154 and `securityTest` 71, with 0 failures.
+  - **pass:** the metadata changed, so `GRADLE_USER_HOME=<new empty home> ./gradlew --no-daemon spotlessCheck check --rerun-tasks` ran with strict verification at the rework revision. Exit 0, 121/121 tasks, 3,448 tests with 0 failures, errors or skips.
+  - **pass (optional):** `GRADLE_USER_HOME=<new empty home> ./gradlew --no-daemon -Pintegration :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`, exit 0. `test` 154 and `securityTest` 71, with 0 failures. In the rework rerun this took 1 h 18 m, against about 1 min before. The cause was not investigated; the likely explanation is that the host slept, or that dependency resolution from the empty home was slow. Every test still executed and passed.
   - **pass:** `git diff --check 325814e`, exit 0.
   - **Limits:**
     - publisher identity is not authenticated;
@@ -136,8 +146,31 @@ Verification:
 - Optional integration tests: **skipped** — record marks them pass; not rerun.
 - Material limits: the 26 "signed while valid" and 23 "signed by other keys" artifacts under the 14 keys were not re-fetched individually; the 8 artifacts under the four omitted keys were checked. The three unchanged `<pgp>` pins whose keys are absent from the committed keyring (`gson` 2.3.1, `apache` 16, `commons-parent` 39) are pre-existing and outside this diff.
 
+### Attempt 1 rework
+Rework revision: 813ae73ab39da2a62cbcc61d56e769785d8c71bd. The implementation commit is `dd3de26`, which adds 2 artifact-scoped ignores and 2 rows. `813ae73` corrects the review document and SECURITY.md. All changed paths are in Review scope.
+
+Dispositions:
+1. **Fixed, with an outcome change the review did not predict.** The root cause was my inventory script, which matched `<trusted-key>` IDs against primary fingerprints only. I rebuilt the inventory to match every `<trusted-key>` and `<pgp>` reference against primary and subkey fingerprints. It finds the same 18 keys the review lists.
+   - **Classification rerun:** I reran the classification against the base metadata and ledger for all 18 keys, not just the four.
+   - **Larger scope than the review counted:** the four keys' scopes hold **10** committed artifacts, not 8. The `^org[.]neo4j($|([.].*))` scope also matches subgroups `org.neo4j.bolt` and `org.neo4j.driver`, which hold one BOM POM each. Two Prometheus POMs already have rows (EX-543, EX-544).
+   - **Six signed while valid,** matching the review: Prometheus `parent` and `simpleclient_bom` 0.16.0, the two Jakarta EE 9.1.0 POMs, and the two kotlinx BOMs.
+   - **Two signed after validity:** `neo4j-bolt-connection-bom` 11.0.2 and `neo4j-java-driver-bom` 6.1.0 were signed 2026-04-30 and 2026-05-01 by the trusted subkey `07A4FA67…F8052E4E1BD0DB31`, which expired 2026-02-12. Under the approved rule, each got an artifact-scoped ignore for that subkey and an exact row (EX-892, EX-893).
+   - **Controls:** a new Gradle control shows the subkey ignore takes effect. With the checksum deleted, verification fails with the ignore and passes without it. The validator rejects the ledger without EX-893.
+   - **Documentation:** the review document and SECURITY.md now state 18 keys, 80 in-scope artifacts, 19 rows, 594 rows in total and 106 IDs left. SECURITY.md tells future reviews to match references against subkeys. The approved Constraints and Decisions text is kept, with a labelled correction beside the wrong count. The approved rule is unchanged: it always covered every revoked or expired trusted key.
+2. **Fixed.** The size estimate is corrected in a labelled Constraints note: 80 committed artifacts across the 18 keys, of which 6 have rows and 74 were classified. The review's own estimate of 78 also missed the two neo4j BOMs.
+
+Verification after rework (details in Tasks):
+- **pass:** validator and negative controls.
+- **pass:** source-byte audit, 594/594.
+- **pass:** field-level ledger check: 575 `review-date` changes, 19 additions, 0 removals, unchanged header, one distinct date.
+- **pass:** `<configuration>` `cmp` identical, keyring unchanged, 0 trust-element additions.
+- **pass:** strict empty-home `spotlessCheck check`, 121/121 tasks and 3,448 tests.
+- **pass (optional):** integration suites, 154 and 71 tests. The run took 1 h 18 m, which is noted in Tasks.
+- **pass:** link and anchor check over the review document and SECURITY.md (13 links, 0 broken), and `validate-agents-md.sh`.
+- **pass:** `git diff --check 325814e`.
+
 ## Outcome
 Pending.
 
 ## Next action
-Address keel-review Attempt 1 (rework): correct the revoked/expired key inventory and counts, record the classification of the eight artifacts under the four omitted keys, commit the scoped corrections, and return the record to `Status: review`. The implementation is commits `cef9292` (key validity), `f539506` (renewal) and `c508696` (review document and SECURITY.md), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
+Run a fresh-context `keel-review` of this record (Attempt 2). The implementation is commits `cef9292` (key validity, 17 rows), `f539506` (renewal), `c508696` (review document and SECURITY.md), `dd3de26` (subkey key validity, 2 rows) and `813ae73` (18-key documentation correction), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
