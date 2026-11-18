@@ -1,5 +1,5 @@
 # Renew the dependency provenance ledger before 2026-12-01
-Status: review
+Status: closed
 Base revision: 325814ea904c044eaaf4aab069c4e86a64eec05f
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md
 
@@ -220,8 +220,69 @@ Verification after rework:
 - **pass:** `git diff --check 325814e`, exit 0. The metadata and ledger diff against `037b4ec` is empty.
 - **Not rerun, deliberately:** the strict empty-home `check`, the source-byte audit and the Gradle scratch controls. This rework changes only Markdown, which none of them read, and Attempt 2 recorded the audit (594/594) and the strict `check` (121/121 tasks, 3,448 tests) as pass at `037b4ec`.
 
+### Attempt 3
+Reviewed revision: 8b0e6cf7f0e9f2f2fa6732a1a2088d41f66dba12
+Verdict: pass
+Findings and dispositions: No findings; no rework required.
+
+Verification:
+- Preconditions: **pass** — `Status: review`, full base revision, concrete scope, record outside scope; working tree clean at HEAD `8b0e6cf`; only the four scoped paths plus this record changed since base.
+- Scoped diff (`325814e..8b0e6cf`): **pass** — exactly `SECURITY.md`, `config/dependency-provenance-exceptions.tsv`, `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md` and `gradle/verification-metadata.xml`, plus this record; no dependency changes. Since the Attempt 2 revision `037b4ec`, only `SECURITY.md`, the review document and this record changed; the ledger, metadata and keyring are byte-identical.
+- Hashes: **pass** — ledger `873d19bd…`, metadata `cd0b29ed…`, keyring `11d778c6…`, matching the record and review document.
+- Ledger edit: **pass** — field-level comparison with the base ledger: 575 existing rows changed only `review-date` (2026-12-01 → 2026-12-31); 19 additions (EX-875..EX-893), 0 removals, header unchanged; 594 rows, one distinct date; no duplicate IDs; new rows reuse the existing owner and trigger, use a 64-hex SHA-256, and match the metadata checksums.
+- Key inventory: **pass** — an independent `gpg` scan of the committed keyring found exactly 18 trusted, non-globally-ignored key references that are revoked or expired: 14 by primary fingerprint and 4 by subkey fingerprint. Three other expired trusted-key entries (concurrent-trees, retirejs, slack-webhook) are globally ignored and correctly excluded.
+- Metadata: **pass** — `<configuration>` is byte-identical to base and the keyring is unchanged. The diff adds only 19 artifact-scoped `<ignored-keys>` blocks; no `<trusted-key>`, `<trusting>`, `<pgp>` or global `<ignored-key>` change. Each ignore id is the actual signer key id.
+- Key-validity scope and counts: **pass** — independently recomputed full scope matching (`group`, `name`, `version`, `file`, exact or regex): 74 committed artifacts in scope, 6 with pre-existing rows, 68 classified. Fetched all 68 artifact and `.asc` pairs from Maven Central and verified every signature with `gpgv` against a dearmored copy of the committed keyring. Reproduced 17 signed by a different trusted key, 32 signed while valid (including all 12 Sonatype artifacts signed between 2010 and 2022, before the 2024-01-04 revocation), and 19 signed after validity. The 19 match the added rows and ignores, and the docs' corrected 74/68/17/32/19 figures are accurate.
+- Validator and negative controls (`./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`): **pass** — BUILD SUCCESSFUL, both tasks executed.
+- Source-byte audit (`python3 scripts/audit-dependency-provenance-sources.py`): **pass** — 594/594 SHA-256 matches, 83,881,439 bytes (577 Maven Central, 17 Plugin Portal), identical to the record.
+- Strict empty-home `spotlessCheck check --rerun-tasks`: **pass** — fresh `GRADLE_USER_HOME`, 121/121 tasks executed, BUILD SUCCESSFUL; 3,448 default-module tests with 0 failures, errors or skips.
+- Links and anchors: **pass** — 24 local links across the record, `SECURITY.md` and the review document resolve, including `#key-validity`; the `verification-metadata.xml#L112` target is a valid GitHub line anchor.
+- `./scripts/validate-agents-md.sh`: **pass** — exit 0.
+- `git diff --check 325814e`: **pass** — exit 0.
+- Optional integration tests: **skipped** — marked optional in the record; not rerun.
+- Material limits: optional integration suites were not rerun; publisher identity remains unauthenticated as documented; key validity is derived from the committed keyring's recorded expiry and revocation data.
+
 ## Outcome
-Pending.
+Closed after review Attempt 3 passed at `8b0e6cf`. The implementation is `cef9292`, `f539506`, `c508696`, `dd3de26`, `813ae73` and `2ba86d1` on base `325814e`, on branch `chore/renew-provenance-ledger-2026-12`.
+
+What changed:
+- **Renewal.** All 575 existing ledger rows were renewed from 2026-12-01 to **2026-12-31 UTC**, the owner-approved Option B, which lines the ledger up with the CVE-2025-32013 suppression deadline. This followed a 575/575 source-byte audit, and only `review-date` changed.
+- **Key-validity rule (approved).** A trusted key now covers only signatures made while it was valid, judged by the committed keyring's expiry and revocation data. Of 74 committed artifacts in the scopes of the 18 revoked or expired trusted keys, 6 already had rows. The other 68 break down as:
+  - 17 signed by other trusted keys;
+  - 32 signed while valid, including all 12 under the superseded Sonatype key;
+  - 19 signed after their key's validity ended.
+- **Rows for the 19.** Each of the 19 got an artifact-scoped `<ignored-key>` for its signing key and an exact row (EX-875..EX-893), so Gradle accepts it by checksum: Mockito 5.23.0, ANTLR 4.9.3, Hamcrest 3.0, `org.json`, `querydsl-bom`, `rsocket-bom`, Android `annotations`, and two `org.neo4j` BOMs signed by an expired trusted subkey.
+- **Result.** The ledger has 594 rows, all at 2026-12-31, and 106 IDs remain.
+- **No trust added.** `<configuration>` and the keyring are byte-identical to base.
+
+Verification at Attempt 3, all pass:
+- **Inventory and classification:** the 18-key inventory, including 4 subkey references, and a full-scope reclassification, both reproduced independently.
+- **Provenance controls:** the validator and its negative controls, and the source-byte audit at 594/594.
+- **Ledger and trust:** the field-level ledger comparison, and trust-state diffs showing no changes.
+- **Build:** strict empty-home `spotlessCheck check`, 121/121 tasks and 3,448 tests.
+- **Documentation:** the link check and `validate-agents-md.sh`.
+- **Whitespace:** `git diff --check`.
+
+Earlier in work, these also passed:
+- the integration suites, 154 and 71 tests (optional; not rerun at Attempt 3);
+- Gradle scratch controls showing that both primary-key and subkey artifact ignores take effect;
+- validator controls showing that the new rows are required.
+
+Review corrections:
+- **Attempt 1:** the first inventory matched trusted references against primary fingerprints only. Correcting it found 4 subkey-referenced keys, 18 in total, and two more rows (EX-892, EX-893).
+- **Attempt 2:** counts that ignored `name` and `version` scope narrowing were corrected from 80/74/23 to 74/68/17. The 19 rows were unchanged.
+- **Policy:** SECURITY.md now requires both subkey matching and full scope matching for future key-validity checks.
+
+Limits and remaining uncertainty:
+- **Publisher identity** is not authenticated.
+- **Key validity** relies on keyring expiry data that may be stale; several publishers likely extended their keys.
+- **Enforcement:** neither Gradle nor the validator checks key validity offline, so each renewal and each dependency change must reclassify.
+- **Rows still on `main`** expire 2026-12-01 until this branch merges.
+- **Dependabot #113** is not reconciled.
+
+Documentation:
+- [DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md);
+- [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials), which links it as the current review and states the key-validity rule.
 
 ## Next action
-Run a fresh-context `keel-review` of this record (Attempt 3). The implementation is commits `cef9292` (key validity, 17 rows), `f539506` (renewal), `c508696` (review document and SECURITY.md), `dd3de26` (subkey key validity, 2 rows), `813ae73` (18-key documentation correction) and `2ba86d1` (scope-attribute count correction), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
+Open a pull request from `chore/renew-provenance-ledger-2026-12` to `main` that links [the November 18 provenance review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md), and merge it before 2026-12-01 UTC.
