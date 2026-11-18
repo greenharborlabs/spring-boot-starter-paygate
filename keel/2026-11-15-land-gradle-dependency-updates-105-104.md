@@ -1,5 +1,5 @@
 # Land Gradle dependency updates from Dependabot #105 and #104
-Status: working
+Status: review
 Base revision: 230b3600ea724f9b4908830822ba82a7125dfc8e
 Review scope: build.gradle.kts, settings.gradle.kts, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md, SECURITY.md, CHANGELOG.md
 
@@ -164,8 +164,24 @@ Verification:
 - Optional post-merge task (close #105 and #104): skipped, optional and not applicable before merge.
 - Material limits: publisher identity is not authenticated; the open decision on 14 revoked or expired keyring keys is unchanged; live LND/LNbits and the Docker stacks were not exercised; the Linux protoc executables are unchanged and are exercised by CI. These match the record's stated limits.
 
+### Attempt 1 rework
+Rework revision: e32944a37c9772f055809d4bce91564960c3e080. It touches only `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-15.md` and `CHANGELOG.md`, both in Review scope.
+
+Dispositions:
+1. **Fixed.** The revoked-key limit now links to `DEPENDENCY-PROVENANCE-REVIEW-2026-11-03.md#limits-and-interval`.
+2. **Fixed.** The CHANGELOG now says the Spotless update "is held at 8.10.2 rather than the latest release", because 8.10.3 and later are signed by a key that is not yet authenticated.
+3. **Fixed.** The review document drops the blanket claim. It now says 13 rows replace a removed row for the same group and module and reuse its rationale. EX-870 (`commons-codec` 1.22.0 POM) replaces no row and reuses the rationale of the existing `commons-codec` 1.22.1 rows EX-527 and EX-528. This was confirmed by comparing every new row's rationale with the base ledger.
+4. No implementation change, as Attempt 1 found none.
+
+Verification after rework:
+- **pass:** a relative-link and anchor check, using GitHub slug rules, over the November 15 review, SECURITY.md, CHANGELOG.md and this record. 21 links, 0 broken. As a control, the same check on the reviewed revision `d4e0af9` of the review document flagged exactly the old `#limits` anchor.
+- **pass:** `./scripts/validate-agents-md.sh`, the CI documentation job.
+- **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`.
+- **pass:** `git diff --check 230b360`, exit 0. No `paygate-*/src/**` changes.
+- **Not rerun:** the strict empty-home build, the integration suites, `buildHealth`, the SBOM, the advisory scan and the source-byte audit. The rework changes only Markdown, which none of them read, and Attempt 1 recorded all of them as pass at `d4e0af9`.
+
 ## Outcome
 Pending.
 
 ## Next action
-Run a fresh-context `keel-review` of this record. The implementation is commits `0a5ff2d` (versions and provenance), `48dc974` (Dependabot ignores) and `11c98aa` (review document and docs), on branch `chore/gradle-deps-2026-11`. Review must pass before 2026-12-01 UTC.
+Run a fresh-context `keel-review` of this record (Attempt 2). The implementation is commits `0a5ff2d` (versions and provenance), `48dc974` (Dependabot ignores), `11c98aa` (review document and docs) and `e32944a` (Attempt 1 documentation rework), on branch `chore/gradle-deps-2026-11`. Review must pass before 2026-12-01 UTC.
