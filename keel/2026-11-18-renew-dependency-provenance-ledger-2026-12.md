@@ -1,5 +1,5 @@
 # Renew the dependency provenance ledger before 2026-12-01
-Status: review
+Status: working
 Base revision: 325814ea904c044eaaf4aab069c4e86a64eec05f
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md
 
@@ -168,6 +168,37 @@ Verification after rework (details in Tasks):
 - **pass (optional):** integration suites, 154 and 71 tests. The run took 1 h 18 m, which is noted in Tasks.
 - **pass:** link and anchor check over the review document and SECURITY.md (13 links, 0 broken), and `validate-agents-md.sh`.
 - **pass:** `git diff --check 325814e`.
+
+### Attempt 2
+Reviewed revision: 037b4ec16e8654356e796463f088513168802b4a
+Verdict: rework
+Findings and dispositions:
+1. **The key-validity artifact counts are inflated by six out-of-scope artifacts.** Gradle narrows a `<trusted-key>` by its `name` and `version` attributes, and the expired `com.diffplug.durian` key is scoped to `durian-swt.os` 4.3.0 ([`gradle/verification-metadata.xml:112`](../gradle/verification-metadata.xml#L112)). The six `durian-collect`, `durian-core` and `durian-io` 1.2.0 artifacts are therefore outside that key's scope; they are signed 2016-06-27 by the separate, valid group-wide key `8756C4F7…379CE192D401AB61`. Counting them makes the inventory too large:
+   - the selection is **74** committed artifacts, not 80;
+   - **68** were classified, not 74;
+   - **17** were signed by a different trusted key, not 23;
+   - the "signed while valid" count of 32 and the 19 post-expiry rows are correct, and still sum to 68 with the corrected 17.
+
+   The security outcome is unchanged: the 19 exact rows cover every correctly scoped artifact signed after its key's recorded expiry, the keyring is still unchanged, and no trust was added. Only the documented evidence counts are wrong. **Disposition: rework** — correct `80`/`74`/`23` to `74`/`68`/`17` in the Constraints correction, the Key validity task, the Attempt 1 rework dispositions and the review document's method step and result table. Keep 32 and 19. No ledger or metadata change is indicated by this finding.
+2. No other findings. The scoped implementation, the 19 classifications and the acceptance criteria otherwise hold.
+
+Verification:
+- Preconditions: **pass** — `Status: review`, full base revision, concrete scope, record outside scope; working tree clean at HEAD `037b4ec`; only the four scoped paths plus this record changed since base.
+- Scoped diff (`325814e..037b4ec`): **pass** — exactly `SECURITY.md`, `config/dependency-provenance-exceptions.tsv`, `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md` and `gradle/verification-metadata.xml`, plus this record; no dependency changes.
+- Ledger edit: **pass** — field-by-field comparison: 575 existing rows changed only `review-date` (2026-12-01 → 2026-12-31); 19 additions (EX-875..EX-893), 0 removals, header byte-identical, one distinct review date; no duplicate IDs; new rows use the existing owner and trigger and a 64-hex SHA-256.
+- Hashes: **pass** — base ledger `4079c494…`, metadata `3fdbcdb6…` and keyring `11d778c6…`; head ledger `873d19bd…` and metadata `cd0b29ed…`; all match the record and review document; keyring unchanged.
+- Metadata: **pass** — `<configuration>` byte-identical to base; full diff adds only 19 artifact-scoped `<ignored-keys>` blocks (EX-875..EX-893), each pairing a valid checksum; no `<trusted-key>`, `<trusting>`, `<pgp>` or global `<ignored-key>` change; every ignore id is the actual signer key id and is expired or revoked in the committed keyring.
+- Key inventory: **pass** — exactly 18 trusted, non-globally-ignored key references are revoked or expired (14 primary, 4 subkey), with the recorded expiry dates.
+- Signature classification of the 19 rows: **pass** — all 19 artifacts and `.asc` files fetched from Maven Central, SHA-256 matches the ledger, signer key ids match the added ignores, and signature creation dates match the review document; each is after its signing key's recorded expiry (or, for `org.neo4j`, the subkey's expiry).
+- Key-validity scope and counts: **fail** — finding 1.
+- Validator and negative controls (`./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`): **pass** — BUILD SUCCESSFUL.
+- Source-byte audit (`python3 scripts/audit-dependency-provenance-sources.py`): **pass** — first pass matched 586/594 with 8 transient timeouts or resets; each failed row was retried individually and matched, so 594/594 match, 83,881,439 bytes (577 Maven Central, 17 Plugin Portal), identical to the record.
+- Strict empty-home `spotlessCheck check --rerun-tasks`: **pass** — 121/121 tasks executed, 3,448 default-module tests across 508 result files with 0 failures, errors or skips. A first attempt was interrupted at a 60-minute tool timeout while still running; the rerun from the same empty home completed in about 9 minutes.
+- Links and anchors: **pass** — 23 local links across the record, `SECURITY.md` and the review document resolve, including the `#key-validity` anchor.
+- `./scripts/validate-agents-md.sh`: **pass** — exit 0.
+- `git diff --check 325814e`: **pass** — exit 0.
+- Optional integration tests: **skipped** — marked optional in the record; not rerun.
+- Material limits: the manual scratch-tree Gradle signature controls were not independently rerun; publisher identity remains unauthenticated as documented; the empty-home first attempt was interrupted.
 
 ## Outcome
 Pending.
