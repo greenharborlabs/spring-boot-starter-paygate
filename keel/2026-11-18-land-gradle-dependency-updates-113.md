@@ -1,6 +1,6 @@
 # Land Gradle dependency and wrapper updates from Dependabot #113
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 66886db0a98b20f35efb90cc8899e0c2a8ef9a78
 Review scope: build.gradle.kts, settings.gradle.kts, gradle/wrapper/gradle-wrapper.jar, gradle/wrapper/gradle-wrapper.properties, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, docs/security/DEPENDENCY-PROVENANCE-REVIEW-<work date>.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md
 
 ## Goal
@@ -112,6 +112,34 @@ Acceptance evidence, mirroring the [November 15 task](2026-11-15-land-gradle-dep
   - SECURITY.md links it as the current review;
   - a CHANGELOG `[Unreleased]` entry;
   - Gradle version references: [CLAUDE.md](../CLAUDE.md) line 12 and the [README](../README.md) compatibility table. Historical records stay as they are.
+
+Approved: 2026-11-18 by Mark Hammond at plan revision 66886db0a98b20f35efb90cc8899e0c2a8ef9a78. This confirms that Tomcat keeps its explicit pin, moved to 11.0.29.
+
+**Proposed amendment, 2026-11-18: the change needs 29 replacement rows, not about 10.**
+
+These are findings from the full generation pass, which hits the plan's "more than 20 new IDs" stop condition.
+- **Generation:** base (9.8.2 wrapper) and after (9.9.1 wrapper) each ran from a new, empty Gradle home with `-Pintegration` and CI's task set. Each exited 0 with 594 tasks executed and resolved 962 artifacts. 40 were added and 40 removed, and no checksum changed. Every base artifact is in the committed metadata.
+- **24 added artifacts the pre-check did not predict.** Each is attributable to one of the four bumps (from `buildEnvironment` on both trees, and the cached module metadata):
+  - **Jackson 2.22.2 → 2.22.3 (17 artifacts) and `json-schema-validator` 2.0.4 → 2.0.8 (2).** These are on the plugin classpath through `cyclonedx-core-java` 13.4.0, CycloneDX 3.6.1's transitive.
+  - **Kotlin `kotlin-stdlib`, `kotlin-stdlib-common` and `kotlin-reflect` 2.4.10 → 2.4.21 (5).** Gradle constrains plugin classpaths to its embedded Kotlin (`kotlin-stdlib:{strictly 2.4.21}`), which the 9.9 notes move to 2.4.21. Build-health 3.20.1 already asked for `kotlin-bom` 2.4.21 but resolved 2.4.10 on 9.8.2.
+- **Calibration:** the classification reproduced the committed representation for all 40 removed artifacts. 11 are covered with no row, and 29 have exact rows: EX-479..EX-498, EX-510, EX-511, EX-597..EX-601 and EX-861..EX-865.
+- **Classification of the 40 added artifacts** (`gpgv` against a dearmored copy of the committed keyring only). Each has the same signer and representation as its predecessor:
+  - **Covered, no row (11):** Tomcat 11.0.29 (`A9C5DF4D…2F6059E7`, signed 2026-11-09, no expiry or revocation), and Kotlin 2.4.21 (the trusted subkey `6F538074…6A0975F8B1127B83`, signed 2026-10-06, valid until 2027-04-11).
+  - **Rows (29):**
+    - 6 give `NO_PUBKEY` from globally ignored keys: build-health and `graph-support` (`95962C5E716C39AA`), `cyclonedx-core-java` (`6FD54E1F311B47E9`);
+    - 19 give a valid signature from a globally ignored key: Jackson (`28118C07…3D12CA2AC19F3181`) and `json-schema-validator` (`AEB1E1AE…3EFC46EE83C40224`);
+    - 4 Plugin Portal artifacts are unsigned.
+- **Other stop conditions: none hit.**
+  - No BADSIG and no signing-key change.
+  - Portal and Central bytes are identical wherever both exist, and the CycloneDX plugin is Portal-only, as 3.5.1 was.
+  - POM `url`, `scm` and `organization` are unchanged apart from each release's version tag.
+- **Effect:** 29 rows (EX-894..EX-922) replace 29 retired rows, like for like. The ledger stays at 594 rows, and 77 IDs remain.
+- **One `<configuration>` text reference:** the global `<ignored-key id="3EFC46EE83C40224">` has `reason="Exact checksum exceptions EX-510 and EX-511 required"`. Retiring the 2.0.4 rows makes that text name rows that no longer exist. The new 2.0.8 rows would be EX-916 and EX-917.
+
+Options:
+- **A (recommended):** land all four bumps with the 29 rows, and update only that reason to name EX-916 and EX-917. That is a single reason-attribute change, with no trust change. The `cmp` check becomes "identical except that attribute".
+- **B:** the same 29 rows, leaving `<configuration>` byte-identical with the stale reason text.
+- **C:** hold CycloneDX at 3.5.1 and land Tomcat, build-health and Gradle 9.9.1. That needs 5 rows (EX-894..EX-898), leaves `<configuration>` identical, and needs a Dependabot ignore for `org.cyclonedx.bom` 3.6.x. CycloneDX 3.6.x brings no fix Paygate needs (SPDX licence expressions and a task-input fix).
 
 ## Tasks
 - [ ] **Baseline.** At base, run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration`, and record task and test counts.
