@@ -1,5 +1,5 @@
 # Renew the dependency provenance ledger before 2026-12-01
-Status: working
+Status: review
 Base revision: 325814ea904c044eaaf4aab069c4e86a64eec05f
 Review scope: config/dependency-provenance-exceptions.tsv, gradle/verification-metadata.xml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-*.md, SECURITY.md
 
@@ -46,7 +46,7 @@ Acceptance evidence:
       - `2518174F…9757D7E7E06DD2AC` (`io.prometheus`, 2024-12-31);
       - `2B34821418…953E02E4F573B46F` (`jakarta.platform`, 2024-02-13);
       - `E7DC75FC…3D5839A2262CBBFB` (`org.jetbrains.kotlinx`, 2026-09-29).
-    - **80 artifacts:** the selection, including pins, is 80 committed artifacts, not "at most 69".
+    - **74 artifacts:** the selection, including pins, is 74 committed artifacts, not "at most 69". The Attempt 1 rework said 80 because it matched scopes by `group` only. Attempt 2 corrected this by applying each scope's `name` and `version` narrowing.
     - **Rule unchanged:** it applies to all 18, which is what "revoked or expired trusted keys" in the Goal and Decisions means.
 - **Gradle accepts signatures from expired or revoked keys.** A rule about key validity therefore has to be expressed with existing metadata constructs. An artifact-scoped `<ignored-key>` plus an exact row, as used for `snakeyaml` 2.6 in the [November 1 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-01.md#metadata-representation-of-exceptions), narrows trust without adding any.
 - **ID space:** 125 IDs remain (EX-875..EX-999). After this task, 106 remain (EX-894..EX-999).
@@ -86,8 +86,8 @@ Approved: 2026-11-18 by Mark Hammond at plan revision 325814ea904c044eaaf4aab069
 - [x] Source-byte audit. Check: `python3 scripts/audit-dependency-provenance-sources.py` exits 0 with 575/575 matches, before any edit.
   - **pass:** at 2026-11-18T14:31Z, exit 0 with 575/575 matches, 82,550,441 bytes (558 Maven Central, 17 Plugin Portal).
 - [x] Key validity. For every artifact covered by a revoked or expired trusted key (18 keys after the Attempt 1 correction), classify its signature creation time against the key's validity, and add an artifact-scoped ignore and exact row for each one signed outside validity. Evidence is in [the November 18 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md#key-validity).
-  - **pass (rework):** the classification was rerun against the base metadata and ledger for all 18 keys. Every `<trusted-key>` and `<pgp>` reference was matched against primary and subkey fingerprints. It covers all 80 committed artifacts in those scopes and pins; 6 already had rows. Of the 74 classified:
-    - 23 are signed by other trusted keys;
+  - **pass (rework):** the classification was rerun against the base metadata and ledger for all 18 keys. Every `<trusted-key>` and `<pgp>` reference was matched against primary and subkey fingerprints, and, after Attempt 2, every scope attribute (`group`, `name`, `version`, `file`). It covers all 74 committed artifacts in those scopes and pins; 6 already had rows. Of the 68 classified:
+    - 17 are signed by other trusted keys;
     - 32 were signed while their key was valid, including all 12 under the superseded Sonatype key, and the Prometheus, Jakarta and kotlinx BOMs under the subkey-referenced keys;
     - 19 were signed after their key's recorded expiry.
   - **Versus Attempt 1:**
@@ -156,8 +156,8 @@ Dispositions:
    - **Six signed while valid,** matching the review: Prometheus `parent` and `simpleclient_bom` 0.16.0, the two Jakarta EE 9.1.0 POMs, and the two kotlinx BOMs.
    - **Two signed after validity:** `neo4j-bolt-connection-bom` 11.0.2 and `neo4j-java-driver-bom` 6.1.0 were signed 2026-04-30 and 2026-05-01 by the trusted subkey `07A4FA67…F8052E4E1BD0DB31`, which expired 2026-02-12. Under the approved rule, each got an artifact-scoped ignore for that subkey and an exact row (EX-892, EX-893).
    - **Controls:** a new Gradle control shows the subkey ignore takes effect. With the checksum deleted, verification fails with the ignore and passes without it. The validator rejects the ledger without EX-893.
-   - **Documentation:** the review document and SECURITY.md now state 18 keys, 80 in-scope artifacts, 19 rows, 594 rows in total and 106 IDs left. SECURITY.md tells future reviews to match references against subkeys. The approved Constraints and Decisions text is kept, with a labelled correction beside the wrong count. The approved rule is unchanged: it always covered every revoked or expired trusted key.
-2. **Fixed.** The size estimate is corrected in a labelled Constraints note: 80 committed artifacts across the 18 keys, of which 6 have rows and 74 were classified. The review's own estimate of 78 also missed the two neo4j BOMs.
+   - **Documentation:** the review document and SECURITY.md now state 18 keys, 80 in-scope artifacts (74 after the Attempt 2 correction), 19 rows, 594 rows in total and 106 IDs left. SECURITY.md tells future reviews to match references against subkeys. The approved Constraints and Decisions text is kept, with a labelled correction beside the wrong count. The approved rule is unchanged: it always covered every revoked or expired trusted key.
+2. **Fixed.** The size estimate is corrected in a labelled Constraints note: 80 committed artifacts across the 18 keys, of which 6 have rows and 74 were classified. The review's own estimate of 78 also missed the two neo4j BOMs. *Superseded by the Attempt 2 rework:* the correct figures are 74 in scope and 68 classified, because six durian 1.2.0 artifacts sit outside the `durian-swt.os`-only scope.
 
 Verification after rework (details in Tasks):
 - **pass:** validator and negative controls.
@@ -200,8 +200,28 @@ Verification:
 - Optional integration tests: **skipped** — marked optional in the record; not rerun.
 - Material limits: the manual scratch-tree Gradle signature controls were not independently rerun; publisher identity remains unauthenticated as documented; the empty-home first attempt was interrupted.
 
+### Attempt 2 rework
+Rework revision: 2ba86d1a9a9b2bcbcae55b4c49563773b0001da3. Commit `2ba86d1` changes only `docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md` and `SECURITY.md`, both in Review scope. The ledger, metadata and keyring are byte-identical to the reviewed revision `037b4ec`: ledger `873d19bd…`, metadata `cd0b29ed…`, keyring `11d778c6…`.
+
+Dispositions:
+1. **Fixed.** The root cause was my classifier, which selected in-scope artifacts by a scope's `group` only.
+   - **Fix:** it now requires every attribute a `<trusted-key>` or `<trusting>` scope sets (`group`, `name`, `version`, `file`, exact or regex) to match. Seven of the 18 keys are narrowed by `name` and `version`.
+   - **Rerun:** against the base metadata and ledger, it reproduces the review's figures independently: 74 in scope, of which 6 have rows; 68 classified as 17 other signer, 32 signed while valid and 19 signed after validity.
+   - **What changed:** a diff against the previous run shows the only change is the removal of the six `durian-collect`, `durian-core` and `durian-io` 1.2.0 artifacts, all previously other-signer. The 32 and 19 sets are identical, so no ledger or metadata change is needed.
+   - **Corrections:** 80/74/23 became 74/68/17 in the review document's method step and result table, the Constraints correction, the Key validity task and the Attempt 1 rework dispositions. The Attempt 1 dispositions are kept, with a labelled supersession note.
+   - **History:** the review document now says that the Attempt 1 rerun still matched by `group` only.
+   - **SECURITY.md** now says a scope covers an artifact only when every attribute it sets matches.
+2. No other findings to address.
+
+Verification after rework:
+- **pass:** link and anchor check over this record, the review document and SECURITY.md, 24 links and 0 broken.
+- **pass:** `./scripts/validate-agents-md.sh`, exit 0.
+- **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
+- **pass:** `git diff --check 325814e`, exit 0. The metadata and ledger diff against `037b4ec` is empty.
+- **Not rerun, deliberately:** the strict empty-home `check`, the source-byte audit and the Gradle scratch controls. This rework changes only Markdown, which none of them read, and Attempt 2 recorded the audit (594/594) and the strict `check` (121/121 tasks, 3,448 tests) as pass at `037b4ec`.
+
 ## Outcome
 Pending.
 
 ## Next action
-Run a fresh-context `keel-review` of this record (Attempt 2). The implementation is commits `cef9292` (key validity, 17 rows), `f539506` (renewal), `c508696` (review document and SECURITY.md), `dd3de26` (subkey key validity, 2 rows) and `813ae73` (18-key documentation correction), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
+Run a fresh-context `keel-review` of this record (Attempt 3). The implementation is commits `cef9292` (key validity, 17 rows), `f539506` (renewal), `c508696` (review document and SECURITY.md), `dd3de26` (subkey key validity, 2 rows), `813ae73` (18-key documentation correction) and `2ba86d1` (scope-attribute count correction), on branch `chore/renew-provenance-ledger-2026-12`. Review and merge must happen before 2026-12-01 UTC, when the current rows expire on `main`.
