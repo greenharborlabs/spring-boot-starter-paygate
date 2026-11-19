@@ -188,7 +188,7 @@ Amendment approved: 2026-11-18 by Mark Hammond at plan revision 0338ee1531caf793
 - [x] **Provenance.** Generate, calibrate on the removed set, classify, run the key-validity sweep, then add and remove rows from EX-894 at 2026-12-31 UTC. Checks:
   - `python3 scripts/audit-dependency-provenance-sources.py` matches every row;
   - `./gradlew validateDependencyProvenance verifyDependencyProvenanceNegativeControls` passes;
-  - trust-state diffs: a `cmp` of `<configuration>` against base is identical, and `git diff <base> -- gradle/verification-keyring.keys` is empty;
+  - trust-state diffs: a `cmp` of `<configuration>` against base is identical except for the `3EFC46EE83C40224` `<ignored-key>` reason attribute, as approved in amendment option A, and `git diff <base> -- gradle/verification-keyring.keys` is empty;
   - the metadata diff has no `<trusted-key>`, `<trusting>`, `<pgp>` or `<ignored-key>` additions.
 
   Evidence is in [the second November 18 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md). Results, as amended:
@@ -257,7 +257,7 @@ Verification:
 - Preconditions: **pass** — `Status: review`, full base revision `66886db`, concrete scope, record outside scope; `HEAD` is `a402bb1`; scoped paths clean; only the scoped files plus this record changed since base; `a402bb1` touches only this record.
 - Scoped diff (`66886db..a402bb1`): **pass** — exactly `build.gradle.kts`, `settings.gradle.kts`, the wrapper jar and properties, `gradle/verification-metadata.xml`, the ledger, the new review document, `SECURITY.md`, `CHANGELOG.md`, `CLAUDE.md` and `README.md`; `git diff --stat 66886db -- 'paygate-*/src/**'` is empty.
 - Hashes and structure: **pass** — metadata `e3eff36c…`, ledger `9a6b2a80…`, keyring `11d778c6…`; base metadata `cd0b29ed…` and ledger `873d19bd…`; 547 components, 964 artifacts, 594 ledger rows, 77 IDs left.
-- Metadata delta: **pass** — 40 artifacts added and 40 removed; 0 checksums changed among the 896 common entries; 11 added artifacts have checksum-only coverage (6 Tomcat, 5 Kotlin) and 29 have exact rows.
+- Metadata delta: **pass** — 40 artifacts added and 40 removed; 0 checksums changed among the 924 common artifacts (corrected in the Attempt 2 rework; it previously read "896 common entries"); 11 added artifacts have checksum-only coverage (6 Tomcat, 5 Kotlin) and 29 have exact rows.
 - Ledger delta: **pass** — 29 rows removed and 29 added (EX-894..EX-922); 565 common rows byte-identical; each new row matches a predecessor by group, module and artifact type and preserves its rationale, owner, deadline, trigger and source host; 25 Central and 4 Plugin Portal sources; no duplicate IDs; IDs match `EX-[0-9]{3}`; all new rows use 2026-12-31.
 - Trust state: **pass** — keyring diff empty; trust-element counts unchanged; the metadata diff's only `<ignored-key>` change is the `3EFC46EE83C40224` reason; `<configuration>` differs in exactly one line (but is 197 lines, not 200 — finding 1).
 - Validator and negative controls (`./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`): **pass** — BUILD SUCCESSFUL, both tasks executed.
@@ -287,6 +287,45 @@ Verification after rework:
 - **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
 - **pass:** `git diff --check 66886db`, exit 0. No `paygate-*/src/**` changes.
 - **Not rerun:** the strict builds, integration suites, `buildHealth`, SBOM, advisory scan, source-byte audit and wrapper check. The rework changes only this record, which none of them read, and Attempt 1 recorded all of them as pass at `a402bb1`.
+
+### Attempt 2
+Reviewed revision: bd6ef087f9a448f9126214a0106ded3afb9c0611
+Verdict: rework
+Findings and dispositions:
+1. **Rework — the Attempt 1 metadata-delta count is wrong.** Attempt 1 records "0 checksums changed among the 896 common entries". Base and final each carry 964 artifacts; with 40 added and 40 removed, **924 artifacts** are common, and all 924 are representation-identical. The rest of the record already states 964 artifacts and the 40/40 delta correctly, so only "896" needs correcting (prefer "924 common artifacts" to remove the ambiguity in "entries").
+2. **Rework — the Provenance check still says the `<configuration>` block is identical to base.** The approved amendment (option A) changes the `3EFC46EE83C40224` ignored-key reason and says "The `cmp` check becomes 'identical except that attribute'." The check bullet still reads "a `cmp` of `<configuration>` against base is identical". Update it to the approved one-line exception; the result bullet already reports the pass "as amended".
+3. **No implementation findings.** The two Attempt 1 evidence errors are fixed and verified (197-line configuration block with a one-line diff; the 29-row retired list). Metadata, ledger, keyring, wrapper, documentation and links are otherwise consistent.
+
+Verification:
+- Preconditions: **pass** — `Status: review` before this attempt, full base revision `66886db`, concrete scope, record outside scope; reviewed revision `bd6ef08`; worktree clean; `git diff --name-only a402bb1..bd6ef08` is only this record; `git diff --name-only 66886db..bd6ef08` is exactly the scope plus this record; `git diff --stat 66886db -- 'paygate-*/src/**'` is empty.
+- Attempt 1 rework findings: **pass** — `<configuration>` is 197 lines (lines 3–199) at base and head and differs only on line 10, the approved `3EFC46EE83C40224` reason; the retired IDs are exactly EX-479, EX-482, EX-484..EX-498, EX-510, EX-511, EX-597..EX-601, EX-861..EX-865 (29), with EX-480, EX-481 and EX-483 still present.
+- Metadata delta: **pass** — 547 components and 964 artifacts at base and head; 40 added, 40 removed, 924 common, 0 changed; 11 added artifacts are checksum-only (6 Tomcat, 5 Kotlin) and 29 have exact rows whose sha256 and reasons match their predecessors.
+- Ledger delta: **pass** — 29 rows removed and 29 added (EX-894..EX-922); 565 common rows byte-identical; each new row matches a predecessor by group/module/artifact type and keeps its rationale, owner and trigger; all use 2026-12-31; 25 Maven Central and 4 Plugin Portal sources; IDs match `EX-[0-9]{3}` with no duplicates; 594 rows and 77 free IDs remain.
+- Trust state: **pass** — keyring SHA-256 `11d778c6…` unchanged; `<trusted-key>` / `<trusting>` / `<pgp>` counts unchanged at 119 / 14 / 7; the only `<ignored-key>` change is the approved reason; no trust was added.
+- Wrapper: **pass** — the committed jar `621008af…3cdaf8` and `distributionSha256Sum` `d8a18a7a…ba228` equal the files services.gradle.org publishes for 9.9.1 (fetched this attempt).
+- Documentation: **pass** — SECURITY.md links the `-2` review as current; the CHANGELOG, CLAUDE.md and README changes match the landed versions; a relative-link and anchor check over the review document, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md and this record found 0 broken local links (55 local links; the sole `mailto:` was excluded as a non-file link).
+- Carried from Attempt 1 at `a402bb1`, with no scoped file changed since: validator and negative controls, source-byte audit, strict `spotlessCheck check` (121/121 tasks, 3,448 tests), integration `test`/`securityTest` (154 and 71), `buildHealth`/`cyclonedxBom` (435/435 tasks, 32 SBOM files), `dependencyCheckAggregate` (0 active, 1 suppressed CVE-2025-32013), and `git diff --check` — all **pass** in Attempt 1's verification.
+- Optional post-merge task (close #113): **skipped** — optional and not applicable before merge.
+- Material limits: publisher identity is not authenticated; key validity is derived from the committed keyring; live LND/LNbits and the Docker stacks were not exercised; the Linux protoc executables are unchanged and first verified by Gradle in CI. This attempt did not rerun the Gradle suites because the only change since Attempt 1 is this record.
+
+### Attempt 2 rework
+Both findings were evidence wording in this record. No file in Review scope changed: `git diff --name-only bd6ef08` over the scoped paths is empty, and the implementation stays `b1776e9` and `4da6d57`.
+
+Dispositions:
+1. **Fixed.** Attempt 1's metadata-delta line now reads "0 checksums changed among the 924 common artifacts", with a note that it previously said "896 common entries". A recount comparing base `66886db` and head `bd6ef08` metadata gives 964 artifacts on each side, 40 added, 40 removed and 0 checksums changed, so 964 − 40 = 924 common artifacts.
+2. **Fixed.** The Provenance task's trust-state check now reads: identical "except for the `3EFC46EE83C40224` `<ignored-key>` reason attribute, as approved in amendment option A". That matches the amendment and the result bullet. A search of this record and the review document for other claims that `<configuration>` is identical found only:
+   - the scratch-tree generation method, where the two trees' blocks are identical to each other;
+   - the description of options B and C.
+
+   Both are correct as written.
+3. No implementation change, as Attempt 2 found none.
+
+Verification after rework:
+- **pass:** a relative-link and anchor check with GitHub slug rules, over the review document, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md and this record: 54 relative links, 0 broken. The `mailto:` link is excluded as a non-file link.
+- **pass:** `./scripts/validate-agents-md.sh`, exit 0, run with no other Gradle run in the worktree.
+- **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
+- **pass:** `git diff --check 66886db`, exit 0. `git diff --stat 66886db -- 'paygate-*/src/**'` is empty.
+- **Not rerun:** the strict builds, integration suites, `buildHealth`, SBOM, advisory scan, source-byte audit and wrapper check. The rework changes only this record, which none of them read. Attempt 1 recorded them as pass at `a402bb1`, and Attempt 2 confirmed no scoped file changed since.
 
 ## Outcome
 Pending.
