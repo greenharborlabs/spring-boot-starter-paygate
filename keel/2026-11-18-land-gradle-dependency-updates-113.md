@@ -143,6 +143,8 @@ Options:
 
 Amendment approved: 2026-11-18 by Mark Hammond at plan revision 0338ee1531caf793d4571999fbf03dc15a957bf1 (option A: land all four bumps with the 29 rows, and update only the `3EFC46EE83C40224` ignore reason to name EX-916 and EX-917).
 
+**Correction to the amendment (review Attempt 1):** the calibration bullet's list "EX-479..EX-498, EX-510, EX-511, EX-597..EX-601 and EX-861..EX-865" expands to 32 IDs. It wrongly includes EX-480, EX-481 and EX-483, which remain in the ledger because their Jackson artifacts (`jackson-bom` 2.19.2 and 2.21.7, `jackson-parent` 2.19.3) are still resolved. The 29 retired rows are EX-479, EX-482, EX-484..EX-498, EX-510, EX-511, EX-597..EX-601 and EX-861..EX-865, as in the Provenance task and the review document. The approved option and the row counts are unchanged.
+
 ## Tasks
 - [x] **Baseline.** At base, run `./gradlew check` and `./gradlew :paygate-integration-tests:test :paygate-integration-tests:securityTest -Pintegration`, and record task and test counts.
   - **pass:** with `--rerun-tasks` (a first run without it was mostly up to date and was discarded), `check` exit 0, 121/121 tasks executed, 3,448 tests with 0 failures, errors or skips. Integration `test` 154 and `securityTest` 71, 36/36 tasks executed, 0 failures.
@@ -200,7 +202,7 @@ Amendment approved: 2026-11-18 by Mark Hammond at plan revision 0338ee1531caf793
   - **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
   - **pass, as amended:**
     - `git diff 66886db -- gradle/verification-keyring.keys` is empty.
-    - The `<configuration>` block has 200 lines at base and after. They differ in exactly one, the `3EFC46EE83C40224` reason (`EX-510 and EX-511` → `EX-916 and EX-917`), as approved in option A.
+    - The `<configuration>` block is 197 lines at base and after: lines 3–199 inclusive, including the `<configuration>` and `</configuration>` tags. They differ in exactly one line, the `3EFC46EE83C40224` reason (`EX-510 and EX-511` → `EX-916 and EX-917`), as approved in option A. (Corrected in the Attempt 1 rework. The original count of 200 came from a check script that split the file at `<components>`, so it also counted the XML prolog, the root element and the partial `<components>` line.)
     - The metadata diff's only trust-element lines are that `<ignored-key>` line, removed and re-added with the same ID. No `<trusted-key>`, `<trusting>` or `<pgp>` line changed.
   - **pass:** a check script confirmed that every kept artifact and ledger row is byte-identical, and every new entry copies its predecessor's `reason` and rationale. The final artifact set equals the after pass plus the two Linux protoc entries.
 - [x] **Documentation.** Write the review document, update SECURITY.md, CHANGELOG, CLAUDE.md and the README. Checks:
@@ -242,6 +244,49 @@ Amendment approved: 2026-11-18 by Mark Hammond at plan revision 0338ee1531caf793
 
 ## Review
 Implementation complete on `chore/land-dependabot-113-2026-11`: `b1776e9` (versions, metadata, ledger) and `4da6d57` (documentation) on base `66886db`. Awaiting fresh-context review.
+
+### Attempt 1
+Reviewed revision: a402bb16a79be8dc241d7aa70137b4d6d9a261d8
+Verdict: rework
+Findings and dispositions:
+1. **Rework — the recorded `<configuration>` line count is wrong.** The Task says the block "has 200 lines at base and after". At both `66886db` and `a402bb1` it is 197 lines: lines 3–199 inclusive, including the `<configuration>` and `</configuration>` tags. The substantive result is correct: the blocks differ in exactly one line, the `3EFC46EE83C40224` reason. Correct the count and keep the one-line-diff result.
+2. **Rework — the amendment's retired-row list is inconsistent.** The amendment says "29 have exact rows: EX-479..EX-498, EX-510, EX-511, EX-597..EX-601 and EX-861..EX-865". That range expands to 32 IDs and includes EX-480, EX-481 and EX-483, which remain. The retired set is the 29 rows listed in the Provenance Task and the review document: EX-479, EX-482, EX-484..EX-498, EX-510, EX-511, EX-597..EX-601, EX-861..EX-865. Add a labelled correction; the approved amendment text can stay intact.
+3. **No implementation findings.** The ledger, metadata, keyring, wrapper, build, tests and advisory scan all pass. Only the recorded evidence needs correction.
+
+Verification:
+- Preconditions: **pass** — `Status: review`, full base revision `66886db`, concrete scope, record outside scope; `HEAD` is `a402bb1`; scoped paths clean; only the scoped files plus this record changed since base; `a402bb1` touches only this record.
+- Scoped diff (`66886db..a402bb1`): **pass** — exactly `build.gradle.kts`, `settings.gradle.kts`, the wrapper jar and properties, `gradle/verification-metadata.xml`, the ledger, the new review document, `SECURITY.md`, `CHANGELOG.md`, `CLAUDE.md` and `README.md`; `git diff --stat 66886db -- 'paygate-*/src/**'` is empty.
+- Hashes and structure: **pass** — metadata `e3eff36c…`, ledger `9a6b2a80…`, keyring `11d778c6…`; base metadata `cd0b29ed…` and ledger `873d19bd…`; 547 components, 964 artifacts, 594 ledger rows, 77 IDs left.
+- Metadata delta: **pass** — 40 artifacts added and 40 removed; 0 checksums changed among the 896 common entries; 11 added artifacts have checksum-only coverage (6 Tomcat, 5 Kotlin) and 29 have exact rows.
+- Ledger delta: **pass** — 29 rows removed and 29 added (EX-894..EX-922); 565 common rows byte-identical; each new row matches a predecessor by group, module and artifact type and preserves its rationale, owner, deadline, trigger and source host; 25 Central and 4 Plugin Portal sources; no duplicate IDs; IDs match `EX-[0-9]{3}`; all new rows use 2026-12-31.
+- Trust state: **pass** — keyring diff empty; trust-element counts unchanged; the metadata diff's only `<ignored-key>` change is the `3EFC46EE83C40224` reason; `<configuration>` differs in exactly one line (but is 197 lines, not 200 — finding 1).
+- Validator and negative controls (`./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`): **pass** — BUILD SUCCESSFUL, both tasks executed.
+- Source-byte audit (`python3 scripts/audit-dependency-provenance-sources.py`): **pass** — 594/594 SHA-256 matches, 83,924,010 bytes (577 Maven Central, 17 Plugin Portal), matching the record.
+- `./gradlew --no-daemon spotlessCheck check --rerun-tasks`: **pass** — 121/121 tasks executed; 3,448 default-module tests across 508 result files with 0 failures, errors or skips. The raw 3,602 includes 154 integration results.
+- `./gradlew --no-daemon -Pintegration :paygate-integration-tests:spotlessCheck :paygate-integration-tests:test :paygate-integration-tests:securityTest --rerun-tasks`: **pass** — 38/38 tasks; `test` 154 and `securityTest` 71, 0 failures, errors or skips.
+- `./gradlew --no-daemon buildHealth cyclonedxBom --rerun-tasks`: **pass** — 435/435 tasks; 32 SBOM files (16 `cyclonedxBom` and 16 `cyclonedxDirectBom`).
+- `./gradlew --no-daemon dependencyCheckAggregate --rerun`: **pass** — 126 dependencies, 0 active findings, 1 suppressed finding: CVE-2025-32013 on `paygate-lightning-lnbits-0.1.8-SNAPSHOT.jar`.
+- Wrapper: **pass** — the committed jar is `621008af…3cdaf8` and `distributionSha256Sum` is `d8a18a7a…ba228`; both equal the files services.gradle.org publishes for 9.9.1.
+- Documentation: **pass, apart from findings 1–2** — a link and anchor check over the review document, `SECURITY.md`, `CHANGELOG.md`, `CLAUDE.md`, `README.md` and this record found 54 local links and 0 broken; `./scripts/validate-agents-md.sh` exits 0; no `9.8.2` remains in `CLAUDE.md` or the READMEs.
+- External claims: **pass** — Gradle 9.9.1's release notes list GHSA-gqrr-4j89-5267 and GHSA-pcp8-98xm-c6pr; Tomcat 11.0.29 is dated 2026-11-09, 11.0.28 is absent from Maven Central and marked not released, the 11.0.28/29 changelog contains the SETTINGS-acknowledgement, flow-control, upgrade and `ProxyErrorReportValve` changes, and the Tomcat 11 security page lists no CVE for either version.
+- `git diff --check 66886db`: **pass** — exit 0.
+- Optional post-merge task (close #113): **skipped** — optional and not applicable before merge.
+- Material limits: publisher identity is not authenticated; key validity is derived from the committed keyring; live LND/LNbits and the Docker stacks were not exercised; the Linux protoc executables are unchanged and first verified by Gradle in CI. The full check ran from the default Gradle home, not a new empty one, but `--rerun-tasks` executed all 121 tasks under strict verification.
+
+### Attempt 1 rework
+Both findings were evidence errors in this record. No file in Review scope changed: `git diff --name-only a402bb1` over the scoped paths is empty, and the implementation stays `b1776e9` and `4da6d57`.
+
+Dispositions:
+1. **Fixed.** The Provenance task now says the `<configuration>` block is 197 lines (lines 3–199, including the tags) at base and after, and keeps the one-line-diff result. A recount on `66886db` and `a402bb1` (`sed -n '3,199p'` plus `diff`) confirms 197 lines, with line 10, the `3EFC46EE83C40224` reason, as the only difference. The 200 came from my check script splitting the file at `<components>`; the task now notes this.
+2. **Fixed.** A labelled correction now follows the amendment approval, and the approved amendment text is unchanged. It gives the 29 retired rows as EX-479, EX-482, EX-484..EX-498, EX-510, EX-511, EX-597..EX-601 and EX-861..EX-865, and says EX-480, EX-481 and EX-483 remain (`jackson-bom` 2.19.2 and 2.21.7, `jackson-parent` 2.19.3). A `comm` of base and current ledger IDs gives exactly those 29. The review document never had the wrong range.
+3. No implementation change, as Attempt 1 found none.
+
+Verification after rework:
+- **pass:** a relative-link and anchor check with GitHub slug rules, over the review document, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md and this record: 54 links, 0 broken.
+- **pass:** `./scripts/validate-agents-md.sh`, exit 0. It ran alone, with no other Gradle run in the worktree.
+- **pass:** `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, exit 0.
+- **pass:** `git diff --check 66886db`, exit 0. No `paygate-*/src/**` changes.
+- **Not rerun:** the strict builds, integration suites, `buildHealth`, SBOM, advisory scan, source-byte audit and wrapper check. The rework changes only this record, which none of them read, and Attempt 1 recorded all of them as pass at `a402bb1`.
 
 ## Outcome
 Pending.
