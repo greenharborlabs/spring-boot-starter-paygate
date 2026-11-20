@@ -9,8 +9,9 @@ Auto-generated from all feature plans. Last updated: 2026-06-06
 
 - Java 25 (LTS) + Spring Boot 4.1.2 + Spring Framework 7.x + Jakarta EE 11
 - Spring Security (optional, for `paygate-spring-security` module)
-- Gradle 9.8.2 (Kotlin DSL), multi-module
+- Gradle 9.9.1 (Kotlin DSL), multi-module
 - Caffeine 3.3.1, gRPC 1.84.1 (follows Spring Boot's managed gRPC version), Protobuf 4.36.2, Jackson, Micrometer (optional)
+- Tomcat 11.0.29 (explicit pin; may lead Spring Boot's managed version for security fixes, drop once Boot manages this version or later)
 - AssertJ 3.27.7, OkHttp mockwebserver3 5.3.2 (test)
 
 ## Project Structure

@@ -1028,7 +1028,7 @@ New L402 challenges use signed identifier version 1. The identifier layout remai
 | Spring Boot | 4.1.2 |
 | Spring Framework | 7.x |
 | Jakarta EE | 11 (Servlet 6.1) |
-| Gradle wrapper | 9.8.2 |
+| Gradle wrapper | 9.9.1 |
 | Caffeine | 3.3.1 |
 | gRPC | 1.84.1 |
 | Protobuf | 4.36.2 |

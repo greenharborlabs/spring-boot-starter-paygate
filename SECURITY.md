@@ -45,7 +45,12 @@ passed validator or matching committed files alone is not a review. The
 [September 23 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-09-23.md) chose 30 days
 for that renewal only. A dependency, key, checksum, or source change requires review before
 the deadline; date changes alone cannot satisfy renewal. The current review is the
-[November 18 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md). It
+[second November 18 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md). It
+reconciled the ledger with the Tomcat 11.0.29, CycloneDX 3.6.1, build-health 3.20.3 and
+Gradle 9.9.1 updates: 29 superseded rows were replaced like for like by exact rows at the
+existing 2026-12-31 UTC deadline, and the key-validity sweep found no new artifact in the scope
+of a revoked or expired key. No trust was added. The
+[November 18 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18.md)
 re-verified the source bytes of every row and renewed the ledger through 2026-12-31 UTC, in the
 same week as the CVE-2025-32013 suppression deadline. It also applied the key-validity rule:
 of 18 revoked or expired trusted keys, 19 artifacts were signed after their key's recorded
