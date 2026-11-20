@@ -1,5 +1,5 @@
 # Land Gradle dependency and wrapper updates from Dependabot #113
-Status: review
+Status: closed
 Base revision: 66886db0a98b20f35efb90cc8899e0c2a8ef9a78
 Review scope: build.gradle.kts, settings.gradle.kts, gradle/wrapper/gradle-wrapper.jar, gradle/wrapper/gradle-wrapper.properties, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md
 
@@ -327,8 +327,59 @@ Verification after rework:
 - **pass:** `git diff --check 66886db`, exit 0. `git diff --stat 66886db -- 'paygate-*/src/**'` is empty.
 - **Not rerun:** the strict builds, integration suites, `buildHealth`, SBOM, advisory scan, source-byte audit and wrapper check. The rework changes only this record, which none of them read. Attempt 1 recorded them as pass at `a402bb1`, and Attempt 2 confirmed no scoped file changed since.
 
+### Attempt 3
+Reviewed revision: 24ba4e237939cb7638de8741ce41e5104181887e
+Verdict: pass
+Findings and dispositions: No findings; no rework required. Both Attempt 2 findings are fixed: the metadata-delta line now reads 924 common artifacts (964 − 40) and notes the prior wording, and the Provenance check now states the approved one-line `<configuration>` exception. Both match the metadata and the approved amendment.
+
+Verification:
+- Preconditions: **pass** — `Status: review`, full base revision `66886db`, concrete scope, record outside scope; reviewed revision `24ba4e2`; worktree clean; `git diff --name-only bd6ef08..24ba4e2` is only this record; `git diff --name-only 66886db..24ba4e2` is exactly the scope plus this record.
+- Scoped implementation: **pass** — no scoped path changed since `bd6ef08`; `git diff --stat 66886db -- 'paygate-*/src/**'` is empty; metadata `e3eff36c…`, ledger `9a6b2a80…`, keyring `11d778c6…`, wrapper jar `621008af…` and distribution `d8a18a7a…` all match the record; no trust was added.
+- Rework findings: **pass** — the metadata-delta line is 924 common artifacts (964 base and final, 40 added, 40 removed, 0 changed), which reproduces from the metadata; the trust-state check reads "identical except for the `3EFC46EE83C40224` `<ignored-key>` reason attribute, as approved in amendment option A", matching the one-line diff and the result.
+- Validator and negative controls (`./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`): **pass** — BUILD SUCCESSFUL at `24ba4e2`, both tasks executed.
+- `git diff --check 66886db`: **pass** — clean.
+- Documentation: **pass** — a relative-link and anchor check over the review document, SECURITY.md, CHANGELOG.md, CLAUDE.md, README.md and this record found 0 broken local links; SECURITY.md links the `-2` review as current.
+- Carried from Attempt 1 and Attempt 2 at `a402bb1` and `bd6ef08`, with no scoped file changed since: source-byte audit (594/594), strict `spotlessCheck check` (121/121 tasks, 3,448 tests), integration `test`/`securityTest` (154 and 71), `buildHealth`/`cyclonedxBom` (435/435 tasks, 32 SBOM files), and `dependencyCheckAggregate` (0 active, 1 suppressed CVE-2025-32013) — all **pass**.
+- Optional post-merge task (close #113): **skipped** — optional and not applicable before merge.
+- Material limits: publisher identity is not authenticated; key validity is derived from the committed keyring; live LND/LNbits and the Docker stacks were not exercised; the Linux protoc executables are unchanged and first verified by Gradle in CI. This attempt reran the validator and negative controls but not the full suites, because no scoped file changed since Attempt 1.
+
 ## Outcome
-Pending.
+Closed after review Attempt 3 passed at `24ba4e2`. The implementation is `b1776e9` (versions, metadata, ledger) and `4da6d57` (documentation) on base `66886db`, on branch `chore/land-dependabot-113-2026-11`. Later commits change only this record.
+
+What changed:
+- **Versions.** All four updates from Dependabot #113 landed: Tomcat 11.0.29 (the explicit pin is kept, with a comment), CycloneDX plugin 3.6.1, build-health 3.20.3 and Gradle wrapper 9.9.1. The wrapper jar and properties were taken from #113 after their checksums matched services.gradle.org. No source or build-script adaptation was needed.
+- **Provenance.** No trust was added: the keyring is byte-identical.
+  - The verification metadata has 40 artifacts added and 40 removed, with 0 checksums changed.
+  - 11 new artifacts (Tomcat, Kotlin) are covered by keys already trusted for their coordinates and signed while valid.
+  - The other 29 replace 29 retired rows like for like, as EX-894..EX-922 at the 2026-12-31 UTC deadline. The ledger stays at 594 rows, and 77 three-digit IDs remain.
+  - The key-validity sweep found no new artifact in the scope of the 18 revoked or expired keys.
+- **Approved amendment (option A).** The plan estimated about 10 rows. 29 were needed, because CycloneDX 3.6.1 pulls Jackson 2.22.3 and `json-schema-validator` 2.0.8 onto the plugin classpath, and Gradle 9.9.1 moves plugin-classpath Kotlin to 2.4.21. The owner approved all four updates. The only `<configuration>` change is the `3EFC46EE83C40224` ignore reason, which now names EX-916 and EX-917.
+
+Verification at Attempt 3, all pass. Attempt 3 reran the validator, negative controls, documentation checks and `git diff --check`. The rest carried from Attempt 1, and no scoped file changed since.
+- **Strict empty-home builds on Gradle 9.9.1:** `spotlessCheck check`, 121/121 tasks and 3,448 tests. Integration `test` 154 and `securityTest` 71, matching the baseline.
+- **Provenance controls:** the validator, its negative controls, and the source-byte audit at 594/594.
+- **Build tasks:** `buildHealth` and `cyclonedxBom` (435/435 tasks, 32 SBOM files). `dependencyCheckAggregate` has 0 active findings, and only the approved CVE-2025-32013 is suppressed.
+- **Wrapper and docs:** wrapper checksums, the documentation link check, `validate-agents-md.sh`, and `git diff --check`.
+
+Review corrections:
+- **Attempt 1:** the `<configuration>` block is 197 lines, not 200. The amendment's retired-row range wrongly included EX-480, EX-481 and EX-483.
+- **Attempt 2:** the metadata delta has 924 common artifacts, not 896, and the trust-state check now states the approved reason-only exception.
+
+All of these were record-only fixes.
+
+During implementation, a first set of final runs failed because `validate-agents-md.sh` ran concurrently in the same worktree. The isolated reruns are the recorded results.
+
+Limits and remaining uncertainty:
+- Publisher identity is not authenticated.
+- Key validity comes from the committed keyring, which may carry stale expiry dates.
+- The Linux protoc executables are unchanged and first verified by Gradle in CI.
+- Live LND and LNbits and the Docker stacks were not exercised.
+
+Documentation:
+- [DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md);
+- [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials), which links it as the current review;
+- the [CHANGELOG](../CHANGELOG.md) `Changed` entry;
+- the Gradle and Tomcat notes in [CLAUDE.md](../CLAUDE.md) and the [README](../README.md#compatibility).
 
 ## Next action
-Run a fresh-context `keel-review` of this record. After it passes, open a pull request from `chore/land-dependabot-113-2026-11` to `main` that links [the second November 18 provenance review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md), merge it before 2026-12-31 UTC, and close #113 as superseded.
+Open a pull request from `chore/land-dependabot-113-2026-11` to `main` that links [the second November 18 provenance review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md), merge it before 2026-12-31 UTC, and close #113 as superseded.
