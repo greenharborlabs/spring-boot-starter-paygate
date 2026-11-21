@@ -45,7 +45,16 @@ passed validator or matching committed files alone is not a review. The
 [September 23 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-09-23.md) chose 30 days
 for that renewal only. A dependency, key, checksum, or source change requires review before
 the deadline; date changes alone cannot satisfy renewal. The current review is the
-[second November 18 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md). It
+[November 21 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-21.md). It refreshed
+six of the 18 revoked or expired trusted keys with newer self-signatures from their own
+primary keys, retiring the 12 rows (EX-879..EX-881, EX-885..EX-893) whose artifacts were
+signed while those keys were valid. It trusts the new Spotless signing subkey, which the
+already-trusted DiffPlug primary key certifies, for `com.diffplug.spotless`. It lifts the
+OkHttp hold without trusting the new lysine.dev key, so OkHttp 5.5.1 lands on exact rows. A
+keyring refresh adds only self-signatures that verify against a fingerprint already in the
+keyring, never a new UID or third-party certification. Adding a subkey requires its own
+reviewed approval. The
+[second November 18 review](docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-18-2.md)
 reconciled the ledger with the Tomcat 11.0.29, CycloneDX 3.6.1, build-health 3.20.3 and
 Gradle 9.9.1 updates: 29 superseded rows were replaced like for like by exact rows at the
 existing 2026-12-31 UTC deadline, and the key-validity sweep found no new artifact in the scope

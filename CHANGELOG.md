@@ -109,6 +109,13 @@ security review; I-20 remains an accepted limitation. Dispositions for every fin
 - **Build and fixtures (I-19).** LND and bitcoind integration images are pinned by digest,
   `installGitHook` re-stages only previously staged files, the POM points at the https
   `spring-boot-starter-paygate` repository, and a stray root `META-INF` file is removed.
+- **Dependency signing keys.** Six stale keys in the Gradle verification keyring now carry
+  their publishers' newer expiry self-signatures. As a result, Mockito 5.23.0, ANTLR 4.9.3,
+  `org.json` and two Neo4j BOMs are again verified by signature instead of 12 exact checksum
+  exceptions. The new Spotless signing subkey, certified by the already-trusted DiffPlug
+  primary key, is trusted for `com.diffplug.spotless`. The Spotless and OkHttp update holds
+  are lifted. OkHttp's new lysine.dev key is not trusted, so its updates take exact checksum
+  exceptions.
 
 ### Changed
 
