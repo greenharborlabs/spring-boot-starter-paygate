@@ -1,6 +1,6 @@
 # Refresh stale signing keys and settle the held Spotless and OkHttp keys
-Status: planned
-Base revision: pending approval
+Status: working
+Base revision: 4eceb4190a10a7a13401e11ad91aaf166fbac718
 Review scope: gradle/verification-keyring.keys, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-<UTC work date>.md, SECURITY.md, CHANGELOG.md
 
 ## Goal
@@ -65,6 +65,8 @@ Acceptance evidence:
 
   Proposed: B, if a Square-controlled channel confirms the transfer.
 
+Approved: 2026-11-21 by Mark Hammond at plan revision 4eceb4190a10a7a13401e11ad91aaf166fbac718.
+
 ## Tasks
 - [ ] Baseline: record the base SHA-256s and rerun the 18-key inventory. Check: the counts reproduce 18 keys, 74 artifacts and 68 without rows.
 - [ ] Fetch all 18 keys from both keyservers, and from publisher channels where documented. Check: the review-document table lists each copy's SHA-256 and the expiry, revocation, UID and subkey differences.
@@ -84,4 +86,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Approve or revise this plan.
+Implement the approved plan.
