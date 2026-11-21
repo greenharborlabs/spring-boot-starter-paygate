@@ -1,7 +1,7 @@
 # Refresh stale signing keys and settle the held Spotless and OkHttp keys
-Status: working
+Status: review
 Base revision: 4eceb4190a10a7a13401e11ad91aaf166fbac718
-Review scope: gradle/verification-keyring.keys, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-<UTC work date>.md, SECURITY.md, CHANGELOG.md
+Review scope: gradle/verification-keyring.keys, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-21.md, SECURITY.md, CHANGELOG.md
 
 ## Goal
 Bring the committed keyring up to date before the 2026-12-31 UTC renewal, so the renewal carries fewer rows and the two held updates can be unblocked.
@@ -67,17 +67,62 @@ Acceptance evidence:
 
 Approved: 2026-11-21 by Mark Hammond at plan revision 4eceb4190a10a7a13401e11ad91aaf166fbac718.
 
+**OkHttp decision (checkpoint, 2026-11-21): Mark Hammond chose B.**
+- **Evidence:** the repository transfer from `square` and the Commonhaus announcement and `PROJECTS.yaml` confirm the stewardship move. The fingerprint is published only on lysine-dev channels.
+- **Result:** the hold is lifted and no trust is added. Option A's bar was not met.
+
 ## Tasks
-- [ ] Baseline: record the base SHA-256s and rerun the 18-key inventory. Check: the counts reproduce 18 keys, 74 artifacts and 68 without rows.
-- [ ] Fetch all 18 keys from both keyservers, and from publisher channels where documented. Check: the review-document table lists each copy's SHA-256 and the expiry, revocation, UID and subkey differences.
-- [ ] Build the refreshed blocks. Check: `gpg --check-sigs` verifies every added self-signature against the committed primary; the keyring diff is confined to refreshed blocks; the `--show-keys` fingerprint set equals the base set.
-- [ ] Reclassify the 74 artifacts against a dearmored refreshed keyring, using `gpgv` and the signature creation times. Check: each artifact's outcome is recorded, and each retired row's artifact verifies within its refreshed validity.
-- [ ] Apply the metadata and ledger changes: retire ignores and rows only for reclassified artifacts, and add rows for any artifact newly outside validity. Check: the field-level ledger diff and the metadata diff.
-- [ ] Spotless: verify the subkey binding and the 8.10.4 plugin and library signatures, then apply the proposal if the bar is met. Check: `gpgv` results; `dependabot.yml` loads.
-- [ ] OkHttp: record the evidence, **stop and ask**, then apply the owner's choice. Check: the decision is recorded here with its date.
-- [ ] Documentation: write the review document, link it from SECURITY.md as the current review, and add a CHANGELOG `Security` entry. Check: relative links resolve.
-- [ ] Controls: run `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, the `scripts/audit-dependency-provenance-sources.py` source-byte audit of all remaining rows, and `./gradlew --no-daemon -g <new empty home> spotlessCheck check --rerun-tasks` (baseline: 121 tasks, 3,448 tests). Then run `scripts/validate-agents-md.sh` with no Gradle running, and `git diff --check`.
-- [ ] (optional) Gradle scratch control: delete one retired-row artifact's checksum in a scratch tree, and confirm strict verification passes on the refreshed key's signature.
+Implementation commit: `a6b68e4`. Scratch tooling and fetched copies stayed in the session scratchpad and were not committed. The method and evidence are in the [November 21 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-21.md).
+
+- [x] Baseline: record the base SHA-256s and rerun the 18-key inventory. Check: the counts reproduce 18 keys, 74 artifacts and 68 without rows.
+  - **pass:** base keyring `11d778c6…`, metadata `e3eff36c…`, ledger `9a6b2a80…`.
+  - The inventory parsed `<trusted-key>`/`<trusting>` scopes with every attribute and regex, matched primary and subkey fingerprints, and excluded globally ignored keys. It found 18 keys (4 by subkey) and 74 artifacts.
+  - On `main` today, 25 of the 74 have rows: the original 6 plus EX-875..EX-893. The other 49 have none, which equals the November 18 count of 68 minus those 19.
+- [x] Fetch all 18 keys from both keyservers, and from publisher channels where documented. Check: the review-document table lists each copy's SHA-256 and the expiry, revocation, UID and subkey differences.
+  - **pass:** 36 requests were made on 2026-11-21. Ubuntu served all 18; keys.openpgp.org served 13 and returned 404 for 5. The table lists every copy's SHA-256 and the committed and refreshed validity.
+  - No copy carries a revocation that is not already committed.
+  - Publisher channels were not consulted for the 18. Every added signature is self-certified by the committed primary, so they would not change the outcome.
+- [x] Build the refreshed blocks. Check: `gpg --check-sigs` verifies every added self-signature against the committed primary; the keyring diff is confined to refreshed blocks; the `--show-keys` fingerprint set equals the base set.
+  - **pass:** the merge is packet-level. For each existing UID or subkey, it adds only the newest self-signature newer than the committed one, plus any revocation; no new UID, subkey or third-party certification. Six keys changed (ANTLR, Mockito, org.json, Neo4j, Michael Osipov, Kotlin Libraries).
+  - **pass:** `gpg --show-keys --with-sig-check` reports every self-signature on the 18 merged keys as good.
+  - **pass:** a separate packet-comparison check against the base file shows:
+    - all Gradle-generated (headed) blocks are byte-identical, and only blocks 74, 91 and 94 changed;
+    - key order and fingerprints are unchanged;
+    - every base packet is retained in order;
+    - every added packet is a self-issued signature, apart from the approved Spotless subkey.
+  - **pass:** the self-certified fingerprint set is 237 at base and equals base plus `2820DE9F…FA5C18CFB74EC7C6` at the end.
+  - The armor writer round-trips the base keyring byte for byte.
+  - Limit: the 93-key block is re-armored, so its text diff spans the whole block.
+- [x] Reclassify the 74 artifacts against a dearmored refreshed keyring, using `gpgv` and the signature creation times. Check: each artifact's outcome is recorded, and each retired row's artifact verifies within its refreshed validity.
+  - **pass:** all 74 artifacts and their `.asc` files were fetched from Maven Central. The SHA-256s match the metadata, 74/74.
+  - **Base keyring:** reproduces November 18 (17 other key, 32 valid, 19 after validity, 6 prior rows).
+  - **Refreshed keyring:** 17 other key, 44 valid, 7 after validity, 6 prior rows.
+  - The 12 that moved are EX-879..EX-881 and EX-885..EX-893. Each verifies with `VALIDSIG` and was signed before its refreshed validity end.
+  - No artifact newly fell outside validity.
+- [x] Apply the metadata and ledger changes: retire ignores and rows only for reclassified artifacts, and add rows for any artifact newly outside validity. Check: the field-level ledger diff and the metadata diff.
+  - **pass, ledger:** the field-level comparison shows only the 12 IDs removed and no row or header changed. 594 → 582 rows, all at 2026-12-31. Final SHA-256 `2c5b3bd4…`.
+  - **pass, metadata:** the diff removes only the 12 artifact-scoped `<ignored-keys>` blocks naming those IDs, and adds one `<trusted-key>` line for Spotless. Components and artifacts stay at 547/964; trusted keys go from 118 to 119. Final SHA-256 `e9245bee…`.
+- [x] Spotless: verify the subkey binding and the 8.10.4 plugin and library signatures, then apply the proposal if the bar is met. Check: `gpgv` results; `dependabot.yml` loads.
+  - **pass, binding:** the binding of `2820DE9F…FA5C18CFB74EC7C6` is issued by the committed primary `1AAAA7AB37293D3E` and checks good (`!`). No revocation is present.
+  - **pass, signatures:** `gpgv` reports `VALIDSIG 2820DE9F…` for the jar, POM and module of `spotless-plugin-gradle` 8.10.4 and 8.10.3, and of `spotless-lib` and `spotless-lib-extra` 4.10.4. All give `NO_PUBKEY` with the base keyring.
+  - **Applied:** the subkey and its binding were added to the full DiffPlug copy, with `<trusted-key … group="com.diffplug.spotless"/>`, and the ignore was removed.
+  - **pass:** `dependabot.yml` loads (Ruby YAML). The Gradle ignores are exactly `io.grpc:*` and `com.google.protobuf` `0.10.1`.
+- [x] OkHttp: record the evidence, **stop and ask**, then apply the owner's choice. Check: the decision is recorded here with its date.
+  - **pass:** the evidence is recorded in the review document. The owner chose B on 2026-11-21 (Decisions). The `com.squareup.okhttp3:*` ignore was removed, and nothing was added to the keyring or metadata for OkHttp.
+- [x] Documentation: write the review document, link it from SECURITY.md as the current review, and add a CHANGELOG `Security` entry. Check: relative links resolve.
+  - **pass:** relative links and anchors resolve in the review document, SECURITY.md, CHANGELOG and this record (0 problems).
+- [x] Controls: run `./gradlew --no-daemon validateDependencyProvenance verifyDependencyProvenanceNegativeControls`, the `scripts/audit-dependency-provenance-sources.py` source-byte audit of all remaining rows, and `./gradlew --no-daemon -g <new empty home> spotlessCheck check --rerun-tasks` (baseline: 121 tasks, 3,448 tests). Then run `scripts/validate-agents-md.sh` with no Gradle running, and `git diff --check`.
+  - **pass:** validator and negative controls, exit 0.
+  - **pass:** the source-byte audit matches 582/582 (565 from Maven Central, 17 from the Plugin Portal).
+  - **pass:** strict empty-home `spotlessCheck check --rerun-tasks` (2026-11-21T19:06Z), exit 0. 121/121 tasks executed. Default-module test XML: 508 files and 3,448 tests, with 0 failures, errors or skips.
+  - **pass:** `scripts/validate-agents-md.sh`, run after all Gradle runs.
+  - **pass:** `scripts/test-dependency-provenance.sh`.
+  - **pass:** `git diff --check`.
+  - Process note: `/verify` was run after, not before, the implementation commit. It reported that the repo declares no checks (`CHECKS: none`).
+- [x] (optional) Gradle scratch control: delete one retired-row artifact's checksum in a scratch tree, and confirm strict verification passes on the refreshed key's signature.
+  - **pass, Spotless subkey control (replaces the planned control):** a scratch project with the final keyring and metadata and no checksum for `spotless-lib` 4.10.4 resolves the jar. With the new `<trusted-key>` removed, it fails dependency verification for the jar and module.
+  - The control shows Gradle picks up the subkey from the full DiffPlug copy, even though a Gradle-generated copy of the same primary exists.
+  - The planned retired-row control was not run separately. The strict build verified those artifacts with no ignore present.
 
 ## Review
 Awaiting implementation and fresh-context review.
@@ -86,4 +131,4 @@ Awaiting implementation and fresh-context review.
 Pending.
 
 ## Next action
-Implement the approved plan.
+Run a fresh-context `keel-review` of this record.
