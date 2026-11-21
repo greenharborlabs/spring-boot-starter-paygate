@@ -1,0 +1,1 @@
+{"SchemaVersion":2,"Trivy":{"Version":"0.74.0"},"ArtifactName":"lnbits/lnbits@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ArtifactType":"container_image","Results":[{"Target":"os","Class":"os-pkgs","Type":"debian","Packages":[]}]}
