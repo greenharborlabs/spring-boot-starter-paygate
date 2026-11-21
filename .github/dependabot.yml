@@ -17,18 +17,11 @@ updates:
       # gRPC follows Spring Boot's managed version; Boot upgrades carry it
       # (keel/2026-11-01-upgrade-gradle-minor-and-patch-dependencies.md).
       - dependency-name: "io.grpc:*"
-      # OkHttp 5.5.1+ is signed by a new key after the project moved to an
-      # unverified GitHub org; held until a key-recovery task authenticates it
-      # (keel/2026-11-15-land-gradle-dependency-updates-105-104.md).
-      - dependency-name: "com.squareup.okhttp3:*"
       # The Plugin Portal copy of 0.10.1 fails its publisher signature; later
-      # releases are still proposed (same keel record).
+      # releases are still proposed
+      # (keel/2026-11-15-land-gradle-dependency-updates-105-104.md).
       - dependency-name: "com.google.protobuf"
         versions: ["0.10.1"]
-      # Spotless 8.10.3+ is signed by a rotated key not yet authenticated
-      # (same keel record).
-      - dependency-name: "com.diffplug.spotless"
-        versions: [">= 8.10.3"]
     labels:
       - dependencies
 
