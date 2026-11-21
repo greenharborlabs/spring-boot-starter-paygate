@@ -1,5 +1,5 @@
 # Refresh stale signing keys and settle the held Spotless and OkHttp keys
-Status: review
+Status: closed
 Base revision: 4eceb4190a10a7a13401e11ad91aaf166fbac718
 Review scope: gradle/verification-keyring.keys, gradle/verification-metadata.xml, config/dependency-provenance-exceptions.tsv, .github/dependabot.yml, docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-21.md, SECURITY.md, CHANGELOG.md
 
@@ -125,10 +125,43 @@ Implementation commit: `a6b68e4`. Scratch tooling and fetched copies stayed in t
   - The planned retired-row control was not run separately. The strict build verified those artifacts with no ignore present.
 
 ## Review
-Awaiting implementation and fresh-context review.
+### Attempt 1
+Reviewed revision: e112e1b95dd7ee2906b051d7092be9984c4daa8b
+Verdict: pass
+Findings and dispositions:
+1. (non-blocking, documentation) The review document's keyring-structure counts state 71 headed and 24 headerless blocks; the committed keyring has 70 headed and 25 headerless blocks (the 25th is the 93-key block). The record's "blocks 74, 91 and 94 changed" is consistent only with a 0-based index; the 1-based positions are 75, 92 and 95. The packet-level facts are correct and the refresh evidence is unaffected. Correct opportunistically; no rework required.
+Verification:
+- Scoped history: pass. HEAD `e112e1b` differs from implementation commit `a6b68e4` only in this record; `a6b68e4` changes exactly the seven scoped files. Base hashes match the record.
+- Keyring: pass. 95 blocks; only the ANTLR full copy, the Mockito full copy and the 93-key block changed. The fingerprint set is 237 -> 238 with only `2820DE9F95EC4043E616B735FA5C18CFB74EC7C6` added. Every base packet is retained in order; every added packet is a self-signature by a primary already in the base keyring, plus the approved Spotless subkey and its binding. No new revocation.
+- Key validity: pass. Refreshed expiries match the record: ANTLR 2023-02-08, Mockito 2030-10-11, org.json 2035-12-22, Neo4j 2027-09-20, Osipov 2028-10-14, Kotlin 2028-09-26; the Spotless subkey is created 2026-09-17 and expires 2030-05-27.
+- Retired-row reclassification: pass. All 12 retired artifacts' SHA-256s match the ledger; each gives `VALIDSIG` with the refreshed keyring and `NO_PUBKEY`/`ERRSIG` with the base keyring; each signature time is inside the refreshed validity.
+- Spotless: pass. The subkey binding verifies against the committed DiffPlug primary `27294482…1AAAA7AB37293D3E`. `spotless-plugin-gradle` 8.10.3 and 8.10.4 and `spotless-lib`/`spotless-lib-extra` 4.10.4 jars give `VALIDSIG` with the new subkey and `NO_PUBKEY` with the base keyring.
+- Metadata, ledger and Dependabot: pass. Metadata removes exactly the 12 artifact-scoped ignores and adds only the approved `<trusted-key>`; components/artifacts stay 547/964 and trusted keys go 118 -> 119. The ledger removes exactly the 12 IDs; 582 rows remain, all at 2026-12-31, and EX-923..EX-999 are free. `dependabot.yml` loads; only the gRPC and protobuf ignores remain.
+- Documentation: pass. The review document exists, SECURITY.md links it as current, the CHANGELOG has a Security entry, and the referenced files and anchors resolve.
+- Controls: pass. `validateDependencyProvenance` and `verifyDependencyProvenanceNegativeControls` passed; the source-byte audit matched 582/582 (565 Maven Central, 17 Plugin Portal); strict empty-home `spotlessCheck check --rerun-tasks` passed with 121/121 tasks and 508 default-module test XML files / 3,448 tests, 0 failures, errors or skips; `scripts/test-dependency-provenance.sh`, `scripts/validate-agents-md.sh` and `git diff --check` passed.
+- Optional control: skipped as planned; the recorded Spotless-subkey scratch control passed. No blocking impact.
+- Material limits: I did not refetch the keyserver copies or the external OkHttp evidence; I relied on the record's recorded SHA-256s and links. A first strict empty-home run produced partial test output; an immediate repeat with the same home produced the full counts above.
 
 ## Outcome
-Pending.
+Closed after review Attempt 1 passed at `e112e1b` (implementation `a6b68e4`). The [November 21 review](../docs/security/DEPENDENCY-PROVENANCE-REVIEW-2026-11-21.md) holds the evidence, and [SECURITY.md](../SECURITY.md#dependency-provenance-and-local-credentials) links it as the current review.
+
+- **Key refresh:** 6 of the 18 revoked or expired trusted keys gained newer self-signatures from their own committed primaries: ANTLR, Mockito, org.json, Neo4j, Michael Osipov and Kotlin Libraries. No UID, third-party certification or revocation was added.
+- **Rows retired:** 12 artifacts were reclassified as signed while valid, so their rows and artifact-scoped ignores were retired (EX-879..EX-881, EX-885..EX-893). The ledger goes from 594 to 582 rows, all still at 2026-12-31. The other 7 rows stay, because their keys (Android annotations, querydsl, rsocket, Hamcrest) show no extension.
+- **Spotless:** the subkey `2820DE9F…FA5C18CFB74EC7C6`, bound by the committed DiffPlug primary, is trusted for `com.diffplug.spotless`. The `>= 8.10.3` Dependabot hold is removed.
+- **OkHttp:** under the owner's decision B, the `com.squareup.okhttp3` hold is removed and no trust is added for the lysine.dev key. 5.5.x will land on exact rows.
+- **Verification:** every required check passed. These were:
+  - the provenance validator and its negative controls;
+  - the source-byte audit, 582/582;
+  - the strict empty-home `spotlessCheck check --rerun-tasks`, 121/121 tasks and 3,448 tests with 0 failures;
+  - packet-level keyring comparison and `gpgv` reclassification of all 74 in-scope artifacts;
+  - `scripts/test-dependency-provenance.sh`, `scripts/validate-agents-md.sh` and `git diff --check`.
+
+  The reviewer independently repeated the keyring, reclassification, Spotless, metadata, ledger and control checks.
+- **Limits:**
+  - The keyserver copies and the OkHttp evidence were fetched once, on 2026-11-21. The reviewer relied on their recorded SHA-256s.
+  - Only 18 of the 116 keys were checked for revocations.
+  - Landing Spotless 8.10.4 and OkHttp 5.5.1 is separate Dependabot work.
+  - The review finding about block counts is unresolved and does not block. The reviewer counted 70 headed and 25 headerless blocks. A closeout recount of blocks whose header has a `pub` line gives 71 and 24, which matches the review document. The block positions in Tasks are 0-based.
 
 ## Next action
-Run a fresh-context `keel-review` of this record.
+Open a PR from `chore/refresh-signing-keys-2026-11` to `main` and merge it before the 2026-12-31 UTC renewal in [the renewal record](2026-11-18-renew-dependency-provenance-ledger-2026-12.md).
