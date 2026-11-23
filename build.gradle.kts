@@ -1,14 +1,14 @@
 plugins {
-    id("org.springframework.boot") version "4.1.2" apply false
+    id("org.springframework.boot") version "4.2.0" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     id("jacoco-report-aggregation")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
     id("org.cyclonedx.bom") version "3.6.1" apply false
-    id("com.diffplug.spotless") version "8.10.2" apply false
+    id("com.diffplug.spotless") version "8.11.0" apply false
     id("org.owasp.dependencycheck") version "13.0.0"
 }
 
-val springBootVersion = "4.1.2"
+val springBootVersion = "4.2.0"
 val log4jVersion = "2.26.1"
 // May lead Spring Boot's managed Tomcat for security fixes; drop once Boot manages this version or later
 val tomcatVersion = "11.0.29"
@@ -16,7 +16,7 @@ val caffeineVersion = "3.3.1"
 val grpcVersion = "1.84.1"
 val protobufVersion = "4.36.2"
 val assertjVersion = "3.27.7"
-val mockWebServerVersion = "5.3.2"
+val mockWebServerVersion = "5.5.1"
 
 allprojects {
     group = property("group") as String
